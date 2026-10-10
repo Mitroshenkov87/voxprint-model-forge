@@ -18,7 +18,7 @@ from voxprint_forge.diffusion.part_control import run_control
 from voxprint_forge.diffusion.part_edit import run_edit
 from voxprint_forge.diffusion.planload import PartId, load_canvas_plan
 from voxprint_forge.diffusion.publish import publish_output
-from voxprint_forge.diffusion.qwen_common import QwenCtx, check_disk, progress, run_stage
+from voxprint_forge.diffusion.qwen_common import QwenCtx, check_disk, on_qwen_mirror, progress, run_stage
 from voxprint_forge.diffusion.qwen_paths import (
     EncoderStatus,
     assert_no_weight_files,
@@ -334,10 +334,16 @@ def _upload(
         repo=source.repo,
         revision=source.revision,
         staging=ctx.upstream_root / "kaggle-staging",
+        on_verified=lambda target: _on_qwen_verified(ctx, target),
     )
     delete_intermediates(ctx.upstream_root)
     _release_canvas_sources(ctx)
     return {"files": records, "encoder": status}
+
+
+def _on_qwen_verified(ctx: QwenCtx, target: str) -> None:
+    on_qwen_mirror(ctx, target)
+    _release_canvas_sources(ctx)
 
 
 def _release_canvas_sources(ctx: QwenCtx) -> None:

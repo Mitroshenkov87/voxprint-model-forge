@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import socket
 import time
 from collections.abc import Callable, Iterator
@@ -49,6 +48,7 @@ from voxprint_forge.placement import Split, options_for, split_fits
 from voxprint_forge.plan import ModelPlan, Plan, Tier
 from voxprint_forge.preflight import memory_status
 from voxprint_forge.progress import Progress
+from voxprint_forge.reclaim import hub_cache, reclaim_model_work
 from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
 from voxprint_forge.statusfile import beating, current_stage, set_stage, update_item
@@ -309,7 +309,7 @@ def run_model(
     target = ORDER.index(stop_after)
     work = layout.model_dir(model.id)
     work.mkdir(parents=True, exist_ok=True)
-    _reserve_disk(plan, model, work)
+    _reserve_disk(plan, model, work, layout.root)
     with _slot(gate, gpu=False):
         _open_stage(tracker, layout, model, "fetch")
         fetched = _fetch(model, host, layout)
@@ -359,7 +359,6 @@ def run_model(
         if target == 6:
             return drafted
         _open_stage(tracker, layout, model, "upload")
-        _delete_intermediates(work)
         with _beat(layout, model, "upload"):
             uploaded = _upload(model, host, layout, card, imatrix)
     tracker.advance(model.id, "upload", share)
@@ -385,12 +384,12 @@ def default_ablate(source: Path, dest: Path, weight_bytes: int, free_vram: int |
     }
 
 
-def _reserve_disk(plan: Plan, model: ModelPlan, work: Path) -> None:
+def _reserve_disk(plan: Plan, model: ModelPlan, work: Path, forge_out: Path) -> None:
     del plan
     need = sum(item.size for item in model.files)
     if model.mode == "ablate":
         need += sum(item.size for item in model.source_files()) * 2
-    ensure_free(work, need, model.id)
+    ensure_free(work, need, model.id, forge_out=forge_out, cache_dir=hub_cache())
 
 
 def _fetch(model: ModelPlan, host: Host, layout: Layout) -> dict[str, object]:
@@ -1025,6 +1024,11 @@ def _upload(
     hub = tuple(name for name in targets if name in {"hf", "kaggle"})
     records: list[dict[str, object]] = []
     hub_failed = False
+    model_dir = layout.model_dir(model.id)
+
+    def _on_verified(target: str) -> None:
+        reclaim_model_work(model_dir, drop_staging=target != "hf" or "kaggle" not in hub)
+
     if hub:
         try:
             records = publish_private(
@@ -1035,8 +1039,9 @@ def _upload(
                 description=Path(str(card["path"])).read_text(encoding="utf-8"),
                 attempts=host.attempts,
                 sleep=host.sleep,
-                work=layout.model_dir(model.id) / "upload-staging",
+                work=model_dir / "upload-staging",
                 targets=hub,
+                on_verified=_on_verified,
             )
         except ForgeError as exc:
             hub_failed = True
@@ -1049,8 +1054,10 @@ def _upload(
                     f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
                     code="upload",
                 ) from drive_exc
+            _on_verified("drive")
     elif "drive" in targets:
         records = upload_drive(artifacts, model_id=model.id, date=date)
+        _on_verified("drive")
     flags = _target_flags(records, targets, hub_failed=hub_failed)
     by_tier = {str(tier["name"]): tier for tier in tiers}
     for record in records:
@@ -1143,15 +1150,6 @@ def _tier_rows(payload: dict[str, object]) -> list[dict[str, object]]:
             raise StageError("tier result is not an object", code="stage_shape")
         rows.append(item)
     return rows
-
-
-def _delete_intermediates(work: Path) -> None:
-    for relative in ("source", "ablated", "f16.gguf", "offload"):
-        path = work / relative
-        if path.is_dir():
-            shutil.rmtree(path)
-        elif path.is_file():
-            path.unlink()
 
 
 def _free_port() -> int:

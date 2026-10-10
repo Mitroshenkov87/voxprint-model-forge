@@ -141,8 +141,8 @@ def _patch_runtime(monkeypatch) -> None:
     part_control.fetch_sources = _fetch_sources
     part_edit.fetch_sources = _fetch_sources
     monkeypatch.setattr(publish, "HubRemote", FakeHub)
-    monkeypatch.setattr("voxprint_forge.diffusion.qwen_common.ensure_free", lambda path, need, what: 10**12)
-    monkeypatch.setattr("voxprint_forge.diffusion.common.ensure_free", lambda path, need, what: 10**12)
+    monkeypatch.setattr("voxprint_forge.diffusion.qwen_common.ensure_free", lambda path, need, what, **_kwargs: 10**12)
+    monkeypatch.setattr("voxprint_forge.diffusion.common.ensure_free", lambda path, need, what, **_kwargs: 10**12)
     monkeypatch.setenv("HF_USER", "Mitroshenkov87")
     monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")

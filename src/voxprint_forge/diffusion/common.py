@@ -17,6 +17,7 @@ from voxprint_forge.disk import ensure_free
 from voxprint_forge.errors import StageError
 from voxprint_forge.layout import Layout, read_marker, write_marker
 from voxprint_forge.progress import append_progress
+from voxprint_forge.reclaim import delete_logged, hub_cache
 from voxprint_forge.statusfile import beating, set_stage, update_item
 
 _SILENT = frozenset({"convert", "quality", "upload", "upload-deferred"})
@@ -71,10 +72,17 @@ def run_stage(ctx: Ctx, name: str, fn: Callable[[], dict[str, object]]) -> dict[
 
 
 def check_disk(ctx: Ctx) -> None:
-    """Raise when the part's disk budget is not free."""
+    """Reclaim leftovers, then raise when the part's disk budget is still not free."""
     set_stage("disk")
     need = ctx.part.min_free_gb * (1024**3)
-    ensure_free(ctx.forge_out, need, ctx.part.id)
+    ensure_free(
+        ctx.forge_out,
+        need,
+        ctx.part.id,
+        forge_out=ctx.forge_out,
+        cache_dir=hub_cache(),
+        plan=ctx.plan,
+    )
 
 
 def write_notice(output: Path) -> None:
@@ -109,6 +117,11 @@ def shared_sources(ctx: Ctx) -> Path:
 def finish_part(ctx: Ctx) -> None:
     """Drop this part's scratch tree. Shared sources stay until every consumer has released."""
     delete_intermediates(ctx.upstream)
+    on_mirror_verified(ctx, "kaggle")
+
+
+def on_mirror_verified(ctx: Ctx, target: str) -> None:
+    """Release this part's sources. Drop scratch once staging is no longer in use."""
     for source in ctx.part.sources:
         release_consumer(
             ctx.forge_out,
@@ -117,6 +130,14 @@ def finish_part(ctx: Ctx) -> None:
             ctx.part.id,
             consumers_for(ctx.plan, source.id),
         )
+    if target == "hf":
+        if ctx.upstream.is_dir():
+            for child in list(ctx.upstream.iterdir()):
+                if child.name == "kaggle-staging":
+                    continue
+                delete_logged(child)
+        return
+    delete_logged(ctx.upstream)
 
 
 def source_dir(ctx: Ctx, source_id: str) -> Path:

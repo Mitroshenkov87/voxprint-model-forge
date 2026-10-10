@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from voxprint_forge.diffusion.planload import CanvasPlan, load_canvas_plan
+from voxprint_forge.scrub import log
 
 
 def source_store(forge_out: Path, job_id: str) -> Path:
@@ -46,12 +47,27 @@ def release_consumer(
     folder = _markers(forge_out, job_id, source_id)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / consumer).write_text("released\n", encoding="utf-8")
+    if consumers:
+        (folder / "_consumers").write_text("\n".join(consumers) + "\n", encoding="utf-8")
     if not consumers or any(not (folder / name).is_file() for name in consumers):
         return False
     tree = source_store(forge_out, job_id) / source_id
-    if tree.exists():
-        shutil.rmtree(tree)
+    _drop_tree(tree)
     return True
+
+
+def _drop_tree(tree: Path) -> None:
+    if not tree.exists():
+        return
+    size = 0
+    for item in tree.rglob("*"):
+        if item.is_symlink() or item.is_file():
+            try:
+                size += item.lstat().st_size
+            except OSError:
+                continue
+    shutil.rmtree(tree)
+    log(f"reclaim {tree} {size} bytes")
 
 
 def release_consumed(forge_out: Path, repo: Path, plan_rel: str, source_ids: tuple[str, ...], consumer: str) -> None:
