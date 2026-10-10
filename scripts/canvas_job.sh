@@ -219,3 +219,4 @@ set -o pipefail
   | python3 "$ROOT/scripts/logscrub.py" \
   | tee -a "$FORGE_OUT/logs/canvas.log"
 progress_line canvas-zimage-tiers-v1 done 100 0
+printf 'ALL-DONE\n'

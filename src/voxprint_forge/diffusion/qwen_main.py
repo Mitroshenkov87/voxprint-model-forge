@@ -19,7 +19,7 @@ from voxprint_forge.diffusion.qwen_guard import canvas_ac_running
 from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
 from voxprint_forge.diffusion.qwen_select import parse_parts
 from voxprint_forge.diffusion.qwen_spec import PLAN_NAME
-from voxprint_forge.errors import EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
+from voxprint_forge.errors import EXIT_STAGE, EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
 from voxprint_forge.jsonio import emit
 
 
@@ -127,8 +127,9 @@ def main(argv: list[str] | None = None) -> int:
                 parts_text=args.parts,
                 defer_upload=bool(args.defer_upload),
             )
-        emit("qwen", result, ok=True, exit_code=0, json_mode=args.json)
-        return 0
+        code = EXIT_STAGE if isinstance(result, dict) and result.get("ok") is False else 0
+        emit("qwen", result, ok=code == 0, exit_code=code, json_mode=args.json)
+        return code
     except ForgeError as exc:
         emit(
             "qwen",

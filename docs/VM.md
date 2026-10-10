@@ -35,7 +35,7 @@ Re-attach: `tmux attach -t forge`.
 
 If the session is gone, export the tokens again and re-run `tmux new -s forge 'bash scripts/bootstrap.sh'`. Stage markers in `~/forge-out/stages` skip finished work, including uploads whose remote sha256 and size already matched.
 
-Progress lines (timestamp, model, stage, percent, ETA) append to `~/forge-out/progress.log`. `tail -f ~/forge-out/progress.log` while the session runs.
+Progress lines (timestamp, model, stage, percent, ETA) append to `~/forge-out/progress.log` at least every 60 seconds during quantize, imatrix, fit, eval, renders, and uploads. `tail -f ~/forge-out/progress.log` while the session runs. The same pulse updates `~/forge-out/status.json` (stage, percent, ETA, last heartbeat, pid, state, error). Hardware Watchdog can poll `forge status` over ssh. Exit 0 means the items are running or finished, 3 means a heartbeat is older than 180 seconds or the pid is gone, 4 means a model failed or the file is missing.
 
 When the run finishes, copy the manifest back:
 
@@ -53,9 +53,9 @@ Bootstrap prints those two paths. There is no push from the VM.
 3. Print the plan estimates with system Python (no torch import).
 4. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
 5. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
-6. Build the bundled llama.cpp with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`.
-7. `scripts/vm_run.sh` runs `forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all`. Global flags precede the subcommand.
-8. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file, and print the manifest paths to copy back.
+6. Register the T-lite-it-2.1 Qwen2 pre-tokenizer on the bundled llama.cpp tree, then build with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`. The registration is `python -m voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"`. It inserts sha256 `e9b7dbd66e0308c6e89983d5b6e1ca047106d862879a0fd33a12c8491b91ec5c` as `qwen2` after the Kimi-K2 entry in `conversion/base.py` at commit `98819068`. The probe text is `src/voxprint_forge/data/llama_b11476_chktxt.txt`. Applying the patch twice is a no-op. `FORGE_PYTHON` is the forge venv interpreter, and `convert_hf_to_gguf.py` uses that interpreter.
+7. `scripts/vm_run.sh` runs `forge preflight` and then `forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all`. Global flags precede the subcommand. `FORGE_JOBS` defaults to 2. Each model uploads when it is READY. If Hugging Face and Kaggle fail, rclone copies the files to `Voxprint/model-forge/<date>/<model>` and checks sha256. A failed model is `STAGEFAIL <stage>`; the others continue. The scripts print `ALL-DONE` only after a zero exit.
+8. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file, and print the manifest paths to copy back. `ALL-DONE` is printed only when that run succeeded.
 
 Copy results off the box with `scp` or `rsync` as a second copy. The private Hub and Kaggle uploads are the primary copy.
 

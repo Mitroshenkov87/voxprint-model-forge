@@ -59,8 +59,11 @@ from voxprint_forge.diffusion.weights import (
     write_fp8_file,
     write_fp8_shards,
 )
-from voxprint_forge.errors import StageError, UsageError
+from voxprint_forge.errors import ForgeError, StageError, UsageError
 from voxprint_forge.layout import Layout, read_marker, write_marker
+from voxprint_forge.outcome import state_line, summarise
+from voxprint_forge.scrub import log
+from voxprint_forge.statusfile import current_stage, update_item
 
 _DONE = frozenset({"reuse", "convert"})
 
@@ -589,50 +592,83 @@ def run_selected(
     try:
         for part in parts:
             current = clock()
-            if part == "base":
-                results.append(
-                    _canvas_part(
-                        repo=repo,
-                        forge_out=forge_out,
-                        token=token,
-                        part_id="base",
-                        deadline=deadline,
-                        now=current,
-                        defer_upload=defer_upload,
+            try:
+                if part == "base":
+                    results.append(
+                        _canvas_part(
+                            repo=repo,
+                            forge_out=forge_out,
+                            token=token,
+                            part_id="base",
+                            deadline=deadline,
+                            now=current,
+                            defer_upload=defer_upload,
+                        )
                     )
-                )
-            elif part == "controlnet":
-                results.append(
-                    _canvas_part(
-                        repo=repo,
-                        forge_out=forge_out,
-                        token=token,
-                        part_id="controlnet",
-                        deadline=deadline,
-                        now=current,
-                        defer_upload=defer_upload,
+                elif part == "controlnet":
+                    results.append(
+                        _canvas_part(
+                            repo=repo,
+                            forge_out=forge_out,
+                            token=token,
+                            part_id="controlnet",
+                            deadline=deadline,
+                            now=current,
+                            defer_upload=defer_upload,
+                        )
                     )
-                )
-            elif part == "qwen":
-                results.append(run_qwen_part(ctx, deadline, current))
-            elif part == "edit":
-                results.append(
-                    _canvas_part(
-                        repo=repo,
-                        forge_out=forge_out,
-                        token=token,
-                        part_id="edit",
-                        deadline=deadline,
-                        now=current,
-                        defer_upload=defer_upload,
+                elif part == "qwen":
+                    results.append(run_qwen_part(ctx, deadline, current))
+                elif part == "edit":
+                    results.append(
+                        _canvas_part(
+                            repo=repo,
+                            forge_out=forge_out,
+                            token=token,
+                            part_id="edit",
+                            deadline=deadline,
+                            now=current,
+                            defer_upload=defer_upload,
+                        )
                     )
+                elif part == "encoder":
+                    results.append(run_encoder_part(ctx, deadline, current))
+                else:
+                    _unexpected_part(part)
+            except ForgeError as exc:
+                stage = current_stage()
+                failed = {
+                    "id": part,
+                    "status": f"STAGEFAIL {stage}",
+                    "state": f"STAGEFAIL {stage}",
+                    "error": str(exc),
+                    "files": [],
+                }
+                update_item(
+                    forge_out,
+                    part,
+                    stage=stage,
+                    pct=0,
+                    eta_min=0,
+                    state=str(failed["state"]),
+                    error=str(exc),
                 )
-            elif part == "encoder":
-                results.append(run_encoder_part(ctx, deadline, current))
-            else:
-                _unexpected_part(part)
+                log(f"{part} STAGEFAIL {stage}: {exc}")
+                results.append(failed)
     finally:
         manifest_json, manifest_md = _write_manifest(forge_out, plan, results)
+    for item in results:
+        update_item(
+            forge_out,
+            str(item.get("id", "")),
+            stage=str(item.get("status", "")),
+            pct=100,
+            eta_min=0,
+            state=state_line(item),
+            error=str(item.get("error", "")),
+        )
+    text, ok = summarise(results)
+    log(text)
     return {
         "job": plan.id,
         "int4": plan.int4,
@@ -641,6 +677,8 @@ def run_selected(
         "manifest": manifest_json,
         "models": manifest_md,
         "copy_back": [manifest_json, manifest_md],
+        "ok": ok,
+        "states": text,
         "estimates_min": {
             "qwen": plan.estimate_min,
             "qwen_reuse": plan.estimate_min_reuse,

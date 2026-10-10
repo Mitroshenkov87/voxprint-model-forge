@@ -15,7 +15,7 @@ from voxprint_forge.diffusion.deadline import resolve_deadline
 from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.diffusion.guard import llm_job_running
 from voxprint_forge.diffusion.planload import load_canvas_plan
-from voxprint_forge.errors import EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
+from voxprint_forge.errors import EXIT_STAGE, EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
 from voxprint_forge.jsonio import emit
 
 
@@ -108,8 +108,9 @@ def main(argv: list[str] | None = None) -> int:
                 deadline_text=args.deadline,
                 defer_upload=bool(args.defer_upload),
             )
-        emit("canvas", result, ok=True, exit_code=0, json_mode=args.json)
-        return 0
+        code = EXIT_STAGE if isinstance(result, dict) and result.get("ok") is False else 0
+        emit("canvas", result, ok=code == 0, exit_code=code, json_mode=args.json)
+        return code
     except ForgeError as exc:
         emit(
             "canvas",

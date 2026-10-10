@@ -7,7 +7,9 @@ import os
 import shutil
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,8 +17,10 @@ from pathlib import Path
 from voxprint_forge.abliterate import abliterate_directory
 from voxprint_forge.calibration import ensure_calibration
 from voxprint_forge.cards import render_card
+from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.disk import ensure_free
-from voxprint_forge.errors import StageError, UsageError
+from voxprint_forge.drive import upload_drive
+from voxprint_forge.errors import ForgeError, StageError, UsageError
 from voxprint_forge.evaluate import data_dir, evaluate_model, read_lines
 from voxprint_forge.fetch import Downloader, ensure_pinned
 from voxprint_forge.hashing import sha256_file, write_sha256
@@ -39,12 +43,17 @@ from voxprint_forge.measure import (
     parse_buffers,
     tier_min_vram,
 )
+from voxprint_forge.outcome import summarise
 from voxprint_forge.plan import ModelPlan, Plan, Tier
 from voxprint_forge.progress import Progress
+from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
+from voxprint_forge.statusfile import beating, current_stage, set_stage, update_item
 from voxprint_forge.upload import Artifact, Remote, publish_private
 
 ORDER = ("fetch", "abliterate", "quantize", "fit", "eval", "card", "publish-prep", "upload")
+_GPU = frozenset({"abliterate", "fit", "eval"})
+_SILENT = frozenset({"imatrix", "quantize", "fit", "eval", "upload"})
 
 
 def _no_probe() -> int | None:
@@ -78,36 +87,116 @@ def _tracker(plan: Plan, layout: Layout, host: Host, progress: Progress | None) 
     )
 
 
-def run_all(plan: Plan, host: Host, repo: Path, layout: Layout) -> dict[str, object]:
+def _slot(gate: Gate | None, *, gpu: bool) -> Iterator[None]:
+    if gate is None:
+        return nullcontext()
+    return gate.slot(gpu=gpu)
+
+
+def _beat(layout: Layout, model: ModelPlan, stage: str) -> Iterator[None]:
+    if stage not in _SILENT:
+        return nullcontext()
+    return beating(layout.root, model.id, stage, eta_min=float(model.estimate_min))
+
+
+def _skip_for_time(model: ModelPlan, remaining: float) -> dict[str, object]:
+    log(f"skip {model.id}: {remaining:.1f} min left, needs {model.estimate_min}")
+    return {
+        "id": model.id,
+        "base_model": model.base_model,
+        "revision": model.revision,
+        "licence": model.licence,
+        "skipped": True,
+        "reason": "time",
+        "state": "DEFERRED",
+        "files": [],
+    }
+
+
+def _fail(layout: Layout, model: ModelPlan, exc: ForgeError) -> dict[str, object]:
+    stage = current_stage()
+    payload = {
+        "id": model.id,
+        "base_model": model.base_model,
+        "state": f"STAGEFAIL {stage}",
+        "stage": stage,
+        "error": str(exc),
+        "skipped": False,
+        "files": [],
+    }
+    update_item(
+        layout.root,
+        model.id,
+        stage=stage,
+        pct=0,
+        eta_min=float(model.estimate_min),
+        state=str(payload["state"]),
+        error=str(exc),
+    )
+    log(f"{model.id} STAGEFAIL {stage}: {exc}")
+    return payload
+
+
+def run_all(
+    plan: Plan,
+    host: Host,
+    repo: Path,
+    layout: Layout,
+    *,
+    jobs: int = 1,
+) -> dict[str, object]:
     start = host.now()
     progress = _tracker(plan, layout, host, None)
+    enabled = list(plan.enabled_models())
     models: list[dict[str, object]] = []
-    for model in plan.enabled_models():
-        remaining = plan.wall_clock_budget_min - (host.now() - start) / 60.0
-        if model.optional and remaining < model.estimate_min:
-            log(f"skip {model.id}: {remaining:.1f} min left, needs {model.estimate_min}")
-            skipped = {
-                "id": model.id,
-                "base_model": model.base_model,
-                "revision": model.revision,
-                "licence": model.licence,
-                "skipped": True,
-                "reason": "time",
-                "files": [],
-            }
-            write_marker(layout.stage(model.id, "skipped"), skipped)
-            progress.advance(model.id, "skipped", float(model.estimate_min))
-            models.append(skipped)
-            continue
-        models.append(run_model(plan, model, host, repo, layout, stop_after="upload", progress=progress))
+    if jobs <= 1:
+        for model in enabled:
+            remaining = plan.wall_clock_budget_min - (host.now() - start) / 60.0
+            if model.optional and remaining < model.estimate_min:
+                skipped = _skip_for_time(model, remaining)
+                write_marker(layout.stage(model.id, "skipped"), skipped)
+                progress.advance(model.id, "skipped", float(model.estimate_min))
+                models.append(skipped)
+                continue
+            try:
+                models.append(run_model(plan, model, host, repo, layout, stop_after="upload", progress=progress))
+            except ForgeError as exc:
+                models.append(_fail(layout, model, exc))
+    else:
+        gate = Gate(jobs)
+
+        def _worker(model: ModelPlan) -> dict[str, object]:
+            remaining = plan.wall_clock_budget_min - (host.now() - start) / 60.0
+            if model.optional and remaining < model.estimate_min:
+                skipped = _skip_for_time(model, remaining)
+                write_marker(layout.stage(model.id, "skipped"), skipped)
+                return skipped
+            try:
+                return run_model(
+                    plan,
+                    model,
+                    host,
+                    repo,
+                    layout,
+                    stop_after="upload",
+                    progress=progress,
+                    gate=gate,
+                )
+            except ForgeError as exc:
+                return _fail(layout, model, exc)
+
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            models.extend(pool.map(_worker, enabled))
     stamped = host.stamped or datetime.now(timezone.utc).date().isoformat()
+    text, ok = summarise(models)
+    log(text)
     payload: dict[str, object] = {"date": stamped, "plan": plan.name, "models": models}
     written = write_run_manifest(layout, payload, date=stamped)
-    text = "\n".join(summary_lines(payload))
-    log(text)
+    card = "\n".join(summary_lines(payload))
+    log(card)
     if written.get("instructions"):
         log(str(written["instructions"]))
-    return {"models": models, "manifest": written, "summary": text}
+    return {"models": models, "manifest": written, "summary": card, "ok": ok, "states": text}
 
 
 def _stage_share(model: ModelPlan) -> float:
@@ -115,6 +204,15 @@ def _stage_share(model: ModelPlan) -> float:
 
 
 def _open_stage(progress: Progress, layout: Layout, model: ModelPlan, stage: str) -> None:
+    set_stage(stage)
+    update_item(
+        layout.root,
+        model.id,
+        stage=stage,
+        pct=0,
+        eta_min=float(model.estimate_min),
+        state="RUNNING",
+    )
     if read_marker(layout.stage(model.id, stage)) is None:
         progress.begin(model.id, stage)
 
@@ -129,6 +227,7 @@ def run_model(
     stop_after: str,
     budgets: set[float] | None = None,
     progress: Progress | None = None,
+    gate: Gate | None = None,
 ) -> dict[str, object]:
     if stop_after not in ORDER:
         raise UsageError(f"unknown stage {stop_after}", code="usage")
@@ -142,46 +241,58 @@ def run_model(
     work = layout.model_dir(model.id)
     work.mkdir(parents=True, exist_ok=True)
     _reserve_disk(plan, model, work)
-    _open_stage(tracker, layout, model, "fetch")
-    fetched = _fetch(model, host, layout)
+    with _slot(gate, gpu=False):
+        _open_stage(tracker, layout, model, "fetch")
+        fetched = _fetch(model, host, layout)
     tracker.advance(model.id, "fetch", share)
     if target == 0:
         return fetched
-    _open_stage(tracker, layout, model, "abliterate")
-    prepared = _prepare(model, host, layout)
+    with _slot(gate, gpu=True):
+        _open_stage(tracker, layout, model, "abliterate")
+        prepared = _prepare(model, host, layout)
     tracker.advance(model.id, "abliterate", share)
     if target == 1:
         return prepared
     gguf = Path(str(prepared["gguf"]))
-    imatrix = _imatrix(plan, model, host, layout, gguf)
-    _open_stage(tracker, layout, model, "quantize")
-    quantized = _quantize(model, host, layout, gguf, Path(str(imatrix["path"])))
+    with _slot(gate, gpu=False):
+        set_stage("imatrix")
+        with _beat(layout, model, "imatrix"):
+            imatrix = _imatrix(plan, model, host, layout, gguf)
+        _open_stage(tracker, layout, model, "quantize")
+        with _beat(layout, model, "quantize"):
+            quantized = _quantize(model, host, layout, gguf, Path(str(imatrix["path"])))
     tracker.advance(model.id, "quantize", share)
     if target == 2:
         return quantized
-    _open_stage(tracker, layout, model, "fit")
-    fitted = _fit(plan, model, host, layout, gguf, Path(str(imatrix["path"])), budgets)
-    tracker.advance(model.id, "fit", share)
-    if target == 3:
-        return fitted
-    _open_stage(tracker, layout, model, "eval")
-    evaluated = _eval(plan, model, host, layout, fitted)
+    imatrix_path = Path(str(imatrix["path"]))
+    with _slot(gate, gpu=True):
+        _open_stage(tracker, layout, model, "fit")
+        with _beat(layout, model, "fit"):
+            fitted = _fit(plan, model, host, layout, gguf, imatrix_path, budgets)
+        tracker.advance(model.id, "fit", share)
+        if target == 3:
+            return fitted
+        _open_stage(tracker, layout, model, "eval")
+        with _beat(layout, model, "eval"):
+            evaluated = _eval(plan, model, host, layout, fitted)
     tracker.advance(model.id, "eval", share)
     if target == 4:
         return evaluated
-    _open_stage(tracker, layout, model, "card")
-    card = _card(plan, model, host, repo, layout, evaluated, prepared, imatrix)
-    tracker.advance(model.id, "card", share)
-    if target == 5:
-        return card
-    _open_stage(tracker, layout, model, "publish-prep")
-    drafted = _publish_prep(model, layout, card)
-    tracker.advance(model.id, "publish-prep", share)
-    if target == 6:
-        return drafted
-    _open_stage(tracker, layout, model, "upload")
-    _delete_intermediates(work)
-    uploaded = _upload(model, host, layout, card, imatrix)
+    with _slot(gate, gpu=False):
+        _open_stage(tracker, layout, model, "card")
+        card = _card(plan, model, host, repo, layout, evaluated, prepared, imatrix)
+        tracker.advance(model.id, "card", share)
+        if target == 5:
+            return card
+        _open_stage(tracker, layout, model, "publish-prep")
+        drafted = _publish_prep(model, layout, card)
+        tracker.advance(model.id, "publish-prep", share)
+        if target == 6:
+            return drafted
+        _open_stage(tracker, layout, model, "upload")
+        _delete_intermediates(work)
+        with _beat(layout, model, "upload"):
+            uploaded = _upload(model, host, layout, card, imatrix)
     tracker.advance(model.id, "upload", share)
     return uploaded
 
@@ -685,34 +796,69 @@ def _upload(
     marker = layout.stage(model.id, "upload")
     cached = read_marker(marker)
     if cached is not None:
-        return cached
+        body = dict(cached)
+        body.setdefault("state", "UPLOADED")
+        return body
     tiers = _tier_rows(card)
     artifacts = _artifacts(layout.model_dir(model.id), tiers, card, imatrix)
-    records = publish_private(
-        host.remote,
-        artifacts,
-        model_id=model.id,
-        title=f"Voxprint {model.id}",
-        description=Path(str(card["path"])).read_text(encoding="utf-8"),
-        attempts=host.attempts,
-        sleep=host.sleep,
-        work=layout.model_dir(model.id) / "upload-staging",
-    )
+    if defer_requested(False):
+        payload = {
+            "id": model.id,
+            "base_model": model.base_model,
+            "revision": model.revision,
+            "licence": model.licence,
+            "skipped": False,
+            "deferred_upload": True,
+            "state": "READY",
+            "files": [
+                {"name": item.name, "sha256": item.sha256, "size": item.size, "tier": item.tier}
+                for item in artifacts
+            ],
+            "tiers": tiers,
+        }
+        write_marker(layout.stage(model.id, "upload-deferred"), payload)
+        update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="READY")
+        return payload
+    date = host.stamped or datetime.now(timezone.utc).date().isoformat()
+    try:
+        records = publish_private(
+            host.remote,
+            artifacts,
+            model_id=model.id,
+            title=f"Voxprint {model.id}",
+            description=Path(str(card["path"])).read_text(encoding="utf-8"),
+            attempts=host.attempts,
+            sleep=host.sleep,
+            work=layout.model_dir(model.id) / "upload-staging",
+        )
+    except ForgeError as exc:
+        try:
+            records = upload_drive(artifacts, model_id=model.id, date=date)
+        except ForgeError as drive_exc:
+            raise StageError(
+                f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
+                code="upload",
+            ) from drive_exc
     vram = {str(tier["name"]): tier["min_vram_gb"] for tier in tiers}
     for record in records:
         tier_name = str(record.get("tier", ""))
         if record.get("kind") == "gguf" and tier_name in vram:
             record["min_vram_gb"] = vram[tier_name]
-    payload: dict[str, object] = {
+    payload = {
         "id": model.id,
         "base_model": model.base_model,
         "revision": model.revision,
         "licence": model.licence,
         "skipped": False,
+        "state": "UPLOADED",
         "files": records,
         "tiers": tiers,
     }
     write_marker(marker, payload)
+    deferred = layout.stage(model.id, "upload-deferred")
+    if deferred.is_file():
+        deferred.unlink()
+    update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="UPLOADED")
     return payload
 
 

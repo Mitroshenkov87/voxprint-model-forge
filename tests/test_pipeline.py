@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -553,6 +554,8 @@ def test_vm_run_invocation_dry_runs_a_tiny_model(
     repo = _scratch_repo(tmp_path)
     host = _host(FakeDownloader({"source.gguf": source, "q5.gguf": reuse}), FakeRemote())
     monkeypatch.setattr("voxprint_forge.cli._live_host", lambda: host)
+    monkeypatch.setenv("HF_TOKEN", "hf-test-token-value")
+    monkeypatch.setenv("KAGGLE_API_TOKEN", "kaggle-test-token-value")
     from voxprint_forge.cli import main
 
     rejected = main(
@@ -572,6 +575,206 @@ def test_vm_run_invocation_dry_runs_a_tiny_model(
     )
     assert code == 0
     assert (tmp_path / "good" / "stages" / "tiny" / "upload.json").is_file()
+
+
+def _pair_plan(tmp: Path, source: bytes) -> Path:
+    sha = _sha(source)
+    text = f"""
+[run]
+name = "pair"
+output_dir = "{tmp.as_posix()}/work"
+wall_clock_budget_min = 30
+headroom_gb = 3.0
+imatrix_chunks = 1
+imatrix_ctx = 512
+refusal_limit = 1
+ppl_chunks = 1
+prose_samples = 1
+contexts = [512]
+llama_cpp_tag = "b11476"
+llama_cpp_commit = "988190680d5a89fce97de3c20df2c2813731fd61"
+artifact_host = ""
+[[models]]
+id = "tiny"
+enabled = true
+mode = "requant"
+repo = "org/tiny"
+revision = "abc123"
+licence = "apache-2.0"
+params_b = 1
+base_model = "org/base"
+source_format = "gguf"
+credits = ["Org"]
+[models.arch]
+full_layers = 0
+[[models.files]]
+role = "source"
+quant = "F16"
+path = "source.gguf"
+sha256 = "{sha}"
+size = {len(source)}
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS"]
+[[models]]
+id = "second"
+enabled = true
+mode = "requant"
+repo = "org/second"
+revision = "abc123"
+licence = "apache-2.0"
+params_b = 1
+base_model = "org/base"
+source_format = "gguf"
+credits = ["Org"]
+[models.arch]
+full_layers = 0
+[[models.files]]
+role = "source"
+quant = "F16"
+path = "source.gguf"
+sha256 = "{sha}"
+size = {len(source)}
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS"]
+"""
+    path = tmp / "pair.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_one_failure_does_not_stop_the_other_model(tmp_path: Path, llama_bin: None) -> None:
+    del llama_bin
+    source = b"SRC" * 40
+    plan = load_plan(_pair_plan(tmp_path, source))
+
+    class BoomSecond(FakeRunner):
+        def run(self, argv: list[str], *, cwd: Path | None = None) -> Completed:
+            if any("second" in str(part) for part in argv):
+                raise StageError("second quantize failed", code="tool_failed")
+            return super().run(argv, cwd=cwd)
+
+    host = _host(FakeDownloader({"source.gguf": source}), FakeRemote())
+    host.runner = BoomSecond()
+    layout = Layout(tmp_path / "forge-out")
+    result = run_all(plan, host, _scratch_repo(tmp_path), layout)
+    assert result["ok"] is False
+    states = str(result["states"])
+    assert "tiny UPLOADED" in states
+    assert "second STAGEFAIL" in states
+    assert "ALL-DONE" not in states
+    assert layout.stage("tiny", "upload").is_file()
+    assert not layout.stage("second", "upload").is_file()
+
+
+def test_jobs_run_models_together(tmp_path: Path, llama_bin: None) -> None:
+    del llama_bin
+    source = b"SRC" * 40
+    plan = load_plan(_pair_plan(tmp_path, source))
+    layout = Layout(tmp_path / "forge-out")
+    result = run_all(
+        plan,
+        _host(FakeDownloader({"source.gguf": source}), FakeRemote()),
+        _scratch_repo(tmp_path),
+        layout,
+        jobs=2,
+    )
+    assert result["ok"] is True
+    assert str(result["states"]).endswith("ALL-DONE")
+    assert layout.stage("tiny", "upload").is_file()
+    assert layout.stage("second", "upload").is_file()
+
+
+def test_defer_upload_leaves_the_model_ready(tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del llama_bin
+    monkeypatch.setenv("FORGE_DEFER_UPLOAD", "1")
+    source = b"SRC" * 40
+    reuse = b"RE" * 80
+    plan = load_plan(_plan(tmp_path, source, reuse))
+    remote = FakeRemote()
+    layout = Layout(tmp_path / "forge-out")
+    result = run_all(
+        plan,
+        _host(FakeDownloader({"source.gguf": source, "q5.gguf": reuse}), remote),
+        _scratch_repo(tmp_path),
+        layout,
+    )
+    assert result["ok"] is True
+    assert "tiny READY" in str(result["states"])
+    assert "ALL-DONE" in str(result["states"])
+    assert not layout.stage("tiny", "upload").is_file()
+    assert layout.stage("tiny", "upload-deferred").is_file()
+    assert remote.hf_private == []
+
+
+def _rclone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / "rclone-bin"
+    folder.mkdir()
+    store = tmp_path / "drive-store"
+    store.mkdir()
+    script = folder / "rclone.py"
+    script.write_text(
+        "import hashlib, shutil, sys\n"
+        "from pathlib import Path\n"
+        f"store = Path({str(store)!r})\n"
+        "argv = sys.argv[1:]\n"
+        "if argv[0] == 'copyto':\n"
+        "    name = argv[2].split('/')[-1]\n"
+        "    target = store / name\n"
+        "    target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    shutil.copyfile(argv[1], target)\n"
+        "    raise SystemExit(0)\n"
+        "if argv[0] == 'sha256sum':\n"
+        "    name = argv[1].split('/')[-1]\n"
+        "    data = (store / name).read_bytes()\n"
+        "    print(hashlib.sha256(data).hexdigest() + '  ' + name)\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n",
+        encoding="utf-8",
+    )
+    launcher = folder / "rclone"
+    launcher.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    bat = folder / "rclone.bat"
+    bat.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    monkeypatch.setenv("PATH", str(folder) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("FORGE_DRIVE_TOKEN", "drive-token-test-value")
+
+
+def test_drive_fallback_after_hub_failure(tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del llama_bin
+    _rclone(tmp_path, monkeypatch)
+    monkeypatch.setenv("HF_TOKEN", "hf-test-token-value")
+    monkeypatch.setenv("KAGGLE_API_TOKEN", "kaggle-test-token-value")
+    source = b"SRC" * 40
+    reuse = b"RE" * 80
+    plan_path = _plan(tmp_path, source, reuse)
+    repo = _scratch_repo(tmp_path)
+    host = _host(FakeDownloader({"source.gguf": source, "q5.gguf": reuse}), FakeRemote(failures=10_000))
+    monkeypatch.setattr("voxprint_forge.cli._live_host", lambda: host)
+    from voxprint_forge.cli import main
+
+    code = main(
+        [
+            "--plan",
+            str(plan_path),
+            "--root",
+            str(repo),
+            "--forge-out",
+            str(tmp_path / "good"),
+            "run-all",
+        ]
+    )
+    assert code == 0
+    payload = json.loads((tmp_path / "good" / "stages" / "tiny" / "upload.json").read_text(encoding="utf-8"))
+    assert payload["state"] == "UPLOADED"
+    assert payload["files"][0]["target"] == "drive"
+    assert str(payload["files"][0]["path"]).startswith("Voxprint/model-forge/")
 
 
 def test_cli_plan_summary_and_usage() -> None:

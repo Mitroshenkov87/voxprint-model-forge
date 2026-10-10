@@ -14,9 +14,12 @@ from voxprint_forge.diffusion.part_base import run_base
 from voxprint_forge.diffusion.part_control import run_control
 from voxprint_forge.diffusion.part_edit import run_edit
 from voxprint_forge.diffusion.planload import CanvasPlan
-from voxprint_forge.errors import PlanError
+from voxprint_forge.errors import ForgeError, PlanError
 from voxprint_forge.layout import Layout, read_marker
+from voxprint_forge.outcome import state_line, summarise
 from voxprint_forge.progress import append_progress
+from voxprint_forge.scrub import log
+from voxprint_forge.statusfile import current_stage, update_item
 
 
 def _unexpected_part(part_id: Never) -> Never:
@@ -138,9 +141,44 @@ def run_job(
                 layout=layout,
                 defer_upload=defer_upload,
             )
-            results.append(_dispatch(ctx))
+            try:
+                results.append(_dispatch(ctx))
+            except ForgeError as exc:
+                stage = current_stage()
+                failed = {
+                    "id": part.id,
+                    "status": f"STAGEFAIL {stage}",
+                    "state": f"STAGEFAIL {stage}",
+                    "estimate_min": part.estimate_min,
+                    "hf_repo": part.hf_repo,
+                    "error": str(exc),
+                    "files": [],
+                }
+                update_item(
+                    forge_out,
+                    part.id,
+                    stage=stage,
+                    pct=0,
+                    eta_min=float(part.estimate_min),
+                    state=str(failed["state"]),
+                    error=str(exc),
+                )
+                log(f"{part.id} STAGEFAIL {stage}: {exc}")
+                results.append(failed)
     finally:
         manifest_json, manifest_md = _write_manifest(forge_out, plan, results)
+    for item in results:
+        update_item(
+            forge_out,
+            str(item.get("id", "")),
+            stage=str(item.get("status", "")),
+            pct=100,
+            eta_min=0,
+            state=state_line(item),
+            error=str(item.get("error", "")),
+        )
+    text, ok = summarise(results)
+    log(text)
     return {
         "job": plan.id,
         "estimates_min": {part.id: part.estimate_min for part in plan.parts},
@@ -149,4 +187,6 @@ def run_job(
         "manifest": manifest_json,
         "models": manifest_md,
         "copy_back": [manifest_json, manifest_md],
+        "ok": ok,
+        "states": text,
     }

@@ -11,7 +11,7 @@ estimate_min = 55
 output_name = "Tongyi-MAI--Z-Image-Turbo-voxprint"
 hf_repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo"
 kaggle_slug = "voxprint-mirror-z-image-turbo"
-min_free_gb = 120
+min_free_gb = 40
 
 [[parts.sources]]
 id = "turbo"
@@ -39,7 +39,7 @@ estimate_min = 25
 output_name = "alibaba-pai--Z-Image-Turbo-Fun-Controlnet-Union-2.1-voxprint"
 hf_repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
 kaggle_slug = "voxprint-mirror-z-image-turbo-controlnet-union-2.1"
-min_free_gb = 80
+min_free_gb = 40
 
 [[parts.sources]]
 id = "controlnet"

@@ -6,7 +6,13 @@ import os
 import sys
 from collections.abc import Sequence
 
-SECRET_ENV = ("HF_TOKEN", "KAGGLE_API_TOKEN", "GH_TOKEN")
+SECRET_ENV = (
+    "HF_TOKEN",
+    "KAGGLE_API_TOKEN",
+    "GH_TOKEN",
+    "FORGE_DRIVE_TOKEN",
+    "FORGE_DRIVE_SERVICE_ACCOUNT",
+)
 
 
 def active_secrets(extra: Sequence[str] = ()) -> list[str]:

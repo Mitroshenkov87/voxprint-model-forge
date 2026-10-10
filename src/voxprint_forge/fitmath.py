@@ -89,9 +89,43 @@ QUANT_RANK = {
     "Q3_K": 34,
     "IQ3_M": 30,
     "IQ3_S": 28,
+    "IQ3_XXS": 26,
+    "IQ2_M": 20,
     "F16": 100,
+}
+
+
+# Bits per weight used by preflight. IQ3_M at 3.716 bpw is 14.4 GB for a 31B model.
+QUANT_BPW = {
+    "F16": 16.0,
+    "BF16": 16.0,
+    "Q8_0": 8.5,
+    "Q6_K": 6.56,
+    "Q5_K_M": 5.69,
+    "Q5_K": 5.69,
+    "Q5_K_S": 5.5,
+    "Q4_K_M": 4.85,
+    "Q4_K": 4.85,
+    "Q4_K_S": 4.5,
+    "IQ4_XS": 4.25,
+    "Q3_K_L": 4.0,
+    "Q3_K_M": 3.9,
+    "Q3_K": 3.9,
+    "IQ3_M": 3.716,
+    "IQ3_S": 3.5,
+    "IQ3_XXS": 3.0,
+    "IQ2_M": 2.7,
 }
 
 
 def quant_rank(name: str) -> int:
     return QUANT_RANK.get(name, 0)
+
+
+def quant_bpw(name: str) -> float:
+    return QUANT_BPW.get(name, 16.0)
+
+
+def estimate_weights_bytes(params_b: float, quant: str) -> int:
+    """param count times bits per weight. params_b is billions of parameters."""
+    return int(params_b * 1_000_000_000 * quant_bpw(quant) / 8)

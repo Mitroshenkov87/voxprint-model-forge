@@ -12,14 +12,17 @@ import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from voxprint_forge.diffusion.registry import Row, render_models_md
 from voxprint_forge.diffusion.weights import link_or_copy
-from voxprint_forge.errors import StageError
+from voxprint_forge.drive import upload_drive
+from voxprint_forge.errors import ForgeError, StageError
 from voxprint_forge.hashing import sha256_file, write_sha256
 from voxprint_forge.upload import (
     DELAYS,
+    Artifact,
     HubRemote,
     assert_private_metadata,
     hf_file_url,
@@ -167,7 +170,7 @@ def _upload_variation(
     raise StageError(last, code="upload_mismatch")
 
 
-def publish_output(
+def _publish_hub(
     *,
     output: Path,
     hf_repo: str,
@@ -288,3 +291,73 @@ def publish_output(
     if stage_root.exists():
         shutil.rmtree(stage_root)
     return records
+
+
+def _drive_artifacts(output: Path) -> list[Artifact]:
+    found: list[Artifact] = []
+    if not output.is_dir():
+        return found
+    for path in sorted(output.rglob("*")):
+        if not path.is_file():
+            continue
+        if "kaggle-staging" in path.parts:
+            continue
+        found.append(
+            Artifact(
+                path,
+                path.relative_to(output).as_posix(),
+                sha256_file(path),
+                path.stat().st_size,
+                "",
+                "",
+                "file",
+            )
+        )
+    return found
+
+
+def publish_output(
+    *,
+    output: Path,
+    hf_repo: str,
+    kaggle_slug: str,
+    title: str,
+    description: str,
+    tiers: dict[str, tuple[str, int | None, str, str]],
+    variations: dict[str, list[str]],
+    repo: str,
+    revision: str,
+    remote: HubRemote | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = 4,
+    staging: Path | None = None,
+) -> list[dict[str, object]]:
+    """Upload to Hugging Face and Kaggle. Drive is the fallback when both fail."""
+    try:
+        return _publish_hub(
+            output=output,
+            hf_repo=hf_repo,
+            kaggle_slug=kaggle_slug,
+            title=title,
+            description=description,
+            tiers=tiers,
+            variations=variations,
+            repo=repo,
+            revision=revision,
+            remote=remote,
+            sleep=sleep,
+            attempts=attempts,
+            staging=staging,
+        )
+    except ForgeError as exc:
+        artifacts = _drive_artifacts(output)
+        if not artifacts:
+            raise
+        day = datetime.now(timezone.utc).date().isoformat()
+        try:
+            return upload_drive(artifacts, model_id=kaggle_slug, date=day)
+        except ForgeError as drive_exc:
+            raise StageError(
+                f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
+                code="upload",
+            ) from drive_exc

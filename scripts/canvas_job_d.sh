@@ -232,3 +232,4 @@ set -o pipefail
   | python3 "$ROOT/scripts/logscrub.py" \
   | tee -a "$FORGE_OUT/logs/canvas-qwen.log"
 progress_line canvas-qwen-image-2512 done 100 0
+printf 'ALL-DONE\n'
