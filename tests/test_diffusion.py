@@ -318,11 +318,17 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert "GH_TOKEN" not in job
     assert "github.com" not in job
     assert "cleanup_secrets" in job
+    assert 'export HF_USER="${HF_USER:-Mitroshenkov87}"' in job
+    assert "non-interactive" in job
+    assert "preflight nvcc ok" in job
+    assert "cmake and ninja are not required" in job
     docs = (ROOT / "docs" / "CANVAS.md").read_text(encoding="utf-8")
     assert "55" in docs and "25" in docs and "135" in docs
     assert "deferred to next rental" in docs
     assert "FORGE_DEADLINE=2026-10-10T18:00:00Z" in docs
     assert "tmux new -s canvas 'bash scripts/canvas_job.sh'" in docs
+    assert "Mitroshenkov87" in docs
+    assert "not a terminal" in docs
     cli = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
     assert "forge canvas run plans/canvas-zimage-tiers-v1.toml" in cli
     assert "deferred to next rental" in cli

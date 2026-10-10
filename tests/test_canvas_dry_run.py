@@ -1,0 +1,192 @@
+"""CPU dry run of the documented canvas command with a tiny model and a fake remote.
+
+The operator command is `python -m voxprint_forge.diffusion run PLAN --json --forge-out ... --root ...`
+from scripts/canvas_job.sh. Diffusers is not installed in CI, so the quality
+stage is replaced after the real convert. Uploads go through a stand-in HubRemote.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import torch
+from safetensors.torch import save_file
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _install_fake_generate() -> types.ModuleType:
+    """Quality imports diffusers. The dry run supplies the three evaluators instead."""
+    passing = {"decision": "fp8", "lpips_mean": 0.01, "clip_drop": 0.001, "clip_i": 0.99}
+    fake = types.ModuleType("voxprint_forge.diffusion.generate")
+    fake.evaluate_base = lambda **kwargs: {  # type: ignore[attr-defined]
+        "components": {
+            "turbo-transformer": dict(passing),
+            "zimage-transformer": dict(passing),
+            "qwen3-4b-encoder": dict(passing),
+        }
+    }
+    fake.evaluate_control = lambda **kwargs: {"components": {"controlnet-lite": dict(passing)}}  # type: ignore[attr-defined]
+    fake.evaluate_edit = lambda **kwargs: {  # type: ignore[attr-defined]
+        "components": {
+            "edit-transformer": dict(passing),
+            "qwen2.5-vl-encoder": dict(passing),
+        }
+    }
+    return fake
+
+
+def _weight(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_file(
+        {
+            "layers.0.attention.to_q.weight": torch.zeros(4, 4),
+            "norm.weight": torch.zeros(4),
+        },
+        path,
+    )
+
+
+def _diffusion_tree(root: Path) -> None:
+    _weight(root / "transformer" / "model.safetensors")
+    (root / "transformer" / "config.json").write_text("{}\n", encoding="utf-8")
+    for name in ("text_encoder", "vae", "tokenizer"):
+        folder = root / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "config.json").write_text("{}\n", encoding="utf-8")
+        _weight(folder / "model.safetensors")
+
+
+class FakeHub:
+    def __init__(self, hf_token: str | None = None, kaggle_token: str | None = None) -> None:
+        del hf_token, kaggle_token
+        self.hf_bytes: dict[str, bytes] = {}
+        self.kaggle_bytes: dict[str, bytes] = {}
+        self.repos: list[str] = []
+
+    def hf_private_repo(self, repo_id: str) -> str:
+        self.repos.append(repo_id)
+        return f"https://huggingface.co/{repo_id}"
+
+    def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
+        del repo_id
+        self.hf_bytes[name] = path.read_bytes()
+
+    def hf_stat(self, repo_id: str, name: str) -> tuple[str, int]:
+        del repo_id
+        payload = self.hf_bytes[name]
+        return hashlib.sha256(payload).hexdigest(), len(payload)
+
+    def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str:
+        del owner, slug, folder
+        return "https://www.kaggle.com/models/example"
+
+    def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str:
+        for path in folder.iterdir():
+            if path.is_file() and path.name not in {"model-instance-metadata.json", "model-metadata.json"}:
+                self.kaggle_bytes[path.name] = path.read_bytes()
+        return f"{owner}/{slug}/gguf/{variation}"
+
+    def kaggle_stat(self, handle: str, name: str) -> tuple[str, int]:
+        del handle
+        payload = self.kaggle_bytes[name]
+        return hashlib.sha256(payload).hexdigest(), len(payload)
+
+
+def test_canvas_job_refuses_a_missing_token_when_stdin_is_not_a_tty(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("KAGGLE_API_TOKEN", None)
+    env["FORGE_OUT"] = str(tmp_path)
+    proc = subprocess.run(
+        ["bash", str(ROOT / "scripts/canvas_job.sh")],
+        input=b"",
+        capture_output=True,
+        env=env,
+        timeout=5,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert b"non-interactive" in proc.stderr
+
+
+def test_documented_canvas_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) -> None:
+    script = (ROOT / "scripts/canvas_job.sh").read_text(encoding="utf-8")
+    assert '"$VENV/bin/python" -m voxprint_forge.diffusion' in script
+    needle = 'args=(run "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")'
+    assert needle in script
+
+    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish
+    from voxprint_forge.diffusion.cli import main
+    from voxprint_forge.diffusion.names import (
+        CONTROL_FULL_UPSTREAM,
+        CONTROL_LITE_UPSTREAM,
+    )
+
+    def fetch_sources(sources: tuple, dest: Path, token: str | None) -> dict[str, object]:
+        del token
+        dest.mkdir(parents=True, exist_ok=True)
+        record: dict[str, object] = {}
+        for source in sources:
+            folder = dest / source.id
+            if source.id == "controlnet":
+                folder.mkdir(parents=True, exist_ok=True)
+                _weight(folder / CONTROL_FULL_UPSTREAM)
+                _weight(folder / CONTROL_LITE_UPSTREAM)
+            else:
+                _diffusion_tree(folder)
+            record[source.id] = {
+                "repo": source.repo,
+                "revision": source.revision,
+                "licence": "apache-2.0",
+                "files": {},
+            }
+        (dest / "upstream-sha256.json").write_text(json.dumps(record), encoding="utf-8")
+        return record
+
+    part_base.fetch_sources = fetch_sources
+    part_control.fetch_sources = fetch_sources
+    part_edit.fetch_sources = fetch_sources
+    previous = sys.modules.get("voxprint_forge.diffusion.generate")
+    sys.modules["voxprint_forge.diffusion.generate"] = _install_fake_generate()
+    monkeypatch.setattr(publish, "HubRemote", FakeHub)
+    monkeypatch.setattr("voxprint_forge.diffusion.common.ensure_free", lambda path, need, what: 10**12)
+    monkeypatch.setenv("HF_USER", "Mitroshenkov87")
+    monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
+    monkeypatch.delenv("FORGE_DEADLINE", raising=False)
+
+    forge_out = tmp_path / "forge-out"
+    try:
+        code = main(
+            [
+                "run",
+                str(ROOT / "plans" / "canvas-zimage-tiers-v1.toml"),
+                "--json",
+                "--forge-out",
+                str(forge_out),
+                "--root",
+                str(ROOT),
+                "--force",
+            ]
+        )
+    finally:
+        if previous is None:
+            sys.modules.pop("voxprint_forge.diffusion.generate", None)
+        else:
+            sys.modules["voxprint_forge.diffusion.generate"] = previous
+        sys.modules.pop("voxprint_forge.diffusion.job", None)
+    assert code == 0
+    assert "diffusers" not in sys.modules
+    manifests = list((forge_out / "manifests").glob("*-canvas-zimage.json"))
+    assert len(manifests) == 1
+    body = json.loads(manifests[0].read_text(encoding="utf-8"))
+    assert [part["id"] for part in body["parts"]] == ["base", "controlnet", "edit"]
+    assert {part["status"] for part in body["parts"]} == {"uploaded"}
+    for part in body["parts"]:
+        assert part["files"]

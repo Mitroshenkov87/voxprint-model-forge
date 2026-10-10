@@ -16,7 +16,6 @@ from voxprint_forge.diffusion.common import (
     write_json,
     write_notice,
 )
-from voxprint_forge.diffusion.generate import evaluate_base
 from voxprint_forge.diffusion.names import (
     BASE_GRID,
     BASE_METRICS,
@@ -98,6 +97,9 @@ def _drop(path: Path) -> None:
 
 
 def _quality(ctx: Ctx) -> dict[str, object]:
+    # diffusers is optional and must not load until this stage runs.
+    from voxprint_forge.diffusion.generate import evaluate_base
+
     report = evaluate_base(
         turbo_dir=source_dir(ctx, "turbo"),
         base_dir=source_dir(ctx, "base"),

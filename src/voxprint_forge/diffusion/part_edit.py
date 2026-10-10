@@ -15,7 +15,6 @@ from voxprint_forge.diffusion.common import (
     write_json,
     write_notice,
 )
-from voxprint_forge.diffusion.generate import evaluate_edit
 from voxprint_forge.diffusion.names import (
     EDIT_BF16_PREFIX,
     EDIT_ENCODER_FP8,
@@ -67,6 +66,9 @@ def _shard_paths(output: Path, prefix: str) -> list[Path]:
 
 
 def _quality(ctx: Ctx) -> dict[str, object]:
+    # diffusers is optional and must not load until this stage runs.
+    from voxprint_forge.diffusion.generate import evaluate_edit
+
     fp8_paths = _shard_paths(ctx.output, EDIT_FP8_PREFIX)
     report = evaluate_edit(
         edit_dir=source_dir(ctx, "edit"),
