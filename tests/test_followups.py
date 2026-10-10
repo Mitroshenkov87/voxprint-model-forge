@@ -305,6 +305,37 @@ def test_preflight_heads_the_shard_index(tmp_path: Path, monkeypatch: pytest.Mon
         calls.append(url)
         return _Head(404)
 
-    with pytest.raises(StageError, match="shard index HEAD 404"):
+    with pytest.raises(StageError, match="shard index HEAD 404") as caught:
         run_preflight(load_plan(plan_path), ROOT, tmp_path / "out", opener=opener, ram=lambda: 64 * 1024**3)
     assert calls and calls[0].endswith("/model.safetensors.index.json")
+    report = caught.value.report
+    assert isinstance(report, dict)
+    failed = [item for item in report["checks"] if isinstance(item, dict) and not item["ok"]]
+    assert failed
+    assert all(item["fix"] for item in failed)
+
+
+def test_preflight_json_keeps_each_fix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from voxprint_forge.cli import main
+
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    for name in ("llama-quantize", "llama-imatrix", "llama-cli", "llama-server"):
+        (folder / name).write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("FORGE_LLAMA_BIN", str(folder))
+    monkeypatch.setenv("FORGE_DEFER_UPLOAD", "1")
+    monkeypatch.setattr("voxprint_forge.disk.free_bytes", lambda _path: 10 * 1024**3)
+    plan_path = tmp_path / "plan.toml"
+    _plan(plan_path, budget=0.01)
+    code = main(
+        ["--plan", str(plan_path), "--root", str(ROOT), "--forge-out", str(tmp_path / "out"), "--json", "preflight"]
+    )
+    assert code == 6
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    checks = payload["result"]["checks"]
+    assert any(not item["ok"] and "fits no quant" in item["detail"] and item["fix"] for item in checks)

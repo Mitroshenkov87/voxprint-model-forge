@@ -39,7 +39,9 @@ pip install -e ".[dev]"
 
 `forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
 
-`forge preflight --plan PLAN` checks, in a few seconds, that the converter Python has torch, transformers, and gguf; that each enabled safetensors model answers HEAD for `model.safetensors.index.json` at the pinned revision; that the T-lite pre-tokenizer hash is registered on the pinned converter; that some quant on every quantize tier fits the tier budget (parameters times bits per weight, plus q8_0 KV at the longest plan context); that free disk covers the plan's pinned files; that RAM covers the smallest quant; that `HF_TOKEN` and `KAGGLE_API_TOKEN` are set unless `FORGE_DEFER_UPLOAD=1`; and that the llama.cpp binaries are present or cmake, ninja, and nvcc are on `PATH`. `run-all` and the stage commands run this check before any download or quant. `--json` prints the report.
+`forge preflight --plan PLAN` checks, in a few seconds, that the converter Python has torch, transformers, and gguf; that each enabled safetensors model answers HEAD for `model.safetensors.index.json` at the pinned revision; that the T-lite pre-tokenizer hash is registered on the pinned converter; that some quant on every quantize tier fits the tier budget (parameters times bits per weight, plus q8_0 KV at the longest plan context); that free disk covers the plan's pinned files; that RAM covers the smallest quant; that `HF_TOKEN` and `KAGGLE_API_TOKEN` are set unless `FORGE_DEFER_UPLOAD=1`; and that the llama.cpp binaries are present or cmake, ninja, and nvcc are on `PATH`. `run-all` and the stage commands run this check before any download or quant. `--json` prints the report, including a `checks` list. Each failed check has a `fix`. A failed preflight still exits 6.
+
+`forge-gui` opens the same checks, the per-model status table, and the upload-target selector. It is a window over this CLI and the library. Tokens typed there are stored in the OS keyring under the service `voxprint-forge`, not in the repo. Install it with `pip install -e ".[gui]"`.
 
 `forge status` reads `~/forge-out/status.json`. Each model or canvas part has `stage`, `pct`, `eta_min`, `last_heartbeat`, `pid`, `state`, and `error`. A `RUNNING` or `READY` item whose heartbeat is older than 180 seconds, or whose pid is dead, is reported as `stalled`.
 
@@ -90,6 +92,7 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 | `FORGE_PYTHON` | Interpreter for `convert_hf_to_gguf.py`. Defaults to the forge interpreter |
 | `FORGE_JOBS` | Parallel models for `run-all` when `--jobs` is omitted. Default 1 |
 | `FORGE_DEFER_UPLOAD` | `1` / `true` / `yes` / `on` skips upload and leaves the model READY |
+| `FORGE_UPLOAD_TARGETS` | Comma-separated `hf`, `kaggle`, and/or `drive`. Default `hf,kaggle,drive`. Drive is used when it is selected and the selected hubs fail, or when it is the only target |
 | `FORGE_HEARTBEAT_S` | Seconds between progress lines during quantize, imatrix, fit, eval, and upload. Default 60 |
 | `FORGE_DRIVE_TOKEN` | OAuth token for the Drive fallback. Passed only in the rclone environment |
 | `FORGE_DRIVE_SERVICE_ACCOUNT` | Service-account JSON for the Drive fallback, as a string |

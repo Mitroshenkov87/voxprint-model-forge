@@ -31,29 +31,65 @@ def missing_imports() -> list[str]:
     return [name for name in _IMPORTS if importlib.util.find_spec(name) is None]
 
 
-def ram_bytes() -> int:
+class _MemoryStatus(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def memory_status() -> tuple[int, int]:
+    """Physical RAM as (total, available) bytes."""
     if os.name == "nt":
-
-        class MemoryStatus(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        status = MemoryStatus()
+        status = _MemoryStatus()
         status.dwLength = ctypes.sizeof(status)
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
-        return int(status.ullTotalPhys)
-    page = os.sysconf("SC_PAGE_SIZE")
-    pages = os.sysconf("SC_PHYS_PAGES")
-    return int(page) * int(pages)
+        return int(status.ullTotalPhys), int(status.ullAvailPhys)
+    page = int(os.sysconf("SC_PAGE_SIZE"))
+    total = page * int(os.sysconf("SC_PHYS_PAGES"))
+    try:
+        available = page * int(os.sysconf("SC_AVPHYS_PAGES"))
+    except (AttributeError, OSError, ValueError):
+        available = total
+    return total, available
+
+
+def ram_bytes() -> int:
+    return memory_status()[0]
+
+
+_FIX_IMPORTS = (
+    "Install torch, transformers, and gguf into the forge interpreter "
+    "(python -m pip install torch transformers gguf)."
+)
+_FIX_INDEX = (
+    "Confirm the repo, the pinned revision, and that model.safetensors.index.json is listed in the plan."
+)
+_FIX_TOKENIZER = (
+    "Run python -m voxprint_forge.llama_patch on the pinned conversion/base.py and rebuild llama.cpp."
+)
+_FIX_LADDER = "Add IQ3_XXS or IQ2_M to that tier, or raise its budget_gb, so weights plus q8_0 KV fit."
+_FIX_DISK = "Free disk space or remove files from the plan until the free space covers the download."
+_FIX_RAM = "Use a machine with more RAM, or leave this model out of the run."
+_FIX_TOKENS = (
+    "Enter HF_TOKEN and KAGGLE_API_TOKEN in the GUI (they are stored in the OS keyring), "
+    "or set FORGE_DEFER_UPLOAD=1."
+)
+_FIX_BINARIES = (
+    "Install cmake, ninja, and nvcc, or set FORGE_LLAMA_BIN to a directory with "
+    "llama-quantize, llama-imatrix, llama-cli, and llama-server."
+)
+
+
+def _check(name: str, ok: bool, detail: str, fix: str) -> dict[str, object]:
+    return {"name": name, "ok": ok, "detail": detail, "fix": "" if ok else fix}
 
 
 def _arch(model: ModelPlan) -> Arch:
@@ -159,34 +195,64 @@ def run_preflight(
     ram: Callable[[], int] | None = None,
 ) -> dict[str, object]:
     problems: list[str] = []
+    checks: list[dict[str, object]] = []
     missing = missing_imports()
     if missing:
-        problems.append("converter Python is missing " + ", ".join(missing))
+        detail = "converter Python is missing " + ", ".join(missing)
+        problems.append(detail)
+        checks.append(_check("imports", False, detail, _FIX_IMPORTS))
+    else:
+        checks.append(_check("imports", True, "torch, transformers, and gguf import", ""))
     fetch = opener or urllib.request.urlopen
     indexes: list[dict[str, object]] = []
-    for model_id, model_repo, revision in index_targets(plan):
+    targets = index_targets(plan)
+    if not targets:
+        checks.append(_check("indexes", True, "no safetensors shard index in this plan", ""))
+    for model_id, model_repo, revision in targets:
         url = f"https://huggingface.co/{model_repo}/resolve/{revision}/model.safetensors.index.json"
         try:
             status = _head(url, fetch)
         except StageError as exc:
-            problems.append(str(exc))
+            detail = str(exc)
+            problems.append(detail)
+            checks.append(_check("indexes", False, detail, _FIX_INDEX))
             continue
         indexes.append({"id": model_id, "status": status})
         if status >= 400:
-            problems.append(f"{model_id} shard index HEAD {status} at {revision}")
+            detail = f"{model_id} shard index HEAD {status} at {revision}"
+            problems.append(detail)
+            checks.append(_check("indexes", False, detail, _FIX_INDEX))
+        else:
+            checks.append(_check("indexes", True, f"{model_id} shard index HEAD {status}", ""))
     if any(model.id == "t-lite-it-2.1" for model in plan.enabled_models()):
-        if not converter_recognises_t_lite(repo):
-            problems.append("T-lite pre-tokenizer hash is not registered on the pinned converter")
+        if converter_recognises_t_lite(repo):
+            checks.append(_check("tokenizer", True, "T-lite pre-tokenizer hash is registered", ""))
+        else:
+            detail = "T-lite pre-tokenizer hash is not registered on the pinned converter"
+            problems.append(detail)
+            checks.append(_check("tokenizer", False, detail, _FIX_TOKENIZER))
+    else:
+        checks.append(_check("tokenizer", True, "T-lite is not enabled", ""))
     gaps = ladder_gaps(plan)
     problems.extend(gaps)
+    if gaps:
+        checks.append(_check("quant-ladder", False, "; ".join(gaps), _FIX_LADDER))
+    else:
+        checks.append(_check("quant-ladder", True, "every quantize tier has a quant that fits", ""))
     need = peak_download_bytes(plan)
+    disk_notes: list[str] = []
     try:
         free = disk.free_bytes(forge_out)
     except OSError as exc:
-        problems.append(f"disk check failed: {exc}")
         free = 0
+        disk_notes.append(f"disk check failed: {exc}")
     if free < need:
-        problems.append(f"need {gib(need):.1f} GiB for the plan, have {gib(free):.1f} GiB")
+        disk_notes.append(f"need {gib(need):.1f} GiB for the plan, have {gib(free):.1f} GiB")
+    problems.extend(disk_notes)
+    if disk_notes:
+        checks.append(_check("disk", False, "; ".join(disk_notes), _FIX_DISK))
+    else:
+        checks.append(_check("disk", True, f"{gib(free):.1f} GiB free, need {gib(need):.1f} GiB", ""))
     memory = (ram or ram_bytes)()
     resident = 0
     for model in plan.enabled_models():
@@ -196,26 +262,39 @@ def run_preflight(
         if quants:
             resident = max(resident, min(estimate_weights_bytes(model.params_b, quant) for quant in quants))
     if resident and memory < resident:
-        problems.append(f"need {gib(resident):.1f} GiB RAM for the smallest quant, have {gib(memory):.1f} GiB")
+        detail = f"need {gib(resident):.1f} GiB RAM for the smallest quant, have {gib(memory):.1f} GiB"
+        problems.append(detail)
+        checks.append(_check("ram", False, detail, _FIX_RAM))
+    else:
+        checks.append(_check("ram", True, f"{gib(memory):.1f} GiB RAM", ""))
     tokens_ok = _deferring() or (
         bool(os.environ.get("HF_TOKEN", "").strip()) and bool(os.environ.get("KAGGLE_API_TOKEN", "").strip())
     )
-    if not tokens_ok:
-        problems.append("HF_TOKEN and KAGGLE_API_TOKEN are required unless FORGE_DEFER_UPLOAD=1")
-    ready, detail = binaries_ready()
-    if not ready:
-        problems.append(f"llama.cpp binaries are absent and not buildable ({detail})")
-    report = {
+    if tokens_ok:
+        checks.append(_check("tokens", True, "upload tokens are set or upload is deferred", ""))
+    else:
+        detail = "HF_TOKEN and KAGGLE_API_TOKEN are required unless FORGE_DEFER_UPLOAD=1"
+        problems.append(detail)
+        checks.append(_check("tokens", False, detail, _FIX_TOKENS))
+    ready, llama_detail = binaries_ready()
+    if ready:
+        checks.append(_check("llama", True, llama_detail, ""))
+    else:
+        detail = f"llama.cpp binaries are absent and not buildable ({llama_detail})"
+        problems.append(detail)
+        checks.append(_check("llama", False, detail, _FIX_BINARIES))
+    report: dict[str, object] = {
         "ok": not problems,
         "problems": problems,
+        "checks": checks,
         "imports": [name for name in _IMPORTS if name not in missing],
         "indexes": indexes,
         "disk_free": free,
         "disk_need": need,
         "ram": memory,
-        "llama": detail,
+        "llama": llama_detail,
         "defer_upload": _deferring(),
     }
     if problems:
-        raise StageError("; ".join(problems), code="preflight")
+        raise StageError("; ".join(problems), code="preflight", report=report)
     return report

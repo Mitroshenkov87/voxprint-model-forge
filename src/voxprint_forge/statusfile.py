@@ -65,6 +65,7 @@ def update_item(
     state: str,
     error: str = "",
     pid: int | None = None,
+    uploads: dict[str, str] | None = None,
 ) -> None:
     path = status_path(forge_out)
     with _LOCK:
@@ -73,7 +74,11 @@ def update_item(
         if not isinstance(items, dict):
             items = {}
             payload["items"] = items
-        items[item_id] = {
+        previous = items.get(item_id)
+        kept: dict[str, str] | None = None
+        if isinstance(previous, dict) and isinstance(previous.get("uploads"), dict):
+            kept = {str(key): str(value) for key, value in previous["uploads"].items()}
+        entry: dict[str, object] = {
             "stage": stage,
             "pct": pct,
             "eta_min": eta_min,
@@ -82,6 +87,10 @@ def update_item(
             "state": state,
             "error": error,
         }
+        chosen = uploads if uploads is not None else kept
+        if chosen is not None:
+            entry["uploads"] = chosen
+        items[item_id] = entry
         payload["updated"] = _now()
         _write(path, payload)
 

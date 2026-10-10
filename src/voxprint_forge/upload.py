@@ -28,6 +28,17 @@ except ImportError:
 
 DELAYS = (2, 4, 8, 16)
 FRAMEWORK = "gguf"
+_TARGET_NAMES = ("hf", "kaggle", "drive")
+
+
+def selected_targets() -> tuple[str, ...]:
+    """Upload destinations from FORGE_UPLOAD_TARGETS. Default is Hugging Face, Kaggle, then Drive."""
+    raw = os.environ.get("FORGE_UPLOAD_TARGETS", "hf,kaggle,drive")
+    names = tuple(dict.fromkeys(part.strip().lower() for part in raw.split(",") if part.strip()))
+    unknown = [name for name in names if name not in _TARGET_NAMES]
+    if not names or unknown:
+        raise UsageError("FORGE_UPLOAD_TARGETS must list hf, kaggle, and/or drive", code="usage")
+    return names
 
 
 @dataclass(frozen=True)
@@ -171,34 +182,45 @@ def publish_private(
     attempts: int,
     sleep: Callable[[float], None],
     work: Path,
+    targets: tuple[str, ...] | None = None,
 ) -> list[dict[str, object]]:
-    """Upload every artifact to a private HF repo and one private Kaggle variation per tier."""
+    """Upload every artifact to the selected private hubs. Default is Hugging Face and Kaggle."""
     if not artifacts:
         raise StageError(f"{model_id} has nothing to upload", code="upload_empty")
-    user = hf_user()
-    owner = kaggle_user()
+    chosen = ("hf", "kaggle") if targets is None else tuple(targets)
+    want_hf = "hf" in chosen
+    want_kaggle = "kaggle" in chosen
+    if not want_hf and not want_kaggle:
+        raise UsageError("publish_private needs hf, kaggle, or both", code="usage")
+    user = hf_user() if want_hf else ""
+    owner = kaggle_user() if want_kaggle else ""
     slug = repo_slug(model_id)
-    repo_id = f"{user}/{slug}"
-    remote.hf_private_repo(repo_id)
-    model_dir = work / "kaggle-model"
-    if model_dir.exists():
-        shutil.rmtree(model_dir)
-    model_dir.mkdir(parents=True)
-    meta = model_metadata(owner, slug, title, description)
-    assert_private_metadata(meta)
-    (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    remote.kaggle_private_model(owner, slug, model_dir)
+    repo_id = f"{user}/{slug}" if want_hf else ""
+    if want_hf:
+        remote.hf_private_repo(repo_id)
+    if want_kaggle:
+        model_dir = work / "kaggle-model"
+        if model_dir.exists():
+            shutil.rmtree(model_dir)
+        model_dir.mkdir(parents=True)
+        meta = model_metadata(owner, slug, title, description)
+        assert_private_metadata(meta)
+        (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        remote.kaggle_private_model(owner, slug, model_dir)
 
     records: list[dict[str, object]] = []
     for artifact in artifacts:
-        upload_verified(
-            lambda artifact=artifact: remote.hf_upload(repo_id, artifact.path, artifact.name),
-            lambda artifact=artifact: remote.hf_stat(repo_id, artifact.name),
-            local_sha=artifact.sha256,
-            local_size=artifact.size,
-            attempts=attempts,
-            sleep=sleep,
-        )
+        hf_url = ""
+        if want_hf:
+            upload_verified(
+                lambda artifact=artifact: remote.hf_upload(repo_id, artifact.path, artifact.name),
+                lambda artifact=artifact: remote.hf_stat(repo_id, artifact.name),
+                local_sha=artifact.sha256,
+                local_size=artifact.size,
+                attempts=attempts,
+                sleep=sleep,
+            )
+            hf_url = hf_file_url(repo_id, artifact.name)
         records.append(
             {
                 "name": artifact.name,
@@ -209,13 +231,15 @@ def publish_private(
                 "kind": artifact.kind,
                 "min_vram_gb": None,
                 "sources": {
-                    "hf": hf_file_url(repo_id, artifact.name),
+                    "hf": hf_url,
                     "kaggle": "",
                     "torrent": "placeholder",
                 },
             }
         )
 
+    if not want_kaggle:
+        return records
     by_tier: dict[str, list[Artifact]] = {}
     shared = [item for item in artifacts if item.tier in ("", "shared")]
     for artifact in artifacts:

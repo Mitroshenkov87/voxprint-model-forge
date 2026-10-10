@@ -49,9 +49,72 @@ from voxprint_forge.progress import Progress
 from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
 from voxprint_forge.statusfile import beating, current_stage, set_stage, update_item
-from voxprint_forge.upload import Artifact, Remote, publish_private
+from voxprint_forge.upload import Artifact, Remote, publish_private, selected_targets
 
 ORDER = ("fetch", "abliterate", "quantize", "fit", "eval", "card", "publish-prep", "upload")
+
+
+def retry_stage(stage: str) -> str:
+    """Stage command that restarts `stage`. `imatrix` restarts at quantize."""
+    if stage in {"", "start"}:
+        return "fetch"
+    if stage == "imatrix":
+        return "quantize"
+    if stage in ORDER:
+        return stage
+    raise UsageError(f"unknown stage {stage}", code="usage")
+
+
+def clear_from_stage(layout: Layout, model_id: str, stage: str) -> list[str]:
+    """Delete markers from `stage` through upload so the stage command runs that work again."""
+    command = retry_stage(stage)
+    start = ORDER.index(command)
+    names = list(ORDER[start:])
+    if start <= ORDER.index("quantize"):
+        names.append("imatrix")
+    if "upload" in names:
+        names.append("upload-deferred")
+    names.append("skipped")
+    removed: list[str] = []
+    for name in names:
+        path = layout.stage(model_id, name)
+        if path.is_file():
+            path.unlink()
+            removed.append(name)
+    return removed
+
+
+def _target_flags(
+    records: list[dict[str, object]],
+    targets: tuple[str, ...],
+    *,
+    hub_failed: bool,
+    deferred: bool = False,
+) -> dict[str, str]:
+    if deferred:
+        return {"hf": "deferred", "kaggle": "deferred", "drive": "deferred"}
+    drive_used = any(row.get("target") == "drive" for row in records)
+    flags: dict[str, str] = {}
+    for name in ("hf", "kaggle", "drive"):
+        if name not in targets:
+            flags[name] = "off"
+            continue
+        if name == "drive":
+            flags[name] = "uploaded" if drive_used else "standby"
+            continue
+        if hub_failed or drive_used:
+            flags[name] = "failed"
+            continue
+        present = False
+        for row in records:
+            sources = row.get("sources")
+            if isinstance(sources, dict) and str(sources.get(name, "")).strip():
+                present = True
+                break
+        flags[name] = "uploaded" if present else "failed"
+    return flags
+
+
 _GPU = frozenset({"abliterate", "fit", "eval"})
 _SILENT = frozenset({"imatrix", "quantize", "fit", "eval", "upload"})
 
@@ -802,6 +865,7 @@ def _upload(
     tiers = _tier_rows(card)
     artifacts = _artifacts(layout.model_dir(model.id), tiers, card, imatrix)
     if defer_requested(False):
+        flags = _target_flags([], (), hub_failed=False, deferred=True)
         payload = {
             "id": model.id,
             "base_model": model.base_model,
@@ -810,6 +874,7 @@ def _upload(
             "skipped": False,
             "deferred_upload": True,
             "state": "READY",
+            "uploads": flags,
             "files": [
                 {"name": item.name, "sha256": item.sha256, "size": item.size, "tier": item.tier}
                 for item in artifacts
@@ -817,28 +882,40 @@ def _upload(
             "tiers": tiers,
         }
         write_marker(layout.stage(model.id, "upload-deferred"), payload)
-        update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="READY")
+        update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="READY", uploads=flags)
         return payload
     date = host.stamped or datetime.now(timezone.utc).date().isoformat()
-    try:
-        records = publish_private(
-            host.remote,
-            artifacts,
-            model_id=model.id,
-            title=f"Voxprint {model.id}",
-            description=Path(str(card["path"])).read_text(encoding="utf-8"),
-            attempts=host.attempts,
-            sleep=host.sleep,
-            work=layout.model_dir(model.id) / "upload-staging",
-        )
-    except ForgeError as exc:
+    targets = selected_targets()
+    hub = tuple(name for name in targets if name in {"hf", "kaggle"})
+    records: list[dict[str, object]] = []
+    hub_failed = False
+    if hub:
         try:
-            records = upload_drive(artifacts, model_id=model.id, date=date)
-        except ForgeError as drive_exc:
-            raise StageError(
-                f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
-                code="upload",
-            ) from drive_exc
+            records = publish_private(
+                host.remote,
+                artifacts,
+                model_id=model.id,
+                title=f"Voxprint {model.id}",
+                description=Path(str(card["path"])).read_text(encoding="utf-8"),
+                attempts=host.attempts,
+                sleep=host.sleep,
+                work=layout.model_dir(model.id) / "upload-staging",
+                targets=hub,
+            )
+        except ForgeError as exc:
+            hub_failed = True
+            if "drive" not in targets:
+                raise
+            try:
+                records = upload_drive(artifacts, model_id=model.id, date=date)
+            except ForgeError as drive_exc:
+                raise StageError(
+                    f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
+                    code="upload",
+                ) from drive_exc
+    elif "drive" in targets:
+        records = upload_drive(artifacts, model_id=model.id, date=date)
+    flags = _target_flags(records, targets, hub_failed=hub_failed)
     vram = {str(tier["name"]): tier["min_vram_gb"] for tier in tiers}
     for record in records:
         tier_name = str(record.get("tier", ""))
@@ -851,6 +928,7 @@ def _upload(
         "licence": model.licence,
         "skipped": False,
         "state": "UPLOADED",
+        "uploads": flags,
         "files": records,
         "tiers": tiers,
     }
@@ -858,7 +936,7 @@ def _upload(
     deferred = layout.stage(model.id, "upload-deferred")
     if deferred.is_file():
         deferred.unlink()
-    update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="UPLOADED")
+    update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="UPLOADED", uploads=flags)
     return payload
 
 

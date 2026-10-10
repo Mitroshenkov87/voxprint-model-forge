@@ -32,6 +32,16 @@ class DownloadError(ForgeError):
 class StageError(ForgeError):
     exit_code = 6
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        report: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message, code=code)
+        self.report = report
+
 
 class DiskShortError(ForgeError):
     """Free space is below the next stage. Stop without deleting finished quants."""
