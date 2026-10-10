@@ -1,3 +1,5 @@
+# Fetched at runtime from the pinned calibration gist. Not redistributed.
+src/voxprint_forge/data/imatrix.txt
 # Models and large artifacts
 *.gguf
 *.safetensors

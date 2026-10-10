@@ -29,9 +29,9 @@ On the VM, in a second tmux window. Do not replace `scripts/bootstrap.sh`.
 cd ~/voxprint-model-forge
 tar -xzf ~/voxprint-model-forge-canvas-<sha>.tar.gz
 export HF_TOKEN=...
-export HF_USER=...
 export KAGGLE_API_TOKEN=...
 export KAGGLE_USER=mitroshenkov87
+# HF_USER defaults to Mitroshenkov87 inside scripts/canvas_job.sh.
 export FORGE_DEADLINE=2026-10-10T18:00:00Z
 tmux new -s canvas 'bash scripts/canvas_job.sh'
 ```
@@ -66,7 +66,9 @@ torchvision==0.29.1
 
 `torchvision` is the CUDA 13.0 build that matches `torch==2.14.1`. It is installed with `--no-deps` so it does not replace torch. `lpips` imports it.
 
-The entry point is `python -m voxprint_forge.diffusion run plans/canvas-zimage-tiers-v1.toml --json`. Tokens stay in the environment. On EXIT, INT, and TERM the script removes Hugging Face and Kaggle token files and unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
+The entry point is `python -m voxprint_forge.diffusion run plans/canvas-zimage-tiers-v1.toml --json --forge-out ~/forge-out --root <repo>`. Those flags follow `run PLAN` because this entry is one parser, not a `forge` subcommand. `HF_USER` defaults to `Mitroshenkov87`. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, the script exits 2 and does not prompt. Tokens stay in the environment. On EXIT, INT, and TERM the script removes Hugging Face and Kaggle token files and unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
+
+Preflight is `nvcc` on `PATH` (or `/usr/local/cuda/bin`), `torch.cuda.is_available()`, and the diffusers imports. This job does not compile llama.cpp, so cmake and ninja are not required, and it does not read an imatrix calibration file.
 
 ## Private destinations
 

@@ -13,7 +13,6 @@ from voxprint_forge.diffusion.common import (
     write_json,
     write_notice,
 )
-from voxprint_forge.diffusion.generate import evaluate_control
 from voxprint_forge.diffusion.names import (
     CONTROL_FULL_BF16,
     CONTROL_FULL_UPSTREAM,
@@ -50,6 +49,9 @@ def _convert(ctx: Ctx) -> dict[str, object]:
 
 
 def _quality(ctx: Ctx) -> dict[str, object]:
+    # diffusers is optional and must not load until this stage runs.
+    from voxprint_forge.diffusion.generate import evaluate_control
+
     report = evaluate_control(
         turbo_dir=source_dir(ctx, "turbo"),
         lite_bf16=ctx.upstream / "lite-bf16.safetensors",

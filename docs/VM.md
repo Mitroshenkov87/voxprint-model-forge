@@ -24,13 +24,12 @@ ssh <user>@<vm>
 tar -xzf voxprint-model-forge-<sha>.tar.gz
 cd voxprint-model-forge
 export HF_TOKEN=...
-export HF_USER=...
 export KAGGLE_API_TOKEN=...
 export KAGGLE_USER=mitroshenkov87
 tmux new -s forge 'bash scripts/bootstrap.sh'
 ```
 
-Pass the tokens in the environment over SSH. Do not write them to disk. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset, bootstrap prompts once with `read -s` on `/dev/tty`. That value stays in the process only. `set +x` stays in force around the prompt. Logs go through `scripts/logscrub.py`. On EXIT, INT, and TERM the script deletes `~/.cache/huggingface/token`, `~/.cache/huggingface/stored_tokens`, `~/.kaggle/`, and any `kaggle.json` or `access_token` file it finds, then unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
+`HF_USER` defaults to `Mitroshenkov87`. Pass the tokens in the environment over SSH. Do not write them to disk. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, bootstrap exits 2 and does not prompt. A real interactive stdin still prompts once with `read -s` on `/dev/tty`. That value stays in the process only. `set +x` stays in force around the prompt. Logs go through `scripts/logscrub.py`. On EXIT, INT, and TERM the script deletes `~/.cache/huggingface/token`, `~/.cache/huggingface/stored_tokens`, `~/.kaggle/`, and any `kaggle.json` or `access_token` file it finds, then unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
 
 Re-attach: `tmux attach -t forge`.
 
@@ -50,12 +49,12 @@ Bootstrap prints those two paths. There is no push from the VM.
 ## What bootstrap does
 
 1. Print the forge commit from `VERSION`. Refuse anything other than Ubuntu 24.04.
-2. Prompt for missing tokens, then check `nvidia-smi`.
+2. Require `HF_TOKEN` and `KAGGLE_API_TOKEN` (prompt only when stdin is a terminal), default `HF_USER` to `Mitroshenkov87`, then check `nvidia-smi`. Preflight then requires `cmake`, `ninja`, and `nvcc` on `PATH`, and that the calibration file tokenises to at least `max(2×ctx, ctx×chunks)` tokens. The file is fetched from the pinned gist when the tree does not already contain a copy with the pinned sha256.
 3. Print the plan estimates with system Python (no torch import).
 4. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
 5. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
 6. Build the bundled llama.cpp with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`.
-7. `scripts/vm_run.sh` runs `forge run-all`.
+7. `scripts/vm_run.sh` runs `forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all`. Global flags precede the subcommand.
 8. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file, and print the manifest paths to copy back.
 
 Copy results off the box with `scp` or `rsync` as a second copy. The private Hub and Kaggle uploads are the primary copy.
@@ -72,7 +71,19 @@ Copy results off the box with `scp` or `rsync` as a second copy. The private Hub
 
 Required path including the build: 140 minutes. The narrative target is about 2.5 hours once network variance is included. Mistral-Small-3.2-24B-Instruct-2506 is pinned and disabled. Mistral Small 4 119B is out of scope. YandexGPT-5-Lite and anything under `smkrv/` are refused.
 
-Rough split of the model minutes: Huihui downloads the reused Q5 (and Q4 only if Q5 misses the cap) plus the F16 source, an 8-chunk imatrix, three 16 GB quants, then a light measure and eval. Gemma is the same shape with a larger F16 and only the Q4 reuse. T-lite downloads about 15 GiB, ablates on the GPU, converts to F16, builds the imatrix, and quantizes Q5, Q4, IQ4_XS, and IQ3_M. T-pro is the same work at about 61 GiB of bf16.
+Rough split of the model minutes: Huihui downloads the reused Q5 (and Q4 only if Q5 misses the cap) plus the F16 source, a 128-chunk imatrix, three 16 GB quants, then a light measure and eval. Gemma is the same shape with a larger F16 and only the Q4 reuse. T-lite downloads about 15 GiB, ablates on the GPU, converts to F16, builds the imatrix, and quantizes Q5, Q4, IQ4_XS, and IQ3_M. T-pro is the same work at about 61 GiB of bf16.
+
+## Calibration file
+
+The imatrix corpus is bartowski's `calibration_datav3` (public gist, no explicit licence). It is not stored in this git repository. Bootstrap downloads it on first use into `~/forge-out/calibration/imatrix.txt` and checks the sha256. A copy already at `src/voxprint_forge/data/imatrix.txt` is used only when that sha256 matches, so a hot-patched tree does not download again.
+
+- Source: https://gist.github.com/bartowski1182/eb213dccb3571f863da82e99418f81e8
+- Pinned raw file: https://gist.githubusercontent.com/bartowski1182/eb213dccb3571f863da82e99418f81e8/raw/41ae165614f4041c262fa8fe668bbe3efd9eb695/calibration_datav3.txt
+- sha256: `200e109bcd2b599fabcceaada7f52bbd1e7c8f9ae030b8dc59c011de039a8026`
+- GPT-2 content tokens: 74048. llama.cpp at `98819068` errors below `2×ctx` (1024 at ctx 512) and will not produce 128 chunks unless the file has at least `ctx×chunks` tokens (65536). 74048 meets both.
+- Licence status: licence unverified, calibration-only, not redistributed in model files. Flagged for GitHub Bot review. Do not copy this text into a published model repo.
+
+`src/voxprint_forge/data/imatrix-ru-pd.txt` is an optional follow-up slice: Pushkin's 1829 lyric, original Russian, public domain (author died 1837). It is not part of the default corpus. Set `FORGE_IMATRIX_RU=1` to append it for that run only.
 
 Eval is a short RU and EN refusal set, one perplexity chunk, and one Russian prose sample. Each tier records llama-server peak weights and KV at 8k and 16k, plus the computed figure, perplexity, refusal rates, and the sample.
 

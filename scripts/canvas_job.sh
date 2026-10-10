@@ -32,14 +32,16 @@ cleanup_secrets() {
 }
 trap cleanup_secrets EXIT INT TERM
 
+# A tmux pty can exist before anyone attaches, and /dev/tty can be readable
+# when stdin is not a terminal. Prompt only for a real interactive stdin.
 prompt_secret() {
   local name="$1"
   set +x
   if [[ -n "${!name:-}" ]]; then
     return 0
   fi
-  if [[ ! -r /dev/tty ]]; then
-    printf '%s is not set and there is no terminal to prompt\n' "$name" >&2
+  if [[ ! -t 0 || ! -r /dev/tty ]]; then
+    printf '%s is not set. Export it before starting. This run is non-interactive, so it will not prompt.\n' "$name" >&2
     exit 2
   fi
   local value
@@ -49,6 +51,9 @@ prompt_secret() {
   printf -v "$name" '%s' "$value"
   export "$name"
 }
+
+export HF_USER="${HF_USER:-Mitroshenkov87}"
+export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 
 FORCE=0
 DEADLINE="${FORGE_DEADLINE:-}"
@@ -74,7 +79,6 @@ done
 
 prompt_secret HF_TOKEN
 prompt_secret KAGGLE_API_TOKEN
-export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 
 if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
   printf 'Run bash scripts/canvas_job.sh from the extracted bundle.\n' >&2
@@ -133,6 +137,9 @@ if ! command -v nvcc >/dev/null 2>&1; then
   printf 'nvcc is missing. Expected /usr/local/cuda/bin/nvcc on PATH (CUDA 13.4).\n' >&2
   exit 9
 fi
+printf 'preflight nvcc ok\n'
+# Canvas does not compile llama.cpp, so cmake and ninja are not required.
+# There is no imatrix calibration file on this path.
 
 VENV="$FORGE_OUT/venv"
 if [[ ! -x "$VENV/bin/python" ]]; then
@@ -186,6 +193,7 @@ progress_line() {
 }
 progress_line canvas-zimage-tiers-v1 start 0 135
 
+# Positional command, then flags. This module is not a forge subcommand.
 args=(run "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")
 if [[ "$FORCE" -eq 1 ]]; then
   args+=(--force)

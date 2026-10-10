@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,15 @@ from voxprint_forge.scrub import scrub
 from voxprint_forge.upload import Remote
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _bash(script: Path) -> list[str]:
+    """Git bash on Windows. System32\\bash.exe is a stub and is not used."""
+    exe = "bash"
+    if os.name == "nt":
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        exe = str(git_bash) if git_bash.is_file() else "bash"
+    return [exe, script.as_posix()]
 
 
 def _sha(payload: bytes) -> str:
@@ -162,7 +172,7 @@ quants = ["IQ4_XS"]
     text = f"""
 [run]
 name = "tiny"
-output_dir = "{tmp}/work"
+output_dir = "{tmp.as_posix()}/work"
 wall_clock_budget_min = 30
 headroom_gb = 3.0
 imatrix_chunks = 1
@@ -256,6 +266,12 @@ def llama_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_USER", "voxprint-tests")
     monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    # The tiny plan declares a 50 GiB reuse that fit rejects and never writes.
+    # ensure_free still requires that size plus the 5 GiB margin (~55 GiB).
+    # windows-latest has about 28 GiB free, so the real check would stop the
+    # run before the skip. Report a large disk here. test_disk_short covers
+    # a short disk, and the production margin is unchanged.
+    monkeypatch.setattr("voxprint_forge.disk.free_bytes", _ample_disk)
 
 
 def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin: None) -> None:
@@ -375,7 +391,7 @@ def test_ablate_stage_uses_injected_ablator(tmp_path: Path, llama_bin: None, mon
     text = f"""
 [run]
 name = "ablate"
-output_dir = "{tmp_path}/work"
+output_dir = "{tmp_path.as_posix()}/work"
 wall_clock_budget_min = 30
 headroom_gb = 3.0
 contexts = [8192]
@@ -455,6 +471,11 @@ def _boom(path: Path, need: int, what: str) -> int:
     raise DiskShortError("short", code="disk_short")
 
 
+def _ample_disk(path: Path) -> int:
+    del path
+    return 200 * 1024**3
+
+
 def test_token_is_scrubbed_from_upload_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "super-secret-token-value")
     message = scrub("remote said super-secret-token-value")
@@ -477,6 +498,57 @@ def test_fetch_checksum(tmp_path: Path) -> None:
     with pytest.raises(ChecksumError):
         ensure_pinned(downloader, pinned, tmp_path / "a.gguf")
     assert not (tmp_path / "a.gguf").exists()
+
+
+def test_vm_run_invocation_dry_runs_a_tiny_model(
+    tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del llama_bin
+    script = (ROOT / "scripts/vm_run.sh").read_text(encoding="utf-8")
+    command = '"$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" run-all'
+    assert command in script
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    forge = venv / "forge"
+    forge.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FORGE_OUT/argv.txt"\n', encoding="utf-8")
+    forge.chmod(0o755)
+    captured = tmp_path / "captured"
+    captured.mkdir()
+    env = os.environ.copy()
+    env["FORGE_OUT"] = captured.as_posix()
+    env["FORGE_VENV"] = (tmp_path / "venv").as_posix()
+    subprocess.run(_bash(ROOT / "scripts/vm_run.sh"), check=True, env=env, cwd=ROOT)
+    argv = (captured / "argv.txt").read_text(encoding="utf-8").splitlines()
+    assert argv[-1] == "run-all"
+    assert argv.index("--plan") < argv.index("run-all")
+    assert argv.index("--root") < argv.index("run-all")
+    assert argv.index("--forge-out") < argv.index("run-all")
+
+    source = b"SRC" * 40
+    reuse = b"RE" * 80
+    plan_path = _plan(tmp_path, source, reuse)
+    repo = _scratch_repo(tmp_path)
+    host = _host(FakeDownloader({"source.gguf": source, "q5.gguf": reuse}), FakeRemote())
+    monkeypatch.setattr("voxprint_forge.cli._live_host", lambda: host)
+    from voxprint_forge.cli import main
+
+    rejected = main(
+        ["run-all", "--plan", str(plan_path), "--root", str(repo), "--forge-out", str(tmp_path / "bad")]
+    )
+    assert rejected == 2
+    code = main(
+        [
+            "--plan",
+            str(plan_path),
+            "--root",
+            str(repo),
+            "--forge-out",
+            str(tmp_path / "good"),
+            "run-all",
+        ]
+    )
+    assert code == 0
+    assert (tmp_path / "good" / "stages" / "tiny" / "upload.json").is_file()
 
 
 def test_cli_plan_summary_and_usage() -> None:

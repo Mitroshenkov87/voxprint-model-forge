@@ -43,6 +43,14 @@ pip install -e ".[dev]"
 
 `forge upload` and `forge run-all` upload after the model is finished. `run-all` does this per model, then writes the manifest.
 
+Global flags precede the subcommand. `scripts/vm_run.sh` runs:
+
+```bash
+forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all
+```
+
+`forge run-all --plan ...` is rejected.
+
 ## Private upload
 
 Uploads go to private destinations only.
