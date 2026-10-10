@@ -13,6 +13,7 @@ from voxprint_forge.errors import (
     EXIT_USAGE,
     ForgeError,
     PlanError,
+    StageError,
     UsageError,
 )
 from voxprint_forge.fetch import HfDownloader
@@ -190,7 +191,12 @@ def _dispatch(args: argparse.Namespace) -> object:
     layout = Layout(forge_out)
     host = _live_host()
     if args.command in {"preflight", "run-all"} or args.command in ORDER:
-        report = run_preflight(plan, root, forge_out)
+        try:
+            report = run_preflight(plan, root, forge_out)
+        except StageError as exc:
+            if args.command == "preflight" and isinstance(exc.report, dict):
+                return exc.report
+            raise
         if args.command == "preflight":
             return report
     if args.command == "run-all":

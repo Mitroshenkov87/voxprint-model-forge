@@ -774,7 +774,34 @@ def test_drive_fallback_after_hub_failure(tmp_path: Path, llama_bin: None, monke
     payload = json.loads((tmp_path / "good" / "stages" / "tiny" / "upload.json").read_text(encoding="utf-8"))
     assert payload["state"] == "UPLOADED"
     assert payload["files"][0]["target"] == "drive"
+    assert payload["uploads"] == {"hf": "failed", "kaggle": "failed", "drive": "uploaded"}
     assert str(payload["files"][0]["path"]).startswith("Voxprint/model-forge/")
+
+
+def test_hf_only_target_skips_kaggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from voxprint_forge.upload import Artifact, publish_private
+
+    monkeypatch.setenv("HF_USER", "tester")
+    payload = b"gguf-bytes"
+    path = tmp_path / "model.gguf"
+    path.write_bytes(payload)
+    artifact = Artifact(path, "model.gguf", _sha(payload), len(payload), "16gb", "IQ2_M", "gguf")
+    remote = FakeRemote()
+    records = publish_private(
+        remote,
+        [artifact],
+        model_id="tiny",
+        title="Tiny",
+        description="A card",
+        attempts=1,
+        sleep=lambda _seconds: None,
+        work=tmp_path / "work",
+        targets=("hf",),
+    )
+    assert remote.hf_private
+    assert remote.kaggle_private == []
+    assert records[0]["sources"]["hf"]
+    assert records[0]["sources"]["kaggle"] == ""
 
 
 def test_cli_plan_summary_and_usage() -> None:
