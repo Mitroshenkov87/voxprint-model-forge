@@ -152,6 +152,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         variations={"24gb-bf16": [CONTROL_FULL_BF16], variation: [lite_name]},
         repo=control.repo,
         revision=control.revision,
+        licence=control.licence,
         staging=ctx.upstream / "kaggle-staging",
         on_verified=lambda target: on_mirror_verified(ctx, target),
     )

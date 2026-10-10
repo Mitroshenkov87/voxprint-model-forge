@@ -1,4 +1,4 @@
-"""Private Hugging Face and Kaggle upload for one canvas part.
+"""Public Hugging Face and private Kaggle upload for one canvas part.
 
 Kaggle variation handles stay on the `gguf` framework because that is the
 handle `HubRemote.kaggle_upload_variation` returns. The bytes are safetensors.
@@ -25,6 +25,8 @@ from voxprint_forge.upload import (
     Artifact,
     HubRemote,
     assert_private_metadata,
+    assert_public_upload,
+    blocks_public_upload,
     hf_file_url,
     kaggle_user,
     kaggle_variation_url,
@@ -179,6 +181,16 @@ def _upload_variation(
     raise StageError(last, code="upload_mismatch")
 
 
+def _card_for_public_upload(output: Path, description: str, card_text: str | None) -> str:
+    """Prefer an explicit card, then ``README.md``, then the short description."""
+    if card_text is not None:
+        return card_text
+    readme = output / "README.md"
+    if readme.is_file():
+        return readme.read_text(encoding="utf-8")
+    return description
+
+
 def _publish_hub(
     *,
     output: Path,
@@ -190,11 +202,13 @@ def _publish_hub(
     variations: dict[str, list[str]],
     repo: str,
     revision: str,
+    licence: str,
     remote: HubRemote | None = None,
     sleep: Callable[[float], None] = time.sleep,
     attempts: int = 4,
     staging: Path | None = None,
     on_verified: Callable[[str], None] | None = None,
+    card_text: str | None = None,
 ) -> list[dict[str, object]]:
     """Upload every output file. A variation is done only when sha256 and size match."""
     client = remote if remote is not None else HubRemote(
@@ -204,6 +218,11 @@ def _publish_hub(
     write_models_md(output, collect_files(output, tiers, repo, revision))
     write_sidecars(output)
     files = collect_files(output, tiers, repo, revision)
+    assert_public_upload(
+        licence=licence,
+        card_text=_card_for_public_upload(output, description, card_text),
+        repo=hf_repo,
+    )
     client.hf_private_repo(hf_repo)
     for item in files:
         upload_verified(
@@ -341,13 +360,19 @@ def publish_output(
     variations: dict[str, list[str]],
     repo: str,
     revision: str,
+    licence: str,
     remote: HubRemote | None = None,
     sleep: Callable[[float], None] = time.sleep,
     attempts: int = 4,
     staging: Path | None = None,
     on_verified: Callable[[str], None] | None = None,
+    card_text: str | None = None,
 ) -> list[dict[str, object]]:
-    """Upload to Hugging Face and Kaggle. Drive is the fallback when both fail."""
+    """Upload to a public Hugging Face repo and a private Kaggle model.
+
+    Drive is the fallback when both hubs fail. A licence or card refusal is
+    not a hub outage and does not fall through to Drive.
+    """
     try:
         return _publish_hub(
             output=output,
@@ -359,13 +384,17 @@ def publish_output(
             variations=variations,
             repo=repo,
             revision=revision,
+            licence=licence,
             remote=remote,
             sleep=sleep,
             attempts=attempts,
             staging=staging,
             on_verified=on_verified,
+            card_text=card_text,
         )
     except ForgeError as exc:
+        if blocks_public_upload(exc):
+            raise
         artifacts = _drive_artifacts(output)
         if not artifacts:
             raise

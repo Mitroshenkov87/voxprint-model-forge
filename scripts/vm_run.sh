@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Model work once the toolchain exists. scripts/bootstrap.sh calls this.
+# Rented-VM logins (FORGE_HOST_KIND=rented-vm) stay for the rental.
+# This script leaves HF_TOKEN and KAGGLE_API_TOKEN in place and does not delete token files.
+# The hub directory removed at the end is the weight cache, not credentials.
 set -euo pipefail
+
+export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"

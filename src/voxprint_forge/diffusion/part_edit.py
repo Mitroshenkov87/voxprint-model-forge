@@ -180,6 +180,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         variations={variation: variation_names},
         repo=source.repo,
         revision=source.revision,
+        licence=source.licence,
         staging=ctx.upstream / "kaggle-staging",
         on_verified=lambda target: on_mirror_verified(ctx, target),
     )

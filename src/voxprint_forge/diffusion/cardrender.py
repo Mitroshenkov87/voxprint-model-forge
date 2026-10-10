@@ -51,11 +51,16 @@ def template_path(repo: Path) -> Path:
 
 
 def licence_text(repo: Path) -> str:
-    """Apache-2.0 text from the repo ``LICENSE`` file."""
-    path = repo / "LICENSE"
-    if not path.is_file():
-        raise ToolMissingError(f"missing {path}", code="licence_missing")
-    return path.read_text(encoding="utf-8").strip()
+    """One-line Apache-2.0 pointer. The card links the licence instead of pasting it.
+
+    ``repo`` is the checkout the card is rendered from. The line does not
+    read ``LICENSE`` from that tree.
+    """
+    del repo
+    return (
+        "Apache-2.0, same as the base model. "
+        "See https://www.apache.org/licenses/LICENSE-2.0"
+    )
 
 
 def render_canvas_card(repo: Path, card: CardContext) -> str:

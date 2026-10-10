@@ -13,6 +13,7 @@ CANVAS_OVERLAY_PATHS=(
   scripts/canvas_job.sh
   scripts/canvas_job_d.sh
   scripts/canvas_upload.sh
+  scripts/vm_logins.sh
   src/voxprint_forge/diffusion
   plans/canvas-zimage-tiers-v1.toml
   plans/canvas-qwen-image-2512-v1.toml

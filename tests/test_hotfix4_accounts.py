@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from tests.complete_card import complete_card
 from voxprint_forge.diffusion.controlnet_union import FULL_PLACES, LITE_PLACES, places_for_count
 from voxprint_forge.diffusion.guard import cmdline_is_job
 from voxprint_forge.diffusion.prompts import EDIT_PAIRS, edit_budget
@@ -71,7 +72,8 @@ def test_publish_uses_a_dashed_kaggle_slug(tmp_path: Path, monkeypatch) -> None:
         [artifact],
         model_id="t-lite-it-2.1",
         title="T",
-        description="card",
+        description=complete_card(),
+        licence="apache-2.0",
         attempts=1,
         sleep=lambda _seconds: None,
         work=tmp_path / "work",

@@ -24,6 +24,7 @@ from safetensors import safe_open
 from transformers import CLIPModel, CLIPProcessor
 
 from voxprint_forge.diffusion.alias import alias_key as _alias_key
+from voxprint_forge.diffusion.controlnet_link import swap_controlnet
 from voxprint_forge.diffusion.controlnet_union import places_for_count, union_config
 from voxprint_forge.diffusion.fp8 import dequant_state
 from voxprint_forge.diffusion.policy import (
@@ -62,6 +63,7 @@ from voxprint_forge.diffusion.spec import (
     TURBO_GUIDANCE,
     TURBO_STEPS,
 )
+from voxprint_forge.diffusion.stage_free import free_eval_stage
 from voxprint_forge.diffusion.weights import load_tensors, materialise_bf16
 from voxprint_forge.errors import StageError, ToolMissingError
 from voxprint_forge.lean import REVIEW_LIMIT, metrics_decided, review_document, wave_size
@@ -561,7 +563,8 @@ def evaluate_control(
             prompts.append(prompt)
             seeds.append(seed)
             _tick(progress, "control-bf16", len(prompts), len(samples))
-        pipe.controlnet = fp8_net.to(device)
+        # Swapped nets must share the transformer embedders like the pipeline constructor does.
+        swap_controlnet(pipe, fp8_net, device, ZImageControlNetModel.from_transformer)
         fresh: list[Image.Image] = []
         for prompt, seed, _kind, control in chunk:
             fresh.append(
@@ -679,7 +682,8 @@ def _inpaint(
             prompts.append(prompt)
             seeds.append(seed)
             _tick(progress, "inpaint-bf16", len(prompts), len(prepared))
-        pipe.controlnet = fp8_net.to(device)
+        # Swapped nets must share the transformer embedders like the pipeline constructor does.
+        swap_controlnet(pipe, fp8_net, device, ZImageControlNetModel.from_transformer)
         fresh: list[Image.Image] = []
         for prompt, seed, scene, mask, control in chunk:
             fresh.append(_inpaint_one(pipe, prompt, seed, scene, mask, control, device))
@@ -719,10 +723,9 @@ def evaluate_edit(
         if (instruction, scene_seed) in allowed_set
     ]
     total = len(prepared)
-    editor = pipe
 
     def _edit(instruction: str, edit_seed: int, image: Image.Image) -> Image.Image:
-        return editor(
+        return pipe(
             image=image,
             prompt=instruction,
             negative_prompt=" ",
@@ -765,12 +768,14 @@ def evaluate_edit(
             prompts.append(instruction)
             seeds.append(edit_seed)
             _tick(progress, "edit-bf16", len(prompts), total)
+        free_eval_stage()
         _apply(pipe.transformer, transformer_fp8_state)
         fresh: list[Image.Image] = []
         for instruction, edit_seed, image in chunk:
             fresh.append(_edit(instruction, edit_seed, image))
             _tick(progress, "edit-transformer-fp8", len(transformer_cands) + len(fresh), total)
         transformer_cands.extend(fresh)
+        free_eval_stage()
         _apply(pipe.transformer, transformer_state)
         _apply(pipe.text_encoder, encoder_fp8_state)
         enc_fresh: list[Image.Image] = []
@@ -791,8 +796,9 @@ def evaluate_edit(
         encoder_clip.extend(clip_i)
     transformer_summary = _pair_stats(refs, transformer_cands, prompts, metric, clip, device, image_score=True)
     encoder_summary = _pair_stats(refs, encoder_cands, prompts, metric, clip, device, image_score=True)
-    del pipe
-    torch.cuda.empty_cache()
+    pipe = free_eval_stage(pipe)
+    if pipe is not None:
+        raise StageError("edit pipeline was not released", code="quality")
     _write_review(grid_path, refs, transformer_cands, prompts, seeds)
     return {
         "components": {

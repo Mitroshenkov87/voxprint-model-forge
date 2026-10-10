@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.complete_card import complete_card
 from voxprint_forge.diffusion.common import Ctx, on_mirror_verified
 from voxprint_forge.diffusion.planload import load_canvas_plan
 from voxprint_forge.diffusion.retain import consumers_for, release_consumer, source_store
@@ -206,7 +207,8 @@ def test_hf_verify_drops_sources_and_keeps_the_quant(tmp_path: Path, monkeypatch
         [Artifact(quant, "Q4.gguf", digest, len(payload), "16gb", "Q4_K_M", "gguf")],
         model_id="tiny",
         title="T",
-        description="card",
+        description=complete_card(),
+        licence="apache-2.0",
         attempts=1,
         sleep=lambda _seconds: None,
         work=model / "upload-staging",

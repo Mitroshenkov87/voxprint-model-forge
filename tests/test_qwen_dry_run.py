@@ -225,6 +225,10 @@ def test_documented_qwen_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) ->
     assert "set +x" in script
     assert "set -x" not in script
     assert "hf auth login" not in script
+    assert "cleanup_secrets" not in script
+    assert "unset HF_TOKEN" not in script
+    assert "persist_rented_vm_logins" in script
+    assert 'export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"' in script
     assert "huggingface-cli login" not in script
     assert "github.com" not in script
     assert "GH_TOKEN" not in script

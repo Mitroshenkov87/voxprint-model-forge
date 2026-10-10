@@ -2,7 +2,7 @@
 
 Model Forge prepares models on the operator's own machine: it tracks a pinned
 upstream revision, removes refusals when the plan says so, quantizes to a VRAM
-budget, records a quality check, and publishes a private model card with
+budget, records a quality check, and publishes a model card with
 checksums. The GUI is for manual use. The CLI speaks JSON so another program
 can drive it.
 
@@ -16,8 +16,9 @@ can drive it.
 - Preflight, heartbeats, and `forge status`.
 - Desktop window for a local run and a remote session.
 - Canvas image tiers (Z-Image and Qwen-Image) as a separate entry point.
-- Private upload to Hugging Face and Kaggle, with sha256 and size checked
-  after the upload.
+- Public Hugging Face upload and private Kaggle upload, with sha256 and size
+  checked after the upload. A public upload requires a permissive licence and
+  a complete card.
 
 ## Next
 

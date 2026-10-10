@@ -92,6 +92,13 @@ def test_model_card_front_matter_matches_hub_card() -> None:
         front = text.split("---", 2)[1]
         assert "finetune" not in front
         assert "This repository is private" not in text
+        assert "## License" in text
+        assert "Apache-2.0, same as the base model. See https://www.apache.org/licenses/LICENSE-2.0" in text
+        licence = text.split("## License", 1)[1].split("\n## ", 1)[0]
+        assert "```" not in licence
+        assert "## Credits" in text
+        assert "## Modification notice" in text
+        assert "Modified from the base model named above" in text
         assert "## Made for Voxprint AI Media Suite" in text
         assert "https://github.com/Mitroshenkov87/voxprint-plotweaver" in text
         assert "min_vram_gb" in text

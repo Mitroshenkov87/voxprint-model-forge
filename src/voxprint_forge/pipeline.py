@@ -1,4 +1,4 @@
-"""Run fetch, ablation, quantize, fit, eval, card, and private upload for one model."""
+"""Run fetch, ablation, quantize, fit, eval, card, and upload for one model."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ from voxprint_forge.reclaim import hub_cache, reclaim_model_work
 from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
 from voxprint_forge.statusfile import beating, current_stage, set_stage, update_item
-from voxprint_forge.upload import Artifact, Remote, publish_private, selected_targets
+from voxprint_forge.upload import Artifact, Remote, blocks_public_upload, publish_private, selected_targets
 
 ORDER = ("fetch", "abliterate", "quantize", "fit", "eval", "card", "publish-prep", "upload")
 
@@ -1037,6 +1037,7 @@ def _upload(
                 model_id=model.id,
                 title=f"Voxprint {model.id}",
                 description=Path(str(card["path"])).read_text(encoding="utf-8"),
+                licence=model.licence,
                 attempts=host.attempts,
                 sleep=host.sleep,
                 work=model_dir / "upload-staging",
@@ -1044,6 +1045,8 @@ def _upload(
                 on_verified=_on_verified,
             )
         except ForgeError as exc:
+            if blocks_public_upload(exc):
+                raise
             hub_failed = True
             if "drive" not in targets:
                 raise

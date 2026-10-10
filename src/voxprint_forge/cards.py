@@ -14,9 +14,8 @@ from voxprint_forge.plan import ModelPlan
 MODIFICATION_NOTICE = (
     "Modified from the base model named above by Voxprint AI Model Forge. "
     "Changes are requantization and, where the plan says so, an in-house "
-    "difference-of-means refusal-direction ablation. The Apache-2.0 licence "
-    "below covers this card and the Forge code. Upstream weights keep the "
-    "licence recorded in this card."
+    "difference-of-means refusal-direction ablation. Upstream weights keep "
+    "the licence recorded in this card. Credits for the base model are listed above."
 )
 
 LIMITS = (
@@ -36,11 +35,16 @@ def template_path(repo: Path) -> Path:
 
 
 def licence_text(repo: Path) -> str:
-    """Apache-2.0 text from the repo ``LICENSE`` file."""
-    path = repo / "LICENSE"
-    if not path.is_file():
-        raise ToolMissingError(f"missing {path}", code="licence_missing")
-    return path.read_text(encoding="utf-8").strip()
+    """One-line Apache-2.0 pointer. The card links the licence instead of pasting it.
+
+    ``repo`` is the checkout the card is rendered from. The line does not
+    read ``LICENSE`` from that tree.
+    """
+    del repo
+    return (
+        "Apache-2.0, same as the base model. "
+        "See https://www.apache.org/licenses/LICENSE-2.0"
+    )
 
 
 def _unexpected_mode(mode: Never) -> Never:

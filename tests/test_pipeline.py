@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.complete_card import complete_card
 from voxprint_forge.errors import DiskShortError, StageError
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Completed, Runner
@@ -797,7 +798,8 @@ def test_hf_only_target_skips_kaggle(tmp_path: Path, monkeypatch: pytest.MonkeyP
         [artifact],
         model_id="tiny",
         title="Tiny",
-        description="A card",
+        description=complete_card(),
+        licence="apache-2.0",
         attempts=1,
         sleep=lambda _seconds: None,
         work=tmp_path / "work",

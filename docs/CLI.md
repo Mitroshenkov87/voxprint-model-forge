@@ -65,14 +65,14 @@ forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all
 
 `forge run-all --plan ...` is rejected.
 
-## Private upload
+## Upload
 
-Uploads go to private destinations only.
+Hugging Face repos are public. Kaggle models stay private.
 
-- Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=True`. Files are the selected GGUF for each tier, the imatrix, `README.md`, and the `.sha256` sidecars. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
-- Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. Slugs use `[a-z0-9-]` (`t-lite-it-2.1` becomes `voxprint-t-lite-it-2-1`). Hugging Face keeps the dotted name. Bootstrap installs the `kaggle` CLI into the forge venv; otherwise the CLI is `kaggle` on `PATH` or `uvx kaggle`, version 2.2 or newer. The API token is passed only in the child environment. A temporary config directory is deleted after each call.
+- Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=False`. The stage does not call `update_repo_visibility`. Before that create, the licence must be Apache-2.0, MIT, or another permissive tag. A non-commercial tag is refused. The model card must contain `## License`, `## Credits`, and `## Modification notice`, and the licence section is one line plus a link, not a fenced copy of the licence. Files are the selected GGUF for each tier, the imatrix, `README.md`, and the `.sha256` sidecars. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
+- Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. Slugs use `[a-z0-9-]` (`t-lite-it-2.1` becomes `voxprint-t-lite-it-2-1`). Hugging Face keeps the dotted name. Bootstrap installs the `kaggle` CLI into the forge venv; otherwise the CLI is `kaggle` on `PATH` or `uvx kaggle`, version 2.2 or newer. On a local machine the API token is passed only in the child environment. A temporary config directory is deleted after each call.
 
-Nothing is made public. If a remote repo is public, the stage stops and does not upload. After each upload the remote sha256 and size must match the local file. The client retries with backoff (2s, 4s, 8s, 16s). The `upload` marker is written only after both sides match. Local deliverables stay on disk until that match. F16 and safetensors intermediates are removed once the quants and the imatrix exist.
+A refused licence or an incomplete card does not fall through to Drive. After each upload the remote sha256 and size must match the local file. The client retries with backoff (2s, 4s, 8s, 16s). The `upload` marker is written only after both sides match. Local deliverables stay on disk until that match. F16 and safetensors intermediates are removed once the quants and the imatrix exist.
 
 The run summary lists every uploaded file with its sha256, Hugging Face URL, and Kaggle URL.
 
@@ -84,8 +84,9 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 
 | Variable | Role |
 | --- | --- |
-| `HF_TOKEN` | Hub read and private upload. Not logged. |
-| `HF_USER` | Hub account that owns the private model repos |
+| `HF_TOKEN` | Hub read and public upload. Not logged. |
+| `HF_USER` | Hub account that owns the public model repos |
+| `FORGE_HOST_KIND` | `local` (default) or `rented-vm`. See `docs/VM.md` |
 | `KAGGLE_API_TOKEN` | Kaggle CLI auth. Not logged. |
 | `KAGGLE_USER` | Kaggle owner. Default `mitroshenkov87` |
 | `FORGE_LLAMA_BIN` | Directory with `llama-quantize`, `llama-imatrix`, `llama-server`, `llama-cli`, `llama-perplexity` |
@@ -103,15 +104,15 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 
 ## Model card
 
-`templates/model_card.md.jinja` renders `README.md`. The file starts with Hugging Face YAML: `license: apache-2.0`, `base_model` (the abliterated upstream for a requant, the T-Bank repo for T-lite and T-pro), `base_model_relation: quantized`, tags `voxprint`, `gguf`, `abliterated`, `llama.cpp`, `imatrix`, `russian`, `language: [ru, en]`, and `pipeline_tag: text-generation`. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then `## Made for Voxprint AI Media Suite` with the Plotweaver link. `huggingface_hub.ModelCard` parses that front matter.
+`templates/model_card.md.jinja` renders `README.md`. The file starts with Hugging Face YAML: `license: apache-2.0`, `base_model` (the abliterated upstream for a requant, the T-Bank repo for T-lite and T-pro), `base_model_relation: quantized`, tags `voxprint`, `gguf`, `abliterated`, `llama.cpp`, `imatrix`, `russian`, `language: [ru, en]`, and `pipeline_tag: text-generation`. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then a one-line `## License` section with a link to the Apache-2.0 text, then `## Made for Voxprint AI Media Suite` with the Plotweaver link. `huggingface_hub.ModelCard` parses that front matter.
 
 ## Canvas
 
-`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares private image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. Parts D and E (Qwen-Image-2512) are retired. `scripts/canvas_job_d.sh` (`python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml`) exits 2 unless `--parts` omits D and E or you pass `--force`. See `docs/CANVAS.md`.
+`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. Parts D and E (Qwen-Image-2512) are retired. `scripts/canvas_job_d.sh` (`python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml`) exits 2 unless `--parts` omits D and E or you pass `--force`. See `docs/CANVAS.md`.
 
 Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 min. Part C converts the shared Qwen2.5-VL-7B encoder. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running, and the only way to run retired parts D and E. `FORGE_DEFER_UPLOAD=1` or `--defer-upload` prepares tier files and writes `<part>-upload-deferred` without tokens. `forge canvas upload PLAN --parts A,B,C` (and `bash scripts/canvas_upload.sh --parts A,B,C`) uploads those parts later and is idempotent.
 
-Exit codes are the same table as the rest of the CLI. Uploads are private. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
+Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
 
 ## Fit
 
