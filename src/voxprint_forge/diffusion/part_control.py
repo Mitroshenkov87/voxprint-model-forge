@@ -110,7 +110,7 @@ def _card(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
         ),
         eval_lines=(
             f"lite FP8 vs BF16 mean LPIPS {lpips_mean} (gate 0.10), decision {decision}",
-            "16 prompts x canny/depth/pose x 2 seeds, plus 8 inpaint cases",
+            "6 hard control cases and 4 inpaint cases, one seed, stop when the LPIPS interval decides",
             "Control maps are generated in the job from synthetic scenes",
         ),
         credits=(

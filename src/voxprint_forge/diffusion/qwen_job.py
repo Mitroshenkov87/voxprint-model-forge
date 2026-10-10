@@ -279,7 +279,7 @@ def _card(ctx: QwenCtx, quality: dict[str, object], encoder: dict[str, object]) 
         ),
         eval_lines=(
             f"qwen-transformer: LPIPS {lpips}, CLIP drop {clip_drop}, decision {decision}",
-            f"32 prompts x 2 seeds, {QWEN_STEPS} steps, true CFG {QWEN_TRUE_CFG}, {QWEN_SIZE}px",
+            f"8 hard prompts, one seed, {QWEN_STEPS} steps, true CFG {QWEN_TRUE_CFG}, {QWEN_SIZE}px",
         ),
         credits=(
             "Qwen / Alibaba Qwen-Image-2512",

@@ -128,7 +128,8 @@ def _card(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
         tags=("voxprint", "fp8", "qwen-image"),
         language=("en",),
         quant_lines=tuple(lines) + ("img_in, txt_in, norms, adaLN, and proj_out stay BF16",),
-        eval_lines=tuple(evals) + ("24 edit pairs x 2 seeds, 40 steps, true CFG 4.0",),
+        eval_lines=tuple(evals)
+        + ("6 hard edit pairs, one seed, 40 steps, true CFG 4.0, stop when the interval decides",),
         credits=(
             "Qwen / Alibaba Qwen-Image-Edit-2511",
             "Qwen2.5-VL-7B text encoder",
