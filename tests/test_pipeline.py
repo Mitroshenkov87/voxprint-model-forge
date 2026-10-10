@@ -22,6 +22,15 @@ from voxprint_forge.upload import Remote
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _bash(script: Path) -> list[str]:
+    """Git bash on Windows. System32\\bash.exe is a stub and is not used."""
+    exe = "bash"
+    if os.name == "nt":
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        exe = str(git_bash) if git_bash.is_file() else "bash"
+    return [exe, script.as_posix()]
+
+
 def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -495,9 +504,9 @@ def test_vm_run_invocation_dry_runs_a_tiny_model(
     captured = tmp_path / "captured"
     captured.mkdir()
     env = os.environ.copy()
-    env["FORGE_OUT"] = str(captured)
-    env["FORGE_VENV"] = str(tmp_path / "venv")
-    subprocess.run(["bash", str(ROOT / "scripts/vm_run.sh")], check=True, env=env, cwd=ROOT)
+    env["FORGE_OUT"] = captured.as_posix()
+    env["FORGE_VENV"] = (tmp_path / "venv").as_posix()
+    subprocess.run(_bash(ROOT / "scripts/vm_run.sh"), check=True, env=env, cwd=ROOT)
     argv = (captured / "argv.txt").read_text(encoding="utf-8").splitlines()
     assert argv[-1] == "run-all"
     assert argv.index("--plan") < argv.index("run-all")

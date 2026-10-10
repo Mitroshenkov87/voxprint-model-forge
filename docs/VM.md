@@ -49,7 +49,7 @@ Bootstrap prints those two paths. There is no push from the VM.
 ## What bootstrap does
 
 1. Print the forge commit from `VERSION`. Refuse anything other than Ubuntu 24.04.
-2. Require `HF_TOKEN` and `KAGGLE_API_TOKEN` (prompt only when stdin is a terminal), default `HF_USER` to `Mitroshenkov87`, then check `nvidia-smi`. Preflight then requires `cmake`, `ninja`, and `nvcc` on `PATH`, and that `src/voxprint_forge/data/imatrix.txt` tokenises to at least `max(2×ctx, ctx×chunks)` tokens.
+2. Require `HF_TOKEN` and `KAGGLE_API_TOKEN` (prompt only when stdin is a terminal), default `HF_USER` to `Mitroshenkov87`, then check `nvidia-smi`. Preflight then requires `cmake`, `ninja`, and `nvcc` on `PATH`, and that the calibration file tokenises to at least `max(2×ctx, ctx×chunks)` tokens. The file is fetched from the pinned gist when the tree does not already contain a copy with the pinned sha256.
 3. Print the plan estimates with system Python (no torch import).
 4. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
 5. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
@@ -75,9 +75,10 @@ Rough split of the model minutes: Huihui downloads the reused Q5 (and Q4 only if
 
 ## Calibration file
 
-`src/voxprint_forge/data/imatrix.txt` is bartowski's `calibration_datav3` (public gist, no explicit licence).
+The imatrix corpus is bartowski's `calibration_datav3` (public gist, no explicit licence). It is not stored in this git repository. Bootstrap downloads it on first use into `~/forge-out/calibration/imatrix.txt` and checks the sha256. A copy already at `src/voxprint_forge/data/imatrix.txt` is used only when that sha256 matches, so a hot-patched tree does not download again.
 
 - Source: https://gist.github.com/bartowski1182/eb213dccb3571f863da82e99418f81e8
+- Pinned raw file: https://gist.githubusercontent.com/bartowski1182/eb213dccb3571f863da82e99418f81e8/raw/41ae165614f4041c262fa8fe668bbe3efd9eb695/calibration_datav3.txt
 - sha256: `200e109bcd2b599fabcceaada7f52bbd1e7c8f9ae030b8dc59c011de039a8026`
 - GPT-2 content tokens: 74048. llama.cpp at `98819068` errors below `2×ctx` (1024 at ctx 512) and will not produce 128 chunks unless the file has at least `ctx×chunks` tokens (65536). 74048 meets both.
 - Licence status: licence unverified, calibration-only, not redistributed in model files. Flagged for GitHub Bot review. Do not copy this text into a published model repo.

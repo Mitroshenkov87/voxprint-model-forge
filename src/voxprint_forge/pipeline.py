@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from voxprint_forge.abliterate import abliterate_directory
+from voxprint_forge.calibration import ensure_calibration
 from voxprint_forge.cards import render_card
 from voxprint_forge.disk import ensure_free
 from voxprint_forge.errors import StageError, UsageError
@@ -274,8 +275,8 @@ def _source_gguf(model: ModelPlan, work: Path) -> Path:
 
 
 def _imatrix_corpus(layout: Layout, model_id: str) -> Path:
-    """Default corpus is imatrix.txt. FORGE_IMATRIX_RU=1 appends the public-domain Russian slice."""
-    base = data_dir() / "imatrix.txt"
+    """Default corpus is the pinned gist file. FORGE_IMATRIX_RU=1 appends the public-domain slice."""
+    base = ensure_calibration()
     if os.environ.get("FORGE_IMATRIX_RU", "").strip() != "1":
         return base
     extra = data_dir() / "imatrix-ru-pd.txt"

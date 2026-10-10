@@ -1,7 +1,8 @@
 # Public-domain Russian calibration slice. Not used unless FORGE_IMATRIX_RU=1.
 # Alexander Pushkin (1799-1837), lyric of 1829. Original Russian. Public domain.
-# This is a follow-up option. The default corpus is bartowski calibration_datav3
-# and this slice is not copied into published model files.
+# This is a follow-up option. The default corpus is bartowski calibration_datav3,
+# fetched at runtime from the pinned gist and not stored in this repository.
+# This slice is not copied into published model files.
 
 Я вас любил: любовь еще, быть может,
 В душе моей угасла не совсем;

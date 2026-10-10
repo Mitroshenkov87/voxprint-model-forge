@@ -21,6 +21,15 @@ from safetensors.torch import save_file
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _bash(script: Path) -> list[str]:
+    """Git bash on Windows. System32\\bash.exe is a stub and is not used."""
+    exe = "bash"
+    if os.name == "nt":
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        exe = str(git_bash) if git_bash.is_file() else "bash"
+    return [exe, script.as_posix()]
+
+
 def _install_fake_generate() -> types.ModuleType:
     """Quality imports diffusers. The dry run supplies the three evaluators instead."""
     passing = {"decision": "fp8", "lpips_mean": 0.01, "clip_drop": 0.001, "clip_i": 0.99}
@@ -103,9 +112,9 @@ def test_canvas_job_refuses_a_missing_token_when_stdin_is_not_a_tty(tmp_path: Pa
     env = os.environ.copy()
     env.pop("HF_TOKEN", None)
     env.pop("KAGGLE_API_TOKEN", None)
-    env["FORGE_OUT"] = str(tmp_path)
+    env["FORGE_OUT"] = tmp_path.as_posix()
     proc = subprocess.run(
-        ["bash", str(ROOT / "scripts/canvas_job.sh")],
+        _bash(ROOT / "scripts/canvas_job.sh"),
         input=b"",
         capture_output=True,
         env=env,
