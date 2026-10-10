@@ -266,6 +266,12 @@ def llama_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_USER", "voxprint-tests")
     monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    # The tiny plan declares a 50 GiB reuse that fit rejects and never writes.
+    # ensure_free still requires that size plus the 5 GiB margin (~55 GiB).
+    # windows-latest has about 28 GiB free, so the real check would stop the
+    # run before the skip. Report a large disk here. test_disk_short covers
+    # a short disk, and the production margin is unchanged.
+    monkeypatch.setattr("voxprint_forge.disk.free_bytes", _ample_disk)
 
 
 def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin: None) -> None:
@@ -463,6 +469,11 @@ def test_disk_short(tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyP
 def _boom(path: Path, need: int, what: str) -> int:
     del path, need, what
     raise DiskShortError("short", code="disk_short")
+
+
+def _ample_disk(path: Path) -> int:
+    del path
+    return 200 * 1024**3
 
 
 def test_token_is_scrubbed_from_upload_errors(monkeypatch: pytest.MonkeyPatch) -> None:
