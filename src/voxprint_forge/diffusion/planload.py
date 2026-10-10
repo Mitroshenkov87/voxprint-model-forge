@@ -19,6 +19,7 @@ def _unexpected_part(part_id: Never) -> Never:
 
 @dataclass(frozen=True)
 class Source:
+    """One upstream repo the canvas plan downloads."""
     id: str
     repo: str
     revision: str
@@ -30,6 +31,7 @@ class Source:
 
 @dataclass(frozen=True)
 class Part:
+    """One canvas part: id, estimate, and sources."""
     id: PartId
     estimate_min: int
     output_name: str
@@ -41,14 +43,17 @@ class Part:
 
 @dataclass(frozen=True)
 class CanvasPlan:
+    """The loaded canvas plan."""
     id: str
     min_free_gb: int
     parts: tuple[Part, ...]
 
     def total_min(self) -> int:
+        """Sum of the part estimates in minutes."""
         return sum(part.estimate_min for part in self.parts)
 
     def part(self, part_id: PartId) -> Part:
+        """The part with this id."""
         if part_id == "base":
             return next(item for item in self.parts if item.id == "base")
         if part_id == "controlnet":
@@ -127,6 +132,7 @@ def _part(row: object) -> Part:
 
 
 def load_canvas_plan(path: Path) -> CanvasPlan:
+    """Load and check a canvas plan TOML file."""
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:

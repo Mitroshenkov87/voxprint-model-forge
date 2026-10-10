@@ -22,17 +22,20 @@ def _gib(amount: int) -> str:
 
 
 def gauge_percent(total: int, used: int) -> int:
+    """Used fraction of ``total`` as a percent from 0 to 100."""
     if total <= 0:
         return 0
     return max(0, min(100, round(used * 100 / total)))
 
 
 def gauge_text(title: str, total: int, used: int) -> str:
+    """One gauge line: title, used, total, and percent."""
     free = max(total - used, 0)
     return f"{title}  {_gib(free)} free of {_gib(total)}"
 
 
 def disk_total_free(path: Path) -> tuple[int, int]:
+    """Total and free bytes on the filesystem that holds ``path``."""
     free = disk.free_bytes(path)
     target = path if path.exists() else path.parent
     total = shutil.disk_usage(target).total
@@ -57,6 +60,7 @@ def vram_status() -> tuple[int, int] | None:
 
 @dataclass
 class GaugeProbes:
+    """VRAM, RAM, and disk readings the window paints."""
     disk: Callable[[], tuple[int, int]]
     ram: Callable[[], tuple[int, int]]
     vram: Callable[[], tuple[int, int] | None]

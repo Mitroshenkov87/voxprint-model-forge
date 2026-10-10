@@ -29,6 +29,7 @@ _WEIGHT_SUFFIXES = frozenset({".safetensors", ".gguf", ".bin", ".pt", ".ckpt"})
 
 
 def stable_root(forge_out: Path) -> Path:
+    """Directory of stable names that point at the latest encoder files."""
     return forge_out / "canvas" / STABLE_DIR
 
 
@@ -47,6 +48,7 @@ def classify_encoder(found: dict[str, str], pins: dict[str, str], edit_fp8: Path
 
 
 def edit_encoder_fp8(forge_out: Path, job_id: str, output_name: str, filename: str) -> Path:
+    """Path of the edit-part FP8 text encoder inside this job."""
     return forge_out / "work" / job_id / output_name / filename
 
 
@@ -80,6 +82,7 @@ def _replace_with_link(dest: Path, target: Path) -> None:
 
 
 def link_stable_file(forge_out: Path, name: str, target: Path) -> Path:
+    """Point a stable name at ``target`` and return the link path."""
     dest = stable_root(forge_out) / name
     _replace_with_link(dest, target)
     return dest
@@ -104,6 +107,7 @@ def refresh_fp8_dir(forge_out: Path, shards: list[Path]) -> Path:
 
 
 def assert_no_weight_files(directory: Path) -> None:
+    """Raise when ``directory`` still contains weight files."""
     if not directory.exists():
         return
     for path in directory.rglob("*"):
@@ -112,6 +116,7 @@ def assert_no_weight_files(directory: Path) -> None:
 
 
 def write_int4_marker(forge_out: Path) -> Path:
+    """Write the marker that says the int4 encoder was skipped."""
     dest = stable_root(forge_out) / "int4"
     dest.mkdir(parents=True, exist_ok=True)
     assert_no_weight_files(dest)
@@ -121,6 +126,7 @@ def write_int4_marker(forge_out: Path) -> Path:
 
 
 def write_encoder_pending(forge_out: Path) -> Path:
+    """Write the marker that says the FP8 encoder is not ready yet."""
     dest = stable_root(forge_out) / "encoder"
     _clear_path(dest)
     dest.mkdir(parents=True)
@@ -138,6 +144,7 @@ def reset_encoder_dir(forge_out: Path) -> Path:
 
 
 def format_stable_lines(forge_out: Path, *, bf16_encoder: Path, expected_fp8: Path) -> list[str]:
+    """Lines that record the BF16 and expected FP8 encoder paths."""
     root = stable_root(forge_out)
     return [
         f"stable fp8 {root / 'fp8'}",

@@ -12,6 +12,7 @@ CANVAS_JOB_PATTERN = r"scripts/canvas_job\.sh([^_]|$)"
 
 
 def command_is_canvas_ac(cmdline: str) -> bool:
+    """True when the command line is a canvas parts A-C process."""
     return re.search(CANVAS_JOB_PATTERN, cmdline) is not None
 
 

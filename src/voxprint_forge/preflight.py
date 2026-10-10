@@ -29,6 +29,7 @@ def _deferring() -> bool:
 
 
 def missing_imports() -> list[str]:
+    """Required converter imports that this interpreter cannot find."""
     return [name for name in _IMPORTS if importlib.util.find_spec(name) is None]
 
 
@@ -63,6 +64,7 @@ def memory_status() -> tuple[int, int]:
 
 
 def ram_bytes() -> int:
+    """Total physical RAM in bytes."""
     return memory_status()[0]
 
 
@@ -147,6 +149,7 @@ def _quant_fits(model: ModelPlan, quant: str, kv: int, budget: int, ram: int) ->
 
 
 def peak_download_bytes(plan: Plan) -> int:
+    """Sum of pinned file sizes for enabled models."""
     total = 0
     for model in plan.enabled_models():
         total += sum(item.size for item in model.files)
@@ -154,6 +157,7 @@ def peak_download_bytes(plan: Plan) -> int:
 
 
 def index_targets(plan: Plan) -> list[tuple[str, str, str]]:
+    """Safetensors models whose shard index must answer HEAD."""
     found: list[tuple[str, str, str]] = []
     for model in plan.enabled_models():
         if model.source_format != "safetensors":
@@ -182,6 +186,7 @@ def _head(url: str, opener: Opener) -> int:
 
 
 def converter_recognises_t_lite(repo: Path) -> bool:
+    """True when the pinned converter contains the T-lite pre-tokenizer hash."""
     env = os.environ.get("FORGE_LLAMA_SRC", "")
     if env:
         path = Path(env) / "conversion" / "base.py"
@@ -193,6 +198,7 @@ def converter_recognises_t_lite(repo: Path) -> bool:
 
 
 def binaries_ready() -> tuple[bool, str]:
+    """Whether llama.cpp binaries exist, and a short reason when they do not."""
     folder = bin_dir()
     if folder is not None and all((folder / name).is_file() for name in _BINARIES):
         return True, str(folder)
@@ -210,6 +216,7 @@ def run_preflight(
     opener: Opener | None = None,
     ram: Callable[[], int] | None = None,
 ) -> dict[str, object]:
+    """Run the seconds-long checks and return the report."""
     problems: list[str] = []
     checks: list[dict[str, object]] = []
     missing = missing_imports()

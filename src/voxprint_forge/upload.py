@@ -45,6 +45,7 @@ def selected_targets() -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Artifact:
+    """One file to upload: path, name, sha256, size, tier, quant, and kind."""
     path: Path
     name: str
     sha256: str
@@ -55,24 +56,42 @@ class Artifact:
 
 
 class Remote(Protocol):
-    def check_hf(self) -> str: ...
+    """Hub and Kaggle operations the upload stage needs."""
+    def check_hf(self) -> str:
+        """Return the signed-in Hugging Face user name."""
+        ...
 
-    def check_kaggle(self) -> str: ...
+    def check_kaggle(self) -> str:
+        """Return the signed-in Kaggle user name."""
+        ...
 
-    def hf_private_repo(self, repo_id: str) -> str: ...
+    def hf_private_repo(self, repo_id: str) -> str:
+        """Create or reuse a private Hub repo and return its URL."""
+        ...
 
-    def hf_upload(self, repo_id: str, path: Path, name: str) -> None: ...
+    def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
+        """Upload one file into the Hub repo."""
+        ...
 
-    def hf_stat(self, repo_id: str, name: str) -> tuple[str | None, int]: ...
+    def hf_stat(self, repo_id: str, name: str) -> tuple[str | None, int]:
+        """Return the Hub file's sha256 and size."""
+        ...
 
-    def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str: ...
+    def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str:
+        """Create or reuse a private Kaggle model and return its URL."""
+        ...
 
-    def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str: ...
+    def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str:
+        """Upload one Kaggle variation and return its handle."""
+        ...
 
-    def kaggle_stat(self, handle: str, name: str) -> tuple[str | None, int]: ...
+    def kaggle_stat(self, handle: str, name: str) -> tuple[str | None, int]:
+        """Return the Kaggle file's sha256 and size."""
+        ...
 
 
 def hf_user() -> str:
+    """Hugging Face user from ``HF_USER``."""
     user = os.environ.get("HF_USER", "").strip()
     if not user:
         raise UsageError("HF_USER is not set", code="hf_user")
@@ -80,10 +99,12 @@ def hf_user() -> str:
 
 
 def kaggle_user() -> str:
+    """Kaggle user from ``KAGGLE_USER``."""
     return os.environ.get("KAGGLE_USER", "mitroshenkov87").strip() or "mitroshenkov87"
 
 
 def repo_slug(model_id: str) -> str:
+    """Private repo slug for a model id."""
     return f"voxprint-{model_id}"
 
 
@@ -93,18 +114,22 @@ def kaggle_model_slug(model_id: str) -> str:
 
 
 def variation_slug(tier: str, quant: str) -> str:
+    """Kaggle variation slug for a tier and quant."""
     return f"{tier}-{quant.lower().replace('_', '-')}"
 
 
 def hf_file_url(repo_id: str, name: str) -> str:
+    """Hub URL of one uploaded file."""
     return f"https://huggingface.co/{repo_id}/blob/main/{name}"
 
 
 def kaggle_variation_url(owner: str, slug: str, variation: str) -> str:
+    """Kaggle URL of one variation."""
     return f"https://www.kaggle.com/models/{owner}/{slug}/{FRAMEWORK}/{variation}"
 
 
 def model_metadata(owner: str, slug: str, title: str, description: str) -> dict[str, object]:
+    """Private Kaggle model metadata. ``isPrivate`` stays true."""
     return {
         "ownerSlug": owner,
         "title": title,
@@ -119,6 +144,7 @@ def model_metadata(owner: str, slug: str, title: str, description: str) -> dict[
 
 
 def variation_metadata(owner: str, slug: str, variation: str, overview: str) -> dict[str, object]:
+    """Private Kaggle variation metadata."""
     return {
         "ownerSlug": owner,
         "modelSlug": slug,
@@ -136,11 +162,13 @@ def variation_metadata(owner: str, slug: str, variation: str, overview: str) -> 
 
 
 def assert_private_metadata(payload: dict[str, object]) -> None:
+    """Raise unless the metadata says the model is private."""
     if payload.get("isPrivate") is not True:
         raise StageError("refusing a model that is not private", code="upload_public")
 
 
 def parse_kaggle_version(text: str) -> tuple[int, int]:
+    """Parse a ``kaggle --version`` string into a major, minor pair."""
     match = re.search(r"(\d+)\.(\d+)", text)
     if match is None:
         raise ToolMissingError(f"cannot read kaggle version from {text!r}", code="kaggle_version")
@@ -148,6 +176,7 @@ def parse_kaggle_version(text: str) -> tuple[int, int]:
 
 
 def require_kaggle_version(text: str) -> tuple[int, int]:
+    """Parse the version and raise when it is older than the pin."""
     major, minor = parse_kaggle_version(text)
     if (major, minor) < (2, 2):
         raise ToolMissingError(f"kaggle CLI {major}.{minor} is older than 2.2", code="kaggle_version")
@@ -167,6 +196,7 @@ def upload_verified(
     attempts: int,
     sleep: Callable[[float], None],
 ) -> None:
+    """Upload, then retry until the remote sha256 and size match."""
     last = "remote sha256/size did not match"
     for attempt in range(attempts):
         action()
@@ -332,11 +362,13 @@ def _sidecars(artifacts: Sequence[Artifact], gguf: Artifact) -> list[Artifact]:
 
 
 def enable_fast_transfer() -> None:
+    """Turn on ``hf_transfer`` when the package is installed."""
     if _hf_transfer is not None:
         os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 
 def kaggle_argv() -> list[str]:
+    """Argv prefix for the kaggle CLI, preferring the interpreter's venv."""
     found = shutil.which("kaggle")
     if found:
         return [found]
@@ -360,6 +392,7 @@ class HubRemote:
         enable_fast_transfer()
 
     def check_hf(self) -> str:
+        """Return the signed-in Hugging Face user name."""
         if not self._hf_token:
             raise UsageError("HF_TOKEN is not set", code="hf_token")
         try:
@@ -372,6 +405,7 @@ class HubRemote:
         return name
 
     def check_kaggle(self) -> str:
+        """Return the signed-in Kaggle user name."""
         if not self._kaggle_token:
             raise UsageError("KAGGLE_API_TOKEN is not set", code="kaggle_token")
         version = _kaggle(self._kaggle_token, ["--version"])
@@ -386,6 +420,7 @@ class HubRemote:
         return owner
 
     def hf_private_repo(self, repo_id: str) -> str:
+        """Create or reuse a private Hub repo and return its URL."""
         if not self._hf_token:
             raise UsageError("HF_TOKEN is not set", code="hf_token")
         api = HfApi(token=self._hf_token)
@@ -402,6 +437,7 @@ class HubRemote:
         return f"https://huggingface.co/{repo_id}"
 
     def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
+        """Upload one file into the Hub repo."""
         api = HfApi(token=self._hf_token)
         try:
             api.upload_file(
@@ -414,6 +450,7 @@ class HubRemote:
             raise StageError(scrub(str(exc)), code="upload_hf") from None
 
     def hf_stat(self, repo_id: str, name: str) -> tuple[str | None, int]:
+        """Return the Hub file's sha256 and size."""
         api = HfApi(token=self._hf_token)
         try:
             infos = api.get_paths_info(repo_id, paths=[name])
@@ -439,6 +476,7 @@ class HubRemote:
             return sha256_file(Path(local))
 
     def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str:
+        """Create or reuse a private Kaggle model and return its URL."""
         meta_path = folder / "model-metadata.json"
         payload = json.loads(meta_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
@@ -456,6 +494,7 @@ class HubRemote:
         return f"https://www.kaggle.com/models/{owner}/{slug}"
 
     def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str:
+        """Upload one Kaggle variation and return its handle."""
         created = _kaggle(
             self._require_kaggle(),
             [
@@ -498,6 +537,7 @@ class HubRemote:
         return handle
 
     def kaggle_stat(self, handle: str, name: str) -> tuple[str | None, int]:
+        """Return the Kaggle file's sha256 and size."""
         listed = _kaggle(
             self._require_kaggle(),
             ["models", "variations", "files", handle, "-v", "--page-size", "100"],
@@ -601,6 +641,7 @@ def _kaggle_sha(token: str, handle: str, name: str) -> str | None:
 
 
 def verify_logins(remote: Remote | None = None) -> dict[str, str]:
+    """Check Hub and Kaggle logins and return both user names."""
     client = remote if remote is not None else HubRemote(
         os.environ.get("HF_TOKEN"),
         os.environ.get("KAGGLE_API_TOKEN"),

@@ -19,6 +19,7 @@ FileRole = Literal["source", "reuse", "sidecar"]
 
 @dataclass(frozen=True)
 class PinnedFile:
+    """One pinned source, reuse, or sidecar file."""
     role: FileRole
     quant: str
     path: str
@@ -30,6 +31,7 @@ class PinnedFile:
 
 @dataclass(frozen=True)
 class Tier:
+    """A card budget and the quants that may fill it."""
     name: str
     budget_gb: float
     kind: TierKind
@@ -38,6 +40,7 @@ class Tier:
 
 @dataclass(frozen=True)
 class ModelPlan:
+    """One model: source, architecture, tiers, and optional offload fields."""
     id: str
     enabled: bool
     optional: bool
@@ -60,14 +63,17 @@ class ModelPlan:
     encoder_gib: float = 0.0
 
     def source_files(self) -> tuple[PinnedFile, ...]:
+        """Pinned files whose role is source."""
         return tuple(item for item in self.files if item.role == "source")
 
     def reuse_files(self) -> tuple[PinnedFile, ...]:
+        """Pinned files whose role is reuse."""
         return tuple(item for item in self.files if item.role == "reuse")
 
 
 @dataclass(frozen=True)
 class Plan:
+    """The loaded run: budgets, contexts, and models."""
     name: str
     output_dir: Path
     wall_clock_budget_min: int
@@ -85,10 +91,12 @@ class Plan:
     models: tuple[ModelPlan, ...]
 
     def enabled_models(self) -> tuple[ModelPlan, ...]:
+        """Models with ``enabled`` set."""
         return tuple(model for model in self.models if model.enabled)
 
 
 def load_plan(path: Path) -> Plan:
+    """Load and check a plan TOML file."""
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -129,6 +137,7 @@ def load_plan(path: Path) -> Plan:
 
 
 def format_estimates(plan: Plan) -> str:
+    """Text estimate of the run, including the llama.cpp build."""
     lines = [
         f"Plan {plan.name}",
         f"Wall-clock budget: {plan.wall_clock_budget_min} min",

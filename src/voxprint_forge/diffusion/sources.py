@@ -27,6 +27,7 @@ def _licence_of(info: object) -> str | None:
 
 
 def assert_apache(repo: str, revision: str, token: str | None) -> str:
+    """Raise unless the Hub repo card says Apache-2.0."""
     api = HfApi(token=token)
     try:
         info = api.model_info(repo, revision=revision)
@@ -42,6 +43,7 @@ def assert_apache(repo: str, revision: str, token: str | None) -> str:
 
 
 def tree_hashes(root: Path) -> dict[str, str]:
+    """Relative path to sha256 for every file under ``root``."""
     found: dict[str, str] = {}
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
         found[path.relative_to(root).as_posix()] = sha256_file(path)
@@ -49,12 +51,14 @@ def tree_hashes(root: Path) -> dict[str, str]:
 
 
 def same_trees(left: Path, right: Path) -> bool:
+    """True when two directories have the same relative paths and hashes."""
     if not left.is_dir() or not right.is_dir():
         return False
     return tree_hashes(left) == tree_hashes(right)
 
 
 def download_source(source: Source, dest: Path, token: str | None) -> dict[str, str]:
+    """Download one planned source into ``dest`` and return its hashes."""
     dest.mkdir(parents=True, exist_ok=True)
     try:
         if source.files:
@@ -92,6 +96,7 @@ def _existing_record(path: Path) -> dict[str, object]:
 
 
 def fetch_sources(sources: tuple[Source, ...], dest: Path, token: str | None) -> dict[str, object]:
+    """Download each source, skipping a directory that is already filled."""
     path = dest / "upstream-sha256.json"
     record = _existing_record(path)
     for source in sources:

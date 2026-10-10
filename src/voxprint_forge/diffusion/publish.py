@@ -36,6 +36,7 @@ from voxprint_forge.upload import (
 
 @dataclass(frozen=True)
 class LocalFile:
+    """One local file ready to publish, with its sha256 and tier."""
     path: Path
     name: str
     sha256: str
@@ -51,6 +52,7 @@ def _iter_files(output: Path) -> list[Path]:
 
 
 def write_sidecars(output: Path) -> None:
+    """Write a sha256 sidecar next to each published file."""
     for path in _iter_files(output):
         write_sha256(path)
 
@@ -70,6 +72,7 @@ def collect_files(
     repo: str,
     revision: str,
 ) -> list[LocalFile]:
+    """List published files with hashes and empty source URLs."""
     found: list[LocalFile] = []
     for path in _iter_files(output):
         name = path.relative_to(output).as_posix()
@@ -90,6 +93,7 @@ def collect_files(
 
 
 def write_models_md(output: Path, files: list[LocalFile]) -> None:
+    """Write the MODELS snippet for these local files."""
     rows = [
         Row(
             repo=item.repo,

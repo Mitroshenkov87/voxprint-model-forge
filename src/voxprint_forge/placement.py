@@ -16,6 +16,7 @@ from voxprint_forge.fitmath import GIB, budget_bytes
 
 @dataclass(frozen=True)
 class Split:
+    """One VRAM/RAM placement: name, device bytes, RAM bytes, and llama-server flags."""
     name: str
     vram_bytes: int
     ram_bytes: int
@@ -79,7 +80,11 @@ def options_for(
 
 
 def split_fits(split: Split, *, budget_gb: float, headroom_gb: float, ram_bytes: int) -> bool:
-    """True when device bytes fit the card budget and RAM bytes fit the machine."""
+    """True when device bytes fit the card and RAM bytes fit the machine.
+
+    The card limit is ``budget_bytes``, which already subtracts headroom.
+    This is the formula the fit stage uses before it measures a split.
+    """
     if split.vram_bytes > budget_bytes(budget_gb, headroom_gb):
         return False
     return split.ram_bytes <= ram_bytes

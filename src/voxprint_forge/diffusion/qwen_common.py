@@ -18,6 +18,7 @@ _SILENT = frozenset({"convert", "quality", "upload", "upload-deferred"})
 
 @dataclass
 class QwenCtx:
+    """Paths and plan for the Qwen-Image part."""
     repo: Path
     forge_out: Path
     plan: QwenPlan
@@ -27,24 +28,30 @@ class QwenCtx:
 
     @property
     def upstream_root(self) -> Path:
+        """Root directory of this part's upstream download."""
         return self.forge_out / "work" / self.plan.id / "upstream"
 
     @property
     def source_dir(self) -> Path:
+        """Shared source directory declared by the plan."""
         return self.upstream_root / self.plan.source.id
 
     @property
     def output(self) -> Path:
+        """Directory of files this part publishes."""
         return self.forge_out / "work" / self.plan.id / self.plan.output_name
 
     def marker(self, stage: str) -> Path:
+        """Marker path for one stage of this part."""
         return self.layout.stage(self.plan.id, f"qwen-{stage}")
 
     def done(self, stage: str) -> bool:
+        """True when this stage's marker already exists."""
         return read_marker(self.marker(stage)) is not None
 
 
 def run_stage(ctx: QwenCtx, name: str, fn: Callable[[], dict[str, object]]) -> dict[str, object]:
+    """Run a stage unless its marker says it already finished."""
     set_stage(name)
     existing = read_marker(ctx.marker(name))
     if existing is not None:
@@ -61,12 +68,14 @@ def run_stage(ctx: QwenCtx, name: str, fn: Callable[[], dict[str, object]]) -> d
 
 
 def check_disk(ctx: QwenCtx) -> None:
+    """Raise when the part's disk budget is not free."""
     set_stage("disk")
     need = ctx.plan.min_free_gb * (1024**3)
     ensure_free(ctx.forge_out, need, "qwen")
 
 
 def progress(ctx: QwenCtx, stage: str, pct: int, eta_min: float) -> None:
+    """Record this stage's percent and remaining minutes."""
     set_stage(stage)
     append_progress(ctx.forge_out / "progress.log", model="qwen", stage=stage, pct=pct, eta_min=eta_min)
     update_item(ctx.forge_out, "qwen", stage=stage, pct=pct, eta_min=eta_min, state="RUNNING")

@@ -6,6 +6,7 @@ from voxprint_forge.diffusion.deadline import DEFERRED
 
 
 def state_line(payload: dict[str, object]) -> str:
+    """One status word for a model result, such as UPLOADED or STAGEFAIL."""
     state = payload.get("state")
     if isinstance(state, str) and state:
         return state
@@ -20,6 +21,7 @@ def state_line(payload: dict[str, object]) -> str:
 
 
 def summarise(items: list[dict[str, object]]) -> tuple[str, bool]:
+    """Join model state lines and report whether every model succeeded."""
     lines = [f"{item.get('id')} {state_line(item)}" for item in items]
     failed = any(line.split(" ", 1)[-1].startswith("STAGEFAIL") for line in lines)
     if not failed:

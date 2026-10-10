@@ -9,6 +9,7 @@ from voxprint_forge.layout import Layout
 
 
 def models_markdown(payload: dict[str, object]) -> str:
+    """MODELS.md snippet for the files in a run payload."""
     lines = [
         "# MODELS registry snippet",
         "",
@@ -52,6 +53,7 @@ def models_markdown(payload: dict[str, object]) -> str:
 
 
 def copy_back_instructions(date: str, folder: Path) -> str:
+    """Tell the operator which manifest files to copy back."""
     manifest = folder / f"{date}-a100.json"
     snippet = folder / f"{date}-a100.MODELS.md"
     return (
@@ -67,6 +69,7 @@ def write_run_manifest(
     *,
     date: str,
 ) -> dict[str, object]:
+    """Write the JSON manifest and the MODELS snippet for this date."""
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     snippet = models_markdown(payload)
     name = f"{date}-a100.json"
@@ -84,6 +87,7 @@ def write_run_manifest(
 
 
 def summary_lines(payload: dict[str, object]) -> list[str]:
+    """Short per-file lines for the end-of-run summary."""
     lines = ["Forge summary"]
     models = payload.get("models")
     if not isinstance(models, list):

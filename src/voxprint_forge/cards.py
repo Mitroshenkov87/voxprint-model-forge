@@ -28,6 +28,7 @@ LIMITS = (
 
 
 def template_path(repo: Path) -> Path:
+    """Path of ``templates/model_card.md.jinja`` in the repo."""
     path = repo / "templates" / "model_card.md.jinja"
     if not path.is_file():
         raise ToolMissingError(f"missing {path}", code="template_missing")
@@ -35,6 +36,7 @@ def template_path(repo: Path) -> Path:
 
 
 def licence_text(repo: Path) -> str:
+    """Apache-2.0 text from the repo ``LICENSE`` file."""
     path = repo / "LICENSE"
     if not path.is_file():
         raise ToolMissingError(f"missing {path}", code="licence_missing")
@@ -60,6 +62,7 @@ def card_base_model(model: ModelPlan) -> str:
 
 
 def calibration_note(model: ModelPlan) -> str:
+    """Card paragraph for requant or ablation calibration data."""
     mode = model.mode
     if mode == "requant":
         return (
@@ -79,6 +82,7 @@ def calibration_note(model: ModelPlan) -> str:
 
 
 def what_changed(model: ModelPlan, ablation: dict[str, object] | None) -> str:
+    """Card paragraph describing the requant or the refusal-direction ablation."""
     if model.mode == "requant" or model.already_abliterated:
         return (
             f"Requant of upstream abliterated {model.repo} at revision {model.revision}. "
@@ -110,6 +114,7 @@ def render_card(
     imatrix_note: str,
     stamped: str | None = None,
 ) -> str:
+    """Render the model card markdown for these tiers."""
     template = template_path(repo).read_text(encoding="utf-8")
     env = Environment(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
     try:

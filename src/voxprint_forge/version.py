@@ -26,6 +26,7 @@ def _build_file() -> Path | None:
 
 
 def load_identity() -> tuple[int, str]:
+    """Read the build number and codename from ``BUILD.json``."""
     path = _build_file()
     offset = 0
     codename = CODENAME_FALLBACK

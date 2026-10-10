@@ -29,6 +29,7 @@ LIMITS = (
 
 @dataclass(frozen=True)
 class CardContext:
+    """Fields the canvas model card template renders."""
     title: str
     base_models: tuple[str, ...]
     base_lines: tuple[str, ...]
@@ -42,6 +43,7 @@ class CardContext:
 
 
 def template_path(repo: Path) -> Path:
+    """Path of the canvas model card template in the repo."""
     path = repo / "templates" / "canvas_model_card.md.jinja"
     if not path.is_file():
         raise ToolMissingError(f"missing {path}", code="template_missing")
@@ -49,6 +51,7 @@ def template_path(repo: Path) -> Path:
 
 
 def licence_text(repo: Path) -> str:
+    """Apache-2.0 text from the repo ``LICENSE`` file."""
     path = repo / "LICENSE"
     if not path.is_file():
         raise ToolMissingError(f"missing {path}", code="licence_missing")
@@ -56,6 +59,7 @@ def licence_text(repo: Path) -> str:
 
 
 def render_canvas_card(repo: Path, card: CardContext) -> str:
+    """Render a canvas model card from ``card``."""
     env = Environment(undefined=StrictUndefined, autoescape=False)
     template = env.from_string(template_path(repo).read_text(encoding="utf-8"))
     return template.render(
@@ -78,4 +82,5 @@ def render_canvas_card(repo: Path, card: CardContext) -> str:
 
 
 def today_stamp() -> str:
+    """Today's date as an ISO stamp."""
     return date.today().isoformat()

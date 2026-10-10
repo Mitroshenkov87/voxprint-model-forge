@@ -30,3 +30,9 @@ jobs:
         run: python -m ruff check src tests
       - name: Pytest
         run: python -m pytest
+      - name: Docstrings
+        run: python -m interrogate src/voxprint_forge
+      - name: CLI reference
+        run: python -m voxprint_forge.cli_reference --check
+      - name: Docs site
+        run: python -m mkdocs build --strict

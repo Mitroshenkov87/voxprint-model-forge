@@ -19,6 +19,7 @@ class _Margins(ctypes.Structure):
 
 
 def windows_build() -> int | None:
+    """Windows build number, or None when this is not Windows."""
     if sys.platform != "win32":
         return None
     try:

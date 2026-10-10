@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Row:
+    """One row of the canvas MODELS table."""
     repo: str
     revision: str
     file: str
@@ -18,6 +19,7 @@ class Row:
 
 
 def render_models_md(rows: list[Row]) -> str:
+    """Render MODELS markdown from these rows."""
     lines = [
         "| repo | revision | file | bytes | sha256 | licence | tier | vram_gb |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",

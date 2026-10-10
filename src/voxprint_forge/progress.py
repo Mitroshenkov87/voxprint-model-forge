@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 class Progress:
+    """Append-only progress log with a remaining-time estimate."""
     def __init__(
         self,
         path: Path,
@@ -26,9 +27,11 @@ class Progress:
         self._start = now()
 
     def begin(self, model: str, stage: str) -> None:
+        """Record that a stage has started."""
         self._write(model, stage)
 
     def advance(self, model: str, stage: str, minutes: float) -> None:
+        """Add this stage's minutes to the consumed estimate."""
         self.consumed_min += minutes
         self._write(model, stage)
 
@@ -49,6 +52,7 @@ class Progress:
 
 
 def append_progress(path: Path, *, model: str, stage: str, pct: int, eta_min: float) -> None:
+    """Append one progress line to the log."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = f"{stamp}  {model}  {stage}  {pct}%  eta {eta_min:.0f} min\n"
     path.parent.mkdir(parents=True, exist_ok=True)

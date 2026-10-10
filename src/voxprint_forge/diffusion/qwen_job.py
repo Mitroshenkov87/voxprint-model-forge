@@ -383,6 +383,7 @@ def _uploaded_qwen(ctx: QwenCtx, marker: dict[str, object]) -> dict[str, object]
 
 
 def run_qwen_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> dict[str, object]:
+    """Prepare and publish the Qwen-Image transformer tier."""
     existing = read_marker(ctx.marker("upload"))
     if existing is not None:
         return _uploaded_qwen(ctx, existing)
@@ -430,6 +431,7 @@ def run_qwen_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> dic
 
 
 def run_encoder_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> dict[str, object]:
+    """Prepare the shared text-encoder files for Qwen-Image."""
     if defer_part(ctx.plan.encoder_estimate_min, deadline, now):
         return {
             "id": "encoder",
@@ -585,6 +587,7 @@ def run_selected(
     now: Callable[[], datetime] | None = None,
     defer_upload: bool = False,
 ) -> dict[str, object]:
+    """Run the selected Qwen-Image parts that still fit before the deadline."""
     clock = now or (lambda: datetime.now(timezone.utc))
     layout = Layout(forge_out)
     forge_out.mkdir(parents=True, exist_ok=True)

@@ -33,6 +33,7 @@ def execute(
     parts_text: str | None,
     defer_upload: bool = False,
 ) -> dict[str, object]:
+    """Run a Qwen-Image plan from the CLI arguments."""
     if not force and llm_job_running(forge_out):
         raise UsageError(
             "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). "
@@ -78,6 +79,7 @@ def _repo(explicit: Path | None) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Qwen-Image CLI and return the process exit code."""
     parser = argparse.ArgumentParser(prog="python -m voxprint_forge.diffusion.qwen_main")
     parser.add_argument("command", choices=["run", "upload"])
     parser.add_argument("plan", type=Path)

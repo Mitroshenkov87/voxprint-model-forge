@@ -252,6 +252,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
 
 
 def run_base(ctx: Ctx) -> dict[str, object]:
+    """Prepare, score, and publish the base image tier."""
     check_disk(ctx)
     progress(ctx, "start", 0, ctx.part.estimate_min)
     run_stage(ctx, "fetch", lambda: _fetch(ctx))

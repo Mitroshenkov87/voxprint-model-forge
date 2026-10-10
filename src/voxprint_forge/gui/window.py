@@ -54,6 +54,7 @@ _UPLOAD_COLUMNS = (("hf", 5), ("kaggle", 6), ("drive", 7))
 
 
 class MainWindow(QMainWindow):
+    """The Model Forge window."""
     def __init__(
         self,
         *,
@@ -255,6 +256,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
 
     def apply_theme(self) -> str:
+        """Apply the suite theme and return the theme name."""
         offscreen = os.environ.get("QT_QPA_PLATFORM", "") == "offscreen"
         if offscreen or sys.platform != "win32":
             self.setStyleSheet(build_style(False))
@@ -265,12 +267,14 @@ class MainWindow(QMainWindow):
         return self.backdrop
 
     def forge_out_path(self) -> Path:
+        """Forge-out directory from the path field."""
         text = self.out_edit.text().strip()
         if text:
             return Path(text)
         return Path.home() / "forge-out"
 
     def selected_upload_targets(self) -> tuple[str, ...]:
+        """Upload targets checked in the window."""
         names: list[str] = []
         if self.hf_box.isChecked():
             names.append("hf")
@@ -299,12 +303,14 @@ class MainWindow(QMainWindow):
         return False
 
     def check_before_run(self) -> None:
+        """Run preflight and show the report."""
         if not self._require_targets():
             return
         payload = self.runner(self._args("preflight"), self._env())
         self.preflight_text.setPlainText(format_checks(payload))
 
     def refresh_status(self) -> None:
+        """Reload ``forge status`` into the model table."""
         if not self._require_targets():
             return
         self._remote = False
@@ -313,6 +319,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("This machine")
 
     def retry_model(self, model_id: str) -> None:
+        """Clear this model's stage and start that stage again."""
         if not model_id or not self._require_targets():
             return
         stage = self._stage_of(model_id)
@@ -362,6 +369,7 @@ class MainWindow(QMainWindow):
                 label.setText("not connected")
 
     def store_tokens(self) -> None:
+        """Save the token fields into the secret store."""
         fields = (
             ("hf", self.token_hf),
             ("kaggle", self.token_kaggle),
@@ -425,6 +433,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("VM upload finished. Remote tokens were unset.")
 
     def attach_remote(self) -> None:
+        """Open the SSH session selected in the window."""
         host = self.host_edit.text().strip()
         user = self.user_edit.text().strip()
         key = self.key_edit.text().strip()
@@ -438,6 +447,7 @@ class MainWindow(QMainWindow):
         self.poll_remote()
 
     def poll_remote(self) -> None:
+        """Read remote status and GPU numbers."""
         if not self._remote:
             return
         payload = self.ssh(
@@ -450,6 +460,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Remote run")
 
     def refresh_gauges(self) -> None:
+        """Repaint RAM, VRAM, and disk gauges."""
         disk_total, disk_free = self.probes.disk()
         _paint_gauge(self.disk_label, self.disk_bar, "Disk", disk_total, disk_total - disk_free)
         ram_total, ram_free = self.probes.ram()
@@ -463,6 +474,7 @@ class MainWindow(QMainWindow):
         _paint_gauge(self.vram_label, self.vram_bar, "VRAM", vram_total, vram_used)
 
     def show_about(self) -> QDialog:
+        """Open the About dialog and return it."""
         dialog = QDialog(self)
         dialog.setObjectName("root")
         dialog.setWindowTitle("About Model Forge")

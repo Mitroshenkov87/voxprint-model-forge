@@ -20,6 +20,7 @@ def emit(
     error_code: str | None = None,
     stream: TextIO | None = None,
 ) -> None:
+    """Print the CLI result as JSON or as plain text. Secrets are scrubbed."""
     out = stream or sys.stdout
     if error is not None:
         error = scrub(error, active_secrets())

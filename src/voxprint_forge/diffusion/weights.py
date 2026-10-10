@@ -41,6 +41,7 @@ _WIDTH = {
 
 @dataclass(frozen=True)
 class TensorRef:
+    """Where one tensor lives and whether the profile quantizes it."""
     name: str
     path: Path
     shape: tuple[int, ...]
@@ -50,6 +51,7 @@ class TensorRef:
 
 
 def safetensor_files(source: Path) -> list[Path]:
+    """Safetensors shards in a model directory, in index order."""
     if source.is_file():
         return [source]
     files = sorted(path for path in source.rglob("*.safetensors") if path.is_file())
@@ -75,6 +77,7 @@ def _bf16_bytes(dtype_name: str, numel: int) -> int:
 
 
 def index_tensors(source: Path, profile: Profile) -> list[TensorRef]:
+    """List tensors in ``source`` with the profile's quantize decision."""
     rows: list[TensorRef] = []
     seen: set[str] = set()
     for path in safetensor_files(source):
@@ -138,6 +141,7 @@ def _as_bf16(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def has_fp32(source: Path) -> bool:
+    """True when any tensor in ``source`` is stored as FP32."""
     for ref in index_tensors(source, "diffusion"):
         if ref.dtype_name == "F32":
             return True
@@ -145,6 +149,7 @@ def has_fp32(source: Path) -> bool:
 
 
 def link_or_copy(src: Path, dest: Path) -> None:
+    """Hard-link ``src`` to ``dest``, or copy when the link fails."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
@@ -155,6 +160,7 @@ def link_or_copy(src: Path, dest: Path) -> None:
 
 
 def link_tree(src: Path, dest: Path) -> None:
+    """Hard-link or copy every file under ``src`` into ``dest``."""
     if not src.is_dir():
         raise StageError(f"missing directory {src}", code="weights_missing")
     for path in sorted(item for item in src.rglob("*") if item.is_file()):
@@ -174,6 +180,7 @@ def passthrough_or_bf16(source: Path, dest: Path) -> str:
 
 
 def write_bf16_shards(source: Path, dest_dir: Path, prefix: str, *, max_bytes: int = SHARD_BYTES) -> list[Path]:
+    """Rewrite ``source`` as BF16 shards no larger than ``max_bytes``."""
     refs = index_tensors(source, "diffusion")
     groups = plan_shards([(ref.name, ref.bf16_bytes) for ref in refs], max_bytes)
     by_name = {ref.name: ref for ref in refs}
@@ -201,6 +208,7 @@ def _quantize_refs(refs: list[TensorRef], profile: Profile) -> dict[str, torch.T
 
 
 def write_fp8_file(source: Path, dest: Path, profile: Profile) -> None:
+    """Quantize ``source`` to one FP8 safetensors file."""
     tensors = _quantize_refs(index_tensors(source, profile), profile)
     dest.parent.mkdir(parents=True, exist_ok=True)
     save_file(
@@ -218,6 +226,7 @@ def write_fp8_shards(
     *,
     max_bytes: int = SHARD_BYTES,
 ) -> list[Path]:
+    """Quantize ``source`` to FP8 shards no larger than ``max_bytes``."""
     refs = index_tensors(source, profile)
     groups = plan_shards([(ref.name, ref.fp8_bytes) for ref in refs], max_bytes)
     by_name = {ref.name: ref for ref in refs}
@@ -237,6 +246,7 @@ def write_fp8_shards(
 
 
 def load_tensors(paths: list[Path]) -> dict[str, torch.Tensor]:
+    """Load every tensor in these safetensors files."""
     merged: dict[str, torch.Tensor] = {}
     for path in paths:
         for name, value in load_file(str(path)).items():
@@ -255,6 +265,7 @@ def materialise_bf16(paths: list[Path], dest: Path) -> Path:
 
 
 def copy_config(source_dir: Path, dest: Path) -> None:
+    """Copy config and tokenizer files from ``source_dir`` to ``dest``."""
     config = source_dir / "config.json"
     if not config.is_file():
         return

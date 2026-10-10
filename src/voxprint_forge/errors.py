@@ -14,22 +14,27 @@ class ForgeError(Exception):
 
 
 class UsageError(ForgeError):
+    """Bad arguments. Exit code 2."""
     exit_code = 2
 
 
 class LicenceError(ForgeError):
+    """A weight licence blocked the run. Exit code 3."""
     exit_code = 3
 
 
 class ChecksumError(ForgeError):
+    """A download hash did not match. Exit code 4."""
     exit_code = 4
 
 
 class DownloadError(ForgeError):
+    """A download failed. Exit code 5."""
     exit_code = 5
 
 
 class StageError(ForgeError):
+    """A pipeline stage failed. Exit code 6."""
     exit_code = 6
 
     def __init__(
@@ -50,10 +55,12 @@ class DiskShortError(ForgeError):
 
 
 class PlanError(ForgeError):
+    """The plan file is missing or invalid. Exit code 8."""
     exit_code = 8
 
 
 class ToolMissingError(ForgeError):
+    """A required binary or file is missing. Exit code 9."""
     exit_code = 9
 
 
