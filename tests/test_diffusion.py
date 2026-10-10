@@ -273,8 +273,10 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     paths = [line.strip() for line in begin.splitlines() if line.strip().startswith(prefixes)]
     assert paths == [
         "scripts/canvas_job.sh",
+        "scripts/canvas_job_d.sh",
         "src/voxprint_forge/diffusion",
         "plans/canvas-zimage-tiers-v1.toml",
+        "plans/canvas-qwen-image-2512-v1.toml",
         "templates/canvas_model_card.md.jinja",
         "docs/CANVAS.md",
     ]

@@ -84,7 +84,7 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 
 ## Canvas
 
-`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares private image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. See `docs/CANVAS.md`.
+`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares private image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. Part D is a separate entry, `scripts/canvas_job_d.sh` (`python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml`). See `docs/CANVAS.md`.
 
 Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 min. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running.
 
