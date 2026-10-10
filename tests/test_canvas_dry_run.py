@@ -327,7 +327,12 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
             sidecar = Path(str(shard) + ".sha256")
             assert sidecar.is_file()
             assert sidecar.read_text(encoding="utf-8").split()[0]
-        assert not (forge_out / "work" / "canvas-zimage-tiers-v1" / "upstream" / "base").exists()
+        work = forge_out / "work" / "canvas-zimage-tiers-v1"
+        assert not (work / "upstream" / "base").exists()
+        assert (work / "sources" / "turbo").is_dir()
+        assert (work / "sources" / "base").is_dir()
+        assert (work / "sources" / "edit").is_dir()
+        assert not (work / "sources" / "controlnet").exists()
 
         monkeypatch.setattr(publish, "HubRemote", FakeHub)
         code = main(

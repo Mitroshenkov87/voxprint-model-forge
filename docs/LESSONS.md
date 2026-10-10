@@ -22,6 +22,11 @@ The rental lost about 40 minutes to three startup bugs.
 - llama.cpp b11476 does not recognise the T-lite Qwen2 pre-tokenizer. Bootstrap patches `conversion/base.py` at build time. The digest of the pinned probe is `e9b7dbd66e0308c6e89983d5b6e1ca047106d862879a0fd33a12c8491b91ec5c` and the converter name is `qwen2`. A check that Hugging Face `encode` ids equal `llama-tokenize` ids belongs next to that patch; the ids are the input to the digest.
 - A failed model used to abort the rest and could still be followed by `ALL-DONE`. The summary is now one line per model (`READY`, `UPLOADED`, `STAGEFAIL <stage>`, `DEFERRED`) and `ALL-DONE` is printed only when every model finished. `forge status` is what Hardware Watchdog polls. Long stages write `~/forge-out/status.json` at least every 60 seconds.
 - Private Hub or Kaggle failure falls back to a Drive folder `Voxprint/model-forge/<date>/<model>` via rclone. The token stays in the environment.
+- Hugging Face git blobs have no LFS sha256. Files up to 64 MiB are hashed from the downloaded bytes.
+- Kaggle model slugs cannot contain dots. `t-lite-it-2.1` is `voxprint-t-lite-it-2-1` on Kaggle and keeps the dot on Hugging Face.
+- Union 2.1 lite is 3 control blocks. VideoX-Fun `config/z_image/z_image_control_2.1_lite.yaml` places them at `[0, 10, 20]`, with refiner blocks `[0, 1]`. The full 2.1 map is every even index from 0 through 28. The VM assumption matched that lite file.
+- `pgrep -f scripts/bootstrap.sh` also matched the tmux server command line. The guard now uses a live `bootstrap.lock` pid, or a python/bash process that is actually the job.
+- The base part used to delete its upstream tree at upload time. Shared sources stay until every `consumers` entry (including `qwen` and `bake-off`) has released.
 
 ## Dry run before a bundle
 

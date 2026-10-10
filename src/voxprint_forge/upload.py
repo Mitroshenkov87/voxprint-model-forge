@@ -9,13 +9,14 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 
 from voxprint_forge.errors import StageError, ToolMissingError, UsageError
 from voxprint_forge.hashing import sha256_file
@@ -28,6 +29,7 @@ except ImportError:
 
 DELAYS = (2, 4, 8, 16)
 FRAMEWORK = "gguf"
+_HF_GIT_SHA_LIMIT = 64 * 1024 * 1024
 _TARGET_NAMES = ("hf", "kaggle", "drive")
 
 
@@ -83,6 +85,11 @@ def kaggle_user() -> str:
 
 def repo_slug(model_id: str) -> str:
     return f"voxprint-{model_id}"
+
+
+def kaggle_model_slug(model_id: str) -> str:
+    """Kaggle slugs allow [a-z0-9-]. Hugging Face keeps the dotted repo name."""
+    return re.sub(r"[^a-z0-9]+", "-", repo_slug(model_id).lower()).strip("-")
 
 
 def variation_slug(tier: str, quant: str) -> str:
@@ -194,8 +201,9 @@ def publish_private(
         raise UsageError("publish_private needs hf, kaggle, or both", code="usage")
     user = hf_user() if want_hf else ""
     owner = kaggle_user() if want_kaggle else ""
-    slug = repo_slug(model_id)
-    repo_id = f"{user}/{slug}" if want_hf else ""
+    hf_slug = repo_slug(model_id)
+    slug = kaggle_model_slug(model_id)
+    repo_id = f"{user}/{hf_slug}" if want_hf else ""
     if want_hf:
         remote.hf_private_repo(repo_id)
     if want_kaggle:
@@ -332,6 +340,11 @@ def kaggle_argv() -> list[str]:
     found = shutil.which("kaggle")
     if found:
         return [found]
+    bindir = Path(sys.executable).resolve().parent
+    for name in ("kaggle", "kaggle.exe"):
+        candidate = bindir / name
+        if candidate.is_file():
+            return [str(candidate)]
     uvx = shutil.which("uvx")
     if uvx is None:
         raise ToolMissingError("kaggle CLI is not installed and uvx is missing", code="tool_missing")
@@ -412,7 +425,18 @@ class HubRemote:
         lfs = getattr(item, "lfs", None)
         sha = getattr(lfs, "sha256", None) if lfs is not None else None
         size = int(getattr(item, "size", 0) or 0)
+        if not sha and 0 < size <= _HF_GIT_SHA_LIMIT:
+            sha = self._hash_small_file(repo_id, name)
         return (str(sha) if sha else None), size
+
+    def _hash_small_file(self, repo_id: str, name: str) -> str:
+        """Git blobs have no LFS sha256. Hash the downloaded bytes instead."""
+        with tempfile.TemporaryDirectory(prefix="forge-hfstat-") as tmp:
+            try:
+                local = hf_hub_download(repo_id, name, token=self._hf_token, local_dir=tmp)
+            except Exception as exc:
+                raise StageError(scrub(str(exc)), code="upload_hf") from None
+            return sha256_file(Path(local))
 
     def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str:
         meta_path = folder / "model-metadata.json"

@@ -8,9 +8,10 @@ from voxprint_forge.diffusion.cardrender import CardContext, render_canvas_card,
 from voxprint_forge.diffusion.common import (
     Ctx,
     check_disk,
-    delete_intermediates,
+    finish_part,
     progress,
     run_stage,
+    shared_sources,
     source_dir,
     write_json,
     write_notice,
@@ -39,7 +40,9 @@ from voxprint_forge.errors import StageError
 
 def _fetch(ctx: Ctx) -> dict[str, object]:
     ctx.upstream.mkdir(parents=True, exist_ok=True)
-    fetch_sources(ctx.part.sources, ctx.upstream, ctx.token)
+    dest = shared_sources(ctx)
+    dest.mkdir(parents=True, exist_ok=True)
+    fetch_sources(ctx.part.sources, dest, ctx.token)
     return {"fetched": [source.id for source in ctx.part.sources]}
 
 
@@ -48,7 +51,7 @@ def _convert(ctx: Ctx) -> dict[str, object]:
     output = ctx.output
     output.mkdir(parents=True, exist_ok=True)
     write_notice(output)
-    link_or_copy(ctx.upstream / "upstream-sha256.json", output / "upstream-sha256.json")
+    link_or_copy(shared_sources(ctx) / "upstream-sha256.json", output / "upstream-sha256.json")
     shards = write_fp8_shards(edit / "transformer", output, EDIT_FP8_PREFIX, "edit_transformer")
     copy_config(edit / "transformer", output / EDIT_TRANSFORMER_CONFIG)
     write_fp8_file(edit / "text_encoder", output / EDIT_ENCODER_FP8, "edit_encoder")
@@ -159,7 +162,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
     variation = "24gb-fp8" if use_fp8 else "24gb-bf16"
     if not remote:
         rows = write_local_files(ctx.output, tiers, source.repo, source.revision)
-        delete_intermediates(ctx.upstream)
+        finish_part(ctx)
         return {"files": rows}
     records = publish_output(
         output=ctx.output,
@@ -173,7 +176,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         revision=source.revision,
         staging=ctx.upstream / "kaggle-staging",
     )
-    delete_intermediates(ctx.upstream)
+    finish_part(ctx)
     return {"files": records}
 
 

@@ -195,7 +195,7 @@ if ! install_torch 3.14; then
     install_torch 3.12
   fi
 fi
-uv pip install --python "$VENV" -e "$ROOT" hf_transfer \
+uv pip install --python "$VENV" -e "$ROOT" hf_transfer "kaggle>=1.6" \
   --extra-index-url https://download.pytorch.org/whl/cu130
 
 "$VENV/bin/forge" verify-logins

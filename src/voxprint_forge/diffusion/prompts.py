@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 BASE_PROMPTS: tuple[str, ...] = (
     "A quiet coastal cliff at dawn, pale water and layered rock, no people.",
     "A red desert mesa under a high white cloud, late afternoon light.",
@@ -99,3 +102,11 @@ BASE_SEEDS: tuple[int, ...] = (0, 1)
 CONTROL_SEEDS: tuple[int, ...] = (0, 1)
 CONTROL_TYPES: tuple[str, ...] = ("canny", "depth", "pose")
 EDIT_SEEDS: tuple[int, ...] = (0, 1)
+
+
+def edit_budget(home: Path | None = None) -> tuple[tuple[tuple[str, int], ...], tuple[int, ...]]:
+    """Trim Edit eval to 8 pairs and seed 0 when ~/forge-out/EDIT_TRIM exists."""
+    root = home if home is not None else Path(os.path.expanduser("~"))
+    if (root / "forge-out" / "EDIT_TRIM").exists():
+        return EDIT_PAIRS[:8], (0,)
+    return EDIT_PAIRS, EDIT_SEEDS

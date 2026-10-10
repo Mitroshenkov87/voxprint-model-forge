@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -12,7 +13,9 @@ from collections.abc import Callable
 from voxprint_forge.errors import UsageError
 
 SshRun = Callable[[list[str]], str]
+SshStdin = Callable[[list[str], str], str]
 ForgeRun = Callable[[list[str], dict[str, str]], dict[str, object]]
+_UPLOAD_ENV = ("HF_TOKEN", "KAGGLE_API_TOKEN", "FORGE_DRIVE_TOKEN", "FORGE_DRIVE_SERVICE_ACCOUNT")
 
 
 def forge_args(command: str, *, plan: str, root: str, forge_out: str, model: str = "") -> list[str]:
@@ -129,6 +132,61 @@ def ssh_status(
     if not isinstance(loaded, dict):
         raise UsageError("forge status --json did not print an object", code="usage")
     return loaded
+
+
+def _ssh_base(host: str, user: str, key: str) -> list[str]:
+    if not host.strip() or not user.strip() or not key.strip():
+        raise UsageError("host, user, and key are required", code="usage")
+    return [
+        "ssh",
+        "-i",
+        key,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        f"{user}@{host}",
+    ]
+
+
+def _upload_script(command: str, names: tuple[str, ...]) -> str:
+    lines = ["set +x", "set +e"]
+    for name in names:
+        lines.append(f"IFS= read -r {name}_B64")
+        lines.append(f"export {name}=$(printf '%s' \"${name}_B64\" | base64 -d)")
+    lines.append(command)
+    lines.append("ec=$?")
+    if names:
+        lines.append("unset " + " ".join(names))
+    lines.append("exit $ec")
+    return "\n".join(lines)
+
+
+def ssh_upload(
+    host: str,
+    user: str,
+    key: str,
+    command: str,
+    secrets: dict[str, str],
+    *,
+    run: SshStdin | None = None,
+) -> str:
+    """Run one remote upload. Tokens travel on stdin, are exported for that command, then unset.
+
+    The token values are not placed in the ssh argument list.
+    """
+    names = tuple(name for name in _UPLOAD_ENV if secrets.get(name, "").strip())
+    script = _upload_script(command, names)
+    argv = [*_ssh_base(host, user, key), script]
+    payload = "\n".join(base64.b64encode(secrets[name].encode()).decode() for name in names)
+    if payload:
+        payload += "\n"
+    if run is not None:
+        return run(argv, payload)
+    done = subprocess.run(argv, check=False, capture_output=True, text=True, input=payload)
+    if done.returncode != 0:
+        raise UsageError((done.stderr or done.stdout or "ssh failed")[-500:], code="ssh")
+    return done.stdout
 
 
 def state_badge(state: str, error: str = "") -> tuple[str, bool]:

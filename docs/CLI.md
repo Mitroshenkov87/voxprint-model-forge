@@ -45,7 +45,9 @@ pip install -e ".[dev]"
 
 `forge status` reads `~/forge-out/status.json`. Each model or canvas part has `stage`, `pct`, `eta_min`, `last_heartbeat`, `pid`, `state`, and `error`. A `RUNNING` or `READY` item whose heartbeat is older than 180 seconds, or whose pid is dead, is reported as `stalled`.
 
-`forge verify-logins` checks `HF_TOKEN` with the Hub API and `KAGGLE_API_TOKEN` with `kaggle` (or `uvx kaggle`) 2.2 or newer. It does not write a token file.
+`forge verify-logins` checks `HF_TOKEN` with the Hub API and `KAGGLE_API_TOKEN` with `kaggle` (or the venv `kaggle`, or `uvx kaggle`) 2.2 or newer. It does not write a token file.
+
+`forge accounts add|list|test|remove --json` stores Hugging Face, Kaggle (KGAT), and Google Drive credentials in the OS keyring (`keyring`: Windows Credential Manager, Linux Secret Service). Nothing is written to a token file. `add --target hf --login browser` uses the Hugging Face device-code flow. `add --target drive --login browser` runs `rclone authorize drive` and keeps the token JSON in the keyring. `list` and `test` return the account name, not the token. `test` checks the connection. A VM upload passes those tokens on ssh stdin for that command only, then the remote shell unsets them.
 
 `forge fetch|abliterate|quantize|fit|eval|card|publish-prep|upload --model ID` runs through that stage. Later stages resume earlier markers under `~/forge-out/stages/<id>/`. `fit` accepts repeatable `--budget-gb`.
 
@@ -68,7 +70,7 @@ forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all
 Uploads go to private destinations only.
 
 - Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=True`. Files are the selected GGUF for each tier, the imatrix, `README.md`, and the `.sha256` sidecars. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
-- Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. The CLI is `kaggle` or `uvx kaggle`, version 2.2 or newer. The API token is passed only in the child environment. A temporary config directory is deleted after each call.
+- Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. Slugs use `[a-z0-9-]` (`t-lite-it-2.1` becomes `voxprint-t-lite-it-2-1`). Hugging Face keeps the dotted name. Bootstrap installs the `kaggle` CLI into the forge venv; otherwise the CLI is `kaggle` on `PATH` or `uvx kaggle`, version 2.2 or newer. The API token is passed only in the child environment. A temporary config directory is deleted after each call.
 
 Nothing is made public. If a remote repo is public, the stage stops and does not upload. After each upload the remote sha256 and size must match the local file. The client retries with backoff (2s, 4s, 8s, 16s). The `upload` marker is written only after both sides match. Local deliverables stay on disk until that match. F16 and safetensors intermediates are removed once the quants and the imatrix exist.
 

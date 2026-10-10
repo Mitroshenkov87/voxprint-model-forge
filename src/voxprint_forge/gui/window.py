@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QHBoxLayout,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from voxprint_forge.accounts import LiveAccounts
 from voxprint_forge.gui.backdrop import apply_backdrop
 from voxprint_forge.gui.client import (
     ForgeRun,
@@ -31,6 +34,7 @@ from voxprint_forge.gui.client import (
     forge_args,
     format_checks,
     ssh_status,
+    ssh_upload,
     state_badge,
     status_items,
 )
@@ -44,6 +48,7 @@ from voxprint_forge.preflight import memory_status
 from voxprint_forge.version import version_line
 
 SshPoll = Callable[[str, str, str, str], dict[str, object]]
+VmUpload = Callable[[str, str, str, str, dict[str, str]], str]
 _COLUMNS = ("Model", "Stage", "Progress", "Last activity", "State", "HF", "Kaggle", "Drive", "Retry")
 _UPLOAD_COLUMNS = (("hf", 5), ("kaggle", 6), ("drive", 7))
 
@@ -56,11 +61,15 @@ class MainWindow(QMainWindow):
         ssh: SshPoll | None = None,
         store: SecretStore | None = None,
         probes: GaugeProbes | None = None,
+        accounts: LiveAccounts | None = None,
+        uploader: VmUpload | None = None,
     ) -> None:
         super().__init__()
         self.runner = runner or SubprocessForge()
         self.ssh = ssh or ssh_status
         self.store = store or open_store()
+        self.accounts = accounts or LiveAccounts(self.store)
+        self.uploader = uploader or ssh_upload
         self._remote = False
         self._about: QDialog | None = None
         self.setWindowTitle("Model Forge")
@@ -73,6 +82,7 @@ class MainWindow(QMainWindow):
             vram=vram_status,
         )
         self._load_remote_fields()
+        self._paint_accounts()
         self.apply_theme()
         self._timer = QTimer(self)
         self._timer.setInterval(2000)
@@ -189,30 +199,56 @@ class MainWindow(QMainWindow):
         self.remote_out_edit.setPlaceholderText("remote forge-out")
         self.attach_button = QPushButton("Attach to VM")
         self.attach_button.clicked.connect(self.attach_remote)
+        self.upload_vm_button = QPushButton("Upload on VM")
+        self.upload_vm_button.setToolTip("Pass keyring tokens only for this upload, then unset them on the VM")
+        self.upload_vm_button.clicked.connect(self.upload_on_vm)
         remote.addWidget(QLabel("Remote"))
         remote.addWidget(self.host_edit)
         remote.addWidget(self.user_edit)
         remote.addWidget(self.key_edit, 2)
         remote.addWidget(self.remote_out_edit)
         remote.addWidget(self.attach_button)
+        remote.addWidget(self.upload_vm_button)
         layout.addLayout(remote)
 
-        tokens = QHBoxLayout()
+        layout.addWidget(QLabel("Accounts"))
         self.token_hf = QLineEdit()
         self.token_kaggle = QLineEdit()
         self.token_drive = QLineEdit()
-        for field, placeholder in (
-            (self.token_hf, "HF token"),
-            (self.token_kaggle, "Kaggle token"),
-            (self.token_drive, "Drive token"),
-        ):
-            field.setPlaceholderText(placeholder)
-            field.setEchoMode(QLineEdit.EchoMode.Password)
-            tokens.addWidget(field)
-        store_button = QPushButton("Store tokens")
-        store_button.clicked.connect(self.store_tokens)
-        tokens.addWidget(store_button)
-        layout.addLayout(tokens)
+        self.hf_account = QLabel("not connected")
+        self.kaggle_account = QLabel("not connected")
+        self.drive_account = QLabel("not connected")
+        self._account_labels = {"hf": self.hf_account, "kaggle": self.kaggle_account, "drive": self.drive_account}
+        layout.addLayout(
+            self._account_row(
+                "Hugging Face",
+                self.hf_account,
+                self.token_hf,
+                "HF token",
+                "hf",
+                browser=True,
+            )
+        )
+        layout.addLayout(
+            self._account_row(
+                "Kaggle",
+                self.kaggle_account,
+                self.token_kaggle,
+                "Kaggle KGAT token",
+                "kaggle",
+                browser=False,
+            )
+        )
+        layout.addLayout(
+            self._account_row(
+                "Google Drive",
+                self.drive_account,
+                self.token_drive,
+                "rclone token JSON",
+                "drive",
+                browser=True,
+            )
+        )
 
         self.status_label = QLabel("This machine")
         self.status_label.setObjectName("subtitle")
@@ -285,18 +321,108 @@ class MainWindow(QMainWindow):
         self.runner(self._args(command, model_id), self._env())
         self.refresh_status()
 
+    def _account_row(
+        self,
+        title: str,
+        name: QLabel,
+        field: QLineEdit,
+        placeholder: str,
+        target: str,
+        *,
+        browser: bool,
+    ) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addWidget(QLabel(title))
+        name.setObjectName(f"account-{target}")
+        row.addWidget(name)
+        field.setPlaceholderText(placeholder)
+        field.setEchoMode(QLineEdit.EchoMode.Password)
+        row.addWidget(field, 1)
+        save = QPushButton("Save token")
+        save.clicked.connect(self.store_tokens)
+        row.addWidget(save)
+        if browser:
+            login = QPushButton("Browser login")
+            login.clicked.connect(lambda _checked=False, chosen=target: self.browser_login(chosen))
+            row.addWidget(login)
+        test = QPushButton("Test connection")
+        test.clicked.connect(lambda _checked=False, chosen=target: self.test_connection(chosen))
+        row.addWidget(test)
+        return row
+
+    def _paint_accounts(self) -> None:
+        for row in self.accounts.list_accounts():
+            target = str(row.get("target", ""))
+            label = self._account_labels.get(target)
+            if label is None:
+                continue
+            if row.get("connected"):
+                label.setText(str(row.get("name") or "connected"))
+            else:
+                label.setText("not connected")
+
     def store_tokens(self) -> None:
         fields = (
-            ("HF_TOKEN", self.token_hf),
-            ("KAGGLE_API_TOKEN", self.token_kaggle),
-            ("FORGE_DRIVE_TOKEN", self.token_drive),
+            ("hf", self.token_hf),
+            ("kaggle", self.token_kaggle),
+            ("drive", self.token_drive),
         )
-        for name, field in fields:
+        for target, field in fields:
             value = field.text().strip()
             if value:
-                self.store.set(name, value)
+                self.accounts.add_token(target, value)
             field.clear()
+        self._paint_accounts()
         self.status_label.setText("Tokens are in the OS keyring.")
+
+    def test_connection(self, target: str) -> None:
+        try:
+            row = self.accounts.test(target)
+        except Exception as exc:
+            self.status_label.setText(str(exc))
+            return
+        self._paint_accounts()
+        self.status_label.setText(f"{target} connected as {row.get('name', '')}")
+
+    def browser_login(self, target: str) -> None:
+        def on_code(uri: str, code: str) -> None:
+            self.status_label.setText(f"Open {uri} and enter {code}")
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+
+        try:
+            row = self.accounts.login_browser(target, on_code)
+        except Exception as exc:
+            self.status_label.setText(str(exc))
+            return
+        self._paint_accounts()
+        self.status_label.setText(f"{target} connected as {row.get('name', '')}")
+
+    def upload_on_vm(self) -> None:
+        row = self.table.currentRow()
+        item = self.table.item(row, 0) if row >= 0 else None
+        if item is None or not item.text().strip():
+            self.status_label.setText("Select a model to upload on the VM.")
+            return
+        host = self.store.get("ssh_host").strip()
+        user = self.store.get("ssh_user").strip()
+        key = self.store.get("ssh_key").strip()
+        if not host or not user or not key:
+            self.status_label.setText("Host, user, and key are required to upload.")
+            return
+        model = item.text().strip()
+        plan = shlex.quote(self.plan_edit.text().strip() or "plans/plan.toml")
+        out = shlex.quote(self.remote_out_edit.text().strip() or str(Path.home() / "forge-out"))
+        command = f"forge --json --plan {plan} --forge-out {out} upload --model {shlex.quote(model)}"
+        secret_names = ("HF_TOKEN", "KAGGLE_API_TOKEN", "FORGE_DRIVE_TOKEN")
+        secrets = {name: self.store.get(name) for name in secret_names if self.store.get(name).strip()}
+        try:
+            self.uploader(host, user, key, command, secrets)
+        except Exception as exc:
+            self.status_label.setText(str(exc))
+            return
+        self.status_label.setText("VM upload finished. Remote tokens were unset.")
 
     def attach_remote(self) -> None:
         host = self.host_edit.text().strip()

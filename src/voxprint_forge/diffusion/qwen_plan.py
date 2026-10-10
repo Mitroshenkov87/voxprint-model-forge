@@ -30,6 +30,8 @@ class QwenPlan:
     edit_revision: str
     edit_encoder_fp8: str
     encoder_pins: dict[str, str]
+    consumes_plan: str = ""
+    consumes_sources: tuple[str, ...] = ()
 
 
 def _require_str(row: dict[str, object], key: str, where: str) -> str:
@@ -106,6 +108,17 @@ def load_qwen_plan(path: Path) -> QwenPlan:
     source_row = _table(raw, "source")
     edit = _table(raw, "edit")
     pins = _pins(_table(raw, "encoder_pins"))
+    consumes_raw = raw.get("consumes")
+    consumes_plan = ""
+    consumes_sources: tuple[str, ...] = ()
+    if consumes_raw is not None:
+        if not isinstance(consumes_raw, dict):
+            raise PlanError("qwen plan [consumes] is not a table", code="plan_shape")
+        consumes_plan = _require_str(consumes_raw, "plan", "consumes")
+        listed = consumes_raw.get("sources")
+        if not isinstance(listed, list) or not listed or not all(isinstance(item, str) and item for item in listed):
+            raise PlanError("consumes sources must be a list of source ids", code="plan_shape")
+        consumes_sources = tuple(listed)
     int4 = _require_str(run, "int4", "run")
     if int4 != INT4_MODE:
         raise PlanError(
@@ -130,4 +143,6 @@ def load_qwen_plan(path: Path) -> QwenPlan:
         edit_revision=_revision(_require_str(edit, "revision", "edit"), "edit"),
         edit_encoder_fp8=_require_str(edit, "encoder_fp8", "edit"),
         encoder_pins=pins,
+        consumes_plan=consumes_plan,
+        consumes_sources=consumes_sources,
     )

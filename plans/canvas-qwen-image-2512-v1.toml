@@ -20,6 +20,10 @@ output_name = "Qwen--Qwen-Image-2512-voxprint"
 hf_repo = "Mitroshenkov87/voxprint-mirror-qwen-image-2512"
 kaggle_slug = "voxprint-mirror-qwen-image-2512"
 
+[consumes]
+plan = "plans/canvas-zimage-tiers-v1.toml"
+sources = ["turbo", "base", "edit"]
+
 [edit]
 job_id = "canvas-zimage-tiers-v1"
 output_name = "Qwen--Qwen-Image-Edit-2511-voxprint"

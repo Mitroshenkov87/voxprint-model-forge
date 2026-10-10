@@ -79,11 +79,34 @@ def download_source(source: Source, dest: Path, token: str | None) -> dict[str, 
     return tree_hashes(dest)
 
 
+def _existing_record(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(key): value for key, value in loaded.items()}
+
+
 def fetch_sources(sources: tuple[Source, ...], dest: Path, token: str | None) -> dict[str, object]:
-    record: dict[str, object] = {}
+    path = dest / "upstream-sha256.json"
+    record = _existing_record(path)
     for source in sources:
+        target = dest / source.id
+        if target.is_dir() and any(target.iterdir()):
+            if source.id not in record:
+                record[source.id] = {
+                    "repo": source.repo,
+                    "revision": source.revision,
+                    "licence": source.licence,
+                    "files": tree_hashes(target),
+                }
+            continue
         tag = assert_apache(source.repo, source.revision, token)
-        hashes = download_source(source, dest / source.id, token)
+        hashes = download_source(source, target, token)
         record[source.id] = {
             "repo": source.repo,
             "revision": source.revision,
