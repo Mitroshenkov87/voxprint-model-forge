@@ -325,6 +325,7 @@ def _upload(
         variations={variation: [*names, *extra]},
         repo=source.repo,
         revision=source.revision,
+        licence=source.licence,
         staging=ctx.upstream_root / "kaggle-staging",
         on_verified=lambda target: _on_qwen_verified(ctx, target),
     )
@@ -776,17 +777,21 @@ def _release_encoder(ctx: QwenCtx, *, explicit: bool) -> dict[str, object] | Non
         stage.mkdir(parents=True)
         link_or_copy(fp8, stage / fp8.name)
         source = ctx.plan.source
+        readme = ctx.output / "README.md"
+        card_text = readme.read_text(encoding="utf-8") if readme.is_file() else ""
         records = publish_output(
             output=stage,
             hf_repo=ctx.plan.hf_repo,
             kaggle_slug=ctx.plan.kaggle_slug,
             title="Voxprint Qwen-Image-2512 text encoder",
-            description="Private Voxprint FP8 text encoder. Apache-2.0. A reused encoder is not copied.",
+            description="Voxprint FP8 text encoder. Apache-2.0. A reused encoder is not copied.",
             tiers={fp8.name: ("24gb", 24, source.repo, source.revision)},
             variations={"24gb-fp8": [fp8.name]},
             repo=source.repo,
             revision=source.revision,
+            licence=source.licence,
             staging=stage / "kaggle-staging",
+            card_text=card_text,
         )
         shutil.rmtree(stage, ignore_errors=True)
     write_marker(done_path, {"stage": "encoder-upload", "files": records, "copied_weights": False})

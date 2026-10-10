@@ -48,6 +48,14 @@ def assert_repo_allowed(repo: str) -> None:
         raise LicenceError(f"{repo} is excluded", code="excluded_repo")
 
 
+def _noncommercial(tag: str) -> bool:
+    """True when the tag is a non-commercial licence, including an ``nc`` token."""
+    folded = tag.replace("_", "-")
+    if "noncommercial" in folded.replace("-", ""):
+        return True
+    return "nc" in [part for part in folded.split("-") if part]
+
+
 def decide_licence(card_licence: str | None, *, repo: str = "") -> str:
     """Return the SPDX id, or raise LicenceError."""
     if repo:
@@ -58,6 +66,11 @@ def decide_licence(card_licence: str | None, *, repo: str = "") -> str:
             code="untagged",
         )
     tag = str(card_licence).strip().lower()
+    if _noncommercial(tag):
+        raise LicenceError(
+            f"{repo or 'model'} licence tag {tag!r} is non-commercial; refusing",
+            code="non_commercial",
+        )
     if tag not in PERMISSIVE:
         raise LicenceError(
             f"{repo or 'model'} licence tag {tag!r} is not permissive",

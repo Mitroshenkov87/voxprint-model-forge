@@ -3,35 +3,16 @@
 # Tokens are required here. The prepare step does not have them.
 # This is the same work as `forge canvas upload PLAN --parts ...`.
 # The diffusion module is the entry so an overlay can upload without replacing the LLM cli.
+# This script does not enable command tracing and does not unset tokens.
+# FORGE_HOST_KIND=local (default) keeps tokens in the process only.
+# FORGE_HOST_KIND=rented-vm logs in once and leaves the logins for the rental.
 set +x
 set -euo pipefail
 
 export GIT_TERMINAL_PROMPT=0
+export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"
 FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"
 export HF_HOME="${HF_HOME:-$FORGE_OUT/hf-home}"
-
-cleanup_secrets() {
-  set +x
-  local home="${HOME:-/root}"
-  rm -f "$home/.cache/huggingface/token" "$home/.huggingface/token" || true
-  rm -rf "$home/.cache/huggingface/stored_tokens" "$home/.kaggle" "$home/.cache/kaggle" || true
-  if [[ -n "${HF_HOME:-}" ]]; then
-    rm -f "$HF_HOME/token" || true
-    rm -rf "$HF_HOME/stored_tokens" || true
-  fi
-  if [[ -n "${FORGE_OUT:-}" ]]; then
-    rm -f "$FORGE_OUT/hf-home/token" || true
-    rm -rf "$FORGE_OUT/hf-home/stored_tokens" || true
-  fi
-  local dir
-  for dir in "$home/.cache" "$home/.config" /tmp; do
-    if [[ -d "$dir" ]]; then
-      find "$dir" -type f \( -name 'kaggle.json' -o -name 'access_token' \) -delete 2>/dev/null || true
-    fi
-  done
-  unset HF_TOKEN KAGGLE_API_TOKEN
-}
-trap cleanup_secrets EXIT INT TERM
 
 prompt_secret() {
   local name="$1"
@@ -95,6 +76,9 @@ export PATH="${HOME}/.local/bin:${PATH}"
 if command -v uv >/dev/null 2>&1; then
   uv pip install --python "$VENV" -e "$ROOT" --no-deps
 fi
+# shellcheck source=scripts/vm_logins.sh
+source "$ROOT/scripts/vm_logins.sh"
+persist_rented_vm_logins
 
 RUN_AC=0
 RUN_DE=0

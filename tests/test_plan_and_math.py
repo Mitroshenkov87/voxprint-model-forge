@@ -107,6 +107,11 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "set +x" in text
     assert "huggingface-cli login" not in text
     assert "hf auth login" not in text
+    assert "cleanup_secrets" not in text
+    assert "unset HF_TOKEN" not in text
+    assert 'export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"' in text
+    assert "persist_rented_vm_logins" in text
+    assert "release_bootstrap_lock" in text
     assert "GH_TOKEN" not in text
     assert "github.com" not in text
     for banned in ("git clone", "git fetch", "git checkout", "git archive", "git push", "git -c"):
@@ -116,11 +121,6 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "KAGGLE_API_TOKEN" in text
     assert "CMAKE_CUDA_ARCHITECTURES" in text
     assert "progress.log" in text
-    assert "cleanup_secrets" in text
-    assert "stored_tokens" in text
-    assert ".kaggle" in text
-    assert "access_token" in text
-    assert "unset HF_TOKEN" in text
     assert "Ubuntu 24.04" in text
     assert "verify-logins" in text
     assert "apt-get install -y cmake build-essential ninja-build" in text
@@ -129,7 +129,15 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "non-interactive" in text
     assert "preflight cmake ninja nvcc ok" in text
     assert "assert_calibration" in text
+    logins = (ROOT / "scripts/vm_logins.sh").read_text(encoding="utf-8")
+    assert '"$hf_bin" auth login --token "$HF_TOKEN"' in logins
+    assert "access_token" in logins
+    assert "stored_tokens" not in logins
+    assert '[[ "${FORGE_HOST_KIND:-local}" != "rented-vm" ]]' in logins
     vm_run = (ROOT / "scripts/vm_run.sh").read_text(encoding="utf-8")
+    assert "unset HF_TOKEN" not in vm_run
+    assert "cleanup_secrets" not in vm_run
+    assert 'export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"' in vm_run
     assert '"$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" run-all' in vm_run
     assert "run-all --plan" not in vm_run
     plan_text = (ROOT / "plans/plan.toml").read_text(encoding="utf-8")
@@ -150,7 +158,7 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "Ubuntu 24.04" in vm
     assert "GH_TOKEN" not in vm
     cli = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
-    assert "private=True" in cli
+    assert "private=False" in cli
     assert "isPrivate" in cli
     assert "base_model_relation" in cli
 

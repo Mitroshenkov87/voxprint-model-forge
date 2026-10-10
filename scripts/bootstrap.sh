@@ -1,36 +1,23 @@
 #!/usr/bin/env bash
 # One command on an Ubuntu 24.04 A100 box, from a bundle with no .git directory.
-# Tokens stay in the process environment. This script does not enable command tracing.
+# This script does not enable command tracing and does not unset tokens.
+# FORGE_HOST_KIND=local (default) keeps tokens in the process only.
+# FORGE_HOST_KIND=rented-vm logs in once after the venv exists and leaves the logins.
 set +x
 set -euo pipefail
 
 export GIT_TERMINAL_PROMPT=0
+export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"
 FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"
 export HF_HOME="${HF_HOME:-$FORGE_OUT/hf-home}"
 
-cleanup_secrets() {
+release_bootstrap_lock() {
   set +x
-  local home="${HOME:-/root}"
-  rm -f "$home/.cache/huggingface/token" "$home/.huggingface/token" || true
-  rm -rf "$home/.cache/huggingface/stored_tokens" "$home/.kaggle" "$home/.cache/kaggle" || true
-  if [[ -n "${HF_HOME:-}" ]]; then
-    rm -f "$HF_HOME/token" || true
-    rm -rf "$HF_HOME/stored_tokens" || true
-  fi
   if [[ -n "${FORGE_OUT:-}" ]]; then
-    rm -f "$FORGE_OUT/hf-home/token" || true
-    rm -rf "$FORGE_OUT/hf-home/stored_tokens" || true
     rm -f "$FORGE_OUT/bootstrap.lock" || true
   fi
-  local dir
-  for dir in "$home/.cache" "$home/.config" /tmp; do
-    if [[ -d "$dir" ]]; then
-      find "$dir" -type f \( -name 'kaggle.json' -o -name 'access_token' \) -delete 2>/dev/null || true
-    fi
-  done
-  unset HF_TOKEN KAGGLE_API_TOKEN
 }
-trap cleanup_secrets EXIT INT TERM
+trap release_bootstrap_lock EXIT INT TERM
 
 # A tmux pty can exist before anyone attaches, and /dev/tty can be readable
 # when stdin is not a terminal. Prompt only for a real interactive stdin.
@@ -198,6 +185,9 @@ fi
 uv pip install --python "$VENV" -e "$ROOT" hf_transfer "kaggle>=1.6" \
   --extra-index-url https://download.pytorch.org/whl/cu130
 
+# shellcheck source=scripts/vm_logins.sh
+source "$ROOT/scripts/vm_logins.sh"
+persist_rented_vm_logins
 "$VENV/bin/forge" verify-logins
 progress_line bootstrap install "$(( FORGE_BUILD_MIN * 40 / FORGE_TOTAL_MIN ))" "$(( FORGE_TOTAL_MIN - FORGE_BUILD_MIN * 40 / 100 ))"
 

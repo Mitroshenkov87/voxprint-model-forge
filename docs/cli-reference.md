@@ -24,7 +24,8 @@ positional arguments:
     eval                Record perplexity, refusal rate, and prose samples.
     card                Render the model card.
     publish-prep        Write the registry draft.
-    upload              Upload private files and verify sha256 and size.
+    upload              Upload files and verify sha256 and size. Hub repos are public.
+                        Kaggle stays private.
     fit                 Measure quants and record the VRAM/RAM split for each tier.
     canvas              Prepare canvas image tiers.
 

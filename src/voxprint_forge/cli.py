@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
         "eval": "Record perplexity, refusal rate, and prose samples.",
         "card": "Render the model card.",
         "publish-prep": "Write the registry draft.",
-        "upload": "Upload private files and verify sha256 and size.",
+        "upload": "Upload files and verify sha256 and size. Hub repos are public. Kaggle stays private.",
     }
     for name in ("fetch", "abliterate", "quantize", "eval", "card", "publish-prep", "upload"):
         command = sub.add_parser(name, help=stage_help[name])

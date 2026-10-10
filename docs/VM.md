@@ -26,10 +26,17 @@ cd voxprint-model-forge
 export HF_TOKEN=...
 export KAGGLE_API_TOKEN=...
 export KAGGLE_USER=mitroshenkov87
+export FORGE_HOST_KIND=rented-vm
 tmux new -s forge 'bash scripts/bootstrap.sh'
 ```
 
-`HF_USER` defaults to `Mitroshenkov87`. Pass the tokens in the environment over SSH. Do not write them to disk. A GUI or `ssh` upload sends the keyring tokens on stdin for that upload command only, and the remote shell unsets them before it exits. Bootstrap installs the `kaggle` CLI into `~/forge-out/venv`. Edit quality uses 8 pairs and seed 0 when `~/forge-out/EDIT_TRIM` exists. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, bootstrap exits 2 and does not prompt. A real interactive stdin still prompts once with `read -s` on `/dev/tty`. That value stays in the process only. `set +x` stays in force around the prompt. Logs go through `scripts/logscrub.py`. On EXIT, INT, and TERM the script deletes `~/.cache/huggingface/token`, `~/.cache/huggingface/stored_tokens`, `~/.kaggle/`, and any `kaggle.json` or `access_token` file it finds, then unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
+`HF_USER` defaults to `Mitroshenkov87`. `FORGE_HOST_KIND` is `local` unless you set `rented-vm`.
+
+On a disposable rented VM, export `FORGE_HOST_KIND=rented-vm` before bootstrap or a canvas script. After the venv exists the script logs in once: `hf auth login --token` from `HF_TOKEN`, and the Kaggle token written to `~/.kaggle/access_token` (mode 600). Those logins stay for the whole rental. The VM scripts do not remove token files on exit and do not clear the two token variables. `set +x` stays in force around the prompt and the login. Logs go through `scripts/logscrub.py`, so a token value that reaches a log line is replaced.
+
+On the operator's own machine (`FORGE_HOST_KIND=local`, the default) the GUI and `accounts` keep credentials in the OS keyring. A GUI or `ssh` upload sends the keyring tokens on stdin for that one command, and that remote shell clears them before it exits. The local CLI still passes the Kaggle token only in a child environment and deletes that temporary config directory after each call. Local mode does not call `hf auth login` or `huggingface-cli login`.
+
+Bootstrap installs the `kaggle` CLI into `~/forge-out/venv`. Edit quality uses 8 pairs and seed 0 when `~/forge-out/EDIT_TRIM` exists. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, bootstrap exits 2 and does not prompt. A real interactive stdin still prompts once with `read -s` on `/dev/tty`.
 
 Re-attach: `tmux attach -t forge`.
 
@@ -52,12 +59,12 @@ Bootstrap prints those two paths. There is no push from the VM.
 2. Require `HF_TOKEN` and `KAGGLE_API_TOKEN` (prompt only when stdin is a terminal), default `HF_USER` to `Mitroshenkov87`, then check `nvidia-smi`. Preflight then requires `cmake`, `ninja`, and `nvcc` on `PATH`, and that the calibration file tokenises to at least `max(2×ctx, ctx×chunks)` tokens. The file is fetched from the pinned gist when the tree does not already contain a copy with the pinned sha256.
 3. Print the plan estimates with system Python (no torch import).
 4. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
-5. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
+5. When `FORGE_HOST_KIND=rented-vm`, log in once with `hf auth login --token` and write `~/.kaggle/access_token`, then `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download. Local mode skips that login and only runs `forge verify-logins`.
 6. Register the T-lite-it-2.1 Qwen2 pre-tokenizer on the bundled llama.cpp tree, then build with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`. The registration is `python -m voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"`. It inserts sha256 `e9b7dbd66e0308c6e89983d5b6e1ca047106d862879a0fd33a12c8491b91ec5c` as `qwen2` after the Kimi-K2 entry in `conversion/base.py` at commit `98819068`. The probe text is `src/voxprint_forge/data/llama_b11476_chktxt.txt`. Applying the patch twice is a no-op. `FORGE_PYTHON` is the forge venv interpreter, and `convert_hf_to_gguf.py` uses that interpreter.
 7. `scripts/vm_run.sh` runs `forge preflight` and then `forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all`. Global flags precede the subcommand. `FORGE_JOBS` defaults to 2. Each model uploads when it is READY. If Hugging Face and Kaggle fail, rclone copies the files to `Voxprint/model-forge/<date>/<model>` and checks sha256. A failed model is `STAGEFAIL <stage>`; the others continue. The scripts print `ALL-DONE` only after a zero exit.
 8. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file, and print the manifest paths to copy back. `ALL-DONE` is printed only when that run succeeded.
 
-Copy results off the box with `scp` or `rsync` as a second copy. The private Hub and Kaggle uploads are the primary copy.
+Copy results off the box with `scp` or `rsync` as a second copy. The public Hub upload and the private Kaggle upload are the primary copy.
 
 ## Order and time
 
@@ -100,17 +107,17 @@ Gemma 24 GB reuses `gemma-4-31b-abliterated-Q4_K_M.gguf` (sha256 `380f2f50…`, 
 
 T-lite and T-pro are ablated here (difference of means, then `W := W - r r^T W` on the writing matrices). Both tiers are our quants. Heretic is not imported or invoked. The layer offload path remains; on this GPU a 24–33B bf16 model can stay resident when the weights plus 6 GB fit in free VRAM.
 
-F16 and safetensors intermediates are deleted per model after the quants and the imatrix exist. Selected GGUFs, the imatrix, the card, and the sha256 files stay until both private uploads verify.
+F16 and safetensors intermediates are deleted per model after the quants and the imatrix exist. Selected GGUFs, the imatrix, the card, and the sha256 files stay until the public Hub upload and the private Kaggle upload verify.
 
-## Private upload
+## Upload
 
-`artifact_host` in the plan is empty. There is no public publish.
+`artifact_host` in the plan is empty. Hugging Face repos are created public (`private=False`, with no forced re-privatize) because the private storage limit was hit. Kaggle stays private. Before the Hub create, the licence must be Apache-2.0, MIT, or another permissive tag. A non-commercial tag is refused, and the card must be complete.
 
 Right after each model, the `upload` stage pushes the finished GGUFs, the imatrix, the model card, and the sha256 sidecars to:
 
-- a private Hugging Face model repo under `HF_USER`
+- a public Hugging Face model repo under `HF_USER`
 - a private Kaggle model owned by `KAGGLE_USER`, one variation per tier, framework `gguf`
 
 Logins are verified before the build. A remote sha256 or size mismatch retries with backoff and does not mark the stage done. The summary lists each file with its sha256 and both URLs. `~/forge-out/manifests/<date>-a100.json` and the MODELS snippet are the failover list: Hugging Face, Kaggle, and a torrent placeholder. Copy them back; the VM does not push.
 
-The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`license`, `base_model`, `base_model_relation: quantized`, tags, `language`, `pipeline_tag`). `base_model` is the abliterated upstream for Huihui and Gemma, and the T-Bank repo for T-lite and T-pro. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then a short "Made for Voxprint AI Media Suite" section that links Plotweaver and records the 16 GB and 24 GB tiers with `min_vram_gb`. The Apache-2.0 text and a modification notice sit above that section.
+The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`license`, `base_model`, `base_model_relation: quantized`, tags, `language`, `pipeline_tag`). `base_model` is the abliterated upstream for Huihui and Gemma, and the T-Bank repo for T-lite and T-pro. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits. A modification notice stays. `## License` is one line and a link to the Apache-2.0 text, not a fenced copy of the licence. A short "Made for Voxprint AI Media Suite" section links Plotweaver and records the 16 GB and 24 GB tiers with `min_vram_gb`.

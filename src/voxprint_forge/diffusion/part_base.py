@@ -246,6 +246,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         variations=_variations(ctx, decisions),
         repo=turbo.repo,
         revision=turbo.revision,
+        licence=turbo.licence,
         staging=ctx.upstream / "kaggle-staging",
         on_verified=lambda target: on_mirror_verified(ctx, target),
     )

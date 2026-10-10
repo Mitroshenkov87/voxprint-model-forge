@@ -14,7 +14,7 @@ def models_markdown(payload: dict[str, object]) -> str:
         "# MODELS registry snippet",
         "",
         "Sources for app failover. `torrent` is a placeholder until a torrent exists.",
-        "Every Hugging Face repo and Kaggle model in this file is private.",
+        "Hugging Face repos in this file are public. Kaggle models stay private.",
         "",
     ]
     models = payload.get("models")

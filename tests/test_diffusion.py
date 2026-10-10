@@ -220,6 +220,12 @@ def test_canvas_card_front_matter() -> None:
     assert card.data.pipeline_tag == "text-to-image"
     assert list(card.data.tags) == ["voxprint", "fp8", "z-image"]
     assert "This repository is private" not in text
+    assert "## License" in text
+    assert "Apache-2.0, same as the base model. See https://www.apache.org/licenses/LICENSE-2.0" in text
+    licence = text.split("## License", 1)[1].split("\n## ", 1)[0]
+    assert "```" not in licence
+    assert "## Credits" in text
+    assert "## Modification notice" in text
     assert "finetune" not in text.split("---", 2)[1]
     assert "## Made for Voxprint AI Media Suite" in text
     assert "https://github.com/Mitroshenkov87/voxprint-canvas" in text
@@ -280,6 +286,7 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
         "scripts/canvas_job.sh",
         "scripts/canvas_job_d.sh",
         "scripts/canvas_upload.sh",
+        "scripts/vm_logins.sh",
         "src/voxprint_forge/diffusion",
         "plans/canvas-zimage-tiers-v1.toml",
         "plans/canvas-qwen-image-2512-v1.toml",
@@ -323,9 +330,12 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert "estimate part edit 55 min" in job
     assert "huggingface-cli login" not in job
     assert "hf auth login" not in job
+    assert "cleanup_secrets" not in job
+    assert "unset HF_TOKEN" not in job
+    assert "persist_rented_vm_logins" in job
+    assert 'export FORGE_HOST_KIND="${FORGE_HOST_KIND:-local}"' in job
     assert "GH_TOKEN" not in job
     assert "github.com" not in job
-    assert "cleanup_secrets" in job
     assert 'export HF_USER="${HF_USER:-Mitroshenkov87}"' in job
     assert "non-interactive" in job
     assert "preflight nvcc ok" in job

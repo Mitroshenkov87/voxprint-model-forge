@@ -1,4 +1,8 @@
-"""Private Hugging Face and Kaggle uploads. A stage is done only after sha256 and size match."""
+"""Public Hugging Face uploads and private Kaggle uploads.
+
+A stage is done only after sha256 and size match. A public Hub upload is
+refused unless the licence is permissive and the model card is complete.
+"""
 
 from __future__ import annotations
 
@@ -18,8 +22,9 @@ from typing import Protocol
 
 from huggingface_hub import HfApi, hf_hub_download
 
-from voxprint_forge.errors import StageError, ToolMissingError, UsageError
+from voxprint_forge.errors import LicenceError, StageError, ToolMissingError, UsageError
 from voxprint_forge.hashing import sha256_file
+from voxprint_forge.licence import decide_licence
 from voxprint_forge.scrub import scrub
 
 try:
@@ -66,7 +71,10 @@ class Remote(Protocol):
         ...
 
     def hf_private_repo(self, repo_id: str) -> str:
-        """Create or reuse a private Hub repo and return its URL."""
+        """Create or reuse a public Hub repo and return its URL.
+
+        The method name is historical. Hugging Face repos are public.
+        """
         ...
 
     def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
@@ -162,9 +170,68 @@ def variation_metadata(owner: str, slug: str, variation: str, overview: str) -> 
 
 
 def assert_private_metadata(payload: dict[str, object]) -> None:
-    """Raise unless the metadata says the model is private."""
+    """Raise unless the Kaggle metadata says the model is private."""
     if payload.get("isPrivate") is not True:
         raise StageError("refusing a model that is not private", code="upload_public")
+
+
+APACHE_LICENCE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
+_CARD_HEADINGS = ("## License", "## Credits", "## Modification notice")
+
+
+def licence_section(card_text: str) -> str:
+    """Return the body of the ``## License`` section, up to the next heading."""
+    marker = "## License"
+    start = card_text.find(marker)
+    if start < 0:
+        return ""
+    rest = card_text[start + len(marker) :]
+    match = re.search(r"\n## ", rest)
+    return rest if match is None else rest[: match.start()]
+
+
+def assert_card_complete(card_text: str, *, repo: str, licence: str) -> None:
+    """Raise when a public card is empty, missing sections, or pastes the licence."""
+    text = card_text.strip()
+    if not text:
+        raise StageError(f"{repo} model card is empty", code="card_incomplete")
+    missing = [heading for heading in _CARD_HEADINGS if heading not in text]
+    if missing:
+        raise StageError(
+            f"{repo} model card is missing {', '.join(missing)}",
+            code="card_incomplete",
+        )
+    section = licence_section(text)
+    if "```" in section:
+        raise StageError(
+            f"{repo} model card licence must be one line plus a link, not a code block",
+            code="card_incomplete",
+        )
+    if "https://" not in section:
+        raise StageError(f"{repo} model card licence section has no link", code="card_incomplete")
+    if licence == "apache-2.0" and APACHE_LICENCE_URL not in section:
+        raise StageError(
+            f"{repo} model card is missing {APACHE_LICENCE_URL}",
+            code="card_incomplete",
+        )
+
+
+def assert_public_upload(*, licence: str, card_text: str, repo: str) -> str:
+    """Refuse a public Hub upload unless the licence is permissive and the card is complete.
+
+    Apache, MIT, and the other permissive tags pass. A non-commercial tag is
+    refused before the card is considered.
+    """
+    tag = decide_licence(licence, repo=repo)
+    assert_card_complete(card_text, repo=repo, licence=tag)
+    return tag
+
+
+def blocks_public_upload(exc: BaseException) -> bool:
+    """True when the failure is the licence or card gate, not a hub outage."""
+    if isinstance(exc, LicenceError):
+        return True
+    return getattr(exc, "code", None) == "card_incomplete"
 
 
 def parse_kaggle_version(text: str) -> tuple[int, int]:
@@ -216,13 +283,15 @@ def publish_private(
     model_id: str,
     title: str,
     description: str,
+    licence: str,
     attempts: int,
     sleep: Callable[[float], None],
     work: Path,
     targets: tuple[str, ...] | None = None,
     on_verified: Callable[[str], None] | None = None,
+    card_text: str | None = None,
 ) -> list[dict[str, object]]:
-    """Upload every artifact to the selected private hubs. Default is Hugging Face and Kaggle."""
+    """Upload every artifact. Hugging Face repos are public. Kaggle models stay private."""
     if not artifacts:
         raise StageError(f"{model_id} has nothing to upload", code="upload_empty")
     chosen = ("hf", "kaggle") if targets is None else tuple(targets)
@@ -236,6 +305,11 @@ def publish_private(
     slug = kaggle_model_slug(model_id)
     repo_id = f"{user}/{hf_slug}" if want_hf else ""
     if want_hf:
+        assert_public_upload(
+            licence=licence,
+            card_text=description if card_text is None else card_text,
+            repo=repo_id or model_id,
+        )
         remote.hf_private_repo(repo_id)
     if want_kaggle:
         model_dir = work / "kaggle-model"
@@ -425,20 +499,18 @@ class HubRemote:
         return owner
 
     def hf_private_repo(self, repo_id: str) -> str:
-        """Create or reuse a private Hub repo and return its URL."""
+        """Create or reuse a public Hub repo and return its URL.
+
+        The method name is historical. Repos are created with ``private=False``
+        and are not forced back to private. Kaggle models stay private.
+        """
         if not self._hf_token:
             raise UsageError("HF_TOKEN is not set", code="hf_token")
         api = HfApi(token=self._hf_token)
         try:
-            api.create_repo(repo_id, private=True, exist_ok=True, repo_type="model")
-            info = api.repo_info(repo_id)
-            if not info.private:
-                api.update_repo_visibility(repo_id, private=True)
-                info = api.repo_info(repo_id)
+            api.create_repo(repo_id, private=False, exist_ok=True, repo_type="model")
         except Exception as exc:
             raise StageError(scrub(str(exc)), code="upload_hf") from None
-        if not info.private:
-            raise StageError(f"{repo_id} is public; refusing to upload", code="upload_public")
         return f"https://huggingface.co/{repo_id}"
 
     def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
