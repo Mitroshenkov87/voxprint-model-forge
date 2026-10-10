@@ -344,7 +344,8 @@ def test_mismatch_does_not_mark_upload(tmp_path: Path, llama_bin: None) -> None:
     assert not (layout.model_dir("tiny") / "source").exists()
 
 
-def test_failed_quantize_removes_the_partial_gguf(tmp_path: Path) -> None:
+def test_failed_quantize_removes_the_partial_gguf(tmp_path: Path, llama_bin: None) -> None:
+    del llama_bin
     dest = tmp_path / "quants" / "Q4_K_M.gguf"
 
     class Boom(Runner):
