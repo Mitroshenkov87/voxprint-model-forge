@@ -242,6 +242,7 @@ def server_argv(
     ctx: int,
     port: int,
     cache: str,
+    extra: tuple[str, ...] = (),
 ) -> list[str]:
     return [
         binary,
@@ -263,6 +264,7 @@ def server_argv(
         str(port),
         "-np",
         "1",
+        *extra,
         "-v",
         "--fit",
         "off",

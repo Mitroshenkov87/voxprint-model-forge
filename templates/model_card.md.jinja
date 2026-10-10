@@ -42,7 +42,7 @@ Importance matrix: {{ imatrix_note }}
 - {{ line }}
 {% endfor %}
 
-KV cache preference is q8_0, then q4_0 when q8_0 does not fit. Fit is weights plus KV, with headroom left for compute buffers.
+KV cache preference is q8_0, then q4_0 when q8_0 does not fit. If that quant misses the card, fit tries KV in RAM, MoE experts on CPU, encoder offload, or sequential loading before a smaller quant. Fit is weights plus KV, with headroom left for compute buffers. The recorded split is the placement that tier assumes.
 
 ## Evaluation
 

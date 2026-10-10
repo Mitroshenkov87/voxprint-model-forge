@@ -16,6 +16,7 @@ from voxprint_forge.errors import StageError
 from voxprint_forge.fitmath import Arch, estimate_weights_bytes, gib
 from voxprint_forge.llama import bin_dir
 from voxprint_forge.llama_patch import T_LITE_HASH, recognised
+from voxprint_forge.placement import options_for
 from voxprint_forge.plan import ModelPlan, Plan
 
 Opener = Callable[..., object]
@@ -106,8 +107,9 @@ def _arch(model: ModelPlan) -> Arch:
 
 
 def ladder_gaps(plan: Plan) -> list[str]:
-    """A tier fails when no listed quant's weights + KV fit its budget."""
+    """A tier fails when no listed quant fits on the card or with an offload split."""
     ctx = max(plan.contexts) if plan.contexts else 8192
+    ram = memory_status()[1]
     gaps: list[str] = []
     for model in plan.enabled_models():
         if model.params_b <= 0:
@@ -120,7 +122,7 @@ def ladder_gaps(plan: Plan) -> list[str]:
             fits = [
                 quant
                 for quant in tier.quants
-                if estimate_weights_bytes(model.params_b, quant) + kv <= budget
+                if _quant_fits(model, quant, kv, budget, ram)
             ]
             if not fits:
                 gaps.append(
@@ -128,6 +130,20 @@ def ladder_gaps(plan: Plan) -> list[str]:
                     f"in {', '.join(tier.quants)} at ctx {ctx}"
                 )
     return gaps
+
+
+def _quant_fits(model: ModelPlan, quant: str, kv: int, budget: int, ram: int) -> bool:
+    weights = estimate_weights_bytes(model.params_b, quant)
+    return any(
+        split.vram_bytes <= budget and split.ram_bytes <= ram
+        for split in options_for(
+            weights,
+            kv,
+            moe_layers=model.moe_layers,
+            expert_fraction=model.expert_fraction,
+            encoder_gib=model.encoder_gib,
+        )
+    )
 
 
 def peak_download_bytes(plan: Plan) -> int:

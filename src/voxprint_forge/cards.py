@@ -124,7 +124,10 @@ def render_card(
             what_changed=what_changed(model, ablation),
             calibration=calibration_note(model),
             quant_lines=[
-                f"{item.get('name')}: {item.get('quant')} (min_vram_gb={item.get('min_vram_gb')})"
+                (
+                    f"{item.get('name')}: {item.get('quant')} "
+                    f"(min_vram_gb={item.get('min_vram_gb')}, split={item.get('split', 'gpu')})"
+                )
                 for item in tiers
             ],
             tiers=tiers,

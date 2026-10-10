@@ -55,6 +55,9 @@ class ModelPlan:
     files: tuple[PinnedFile, ...]
     tiers: tuple[Tier, ...]
     note: str = ""
+    moe_layers: int = 0
+    expert_fraction: float = 0.0
+    encoder_gib: float = 0.0
 
     def source_files(self) -> tuple[PinnedFile, ...]:
         return tuple(item for item in self.files if item.role == "source")
@@ -196,6 +199,9 @@ def _model(raw: object) -> ModelPlan:
         files=tuple(_file(item, repo, str(raw.get("revision", ""))) for item in files_raw),
         tiers=tuple(_tier(item) for item in tiers_raw),
         note=str(raw.get("note", "")),
+        moe_layers=int(raw.get("moe_layers", 0)),
+        expert_fraction=float(raw.get("expert_fraction", 0)),
+        encoder_gib=float(raw.get("encoder_gib", 0)),
     )
 
 
