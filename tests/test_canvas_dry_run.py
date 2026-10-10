@@ -199,3 +199,181 @@ def test_documented_canvas_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) 
     assert {part["status"] for part in body["parts"]} == {"uploaded"}
     for part in body["parts"]:
         assert part["files"]
+
+
+class _RefuseRemote:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("deferred prepare must not open a remote")
+
+
+def test_defer_upload_skips_the_token_prompt(tmp_path: Path) -> None:
+    script = (ROOT / "scripts/canvas_job.sh").read_text(encoding="utf-8")
+    assert "FORGE_DEFER_UPLOAD" in script
+    assert "--defer-upload" in script
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("KAGGLE_API_TOKEN", None)
+    env["FORGE_DEFER_UPLOAD"] = "1"
+    env["FORGE_OUT"] = tmp_path.as_posix()
+    proc = subprocess.run(
+        _bash(ROOT / "scripts/canvas_job.sh"),
+        input=b"",
+        capture_output=True,
+        env=env,
+        timeout=8,
+        check=False,
+    )
+    assert b"non-interactive" not in proc.stderr
+    assert proc.returncode != 2
+
+
+def test_canvas_upload_still_requires_tokens(tmp_path: Path) -> None:
+    script = (ROOT / "scripts/canvas_upload.sh").read_text(encoding="utf-8")
+    needle = 'args=(upload "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")'
+    assert needle in script
+    assert 'args=(upload "$ROOT/plans/canvas-qwen-image-2512-v1.toml"' in script
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("KAGGLE_API_TOKEN", None)
+    env["FORGE_OUT"] = tmp_path.as_posix()
+    proc = subprocess.run(
+        [*_bash(ROOT / "scripts/canvas_upload.sh"), "--parts", "A,B,C,D"],
+        input=b"",
+        capture_output=True,
+        env=env,
+        timeout=8,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert b"non-interactive" in proc.stderr
+
+
+def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> None:
+    """Exact canvas_job.sh args with --defer-upload, then canvas_upload.sh's upload line."""
+    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish
+    from voxprint_forge.diffusion.cli import main
+    from voxprint_forge.diffusion.defer import defer_requested
+    from voxprint_forge.diffusion.names import CONTROL_FULL_UPSTREAM, CONTROL_LITE_UPSTREAM
+
+    monkeypatch.setenv("FORGE_DEFER_UPLOAD", "1")
+    assert defer_requested(False) is True
+    monkeypatch.delenv("FORGE_DEFER_UPLOAD")
+    assert defer_requested(False) is False
+    assert defer_requested(True) is True
+
+    def fetch_sources(sources: tuple, dest: Path, token: str | None) -> dict[str, object]:
+        del token
+        dest.mkdir(parents=True, exist_ok=True)
+        record: dict[str, object] = {}
+        for source in sources:
+            folder = dest / source.id
+            if source.id == "controlnet":
+                folder.mkdir(parents=True, exist_ok=True)
+                _weight(folder / CONTROL_FULL_UPSTREAM)
+                _weight(folder / CONTROL_LITE_UPSTREAM)
+            else:
+                _diffusion_tree(folder)
+            record[source.id] = {
+                "repo": source.repo,
+                "revision": source.revision,
+                "licence": "apache-2.0",
+                "files": {},
+            }
+        (dest / "upstream-sha256.json").write_text(json.dumps(record), encoding="utf-8")
+        return record
+
+    part_base.fetch_sources = fetch_sources
+    part_control.fetch_sources = fetch_sources
+    part_edit.fetch_sources = fetch_sources
+    previous = sys.modules.get("voxprint_forge.diffusion.generate")
+    sys.modules["voxprint_forge.diffusion.generate"] = _install_fake_generate()
+    monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
+    monkeypatch.setattr("voxprint_forge.diffusion.common.ensure_free", lambda path, need, what: 10**12)
+    monkeypatch.setenv("HF_USER", "Mitroshenkov87")
+    monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.delenv("FORGE_DEADLINE", raising=False)
+    forge_out = tmp_path / "forge-out"
+    plan = ROOT / "plans" / "canvas-zimage-tiers-v1.toml"
+    try:
+        code = main(
+            [
+                "run",
+                str(plan),
+                "--json",
+                "--forge-out",
+                str(forge_out),
+                "--root",
+                str(ROOT),
+                "--defer-upload",
+                "--force",
+            ]
+        )
+        assert code == 0
+        manifest = json.loads(next((forge_out / "manifests").glob("*-canvas-zimage.json")).read_text(encoding="utf-8"))
+        assert [part["status"] for part in manifest["parts"]] == [
+            "upload-deferred",
+            "upload-deferred",
+            "upload-deferred",
+        ]
+        stages = forge_out / "stages" / "canvas-zimage-tiers-v1"
+        for name in ("base", "controlnet", "edit"):
+            assert (stages / f"{name}-upload-deferred.json").is_file()
+            assert not (stages / f"{name}-upload.json").exists()
+        output = forge_out / "work" / "canvas-zimage-tiers-v1" / "Tongyi-MAI--Z-Image-Turbo-voxprint"
+        shards = list(output.rglob("*.safetensors"))
+        assert shards
+        for shard in shards:
+            sidecar = Path(str(shard) + ".sha256")
+            assert sidecar.is_file()
+            assert sidecar.read_text(encoding="utf-8").split()[0]
+        assert not (forge_out / "work" / "canvas-zimage-tiers-v1" / "upstream" / "base").exists()
+
+        monkeypatch.setattr(publish, "HubRemote", FakeHub)
+        code = main(
+            [
+                "upload",
+                str(plan),
+                "--json",
+                "--forge-out",
+                str(forge_out),
+                "--root",
+                str(ROOT),
+                "--parts",
+                "A,B,C",
+                "--force",
+            ]
+        )
+        assert code == 0
+        for name in ("base", "controlnet", "edit"):
+            marker = json.loads((stages / f"{name}-upload.json").read_text(encoding="utf-8"))
+            assert marker["files"]
+            assert not (stages / f"{name}-upload-deferred.json").exists()
+        assert shards[0].is_file()
+
+        monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
+        from voxprint_forge.cli import main as forge_main
+
+        code = forge_main(
+            [
+                "--json",
+                "--root",
+                str(ROOT),
+                "--forge-out",
+                str(forge_out),
+                "canvas",
+                "upload",
+                str(plan),
+                "--parts",
+                "A,B,C",
+                "--force",
+            ]
+        )
+        assert code == 0
+        assert (stages / "base-upload.json").is_file()
+    finally:
+        if previous is None:
+            sys.modules.pop("voxprint_forge.diffusion.generate", None)
+        else:
+            sys.modules["voxprint_forge.diffusion.generate"] = previous
+        sys.modules.pop("voxprint_forge.diffusion.job", None)

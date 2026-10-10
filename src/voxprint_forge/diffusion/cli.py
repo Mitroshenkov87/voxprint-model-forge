@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from voxprint_forge.diffusion.deadline import resolve_deadline
+from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.diffusion.guard import llm_job_running
 from voxprint_forge.diffusion.planload import load_canvas_plan
 from voxprint_forge.errors import EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
@@ -25,6 +26,7 @@ def execute(
     forge_out: Path,
     force: bool,
     deadline_text: str | None,
+    defer_upload: bool = False,
 ) -> dict[str, object]:
     if not force and llm_job_running(forge_out):
         raise UsageError(
@@ -37,7 +39,14 @@ def execute(
     from voxprint_forge.diffusion.job import run_job
 
     token = os.environ.get("HF_TOKEN", "").strip() or None
-    return run_job(repo=repo, plan=plan, forge_out=forge_out, deadline=deadline, token=token)
+    return run_job(
+        repo=repo,
+        plan=plan,
+        forge_out=forge_out,
+        deadline=deadline,
+        token=token,
+        defer_upload=defer_requested(defer_upload),
+    )
 
 
 def _repo(explicit: Path | None) -> Path:
@@ -58,10 +67,12 @@ def _repo(explicit: Path | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m voxprint_forge.diffusion")
-    parser.add_argument("command", choices=["run"])
+    parser.add_argument("command", choices=["run", "upload"])
     parser.add_argument("plan", type=Path)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--defer-upload", action="store_true")
+    parser.add_argument("--parts", default=None)
     parser.add_argument("--deadline", default=None)
     parser.add_argument("--forge-out", type=Path, default=None)
     parser.add_argument("--root", type=Path, default=None)
@@ -72,13 +83,31 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_USAGE
     forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
     try:
-        result = execute(
-            repo=_repo(args.root),
-            plan_path=args.plan,
-            forge_out=forge_out,
-            force=bool(args.force),
-            deadline_text=args.deadline,
-        )
+        if args.command == "upload":
+            from voxprint_forge.diffusion.release import release_canvas_plan
+
+            if not args.force and llm_job_running(forge_out):
+                raise UsageError(
+                    "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). "
+                    "Pass --force to start anyway.",
+                    code="llm_running",
+                )
+            result = release_canvas_plan(
+                repo=_repo(args.root),
+                plan_path=args.plan,
+                forge_out=forge_out,
+                token=os.environ.get("HF_TOKEN", "").strip() or None,
+                parts_text=args.parts,
+            )
+        else:
+            result = execute(
+                repo=_repo(args.root),
+                plan_path=args.plan,
+                forge_out=forge_out,
+                force=bool(args.force),
+                deadline_text=args.deadline,
+                defer_upload=bool(args.defer_upload),
+            )
         emit("canvas", result, ok=True, exit_code=0, json_mode=args.json)
         return 0
     except ForgeError as exc:

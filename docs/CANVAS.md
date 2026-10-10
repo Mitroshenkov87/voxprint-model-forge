@@ -86,3 +86,82 @@ scp <user>@<vm>:~/forge-out/manifests/<date>-canvas-zimage.MODELS.md .
 ```
 
 Exit codes match the forge CLI: 0 success (including a part deferred for the deadline), 2 usage or a live LLM job, 3 licence, 4 checksum, 5 download, 6 stage or upload mismatch, 7 disk, 8 plan, 9 missing tool.
+
+## Part D
+
+Qwen-Image-2512 FP8, in its own entry so a running `scripts/canvas_job.sh` is not replaced. INT4 stays a marker: there is no official licence-clean nunchaku-tech SVDQuant pin, and this rental does not calibrate. The Qwen2.5-VL-7B text encoder is byte-checked against Edit-2511. When the pins match and part C has already written `qwen2.5-vl-7b-text-encoder-fp8.safetensors`, part D links that file. It does not copy the weights into a second encoder. A pin match with no part C file yet is `reuse-pending`. A hash mismatch converts the encoder. Stable files land in `~/forge-out/canvas/qwen-image-2512`.
+
+| Selection | Work | Estimate |
+| --- | --- | --- |
+| D (default) | Qwen-Image-2512 transformer FP8, INT4 marker, encoder dedupe | 120 min |
+| D, encoder reused | Planning figure when part C's FP8 encoder is linked | 280 min |
+| D, encoder recomputed | Planning figure when the encoder hashes do not match | 340 min |
+| E | Encoder dedupe only | 15 min |
+| C | Qwen-Image-Edit-2511, the existing part | 55 min |
+
+`--parts` accepts `A,B,C,D,E` or `base,controlnet,qwen,edit,encoder`. The run order is A, B, D, C, E, so `--parts C,D` runs D first. Default is D. Part C's FP8 encoder exists only after C has finished, so a same-rental `--parts C,D,E` links it when E runs.
+
+Private destination: `Mitroshenkov87/voxprint-mirror-qwen-image-2512`. Kaggle slug `voxprint-mirror-qwen-image-2512`. Nothing is made public.
+
+On a machine that can reach the checkout:
+
+```bash
+bash scripts/make_vm_bundle.sh --canvas-only
+```
+
+On the VM, in a tmux window that is not the LLM job and not the A–C canvas job:
+
+```bash
+cd ~/voxprint-model-forge
+tar -xzf ~/voxprint-model-forge-canvas-<sha>.tar.gz
+export HF_TOKEN=...
+export KAGGLE_API_TOKEN=...
+export KAGGLE_USER=mitroshenkov87
+# HF_USER defaults to Mitroshenkov87 inside scripts/canvas_job_d.sh.
+tmux new -s canvas-d 'bash scripts/canvas_job_d.sh'
+```
+
+The script runs:
+
+```bash
+python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml --json --forge-out ~/forge-out --root <repo>
+```
+
+Selectors:
+
+```bash
+bash scripts/canvas_job_d.sh --parts C,E
+bash scripts/canvas_job_d.sh --parts C,D,E
+```
+
+`scripts/canvas_job_d.sh` exits 2 while `scripts/canvas_job.sh` is still running, unless you pass `--force`. A missing token on a non-interactive stdin exits 2 and does not prompt. The INT4 directory contains `DEFERRED.txt` and no weights.
+
+## Token-free prepare, upload later
+
+The A100 can run with no `HF_TOKEN` and no `KAGGLE_API_TOKEN`. Downloads of the public inputs use `HF_TOKEN` only when it is set. Set `FORGE_DEFER_UPLOAD=1` (or pass `--defer-upload`). The scripts skip the token prompt. Each part still runs fetch, convert, quality, card, and sha256 sidecars, writes `~/forge-out/stages/<job>/<part>-upload-deferred.json`, keeps the tier files, and deletes the FP32/BF16 download. The part status is `upload-deferred`.
+
+```bash
+export FORGE_DEFER_UPLOAD=1
+bash scripts/canvas_job.sh
+bash scripts/canvas_job_d.sh
+bash scripts/canvas_job_d.sh --parts C,D,E
+```
+
+The python entry is the same command as the script, plus `--defer-upload`:
+
+```bash
+python -m voxprint_forge.diffusion run plans/canvas-zimage-tiers-v1.toml --json --forge-out ~/forge-out --root <repo> --defer-upload
+python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml --json --forge-out ~/forge-out --root <repo> --defer-upload
+```
+
+When the tokens are back, one batch uploads every deferred part, checks sha256 and size, and flips the marker to `<part>-upload`. A second run is a no-op.
+
+```bash
+export HF_TOKEN=...
+export KAGGLE_API_TOKEN=...
+bash scripts/canvas_upload.sh --parts A,B,C,D
+forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-zimage-tiers-v1.toml --parts A,B,C
+forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-qwen-image-2512-v1.toml --parts D,E
+```
+
+`bash scripts/canvas_upload.sh` with no `--parts` uploads every deferred part, including E. `--parts C,D,E` uploads edit, Qwen-Image-2512, and the encoder. A reused encoder is still not copied.

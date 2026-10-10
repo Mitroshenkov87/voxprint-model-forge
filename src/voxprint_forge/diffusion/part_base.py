@@ -16,6 +16,7 @@ from voxprint_forge.diffusion.common import (
     write_json,
     write_notice,
 )
+from voxprint_forge.diffusion.defer import drop_marker, write_local_files
 from voxprint_forge.diffusion.names import (
     BASE_GRID,
     BASE_METRICS,
@@ -222,11 +223,15 @@ def _variations(ctx: Ctx, decisions: dict[str, object]) -> dict[str, list[str]]:
     return variations
 
 
-def _upload(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
+def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dict[str, object]:
     decisions = quality.get("decisions")
     if not isinstance(decisions, dict):
         raise StageError("base upload is missing quality decisions", code="quality")
     turbo = ctx.part.sources[0]
+    if not remote:
+        rows = write_local_files(ctx.output, _tiers(ctx), turbo.repo, turbo.revision)
+        delete_intermediates(ctx.upstream)
+        return {"files": rows}
     records = publish_output(
         output=ctx.output,
         hf_repo=ctx.part.hf_repo,
@@ -250,14 +255,22 @@ def run_base(ctx: Ctx) -> dict[str, object]:
     run_stage(ctx, "convert", lambda: _convert(ctx))
     quality = run_stage(ctx, "quality", lambda: _quality(ctx))
     run_stage(ctx, "card", lambda: _card(ctx, quality))
-    uploaded = run_stage(ctx, "upload", lambda: _upload(ctx, quality))
+    if ctx.defer_upload:
+        held = run_stage(ctx, "upload-deferred", lambda: _upload(ctx, quality, remote=False))
+        status = "upload-deferred"
+        files = held.get("files", [])
+    else:
+        uploaded = run_stage(ctx, "upload", lambda: _upload(ctx, quality))
+        drop_marker(ctx.marker("upload-deferred"))
+        status = "uploaded"
+        files = uploaded.get("files", [])
     progress(ctx, "done", 100, 0)
     return {
         "id": "base",
-        "status": "uploaded",
+        "status": status,
         "estimate_min": ctx.part.estimate_min,
         "hf_repo": ctx.part.hf_repo,
         "kaggle_slug": ctx.part.kaggle_slug,
         "decisions": quality.get("decisions"),
-        "files": uploaded.get("files", []),
+        "files": files,
     }

@@ -38,7 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     canvas_run = canvas_sub.add_parser("run")
     canvas_run.add_argument("canvas_plan", type=Path, metavar="PLAN")
     canvas_run.add_argument("--force", action="store_true")
+    canvas_run.add_argument("--defer-upload", action="store_true")
     canvas_run.add_argument("--deadline", default=None)
+    canvas_upload = canvas_sub.add_parser("upload")
+    canvas_upload.add_argument("canvas_plan", type=Path, metavar="PLAN")
+    canvas_upload.add_argument("--parts", default=None)
+    canvas_upload.add_argument("--force", action="store_true")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -73,20 +78,59 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_UNEXPECTED
 
 
+def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | None, force: bool) -> dict[str, object]:
+    from voxprint_forge.diffusion.guard import llm_job_running
+    from voxprint_forge.errors import PlanError
+
+    if not force and llm_job_running(forge_out):
+        raise UsageError(
+            "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). "
+            "Pass --force to start anyway.",
+            code="llm_running",
+        )
+    token = os.environ.get("HF_TOKEN", "").strip() or None
+    try:
+        from voxprint_forge.diffusion.release import release_canvas_plan
+
+        return release_canvas_plan(
+            repo=root,
+            plan_path=plan_path,
+            forge_out=forge_out,
+            token=token,
+            parts_text=parts,
+        )
+    except PlanError:
+        from voxprint_forge.diffusion.qwen_job import release_deferred
+        from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
+
+        return release_deferred(
+            repo=root,
+            plan=load_qwen_plan(plan_path),
+            forge_out=forge_out,
+            token=token,
+            parts_text=parts,
+        )
+
+
 def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
-        from voxprint_forge.diffusion.cli import execute
-
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
-        return execute(
-            repo=root,
-            plan_path=args.canvas_plan,
-            forge_out=forge_out,
-            force=bool(args.force),
-            deadline_text=args.deadline,
-        )
+        if args.canvas_command == "upload":
+            return _canvas_upload(root, args.canvas_plan, forge_out, args.parts, bool(args.force))
+        if args.canvas_command == "run":
+            from voxprint_forge.diffusion.cli import execute
+
+            return execute(
+                repo=root,
+                plan_path=args.canvas_plan,
+                forge_out=forge_out,
+                force=bool(args.force),
+                deadline_text=args.deadline,
+                defer_upload=bool(args.defer_upload),
+            )
+        raise UsageError(f"unknown canvas command {args.canvas_command}", code="usage")
     plan_path = args.plan or (root / "plans" / "plan.toml")
     if args.command == "verify-logins":
         return verify_logins()
