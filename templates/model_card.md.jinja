@@ -32,7 +32,8 @@ pipeline_tag: text-generation
 
 ## Calibration data
 
-{{ calibration }}
+{# Forge-authored paragraph. It names only files in this repo, not an upstream model, eval sample, or HF field. -#}
+{{ calibration|safe }}
 
 ## Quantization
 
@@ -70,7 +71,8 @@ KV cache preference is q8_0, then q4_0 when q8_0 does not fit. If that quant mis
 
 ## Known limits
 
-{{ limits }}
+{# Forge-authored limits. No upstream name or eval text. -#}
+{{ limits|safe }}
 
 ## Credits
 
@@ -81,11 +83,13 @@ KV cache preference is q8_0, then q4_0 when q8_0 does not fit. If that quant mis
 
 ## Modification notice
 
-{{ modification_notice }}
+{# Forge-authored notice. No upstream name or eval text. -#}
+{{ modification_notice|safe }}
 
 ## License
 
-{{ apache_text }}
+{# Forge-authored licence line and Apache URL. Not the upstream licence tag. -#}
+{{ apache_text|safe }}
 
 ## Made for Voxprint AI Media Suite
 
