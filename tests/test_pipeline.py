@@ -14,7 +14,7 @@ import pytest
 from voxprint_forge.errors import DiskShortError, StageError
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Completed, Runner
-from voxprint_forge.pipeline import Host, run_all, run_model
+from voxprint_forge.pipeline import Host, _run_quantize, run_all, run_model
 from voxprint_forge.plan import load_plan
 from voxprint_forge.scrub import scrub
 from voxprint_forge.upload import Remote
@@ -56,7 +56,11 @@ class FakeRunner(Runner):
 
     def capture_until(self, argv: list[str], *, pattern: str, timeout: float = 180) -> Completed:
         del pattern, timeout
-        log = "model buffer size = 100.00 MiB\nKV buffer size = 10.00 MiB\n"
+        log = (
+            "load_tensors:   CPU_Mapped model buffer size =   521.00 MiB\n"
+            "load_tensors:        CUDA0 model buffer size =   100.00 MiB\n"
+            "llama_kv_cache:      CUDA0 KV buffer size =    10.00 MiB\n"
+        )
         return Completed(argv=argv, returncode=0, stdout=log, stderr="")
 
 
@@ -338,6 +342,24 @@ def test_mismatch_does_not_mark_upload(tmp_path: Path, llama_bin: None) -> None:
     quants = list((layout.model_dir("tiny") / "quants").rglob("*.gguf"))
     assert quants
     assert not (layout.model_dir("tiny") / "source").exists()
+
+
+def test_failed_quantize_removes_the_partial_gguf(tmp_path: Path) -> None:
+    dest = tmp_path / "quants" / "Q4_K_M.gguf"
+
+    class Boom(Runner):
+        def run(self, argv: list[str], *, cwd: Path | None = None) -> Completed:
+            del cwd
+            out = Path(argv[-2])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"partial-gguf")
+            raise StageError("llama-quantize exited 1", code="tool_failed")
+
+    host = _host(FakeDownloader({}), FakeRemote())
+    host.runner = Boom()
+    with pytest.raises(StageError):
+        _run_quantize(host, tmp_path / "src.gguf", tmp_path / "im.gguf", dest, "Q4_K_M")
+    assert not dest.exists()
 
 
 def test_resume_does_not_download_again(tmp_path: Path, llama_bin: None) -> None:
