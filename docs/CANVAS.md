@@ -8,7 +8,7 @@ Three private image-model parts, after the LLM bootstrap on the same A100. Unpac
 | controlnet | Union 2.1 lite FP8, full BF16 | 25 min |
 | edit | Qwen-Image-Edit-2511 FP8 | 55 min |
 
-Total when every part runs: 135 min. Each part uploads to its own private Hugging Face repo and a private Kaggle model, then deletes that part's scratch directory. Shared downloads live in `~/forge-out/work/<job>/sources/<id>` until every name in that source's `consumers` list has released. Base and turbo stay for controlnet, part D (`qwen`), and bake-off. Edit stays for part D and bake-off. The controlnet file has no later consumer and is removed when that part finishes. `forge --plan plans/canvas-zimage-tiers-v1.toml sources release --source turbo --consumer bake-off` records the external bake-off and deletes the tree when it was the last name. Finished tier files stay in `~/forge-out`.
+Total when every part runs: 135 min. Each part uploads to its own private Hugging Face repo and a private Kaggle model, then deletes that part's scratch directory. Shared downloads live in `~/forge-out/work/<job>/sources/<id>` until every name in that source's `consumers` list has released. Base and turbo stay for controlnet, a forced part D (`qwen`), and bake-off. Edit stays for a forced part D and bake-off. Parts D and E are retired, and those consumer names stay so `--force` can still release them. The controlnet file has no later consumer and is removed when that part finishes. `forge --plan plans/canvas-zimage-tiers-v1.toml sources release --source turbo --consumer bake-off` records the external bake-off and deletes the tree when it was the last name. Finished tier files stay in `~/forge-out`.
 
 `FORGE_DEADLINE` (or `--deadline`) is an ISO time. Before a part starts, the job skips it when the estimate is longer than the time remaining and records `deferred to next rental`. Equal time still runs.
 
@@ -74,7 +74,7 @@ Preflight is `nvcc` on `PATH` (or `/usr/local/cuda/bin`), `torch.cuda.is_availab
 
 - `Mitroshenkov87/voxprint-mirror-z-image-turbo`
 - `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`
-- `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`
+- `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511` (includes the shared Qwen2.5-VL-7B encoder)
 
 Kaggle owner `KAGGLE_USER` (default `mitroshenkov87`), one private model per part. A variation is marked done only after the remote sha256 and size match. Nothing is made public.
 
@@ -85,23 +85,27 @@ scp <user>@<vm>:~/forge-out/manifests/<date>-canvas-zimage.json .
 scp <user>@<vm>:~/forge-out/manifests/<date>-canvas-zimage.MODELS.md .
 ```
 
+The canvas MODELS snippet says part C converts `qwen2.5-vl-7b-text-encoder-fp8.safetensors` and does not read Qwen-Image-2512 files.
+
 Exit codes match the forge CLI: 0 success (including a part deferred for the deadline), 2 usage or a live LLM job, 3 licence, 4 checksum, 5 download, 6 stage or upload mismatch, 7 disk, 8 plan, 9 missing tool.
 
-## Part D
+## Parts D and E are retired
 
-Qwen-Image-2512 FP8, in its own entry so a running `scripts/canvas_job.sh` is not replaced. INT4 stays a marker: there is no official licence-clean nunchaku-tech SVDQuant pin, and this rental does not calibrate. The Qwen2.5-VL-7B text encoder is byte-checked against Edit-2511. When the pins match and part C has already written `qwen2.5-vl-7b-text-encoder-fp8.safetensors`, part D links that file. It does not copy the weights into a second encoder. A pin match with no part C file yet is `reuse-pending`. A hash mismatch converts the encoder. Stable files land in `~/forge-out/canvas/qwen-image-2512`.
+Qwen-Image-2512 is retired as a Canvas generator. Part D (Qwen-Image-2512 FP8/INT4) and part E (the encoder probe on 2512) stay in `plans/canvas-qwen-image-2512-v1.toml` as `retired = ["qwen", "encoder"]`. The job code remains, in its own entry, so a running `scripts/canvas_job.sh` is left alone. `--parts D`, `--parts E`, and a run with no `--parts` (the default selection is D) exit 2 with a message that contains `retired`. `--force` runs that retired part.
+
+Part C (Qwen-Image-Edit-2511) owns the shared Qwen2.5-VL-7B encoder conversion. It writes `qwen2.5-vl-7b-text-encoder-fp8.safetensors` from the Edit-2511 text encoder. That step reads the edit download. A forced part D links part C's file when the encoder pins match and the file is already on disk, under `~/forge-out/canvas/qwen-image-2512`. A missing file or a pin mismatch is `reuse-pending` and contains no weights. Part D does not convert an encoder of its own. INT4 stays a marker: there is no official licence-clean nunchaku-tech SVDQuant pin, and this rental does not calibrate.
 
 | Selection | Work | Estimate |
 | --- | --- | --- |
-| D (default) | Qwen-Image-2512 transformer FP8, INT4 marker, encoder dedupe | 120 min |
+| D (default, retired) | Qwen-Image-2512 transformer FP8, INT4 marker, link to part C's encoder | 120 min |
 | D, encoder reused | Planning figure when part C's FP8 encoder is linked | 280 min |
-| D, encoder recomputed | Planning figure when the encoder hashes do not match | 340 min |
-| E | Encoder dedupe only | 15 min |
-| C | Qwen-Image-Edit-2511, the existing part | 55 min |
+| D, pin mismatch | Planning figure kept in the plan. Part D does not recompute the encoder | 340 min |
+| E (retired) | Link part C's encoder, or write the pending marker | 15 min |
+| C | Qwen-Image-Edit-2511, including the Qwen2.5-VL-7B encoder | 55 min |
 
-`--parts` accepts `A,B,C,D,E` or `base,controlnet,qwen,edit,encoder`. The run order is A, B, D, C, E, so `--parts C,D` runs D first. Default is D. Part C's FP8 encoder exists only after C has finished, so a same-rental `--parts C,D,E` links it when E runs.
+`--parts` accepts `A,B,C,D,E` or `base,controlnet,qwen,edit,encoder`. The run order is A, B, D, C, E, so `--parts C,D` runs D first. Default is D, and that default is retired. Part C's FP8 encoder exists only after C has finished, so a forced `--parts C,D,E` links it when E runs and the pins match.
 
-Private destination: `Mitroshenkov87/voxprint-mirror-qwen-image-2512`. Kaggle slug `voxprint-mirror-qwen-image-2512`. Nothing is made public.
+A forced part D still has a private destination: `Mitroshenkov87/voxprint-mirror-qwen-image-2512`. Kaggle slug `voxprint-mirror-qwen-image-2512`. The shared encoder is published with part C. Nothing is made public. The Qwen-Image-2512 MODELS snippet says parts D and E are retired and names part C's encoder file.
 
 On a machine that can reach the checkout:
 
@@ -121,7 +125,7 @@ export KAGGLE_USER=mitroshenkov87
 tmux new -s canvas-d 'bash scripts/canvas_job_d.sh'
 ```
 
-The script runs:
+The script runs this command. With no `--parts` and no `--force` it exits 2 because D is retired:
 
 ```bash
 python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml --json --forge-out ~/forge-out --root <repo>
@@ -130,8 +134,9 @@ python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1
 Selectors:
 
 ```bash
-bash scripts/canvas_job_d.sh --parts C,E
-bash scripts/canvas_job_d.sh --parts C,D,E
+bash scripts/canvas_job_d.sh --parts C
+bash scripts/canvas_job_d.sh --parts D --force
+bash scripts/canvas_job_d.sh --parts C,D,E --force
 ```
 
 `scripts/canvas_job_d.sh` exits 2 while `scripts/canvas_job.sh` is still running, unless you pass `--force`. A missing token on a non-interactive stdin exits 2 and does not prompt. The INT4 directory contains `DEFERRED.txt` and no weights.
@@ -143,8 +148,8 @@ The A100 can run with no `HF_TOKEN` and no `KAGGLE_API_TOKEN`. Downloads of the 
 ```bash
 export FORGE_DEFER_UPLOAD=1
 bash scripts/canvas_job.sh
-bash scripts/canvas_job_d.sh
-bash scripts/canvas_job_d.sh --parts C,D,E
+bash scripts/canvas_job_d.sh --parts C
+bash scripts/canvas_job_d.sh --parts C,D,E --force
 ```
 
 The python entry is the same command as the script, plus `--defer-upload`:
@@ -159,9 +164,9 @@ When the tokens are back, one batch uploads every deferred part, checks sha256 a
 ```bash
 export HF_TOKEN=...
 export KAGGLE_API_TOKEN=...
-bash scripts/canvas_upload.sh --parts A,B,C,D
+bash scripts/canvas_upload.sh --parts A,B,C
 forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-zimage-tiers-v1.toml --parts A,B,C
-forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-qwen-image-2512-v1.toml --parts D,E
+forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-qwen-image-2512-v1.toml --parts D,E --force
 ```
 
-`bash scripts/canvas_upload.sh` with no `--parts` uploads every deferred part, including E. `--parts C,D,E` uploads edit, Qwen-Image-2512, and the encoder. A reused encoder is still not copied.
+`bash scripts/canvas_upload.sh` with no `--parts` uploads every deferred A–C part, then asks the Qwen-Image-2512 entry to upload D and E. That second step exits 2 unless `--force`, because D and E are retired. `--parts C` uploads the edit part, including the Qwen2.5-VL-7B encoder. A linked encoder is not copied into the 2512 repo.

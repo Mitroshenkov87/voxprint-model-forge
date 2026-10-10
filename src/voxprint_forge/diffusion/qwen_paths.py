@@ -11,6 +11,7 @@ from voxprint_forge.diffusion.qwen_spec import INT4_MARKER_NAME, STABLE_DIR
 from voxprint_forge.diffusion.sources import tree_hashes
 from voxprint_forge.errors import StageError
 
+# "convert" remains for markers written before part D stopped owning the encoder.
 EncoderStatus = Literal["reuse", "reuse-pending", "convert"]
 
 INT4_MARKER_TEXT = (
@@ -21,7 +22,8 @@ INT4_MARKER_TEXT = (
 
 ENCODER_PENDING_TEXT = (
     "Encoder reuse pending\n"
-    "The text encoder matches the Edit-2511 pin, and the part C FP8 file is not on disk yet.\n"
+    "Part C (Qwen-Image-Edit-2511) owns the Qwen2.5-VL-7B FP8 encoder.\n"
+    "Part D links that file when it is on disk and the encoder pins match.\n"
     "This directory contains no weights.\n"
 )
 
@@ -39,10 +41,8 @@ def encoder_hashes(text_encoder: Path) -> dict[str, str]:
 
 
 def classify_encoder(found: dict[str, str], pins: dict[str, str], edit_fp8: Path) -> EncoderStatus:
-    """Match pins, then prefer part C's FP8 file. A mismatch is converted, not linked."""
-    if found != pins:
-        return "convert"
-    if edit_fp8.is_file():
+    """Link part C's FP8 file when the pins match. Part D does not convert an encoder."""
+    if found == pins and edit_fp8.is_file():
         return "reuse"
     return "reuse-pending"
 

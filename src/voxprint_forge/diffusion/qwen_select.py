@@ -43,3 +43,29 @@ def parse_parts(text: str | None) -> tuple[QwenPart, ...]:
             raise UsageError(f"empty part in {text!r}", code="parts")
         chosen.add(_one(token))
     return tuple(part for part in PART_ORDER if part in chosen)
+
+
+def _retired_label(part: str) -> str:
+    if part == "qwen":
+        return "D (Qwen-Image-2512 FP8/INT4)"
+    if part == "encoder":
+        return "E (encoder probe on Qwen-Image-2512)"
+    return part
+
+
+def refuse_retired(parts: tuple[str, ...], retired: tuple[str, ...], *, force: bool) -> None:
+    """Refuse a retired part unless the caller passed --force."""
+    if force:
+        return
+    blocked = [part for part in parts if part in retired]
+    if not blocked:
+        return
+    names = " and ".join(_retired_label(part) for part in blocked)
+    verb = "is" if len(blocked) == 1 else "are"
+    raise UsageError(
+        f"{names} {verb} retired. "
+        "Qwen-Image-2512 is retired as a Canvas generator. "
+        "Part C (Qwen-Image-Edit-2511) owns the Qwen2.5-VL-7B encoder conversion. "
+        "Pass --force to run a retired part.",
+        code="retired",
+    )

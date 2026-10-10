@@ -77,7 +77,13 @@ def _write_manifest(forge_out: Path, plan: CanvasPlan, parts: list[dict[str, obj
     }
     json_path = directory / f"{day}-canvas-zimage.json"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    lines = ["# Canvas MODELS", ""]
+    lines = [
+        "# Canvas MODELS",
+        "",
+        "Part C (edit, Qwen-Image-Edit-2511) converts the shared Qwen2.5-VL-7B encoder "
+        "(qwen2.5-vl-7b-text-encoder-fp8.safetensors). It does not read Qwen-Image-2512 files.",
+        "",
+    ]
     for part in parts:
         status = str(part.get("status", ""))
         lines.append(f"## {part.get('id')} — {status}")

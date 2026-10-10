@@ -7,6 +7,7 @@ not installed here, so the quality stage is replaced after the real convert.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import subprocess
@@ -133,13 +134,20 @@ def _fetch_sources(sources: tuple, dest: Path, token: str | None) -> dict[str, o
     return record
 
 
-def _patch_runtime(monkeypatch) -> None:
-    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish, qwen_job
+def _forbid_hub(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("the CPU dry run must not download from Hugging Face")
 
-    qwen_job.fetch_sources = _fetch_sources
-    part_base.fetch_sources = _fetch_sources
-    part_control.fetch_sources = _fetch_sources
-    part_edit.fetch_sources = _fetch_sources
+
+def _patch_runtime(monkeypatch) -> None:
+    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish, sources
+
+    qwen_job = importlib.import_module("voxprint_forge.diffusion.qwen_job")
+    monkeypatch.setattr(qwen_job, "fetch_sources", _fetch_sources)
+    monkeypatch.setattr(part_base, "fetch_sources", _fetch_sources)
+    monkeypatch.setattr(part_control, "fetch_sources", _fetch_sources)
+    monkeypatch.setattr(part_edit, "fetch_sources", _fetch_sources)
+    monkeypatch.setattr(sources, "snapshot_download", _forbid_hub)
+    monkeypatch.setattr(sources, "hf_hub_download", _forbid_hub)
     monkeypatch.setattr(publish, "HubRemote", FakeHub)
     monkeypatch.setattr("voxprint_forge.diffusion.qwen_common.ensure_free", lambda path, need, what, **_kwargs: 10**12)
     monkeypatch.setattr("voxprint_forge.diffusion.common.ensure_free", lambda path, need, what, **_kwargs: 10**12)
@@ -192,6 +200,9 @@ def test_refuses_a_live_canvas_job_before_the_runner_imports(tmp_path: Path, mon
     monkeypatch.setattr("voxprint_forge.diffusion.qwen_main.llm_job_running", lambda forge_out: False)
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     sys.modules.pop("voxprint_forge.diffusion.qwen_job", None)
+    diffusion = importlib.import_module("voxprint_forge.diffusion")
+    if hasattr(diffusion, "qwen_job"):
+        delattr(diffusion, "qwen_job")
     from voxprint_forge.diffusion.qwen_main import main
 
     # No --force: that flag is what skips the live-job guard.
@@ -240,13 +251,20 @@ def test_documented_qwen_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) ->
     assert body["int4"] == "deferred"
     assert [part["id"] for part in body["parts"]] == ["qwen"]
     assert body["parts"][0]["status"] == "uploaded"
-    assert body["parts"][0]["encoder"] == "convert"
+    assert body["retired"] == ["qwen", "encoder"]
+    assert body["encoder_owner"] == "edit"
+    assert body["parts"][0]["encoder"] == "reuse-pending"
     assert body["parts"][0]["copied_weights"] is False
     assert body["parts"][0]["files"]
+    models = manifests[0].with_name(manifests[0].name.replace(".json", ".MODELS.md")).read_text(encoding="utf-8")
+    assert "Retired" in models
+    assert "part C" in models
 
     output = forge_out / "work" / "canvas-qwen-image-2512" / "Qwen--Qwen-Image-2512-voxprint"
-    assert list(output.glob("qwen-image-2512-transformer-fp8-*.safetensors"))
-    assert (output / "qwen2.5-vl-7b-text-encoder-fp8.safetensors").is_file()
+    shards = list(output.glob("qwen-image-2512-transformer-fp8-*.safetensors"))
+    assert shards
+    assert shards[0].stat().st_size < 1_000_000
+    assert not (output / "qwen2.5-vl-7b-text-encoder-fp8.safetensors").exists()
     assert not (output / "text_encoder").exists()
     _no_weights(output / "int4")
     assert "no weights" in (output / "int4" / "DEFERRED.txt").read_text(encoding="utf-8")
@@ -255,6 +273,8 @@ def test_documented_qwen_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) ->
     _no_weights(stable / "int4")
     assert list((stable / "fp8").glob("qwen-image-2512-transformer-fp8-*.safetensors"))
     assert (stable / "encoder").is_dir()
+    _no_weights(stable / "encoder")
+    assert (stable / "encoder" / "PENDING.txt").is_file()
     record = json.loads((output / "encoder-reuse.json").read_text(encoding="utf-8"))
     assert record == {
         "copied_weights": False,
@@ -265,7 +285,7 @@ def test_documented_qwen_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) ->
             / "Qwen--Qwen-Image-Edit-2511-voxprint"
             / "qwen2.5-vl-7b-text-encoder-fp8.safetensors"
         ),
-        "status": "convert",
+        "status": "reuse-pending",
     }
 
 
@@ -284,9 +304,12 @@ def test_parts_c_d_e_run_qwen_then_edit_then_encoder(tmp_path: Path, monkeypatch
     body = json.loads(next((forge_out / "manifests").glob("*-canvas-qwen-image-2512.json")).read_text(encoding="utf-8"))
     assert [part["id"] for part in body["parts"]] == ["qwen", "edit", "encoder"]
     assert body["parts"][0]["status"] == "uploaded"
+    assert body["parts"][0]["encoder"] == "reuse-pending"
     assert body["parts"][1]["status"] == "uploaded"
-    assert body["parts"][2]["status"] == "convert"
+    assert body["parts"][2]["status"] == "reuse-pending"
     assert body["parts"][2]["copied_weights"] is False
+    qwen_output = forge_out / "work" / "canvas-qwen-image-2512" / "Qwen--Qwen-Image-2512-voxprint"
+    assert not (qwen_output / "qwen2.5-vl-7b-text-encoder-fp8.safetensors").exists()
     edit_fp8 = (
         forge_out
         / "work"
@@ -332,10 +355,10 @@ def test_encoder_selector_reuses_part_c_without_copying_weights(tmp_path: Path, 
 
     _install_fakes()
     _patch_runtime(monkeypatch)
-    from voxprint_forge.diffusion import qwen_job
+    qwen_job = importlib.import_module("voxprint_forge.diffusion.qwen_job")
     from voxprint_forge.diffusion.qwen_main import main
 
-    qwen_job.fetch_sources = fetch_sources
+    monkeypatch.setattr(qwen_job, "fetch_sources", fetch_sources)
     forge_out = tmp_path / "forge-out"
     argv = [
         "run",
@@ -451,9 +474,15 @@ def test_deferred_qwen_parts_then_batch_upload(tmp_path: Path, monkeypatch) -> N
         assert (edit_stages / "edit-upload-deferred.json").is_file()
         output = forge_out / "work" / "canvas-qwen-image-2512" / "Qwen--Qwen-Image-2512-voxprint"
         encoder = output / QWEN_ENCODER_FP8
-        assert encoder.is_file()
-        assert not encoder.is_symlink()
-        assert Path(str(encoder) + ".sha256").is_file()
+        assert not encoder.exists()
+        edit_encoder = (
+            forge_out
+            / "work"
+            / "canvas-zimage-tiers-v1"
+            / "Qwen--Qwen-Image-Edit-2511-voxprint"
+            / QWEN_ENCODER_FP8
+        )
+        assert edit_encoder.is_file()
         assert not (forge_out / "work" / "canvas-qwen-image-2512" / "upstream").exists()
         assert (output / "int4" / "DEFERRED.txt").is_file()
 
@@ -499,8 +528,9 @@ def test_deferred_qwen_parts_then_batch_upload(tmp_path: Path, monkeypatch) -> N
         assert not (qwen_stages / "encoder-upload-deferred.json").exists()
         encoder_marker = json.loads((qwen_stages / "encoder-upload.json").read_text(encoding="utf-8"))
         assert encoder_marker["copied_weights"] is False
-        assert any(item["name"] == QWEN_ENCODER_FP8 for item in encoder_marker["files"])
-        assert encoder.is_file()
+        assert not any(item["name"] == QWEN_ENCODER_FP8 for item in encoder_marker["files"])
+        assert not encoder.exists()
+        assert edit_encoder.is_file()
 
         monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
         assert (

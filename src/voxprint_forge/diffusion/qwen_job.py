@@ -26,15 +26,13 @@ from voxprint_forge.diffusion.qwen_paths import (
     edit_encoder_fp8,
     encoder_hashes,
     format_stable_lines,
-    hardlink_tree,
     link_stable_file,
     refresh_fp8_dir,
-    reset_encoder_dir,
     write_encoder_pending,
     write_int4_marker,
 )
 from voxprint_forge.diffusion.qwen_plan import QwenPlan
-from voxprint_forge.diffusion.qwen_select import QwenPart, parse_parts
+from voxprint_forge.diffusion.qwen_select import QwenPart, parse_parts, refuse_retired
 from voxprint_forge.diffusion.qwen_spec import (
     ENCODER_REUSE,
     INT4_MARKER_NAME,
@@ -57,7 +55,6 @@ from voxprint_forge.diffusion.weights import (
     link_or_copy,
     link_tree,
     write_bf16_shards,
-    write_fp8_file,
     write_fp8_shards,
 )
 from voxprint_forge.errors import ForgeError, StageError, UsageError
@@ -149,20 +146,15 @@ def _current_hashes(ctx: QwenCtx, existing: dict[str, object] | None) -> dict[st
 
 
 def _apply_encoder(ctx: QwenCtx, status: EncoderStatus, edit_fp8: Path) -> None:
+    """Link part C's encoder. A 2512 download is never turned into that file."""
     if status == "reuse":
         _drop_published_encoder(ctx.output)
         link_stable_file(ctx.forge_out, "encoder", edit_fp8.resolve())
         return
-    if status == "reuse-pending":
+    if status == "reuse-pending" or status == "convert":
+        # "convert" is an old marker. New runs classify only reuse or reuse-pending.
         _drop_published_encoder(ctx.output)
         write_encoder_pending(ctx.forge_out)
-        return
-    if status == "convert":
-        text_encoder = ctx.source_dir / "text_encoder"
-        if not text_encoder.is_dir():
-            raise StageError(f"missing text encoder {text_encoder}", code="weights_missing")
-        write_fp8_file(text_encoder, ctx.output / QWEN_ENCODER_FP8, "edit_encoder")
-        hardlink_tree(text_encoder, reset_encoder_dir(ctx.forge_out))
         return
     _unexpected_status(status)
 
@@ -263,8 +255,8 @@ def _card(ctx: QwenCtx, quality: dict[str, object], encoder: dict[str, object]) 
         base_lines=(
             f"Quantized from: `{source.repo}`",
             f"Revision: `{source.revision}`",
-            "Text encoder: Qwen2.5-VL-7B, shared with Qwen-Image-Edit-2511",
-            f"Encoder: {status}. A reused encoder is not copied into this repo.",
+            "Text encoder: Qwen2.5-VL-7B, converted by part C (Qwen-Image-Edit-2511)",
+            f"Encoder: {status}. This part links part C's file and does not write one.",
             "INT4: deferred. No official nunchaku-tech SVDQuant pin. No calibration.",
             "Licence of the weights: Apache-2.0",
             f"Card date: {today_stamp()}",
@@ -327,7 +319,7 @@ def _upload(
         title="Voxprint Qwen-Image-2512",
         description=(
             "Private Voxprint dtype conversion of Qwen-Image-2512. Apache-2.0. "
-            "INT4 is deferred. A reused text encoder is not copied."
+            "INT4 is deferred. The text encoder belongs to part C and is linked, not written here."
         ),
         tiers=tiers,
         variations={variation: [*names, *extra]},
@@ -563,6 +555,8 @@ def _write_manifest(forge_out: Path, plan: QwenPlan, parts: list[dict[str, objec
         "job": plan.id,
         "date": day,
         "int4": plan.int4,
+        "retired": list(plan.retired),
+        "encoder_owner": "edit",
         "estimates_min": {
             "qwen": plan.estimate_min,
             "qwen_reuse": plan.estimate_min_reuse,
@@ -573,7 +567,16 @@ def _write_manifest(forge_out: Path, plan: QwenPlan, parts: list[dict[str, objec
     }
     json_path = directory / f"{day}-canvas-qwen-image-2512.json"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    lines = ["# Qwen-Image-2512 MODELS", "", "INT4 deferred. No weights in the int4 directory.", ""]
+    lines = [
+        "# Qwen-Image-2512 MODELS",
+        "",
+        "Retired. Parts D and E are retired Canvas generators.",
+        "The Qwen2.5-VL-7B encoder is part C's file "
+        "(qwen2.5-vl-7b-text-encoder-fp8.safetensors from Qwen-Image-Edit-2511).",
+        "A forced part D links that file. Part C does not read part D.",
+        "INT4 deferred. No weights in the int4 directory.",
+        "",
+    ]
     for part in parts:
         lines.append(f"## {part.get('id')} — {part.get('status')}")
         lines.append("")
@@ -798,9 +801,12 @@ def release_deferred(
     forge_out: Path,
     token: str | None,
     parts_text: str | None,
+    force: bool = False,
 ) -> dict[str, object]:
-    """Upload deferred D and E. Parts that are already uploaded are left alone."""
+    """Upload deferred D and E. Retired parts refuse unless force is set."""
     selected = _qwen_upload_ids(parts_text)
+    considered = ("qwen", "encoder") if selected is None else selected
+    refuse_retired(considered, plan.retired, force=force)
     forge_out.mkdir(parents=True, exist_ok=True)
     ctx = QwenCtx(repo=repo, forge_out=forge_out, plan=plan, token=token, layout=Layout(forge_out))
     results: list[dict[str, object]] = []
