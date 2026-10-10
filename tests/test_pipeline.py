@@ -172,7 +172,7 @@ quants = ["IQ4_XS"]
     text = f"""
 [run]
 name = "tiny"
-output_dir = "{tmp}/work"
+output_dir = "{tmp.as_posix()}/work"
 wall_clock_budget_min = 30
 headroom_gb = 3.0
 imatrix_chunks = 1
@@ -385,7 +385,7 @@ def test_ablate_stage_uses_injected_ablator(tmp_path: Path, llama_bin: None, mon
     text = f"""
 [run]
 name = "ablate"
-output_dir = "{tmp_path}/work"
+output_dir = "{tmp_path.as_posix()}/work"
 wall_clock_budget_min = 30
 headroom_gb = 3.0
 contexts = [8192]
