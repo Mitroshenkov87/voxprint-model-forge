@@ -25,6 +25,7 @@ class Ctx:
     part: Part
     token: str | None
     layout: Layout
+    defer_upload: bool = False
 
     @property
     def upstream(self) -> Path:

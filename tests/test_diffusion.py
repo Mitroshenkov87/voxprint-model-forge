@@ -274,6 +274,7 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert paths == [
         "scripts/canvas_job.sh",
         "scripts/canvas_job_d.sh",
+        "scripts/canvas_upload.sh",
         "src/voxprint_forge/diffusion",
         "plans/canvas-zimage-tiers-v1.toml",
         "plans/canvas-qwen-image-2512-v1.toml",

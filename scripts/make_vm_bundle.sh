@@ -12,6 +12,7 @@ SHA="$(git -C "$ROOT" rev-parse HEAD)"
 CANVAS_OVERLAY_PATHS=(
   scripts/canvas_job.sh
   scripts/canvas_job_d.sh
+  scripts/canvas_upload.sh
   src/voxprint_forge/diffusion
   plans/canvas-zimage-tiers-v1.toml
   plans/canvas-qwen-image-2512-v1.toml

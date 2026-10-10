@@ -104,6 +104,7 @@ def run_job(
     deadline: datetime | None,
     token: str | None,
     now: Callable[[], datetime] | None = None,
+    defer_upload: bool = False,
 ) -> dict[str, object]:
     clock = now or (lambda: datetime.now(timezone.utc))
     layout = Layout(forge_out)
@@ -135,6 +136,7 @@ def run_job(
                 part=part,
                 token=token,
                 layout=layout,
+                defer_upload=defer_upload,
             )
             results.append(_dispatch(ctx))
     finally:

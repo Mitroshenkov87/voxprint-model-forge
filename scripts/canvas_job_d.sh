@@ -56,10 +56,17 @@ export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 FORCE=0
 DEADLINE="${FORGE_DEADLINE:-}"
 PARTS=""
+DEFER=0
+case "${FORGE_DEFER_UPLOAD:-}" in
+  1|true|TRUE|yes|YES|on|ON) DEFER=1 ;;
+esac
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force)
       FORCE=1
+      ;;
+    --defer-upload)
+      DEFER=1
       ;;
     --deadline)
       shift
@@ -83,8 +90,10 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-prompt_secret HF_TOKEN
-prompt_secret KAGGLE_API_TOKEN
+if [[ "$DEFER" -eq 0 ]]; then
+  prompt_secret HF_TOKEN
+  prompt_secret KAGGLE_API_TOKEN
+fi
 
 if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
   printf 'Run bash scripts/canvas_job_d.sh from the extracted bundle.\n' >&2
@@ -213,6 +222,9 @@ if [[ "$FORCE" -eq 1 ]]; then
 fi
 if [[ -n "$DEADLINE" ]]; then
   args+=(--deadline "$DEADLINE")
+fi
+if [[ "$DEFER" -eq 1 ]]; then
+  args+=(--defer-upload)
 fi
 
 set -o pipefail

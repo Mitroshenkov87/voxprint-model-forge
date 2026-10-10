@@ -135,3 +135,33 @@ bash scripts/canvas_job_d.sh --parts C,D,E
 ```
 
 `scripts/canvas_job_d.sh` exits 2 while `scripts/canvas_job.sh` is still running, unless you pass `--force`. A missing token on a non-interactive stdin exits 2 and does not prompt. The INT4 directory contains `DEFERRED.txt` and no weights.
+
+## Token-free prepare, upload later
+
+The A100 can run with no `HF_TOKEN` and no `KAGGLE_API_TOKEN`. Downloads of the public inputs use `HF_TOKEN` only when it is set. Set `FORGE_DEFER_UPLOAD=1` (or pass `--defer-upload`). The scripts skip the token prompt. Each part still runs fetch, convert, quality, card, and sha256 sidecars, writes `~/forge-out/stages/<job>/<part>-upload-deferred.json`, keeps the tier files, and deletes the FP32/BF16 download. The part status is `upload-deferred`.
+
+```bash
+export FORGE_DEFER_UPLOAD=1
+bash scripts/canvas_job.sh
+bash scripts/canvas_job_d.sh
+bash scripts/canvas_job_d.sh --parts C,D,E
+```
+
+The python entry is the same command as the script, plus `--defer-upload`:
+
+```bash
+python -m voxprint_forge.diffusion run plans/canvas-zimage-tiers-v1.toml --json --forge-out ~/forge-out --root <repo> --defer-upload
+python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml --json --forge-out ~/forge-out --root <repo> --defer-upload
+```
+
+When the tokens are back, one batch uploads every deferred part, checks sha256 and size, and flips the marker to `<part>-upload`. A second run is a no-op.
+
+```bash
+export HF_TOKEN=...
+export KAGGLE_API_TOKEN=...
+bash scripts/canvas_upload.sh --parts A,B,C,D
+forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-zimage-tiers-v1.toml --parts A,B,C
+forge --forge-out ~/forge-out --root <repo> canvas upload plans/canvas-qwen-image-2512-v1.toml --parts D,E
+```
+
+`bash scripts/canvas_upload.sh` with no `--parts` uploads every deferred part, including E. `--parts C,D,E` uploads edit, Qwen-Image-2512, and the encoder. A reused encoder is still not copied.

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from voxprint_forge.diffusion.deadline import resolve_deadline
+from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.diffusion.guard import llm_job_running
 from voxprint_forge.diffusion.qwen_guard import canvas_ac_running
 from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
@@ -30,6 +31,7 @@ def execute(
     force: bool,
     deadline_text: str | None,
     parts_text: str | None,
+    defer_upload: bool = False,
 ) -> dict[str, object]:
     if not force and llm_job_running(forge_out):
         raise UsageError(
@@ -55,6 +57,7 @@ def execute(
         parts=parts,
         deadline=deadline,
         token=token,
+        defer_upload=defer_requested(defer_upload),
     )
 
 
@@ -76,10 +79,11 @@ def _repo(explicit: Path | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m voxprint_forge.diffusion.qwen_main")
-    parser.add_argument("command", choices=["run"])
+    parser.add_argument("command", choices=["run", "upload"])
     parser.add_argument("plan", type=Path)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--defer-upload", action="store_true")
     parser.add_argument("--deadline", default=None)
     parser.add_argument("--parts", default=None)
     parser.add_argument("--forge-out", type=Path, default=None)
@@ -91,14 +95,38 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_USAGE
     forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
     try:
-        result = execute(
-            repo=_repo(args.root),
-            plan_path=args.plan,
-            forge_out=forge_out,
-            force=bool(args.force),
-            deadline_text=args.deadline,
-            parts_text=args.parts,
-        )
+        if args.command == "upload":
+            from voxprint_forge.diffusion.qwen_job import release_deferred
+            from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
+
+            if not args.force and llm_job_running(forge_out):
+                raise UsageError(
+                    "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). "
+                    "Pass --force to start anyway.",
+                    code="llm_running",
+                )
+            if not args.force and canvas_ac_running():
+                raise UsageError(
+                    "scripts/canvas_job.sh is still running. Wait until it exits, or pass --force.",
+                    code="canvas_running",
+                )
+            result = release_deferred(
+                repo=_repo(args.root),
+                plan=load_qwen_plan(args.plan),
+                forge_out=forge_out,
+                token=os.environ.get("HF_TOKEN", "").strip() or None,
+                parts_text=args.parts,
+            )
+        else:
+            result = execute(
+                repo=_repo(args.root),
+                plan_path=args.plan,
+                forge_out=forge_out,
+                force=bool(args.force),
+                deadline_text=args.deadline,
+                parts_text=args.parts,
+                defer_upload=bool(args.defer_upload),
+            )
         emit("qwen", result, ok=True, exit_code=0, json_mode=args.json)
         return 0
     except ForgeError as exc:

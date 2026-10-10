@@ -12,6 +12,7 @@ from typing import Never
 from voxprint_forge.diffusion.cardrender import CardContext, render_canvas_card, today_stamp
 from voxprint_forge.diffusion.common import Ctx, delete_intermediates, write_json, write_notice
 from voxprint_forge.diffusion.deadline import DEFERRED, defer_part
+from voxprint_forge.diffusion.defer import drop_marker, write_local_files
 from voxprint_forge.diffusion.part_base import run_base
 from voxprint_forge.diffusion.part_control import run_control
 from voxprint_forge.diffusion.part_edit import run_edit
@@ -33,7 +34,7 @@ from voxprint_forge.diffusion.qwen_paths import (
     write_int4_marker,
 )
 from voxprint_forge.diffusion.qwen_plan import QwenPlan
-from voxprint_forge.diffusion.qwen_select import QwenPart
+from voxprint_forge.diffusion.qwen_select import QwenPart, parse_parts
 from voxprint_forge.diffusion.qwen_spec import (
     ENCODER_REUSE,
     INT4_MARKER_NAME,
@@ -288,7 +289,13 @@ def _card(ctx: QwenCtx, quality: dict[str, object], encoder: dict[str, object]) 
     return {"card": "README.md", "encoder": status}
 
 
-def _upload(ctx: QwenCtx, quality: dict[str, object], encoder: dict[str, object]) -> dict[str, object]:
+def _upload(
+    ctx: QwenCtx,
+    quality: dict[str, object],
+    encoder: dict[str, object],
+    *,
+    remote: bool = True,
+) -> dict[str, object]:
     decision = _decision(quality)
     status = _encoder_status(encoder)
     if status != "convert":
@@ -304,6 +311,10 @@ def _upload(ctx: QwenCtx, quality: dict[str, object], encoder: dict[str, object]
     if status == "convert":
         tiers[QWEN_ENCODER_FP8] = ("24gb", 24, source.repo, source.revision)
     variation = "24gb-fp8" if decision == "fp8" else "24gb-bf16"
+    if not remote:
+        rows = write_local_files(ctx.output, tiers, source.repo, source.revision)
+        delete_intermediates(ctx.upstream_root)
+        return {"files": rows, "encoder": status}
     records = publish_output(
         output=ctx.output,
         hf_repo=ctx.plan.hf_repo,
@@ -379,12 +390,19 @@ def run_qwen_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> dic
     quality = run_stage(ctx, "quality", lambda: _quality(ctx))
     run_stage(ctx, "card", lambda: _card(ctx, quality, encoder))
     _refresh(ctx, quality)
-    uploaded = run_stage(ctx, "upload", lambda: _upload(ctx, quality, encoder))
+    if ctx.defer_upload:
+        held = run_stage(ctx, "upload-deferred", lambda: _upload(ctx, quality, encoder, remote=False))
+        status = "upload-deferred"
+        files = held.get("files", [])
+    else:
+        uploaded = run_stage(ctx, "upload", lambda: _upload(ctx, quality, encoder))
+        drop_marker(ctx.marker("upload-deferred"))
+        status = "uploaded"
+        files = uploaded.get("files", [])
     progress(ctx, "done", 100, 0)
-    files = uploaded.get("files", [])
     return {
         "id": "qwen",
-        "status": "uploaded",
+        "status": status,
         "estimate_min": ctx.plan.estimate_min,
         "estimate_min_reuse": ctx.plan.estimate_min_reuse,
         "estimate_min_recompute": ctx.plan.estimate_min_recompute,
@@ -411,6 +429,31 @@ def run_encoder_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> 
     run_stage(ctx, "fetch", lambda: _fetch(ctx))
     encoder = ensure_encoder(ctx)
     progress(ctx, "encoder", 100, 0)
+    uploaded_encoder = read_marker(ctx.layout.stage(ctx.plan.id, "encoder-upload"))
+    if uploaded_encoder is not None:
+        files = uploaded_encoder.get("files", [])
+        return {
+            "id": "encoder",
+            "status": "uploaded",
+            "estimate_min": ctx.plan.encoder_estimate_min,
+            "copied_weights": False,
+            "resumed": True,
+            "files": files if isinstance(files, list) else [],
+            "stable": _stable(ctx),
+        }
+    if ctx.defer_upload:
+        held = _hold_encoder(ctx, encoder)
+        files = held.get("files", [])
+        return {
+            "id": "encoder",
+            "status": "upload-deferred",
+            "estimate_min": ctx.plan.encoder_estimate_min,
+            "copied_weights": False,
+            "encoder": _encoder_status(encoder),
+            "edit_fp8": encoder.get("edit_fp8"),
+            "files": files if isinstance(files, list) else [],
+            "stable": _stable(ctx),
+        }
     return {
         "id": "encoder",
         "status": _encoder_status(encoder),
@@ -422,6 +465,25 @@ def run_encoder_part(ctx: QwenCtx, deadline: datetime | None, now: datetime) -> 
     }
 
 
+def _hold_encoder(ctx: QwenCtx, encoder: dict[str, object]) -> dict[str, object]:
+    """Record the encoder file for a later upload. A reused encoder is not copied."""
+    status = _encoder_status(encoder)
+    fp8 = ctx.output / QWEN_ENCODER_FP8
+    files: list[dict[str, object]] = []
+    if status == "convert" and fp8.is_file() and not fp8.is_symlink():
+        from voxprint_forge.hashing import sha256_file, write_sha256
+
+        digest = sha256_file(fp8)
+        write_sha256(fp8, digest)
+        files.append({"name": fp8.name, "sha256": digest, "size": fp8.stat().st_size, "tier": "24gb"})
+    payload = {"status": status, "copied_weights": False, "files": files}
+    write_marker(
+        ctx.layout.stage(ctx.plan.id, "encoder-upload-deferred"),
+        {"stage": "encoder-upload-deferred", **payload},
+    )
+    return payload
+
+
 def _canvas_part(
     *,
     repo: Path,
@@ -430,6 +492,7 @@ def _canvas_part(
     part_id: PartId,
     deadline: datetime | None,
     now: datetime,
+    defer_upload: bool,
 ) -> dict[str, object]:
     plan = load_canvas_plan(repo / "plans" / ZIMAGE_PLAN)
     part = plan.part(part_id)
@@ -453,7 +516,15 @@ def _canvas_part(
             "resumed": True,
             "files": files if isinstance(files, list) else [],
         }
-    ctx = Ctx(repo=repo, forge_out=forge_out, plan=plan, part=part, token=token, layout=layout)
+    ctx = Ctx(
+        repo=repo,
+        forge_out=forge_out,
+        plan=plan,
+        part=part,
+        token=token,
+        layout=layout,
+        defer_upload=defer_upload,
+    )
     if part_id == "base":
         return run_base(ctx)
     if part_id == "controlnet":
@@ -499,11 +570,19 @@ def run_selected(
     deadline: datetime | None,
     token: str | None,
     now: Callable[[], datetime] | None = None,
+    defer_upload: bool = False,
 ) -> dict[str, object]:
     clock = now or (lambda: datetime.now(timezone.utc))
     layout = Layout(forge_out)
     forge_out.mkdir(parents=True, exist_ok=True)
-    ctx = QwenCtx(repo=repo, forge_out=forge_out, plan=plan, token=token, layout=layout)
+    ctx = QwenCtx(
+        repo=repo,
+        forge_out=forge_out,
+        plan=plan,
+        token=token,
+        layout=layout,
+        defer_upload=defer_upload,
+    )
     results: list[dict[str, object]] = []
     manifest_json = ""
     manifest_md = ""
@@ -519,6 +598,7 @@ def run_selected(
                         part_id="base",
                         deadline=deadline,
                         now=current,
+                        defer_upload=defer_upload,
                     )
                 )
             elif part == "controlnet":
@@ -530,6 +610,7 @@ def run_selected(
                         part_id="controlnet",
                         deadline=deadline,
                         now=current,
+                        defer_upload=defer_upload,
                     )
                 )
             elif part == "qwen":
@@ -543,6 +624,7 @@ def run_selected(
                         part_id="edit",
                         deadline=deadline,
                         now=current,
+                        defer_upload=defer_upload,
                     )
                 )
             elif part == "encoder":
@@ -567,3 +649,110 @@ def run_selected(
         },
     }
 
+
+def _qwen_upload_ids(text: str | None) -> tuple[str, ...] | None:
+    if text is None or not text.strip():
+        return None
+    chosen = parse_parts(text)
+    allowed = ("qwen", "encoder")
+    found = tuple(part for part in allowed if part in chosen)
+    if not found or len(found) != len(chosen):
+        raise UsageError("qwen upload parts must be D, E or qwen, encoder", code="parts")
+    return found
+
+
+def _release_qwen(ctx: QwenCtx, *, explicit: bool) -> dict[str, object] | None:
+    uploaded = read_marker(ctx.marker("upload"))
+    deferred = ctx.marker("upload-deferred")
+    if uploaded is not None:
+        drop_marker(deferred)
+        return _uploaded_qwen(ctx, uploaded)
+    if read_marker(deferred) is None:
+        if not explicit:
+            return None
+        raise StageError("qwen has no upload-deferred marker", code="upload_deferred")
+    quality = read_marker(ctx.marker("quality"))
+    encoder = read_marker(ctx.marker("encoder"))
+    if quality is None or encoder is None:
+        raise StageError("qwen is missing quality or encoder markers", code="quality")
+    body = run_stage(ctx, "upload", lambda: _upload(ctx, quality, encoder))
+    drop_marker(deferred)
+    files = body.get("files", [])
+    return {
+        "id": "qwen",
+        "status": "uploaded",
+        "estimate_min": ctx.plan.estimate_min,
+        "hf_repo": ctx.plan.hf_repo,
+        "encoder": body.get("encoder"),
+        "copied_weights": False,
+        "files": files if isinstance(files, list) else [],
+    }
+
+
+def _release_encoder(ctx: QwenCtx, *, explicit: bool) -> dict[str, object] | None:
+    done_path = ctx.layout.stage(ctx.plan.id, "encoder-upload")
+    deferred_path = ctx.layout.stage(ctx.plan.id, "encoder-upload-deferred")
+    done = read_marker(done_path)
+    if done is not None:
+        drop_marker(deferred_path)
+        files = done.get("files", [])
+        return {
+            "id": "encoder",
+            "status": "uploaded",
+            "resumed": True,
+            "copied_weights": False,
+            "files": files if isinstance(files, list) else [],
+        }
+    if read_marker(deferred_path) is None:
+        if not explicit:
+            return None
+        raise StageError("encoder has no upload-deferred marker", code="upload_deferred")
+    fp8 = ctx.output / QWEN_ENCODER_FP8
+    records: list[dict[str, object]] = []
+    if fp8.is_file() and not fp8.is_symlink():
+        stage = ctx.forge_out / "work" / ctx.plan.id / "encoder-upload-stage"
+        if stage.exists():
+            shutil.rmtree(stage)
+        stage.mkdir(parents=True)
+        link_or_copy(fp8, stage / fp8.name)
+        source = ctx.plan.source
+        records = publish_output(
+            output=stage,
+            hf_repo=ctx.plan.hf_repo,
+            kaggle_slug=ctx.plan.kaggle_slug,
+            title="Voxprint Qwen-Image-2512 text encoder",
+            description="Private Voxprint FP8 text encoder. Apache-2.0. A reused encoder is not copied.",
+            tiers={fp8.name: ("24gb", 24, source.repo, source.revision)},
+            variations={"24gb-fp8": [fp8.name]},
+            repo=source.repo,
+            revision=source.revision,
+            staging=stage / "kaggle-staging",
+        )
+        shutil.rmtree(stage, ignore_errors=True)
+    write_marker(done_path, {"stage": "encoder-upload", "files": records, "copied_weights": False})
+    drop_marker(deferred_path)
+    return {"id": "encoder", "status": "uploaded", "copied_weights": False, "files": records}
+
+
+def release_deferred(
+    *,
+    repo: Path,
+    plan: QwenPlan,
+    forge_out: Path,
+    token: str | None,
+    parts_text: str | None,
+) -> dict[str, object]:
+    """Upload deferred D and E. Parts that are already uploaded are left alone."""
+    selected = _qwen_upload_ids(parts_text)
+    forge_out.mkdir(parents=True, exist_ok=True)
+    ctx = QwenCtx(repo=repo, forge_out=forge_out, plan=plan, token=token, layout=Layout(forge_out))
+    results: list[dict[str, object]] = []
+    if selected is None or "qwen" in selected:
+        released = _release_qwen(ctx, explicit=selected is not None)
+        if released is not None:
+            results.append(released)
+    if selected is None or "encoder" in selected:
+        released = _release_encoder(ctx, explicit=selected is not None)
+        if released is not None:
+            results.append(released)
+    return {"job": plan.id, "parts": results}

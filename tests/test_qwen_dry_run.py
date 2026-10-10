@@ -383,3 +383,162 @@ def test_encoder_selector_reuses_part_c_without_copying_weights(tmp_path: Path, 
     else:
         assert linked.stat().st_ino == edit_fp8.stat().st_ino
     assert "diffusers" not in sys.modules
+
+
+class _RefuseRemote:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("deferred prepare must not open a remote")
+
+
+def test_qwen_defer_skips_the_token_prompt(tmp_path: Path) -> None:
+    script = (ROOT / "scripts" / "canvas_job_d.sh").read_text(encoding="utf-8")
+    assert "FORGE_DEFER_UPLOAD" in script
+    assert "--defer-upload" in script
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("KAGGLE_API_TOKEN", None)
+    env["FORGE_DEFER_UPLOAD"] = "1"
+    env["FORGE_OUT"] = tmp_path.as_posix()
+    proc = subprocess.run(
+        [*_bash(ROOT / "scripts" / "canvas_job_d.sh"), "--parts", "C,D,E"],
+        input=b"",
+        capture_output=True,
+        env=env,
+        timeout=8,
+        check=False,
+    )
+    assert b"non-interactive" not in proc.stderr
+    assert proc.returncode != 2
+
+
+def test_deferred_qwen_parts_then_batch_upload(tmp_path: Path, monkeypatch) -> None:
+    """C, D, and E with FORGE_DEFER_UPLOAD, then canvas_upload.sh's two upload lines."""
+    from voxprint_forge.diffusion import publish
+    from voxprint_forge.diffusion.cli import main as canvas_main
+    from voxprint_forge.diffusion.qwen_main import main
+    from voxprint_forge.diffusion.qwen_spec import QWEN_ENCODER_FP8
+
+    _install_fakes()
+    _patch_runtime(monkeypatch)
+    monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
+    forge_out = tmp_path / "forge-out"
+    zimage = ROOT / "plans" / "canvas-zimage-tiers-v1.toml"
+    try:
+        code = main(
+            [
+                "run",
+                str(PLAN),
+                "--json",
+                "--forge-out",
+                str(forge_out),
+                "--root",
+                str(ROOT),
+                "--parts",
+                "C,D,E",
+                "--force",
+                "--defer-upload",
+            ]
+        )
+        assert code == 0
+        manifest = next((forge_out / "manifests").glob("*-canvas-qwen-image-2512.json"))
+        body = json.loads(manifest.read_text(encoding="utf-8"))
+        statuses = {part["id"]: part["status"] for part in body["parts"]}
+        assert statuses == {"qwen": "upload-deferred", "edit": "upload-deferred", "encoder": "upload-deferred"}
+        qwen_stages = forge_out / "stages" / "canvas-qwen-image-2512"
+        edit_stages = forge_out / "stages" / "canvas-zimage-tiers-v1"
+        assert (qwen_stages / "qwen-upload-deferred.json").is_file()
+        assert (qwen_stages / "encoder-upload-deferred.json").is_file()
+        assert (edit_stages / "edit-upload-deferred.json").is_file()
+        output = forge_out / "work" / "canvas-qwen-image-2512" / "Qwen--Qwen-Image-2512-voxprint"
+        encoder = output / QWEN_ENCODER_FP8
+        assert encoder.is_file()
+        assert not encoder.is_symlink()
+        assert Path(str(encoder) + ".sha256").is_file()
+        assert not (forge_out / "work" / "canvas-qwen-image-2512" / "upstream").exists()
+        assert (output / "int4" / "DEFERRED.txt").is_file()
+
+        monkeypatch.setattr(publish, "HubRemote", FakeHub)
+        assert (
+            main(
+                [
+                    "upload",
+                    str(PLAN),
+                    "--json",
+                    "--forge-out",
+                    str(forge_out),
+                    "--root",
+                    str(ROOT),
+                    "--parts",
+                    "D,E",
+                    "--force",
+                ]
+            )
+            == 0
+        )
+        assert (
+            canvas_main(
+                [
+                    "upload",
+                    str(zimage),
+                    "--json",
+                    "--forge-out",
+                    str(forge_out),
+                    "--root",
+                    str(ROOT),
+                    "--parts",
+                    "C",
+                    "--force",
+                ]
+            )
+            == 0
+        )
+        assert (qwen_stages / "qwen-upload.json").is_file()
+        assert (qwen_stages / "encoder-upload.json").is_file()
+        assert (edit_stages / "edit-upload.json").is_file()
+        assert not (qwen_stages / "qwen-upload-deferred.json").exists()
+        assert not (qwen_stages / "encoder-upload-deferred.json").exists()
+        encoder_marker = json.loads((qwen_stages / "encoder-upload.json").read_text(encoding="utf-8"))
+        assert encoder_marker["copied_weights"] is False
+        assert any(item["name"] == QWEN_ENCODER_FP8 for item in encoder_marker["files"])
+        assert encoder.is_file()
+
+        monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
+        assert (
+            main(
+                [
+                    "upload",
+                    str(PLAN),
+                    "--json",
+                    "--forge-out",
+                    str(forge_out),
+                    "--root",
+                    str(ROOT),
+                    "--parts",
+                    "D,E",
+                    "--force",
+                ]
+            )
+            == 0
+        )
+        from voxprint_forge.cli import main as forge_main
+
+        assert (
+            forge_main(
+                [
+                    "--json",
+                    "--root",
+                    str(ROOT),
+                    "--forge-out",
+                    str(forge_out),
+                    "canvas",
+                    "upload",
+                    str(zimage),
+                    "--parts",
+                    "C",
+                    "--force",
+                ]
+            )
+            == 0
+        )
+    finally:
+        _clear_fakes()
