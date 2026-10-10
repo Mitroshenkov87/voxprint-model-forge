@@ -56,13 +56,7 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 
 ## Manifest
 
-`run-all` writes `manifests/<date>-a100.json` and `manifests/<date>-a100.MODELS.md` into the repo and into `~/forge-out/manifests/`. `torrent` is the placeholder `placeholder`. With `GH_TOKEN` set, the same files are committed and pushed using `git -c http.extraHeader=...`. The token is not stored in git config. Without `GH_TOKEN`, the process prints:
-
-```bash
-git add manifests/<date>-a100.json manifests/<date>-a100.MODELS.md
-git commit -m "Record A100 sha256 manifest <date>"
-git push
-```
+`run-all` writes `manifests/<date>-a100.json` and `manifests/<date>-a100.MODELS.md` under `~/forge-out/manifests/`. `torrent` is the placeholder `placeholder`. The A100 box has no GitHub remote. The run prints the two paths so the operator can copy them back. It does not push.
 
 ## Environment
 
@@ -72,14 +66,13 @@ git push
 | `HF_USER` | Hub account that owns the private model repos |
 | `KAGGLE_API_TOKEN` | Kaggle CLI auth. Not logged. |
 | `KAGGLE_USER` | Kaggle owner. Default `mitroshenkov87` |
-| `GH_TOKEN` | Private clone and optional manifest push. Not logged. |
 | `FORGE_LLAMA_BIN` | Directory with `llama-quantize`, `llama-imatrix`, `llama-server`, `llama-cli`, `llama-perplexity` |
 | `FORGE_LLAMA_SRC` | llama.cpp checkout that contains `convert_hf_to_gguf.py` |
 | `FORGE_ROOT` | Repo root, if it is not the working directory |
 
 ## Model card
 
-`templates/model_card.md.jinja` renders `README.md`. The card includes the base model, revision, licence, what changed (in-house ablation or a requant of an upstream abliterated model), quant types, imatrix, Plotweaver purpose, 16/24 GB tiers, measured VRAM, perplexity, RU and EN refusal rates, a prose sample, limits, credits, the Apache-2.0 text from `LICENSE`, and a modification notice.
+`templates/model_card.md.jinja` renders `README.md`. The file starts with Hugging Face YAML: `license: apache-2.0`, `base_model` (the abliterated upstream for a requant, the T-Bank repo for T-lite and T-pro), `base_model_relation: quantized`, tags `voxprint`, `gguf`, `abliterated`, `llama.cpp`, `imatrix`, `russian`, `language: [ru, en]`, and `pipeline_tag: text-generation`. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then `## Made for Voxprint AI Media Suite` with the Plotweaver link. `huggingface_hub.ModelCard` parses that front matter.
 
 ## Fit
 

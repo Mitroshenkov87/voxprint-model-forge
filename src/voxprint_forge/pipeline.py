@@ -38,6 +38,7 @@ from voxprint_forge.measure import (
     tier_min_vram,
 )
 from voxprint_forge.plan import ModelPlan, Plan, Tier
+from voxprint_forge.progress import Progress
 from voxprint_forge.scrub import log
 from voxprint_forge.upload import Artifact, Remote, publish_private
 
@@ -62,8 +63,22 @@ class Host:
     stamped: str = ""
 
 
-def run_all(plan: Plan, host: Host, repo: Path, layout: Layout, *, push_manifest: bool = True) -> dict[str, object]:
+def _tracker(plan: Plan, layout: Layout, host: Host, progress: Progress | None) -> Progress:
+    if progress is not None:
+        return progress
+    build = float(plan.estimates_min.get("bootstrap_build", 0))
+    total = build + sum(float(item.estimate_min) for item in plan.enabled_models())
+    return Progress(
+        layout.root / "progress.log",
+        total_min=total,
+        consumed_min=build,
+        now=host.now,
+    )
+
+
+def run_all(plan: Plan, host: Host, repo: Path, layout: Layout) -> dict[str, object]:
     start = host.now()
+    progress = _tracker(plan, layout, host, None)
     models: list[dict[str, object]] = []
     for model in plan.enabled_models():
         remaining = plan.wall_clock_budget_min - (host.now() - start) / 60.0
@@ -79,17 +94,27 @@ def run_all(plan: Plan, host: Host, repo: Path, layout: Layout, *, push_manifest
                 "files": [],
             }
             write_marker(layout.stage(model.id, "skipped"), skipped)
+            progress.advance(model.id, "skipped", float(model.estimate_min))
             models.append(skipped)
             continue
-        models.append(run_model(plan, model, host, repo, layout, stop_after="upload"))
+        models.append(run_model(plan, model, host, repo, layout, stop_after="upload", progress=progress))
     stamped = host.stamped or datetime.now(timezone.utc).date().isoformat()
     payload: dict[str, object] = {"date": stamped, "plan": plan.name, "models": models}
-    written = write_run_manifest(repo, layout, payload, date=stamped, push=push_manifest)
+    written = write_run_manifest(layout, payload, date=stamped)
     text = "\n".join(summary_lines(payload))
     log(text)
     if written.get("instructions"):
         log(str(written["instructions"]))
     return {"models": models, "manifest": written, "summary": text}
+
+
+def _stage_share(model: ModelPlan) -> float:
+    return float(model.estimate_min) / len(ORDER)
+
+
+def _open_stage(progress: Progress, layout: Layout, model: ModelPlan, stage: str) -> None:
+    if read_marker(layout.stage(model.id, stage)) is None:
+        progress.begin(model.id, stage)
 
 
 def run_model(
@@ -101,41 +126,62 @@ def run_model(
     *,
     stop_after: str,
     budgets: set[float] | None = None,
+    progress: Progress | None = None,
 ) -> dict[str, object]:
     if stop_after not in ORDER:
         raise UsageError(f"unknown stage {stop_after}", code="usage")
+    tracker = _tracker(plan, layout, host, progress)
+    share = _stage_share(model)
     done = read_marker(layout.stage(model.id, "upload"))
     if done is not None:
+        tracker.advance(model.id, "upload", float(model.estimate_min))
         return done
     target = ORDER.index(stop_after)
     work = layout.model_dir(model.id)
     work.mkdir(parents=True, exist_ok=True)
     _reserve_disk(plan, model, work)
+    _open_stage(tracker, layout, model, "fetch")
     fetched = _fetch(model, host, layout)
+    tracker.advance(model.id, "fetch", share)
     if target == 0:
         return fetched
+    _open_stage(tracker, layout, model, "abliterate")
     prepared = _prepare(model, host, layout)
+    tracker.advance(model.id, "abliterate", share)
     if target == 1:
         return prepared
     gguf = Path(str(prepared["gguf"]))
     imatrix = _imatrix(plan, model, host, layout, gguf)
+    _open_stage(tracker, layout, model, "quantize")
     quantized = _quantize(model, host, layout, gguf, Path(str(imatrix["path"])))
+    tracker.advance(model.id, "quantize", share)
     if target == 2:
         return quantized
+    _open_stage(tracker, layout, model, "fit")
     fitted = _fit(plan, model, host, layout, gguf, Path(str(imatrix["path"])), budgets)
+    tracker.advance(model.id, "fit", share)
     if target == 3:
         return fitted
+    _open_stage(tracker, layout, model, "eval")
     evaluated = _eval(plan, model, host, layout, fitted)
+    tracker.advance(model.id, "eval", share)
     if target == 4:
         return evaluated
+    _open_stage(tracker, layout, model, "card")
     card = _card(plan, model, host, repo, layout, evaluated, prepared, imatrix)
+    tracker.advance(model.id, "card", share)
     if target == 5:
         return card
+    _open_stage(tracker, layout, model, "publish-prep")
     drafted = _publish_prep(model, layout, card)
+    tracker.advance(model.id, "publish-prep", share)
     if target == 6:
         return drafted
+    _open_stage(tracker, layout, model, "upload")
     _delete_intermediates(work)
-    return _upload(model, host, layout, card, imatrix)
+    uploaded = _upload(model, host, layout, card, imatrix)
+    tracker.advance(model.id, "upload", share)
+    return uploaded
 
 
 def default_ablate(source: Path, dest: Path, weight_bytes: int, free_vram: int | None) -> dict[str, object]:

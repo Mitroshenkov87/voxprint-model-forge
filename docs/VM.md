@@ -1,46 +1,62 @@
 # A100 80GB VM
 
-Fresh Ubuntu on immers.cloud: 1x A100 80GB, 16 vCPU, 128 GB RAM, 480 GB NVMe. The rental is about 3 hours. Model work is budgeted at 150 minutes inside that window. The separate RTX 4090 is for app tests later, so fit on this box is computed weights + KV plus a llama-server measurement on the A100. `min_vram_gb` in the registry is 16 or 24 from that measurement.
+Ubuntu 24.04 on immers.cloud: 1x A100 80GB, 16 vCPU, 128 GB RAM, 480 GB NVMe. The rental is about 3 hours. Model work is budgeted at 150 minutes inside that window. The separate RTX 4090 is for app tests later, so fit on this box is computed weights + KV plus a llama-server measurement on the A100. `min_vram_gb` in the registry is 16 or 24 from that measurement.
 
 RAM: the resident ablation path wants the bf16 weights plus about 6 GB. T-pro bf16 is about 61 GiB, so 128 GB is the minimum this plan is written for. Disk: keep at least a few tens of GiB free after the F16 source, the quants, and the reused GGUF. Bootstrap stops with exit 7 when the next stage would not fit, and it leaves finished quants in place.
 
-## Command
+The VM has no GitHub access. The repo arrives as a `git archive` bundle, so the tree has no `.git` directory.
 
-Set the tokens in the environment. The script prompts once on `/dev/tty` with a silent read if `HF_TOKEN` or `KAGGLE_API_TOKEN` is missing. It never echoes them, never writes them to disk, and scrubs them from `~/forge-out/logs`.
+## Operator steps
+
+On a machine that can reach GitHub, from a checkout of this repo:
 
 ```bash
-export GH_TOKEN=...
+bash scripts/make_vm_bundle.sh
+scp dist/voxprint-model-forge-<sha>.tar.gz <user>@<vm>:
+```
+
+`make_vm_bundle.sh` runs `git archive`, writes the commit sha to `VERSION`, and packs llama.cpp `b11476` (`scripts/llama.rev`) under `third_party/`. Bootstrap prints that sha and does not call git or GitHub.
+
+On the VM:
+
+```bash
+ssh <user>@<vm>
+tar -xzf voxprint-model-forge-<sha>.tar.gz
+cd voxprint-model-forge
 export HF_TOKEN=...
 export HF_USER=...
 export KAGGLE_API_TOKEN=...
 export KAGGLE_USER=mitroshenkov87
-
-curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-  https://raw.githubusercontent.com/Mitroshenkov87/voxprint-model-forge/main/scripts/bootstrap.sh | bash
+tmux new -s forge 'bash scripts/bootstrap.sh'
 ```
 
-From a checkout:
+Pass the tokens in the environment over SSH. Do not write them to disk. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset, bootstrap prompts once with `read -s` on `/dev/tty`. That value stays in the process only. `set +x` stays in force around the prompt. Logs go through `scripts/logscrub.py`. On EXIT, INT, and TERM the script deletes `~/.cache/huggingface/token`, `~/.cache/huggingface/stored_tokens`, `~/.kaggle/`, and any `kaggle.json` or `access_token` file it finds, then unsets the two token variables. It does not call `hf auth login` or `huggingface-cli login`.
+
+Re-attach: `tmux attach -t forge`.
+
+If the session is gone, export the tokens again and re-run `tmux new -s forge 'bash scripts/bootstrap.sh'`. Stage markers in `~/forge-out/stages` skip finished work, including uploads whose remote sha256 and size already matched.
+
+Progress lines (timestamp, model, stage, percent, ETA) append to `~/forge-out/progress.log`. `tail -f ~/forge-out/progress.log` while the session runs.
+
+When the run finishes, copy the manifest back:
 
 ```bash
-git -c "http.extraHeader=Authorization: Bearer $GH_TOKEN" \
-  clone https://github.com/Mitroshenkov87/voxprint-model-forge.git
-cd voxprint-model-forge
-bash scripts/bootstrap.sh
+scp <user>@<vm>:~/forge-out/manifests/<date>-a100.json .
+scp <user>@<vm>:~/forge-out/manifests/<date>-a100.MODELS.md .
 ```
 
-`GH_TOKEN` is only required for the private clone and, if you want it, the manifest push. Do not put the token in the remote URL or in `git config`.
+Bootstrap prints those two paths. There is no push from the VM.
 
 ## What bootstrap does
 
-1. Prompt for missing tokens, then check `nvidia-smi`.
-2. Print the plan estimates with system Python (no torch import).
-3. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
-4. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
-5. Build llama.cpp `b11476` (`988190680d5a89fce97de3c20df2c2813731fd61`) with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`.
-6. `scripts/vm_run.sh` runs `forge run-all`.
-7. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file.
-
-Stage markers live in `~/forge-out/stages`. Re-running the script skips finished stages.
+1. Print the forge commit from `VERSION`. Refuse anything other than Ubuntu 24.04.
+2. Prompt for missing tokens, then check `nvidia-smi`.
+3. Print the plan estimates with system Python (no torch import).
+4. Install uv, Python 3.14, and `torch==2.14.1` from the cu130 index. If that wheel is missing it retries Python 3.13, then 3.12.
+5. `forge verify-logins`. A failed Hub or Kaggle login stops the script before the llama.cpp build and before any download.
+6. Build the bundled llama.cpp with `-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80;89;120`.
+7. `scripts/vm_run.sh` runs `forge run-all`.
+8. Tar `~/forge-out/forge-results-<date>.tar` plus a sha256 file, and print the manifest paths to copy back.
 
 Copy results off the box with `scp` or `rsync` as a second copy. The private Hub and Kaggle uploads are the primary copy.
 
@@ -84,6 +100,6 @@ Right after each model, the `upload` stage pushes the finished GGUFs, the imatri
 - a private Hugging Face model repo under `HF_USER`
 - a private Kaggle model owned by `KAGGLE_USER`, one variation per tier, framework `gguf`
 
-Logins are verified before the build. A remote sha256 or size mismatch retries with backoff and does not mark the stage done. The summary lists each file with its sha256 and both URLs. The manifest committed back to this repo (`manifests/<date>-a100.json` and the MODELS snippet) is the failover list: Hugging Face, Kaggle, and a torrent placeholder.
+Logins are verified before the build. A remote sha256 or size mismatch retries with backoff and does not mark the stage done. The summary lists each file with its sha256 and both URLs. `~/forge-out/manifests/<date>-a100.json` and the MODELS snippet are the failover list: Hugging Face, Kaggle, and a torrent placeholder. Copy them back; the VM does not push.
 
-The card template is `templates/model_card.md.jinja`. It carries the base revision and licence, the ablation or requant note, calibration licences, quant and imatrix data, Plotweaver purpose, eval numbers, limits (reduced refusals, not for safety-critical use, Russian quality is a sample), credits (base authors, T-Bank and Qwen for T-lite and T-pro, abliteration authors for Huihui and Gemma, llama.cpp), and the Apache-2.0 text plus a modification notice.
+The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`license`, `base_model`, `base_model_relation: quantized`, tags, `language`, `pipeline_tag`). `base_model` is the abliterated upstream for Huihui and Gemma, and the T-Bank repo for T-lite and T-pro. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then a short "Made for Voxprint AI Media Suite" section that links Plotweaver and records the 16 GB and 24 GB tiers with `min_vram_gb`. The Apache-2.0 text and a modification notice sit above that section.

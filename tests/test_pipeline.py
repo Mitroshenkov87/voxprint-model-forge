@@ -268,7 +268,7 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     remote = FakeRemote(failures=1)
     repo = _scratch_repo(tmp_path)
     layout = Layout(tmp_path / "forge-out")
-    result = run_all(plan, _host(downloader, remote), repo, layout, push_manifest=False)
+    result = run_all(plan, _host(downloader, remote), repo, layout)
     assert "q4-huge.gguf" not in downloader.calls
     assert "q5.gguf" in downloader.calls
     assert remote.hf_private == ["voxprint-tests/voxprint-tiny"]
@@ -289,10 +289,16 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     summary = result["summary"]
     assert isinstance(summary, str)
     assert "sha256=" in summary
-    manifest = repo / "manifests" / "2026-10-10-a100.json"
+    manifest = layout.root / "manifests" / "2026-10-10-a100.json"
     assert manifest.is_file()
     body = json.loads(manifest.read_text(encoding="utf-8"))
     assert body["models"][0]["files"]
+    instructions = result["manifest"]["instructions"]
+    assert isinstance(instructions, str)
+    assert "Copy these files back" in instructions
+    assert str(manifest) in instructions
+    progress = (layout.root / "progress.log").read_text(encoding="utf-8")
+    assert "tiny" in progress and "upload" in progress and "%" in progress
 
 
 def test_mismatch_does_not_mark_upload(tmp_path: Path, llama_bin: None) -> None:
@@ -353,7 +359,6 @@ def test_optional_model_skips_when_time_is_gone(tmp_path: Path, llama_bin: None)
         _host(downloader, remote, now=now),
         _scratch_repo(tmp_path),
         layout,
-        push_manifest=False,
     )
     skipped = [item for item in result["models"] if isinstance(item, dict) and item.get("skipped")]
     assert skipped and skipped[0]["id"] == "later"

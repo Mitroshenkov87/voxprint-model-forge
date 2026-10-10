@@ -1,15 +1,39 @@
 #!/usr/bin/env bash
-# One command on a fresh Ubuntu A100 box.
-# Tokens stay in the environment. This script does not enable command tracing.
+# One command on an Ubuntu 24.04 A100 box, from a bundle with no .git directory.
+# Tokens stay in the process environment. This script does not enable command tracing.
+set +x
 set -euo pipefail
 
 export GIT_TERMINAL_PROMPT=0
 FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"
-REPO_URL="${FORGE_REPO_URL:-https://github.com/Mitroshenkov87/voxprint-model-forge.git}"
-LLAMA_COMMIT="988190680d5a89fce97de3c20df2c2813731fd61"
+export HF_HOME="${HF_HOME:-$FORGE_OUT/hf-home}"
+
+cleanup_secrets() {
+  set +x
+  local home="${HOME:-/root}"
+  rm -f "$home/.cache/huggingface/token" "$home/.huggingface/token" || true
+  rm -rf "$home/.cache/huggingface/stored_tokens" "$home/.kaggle" "$home/.cache/kaggle" || true
+  if [[ -n "${HF_HOME:-}" ]]; then
+    rm -f "$HF_HOME/token" || true
+    rm -rf "$HF_HOME/stored_tokens" || true
+  fi
+  if [[ -n "${FORGE_OUT:-}" ]]; then
+    rm -f "$FORGE_OUT/hf-home/token" || true
+    rm -rf "$FORGE_OUT/hf-home/stored_tokens" || true
+  fi
+  local dir
+  for dir in "$home/.cache" "$home/.config" /tmp; do
+    if [[ -d "$dir" ]]; then
+      find "$dir" -type f \( -name 'kaggle.json' -o -name 'access_token' \) -delete 2>/dev/null || true
+    fi
+  done
+  unset HF_TOKEN KAGGLE_API_TOKEN
+}
+trap cleanup_secrets EXIT INT TERM
 
 prompt_secret() {
   local name="$1"
+  set +x
   if [[ -n "${!name:-}" ]]; then
     return 0
   fi
@@ -39,19 +63,39 @@ fi
 export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 
 if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
-  prompt_secret GH_TOKEN
-  dest="${FORGE_REPO_DIR:-$HOME/voxprint-model-forge}"
-  if [[ ! -f "$dest/scripts/bootstrap.sh" ]]; then
-    git -c "http.extraHeader=Authorization: Bearer ${GH_TOKEN}" \
-      clone --quiet "$REPO_URL" "$dest"
-  fi
-  exec bash "$dest/scripts/bootstrap.sh"
+  printf 'Run bash scripts/bootstrap.sh from the extracted bundle.\n' >&2
+  exit 2
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mkdir -p "$FORGE_OUT/logs" "$FORGE_OUT/stages"
+if [[ ! -f "$ROOT/VERSION" ]]; then
+  printf 'VERSION is missing. Build the VM bundle with scripts/make_vm_bundle.sh\n' >&2
+  exit 9
+fi
+FORGE_VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+printf 'forge %s\n' "$FORGE_VERSION"
+
+if [[ ! -r /etc/os-release ]]; then
+  printf 'This bootstrap targets Ubuntu 24.04\n' >&2
+  exit 2
+fi
+OS_ID="$(. /etc/os-release && printf '%s' "${ID:-}")"
+OS_VER="$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")"
+if [[ "$OS_ID" != "ubuntu" || "$OS_VER" != "24.04" ]]; then
+  printf 'This bootstrap targets Ubuntu 24.04 (found %s %s)\n' "$OS_ID" "$OS_VER" >&2
+  exit 2
+fi
+
+mkdir -p "$FORGE_OUT/logs" "$FORGE_OUT/stages" "$HF_HOME"
 # Scrub before the log file. The prompt above goes only to the terminal.
 exec > >(python3 "$ROOT/scripts/logscrub.py" | tee -a "$FORGE_OUT/logs/bootstrap.log") 2>&1
+
+progress_line() {
+  local model="$1" stage="$2" pct="$3" eta="$4"
+  local stamp
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '%s  %s  %s  %s%%  eta %s min\n' "$stamp" "$model" "$stage" "$pct" "$eta" >> "$FORGE_OUT/progress.log"
+}
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   printf 'nvidia-smi is missing\n' >&2
@@ -59,11 +103,27 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
 fi
 nvidia-smi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'python3 is missing\n' >&2
+  exit 9
+fi
+
 PYTHONPATH="$ROOT/src" python3 -c '
 from pathlib import Path
 from voxprint_forge.plan import format_estimates, load_plan
 print(format_estimates(load_plan(Path("'"$ROOT"'/plans/plan.toml"))))
 '
+
+eval "$(PYTHONPATH="$ROOT/src" python3 -c '
+from pathlib import Path
+from voxprint_forge.plan import load_plan
+plan = load_plan(Path("'"$ROOT"'/plans/plan.toml"))
+build = int(plan.estimates_min.get("bootstrap_build", 0))
+total = build + sum(model.estimate_min for model in plan.enabled_models())
+print(f"FORGE_BUILD_MIN={build}")
+print(f"FORGE_TOTAL_MIN={total}")
+')"
+progress_line bootstrap start 0 "$FORGE_TOTAL_MIN"
 
 export PATH="${HOME}/.local/bin:${PATH}"
 if ! command -v uv >/dev/null 2>&1; then
@@ -88,25 +148,38 @@ uv pip install --python "$VENV" -e "$ROOT" hf_transfer \
   --extra-index-url https://download.pytorch.org/whl/cu130
 
 "$VENV/bin/forge" verify-logins
+progress_line bootstrap install "$(( FORGE_BUILD_MIN * 40 / FORGE_TOTAL_MIN ))" "$(( FORGE_TOTAL_MIN - FORGE_BUILD_MIN * 40 / 100 ))"
 
-LLAMA_SRC="$FORGE_OUT/llama.cpp"
+LLAMA_COMMIT="$(tr -d '[:space:]' < "$ROOT/scripts/llama.rev")"
+LLAMA_SRC="$ROOT/third_party/llama.cpp"
+if [[ ! -f "$LLAMA_SRC/CMakeLists.txt" || ! -f "$ROOT/third_party/LLAMA_COMMIT" ]]; then
+  printf 'llama.cpp sources are missing from third_party. Use scripts/make_vm_bundle.sh\n' >&2
+  exit 9
+fi
+BUNDLED_LLAMA="$(tr -d '[:space:]' < "$ROOT/third_party/LLAMA_COMMIT")"
+if [[ "$BUNDLED_LLAMA" != "$LLAMA_COMMIT" ]]; then
+  printf 'bundled llama.cpp commit does not match scripts/llama.rev\n' >&2
+  exit 9
+fi
+
 if [[ ! -f "$FORGE_OUT/stages/llama-cpp.done" ]]; then
-  if [[ ! -d "$LLAMA_SRC/.git" ]]; then
-    git clone https://github.com/ggml-org/llama.cpp "$LLAMA_SRC"
-  fi
-  git -C "$LLAMA_SRC" fetch --depth 1 origin "$LLAMA_COMMIT"
-  git -C "$LLAMA_SRC" checkout "$LLAMA_COMMIT"
-  cmake -S "$LLAMA_SRC" -B "$LLAMA_SRC/build" \
+  cmake -S "$LLAMA_SRC" -B "$FORGE_OUT/llama-build" \
     -DGGML_CUDA=ON \
     -DGGML_NATIVE=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="80;89;120"
-  cmake --build "$LLAMA_SRC/build" --parallel "$(nproc)"
-  printf '%s\n' "$LLAMA_COMMIT" >"$FORGE_OUT/stages/llama-cpp.done"
+  cmake --build "$FORGE_OUT/llama-build" --parallel "$(nproc)"
+  printf '%s\n' "$LLAMA_COMMIT" > "$FORGE_OUT/stages/llama-cpp.done"
 fi
+progress_line bootstrap llama "$(( FORGE_BUILD_MIN * 100 / FORGE_TOTAL_MIN ))" "$(( FORGE_TOTAL_MIN - FORGE_BUILD_MIN ))"
 
+export FORGE_LLAMA_SRC="$LLAMA_SRC"
+export FORGE_LLAMA_BIN="$FORGE_OUT/llama-build/bin"
 FORGE_OUT="$FORGE_OUT" FORGE_VENV="$VENV" bash "$ROOT/scripts/vm_run.sh"
 
 stamp="$(date -u +%F)"
 tar -C "$FORGE_OUT" -cf "$FORGE_OUT/forge-results-${stamp}.tar" work manifests
 sha256sum "$FORGE_OUT/forge-results-${stamp}.tar" | tee "$FORGE_OUT/forge-results-${stamp}.tar.sha256"
 printf 'results: %s\n' "$FORGE_OUT/forge-results-${stamp}.tar"
+printf 'copy back: %s\n' "$FORGE_OUT/manifests/${stamp}-a100.json"
+printf 'copy back: %s\n' "$FORGE_OUT/manifests/${stamp}-a100.MODELS.md"
+progress_line bootstrap done 100 0

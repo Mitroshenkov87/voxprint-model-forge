@@ -1,19 +1,38 @@
-# {{ title }}
+---
+license: apache-2.0
+base_model: {{ card_base }}
+base_model_relation: quantized
+tags:
+- voxprint
+- gguf
+- abliterated
+- llama.cpp
+- imatrix
+- russian
+language:
+- ru
+- en
+pipeline_tag: text-generation
+---
 
-Private weights for Voxprint AI Plotweaver. This repository is private.
+# {{ title }}
 
 ## Base model
 
-- Base: `{{ base_model }}`
-- Upstream: `{{ upstream_repo }}`
+- Quantized from: `{{ card_base }}`
 - Revision: `{{ revision }}`
+- Foundation weights: `{{ foundation }}`
 - Licence of the weights: `{{ licence }}`
 - Parameters: {{ params_b }}B
 - Card date: {{ stamped }}
 
-## What changed
+## Method
 
 {{ what_changed }}
+
+## Calibration data
+
+{{ calibration }}
 
 ## Quantization
 
@@ -23,11 +42,7 @@ Importance matrix: {{ imatrix_note }}
 - {{ line }}
 {% endfor %}
 
-KV cache preference is q8_0, then q4_0 when q8_0 does not fit. Fit is weights + KV, with headroom left for compute buffers.
-
-## Purpose
-
-{{ purpose }}
+KV cache preference is q8_0, then q4_0 when q8_0 does not fit. Fit is weights plus KV, with headroom left for compute buffers.
 
 ## Evaluation
 
@@ -73,3 +88,11 @@ KV cache preference is q8_0, then q4_0 when q8_0 does not fit. Fit is weights + 
 ```
 {{ apache_text }}
 ```
+
+## Made for Voxprint AI Media Suite
+
+[Voxprint AI Plotweaver](https://github.com/Mitroshenkov87/voxprint-plotweaver) loads these GGUF tiers for creative writing. It selects the 16 GB or 24 GB tier using `min_vram_gb` from the measurements above.
+
+{% for tier in tiers %}
+- {{ tier.name }} / {{ tier.quant }}: min_vram_gb {{ tier.min_vram_gb }}
+{% endfor %}

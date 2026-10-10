@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Never
 
 from jinja2 import Environment, StrictUndefined
 
@@ -25,12 +26,6 @@ LIMITS = (
     "the quant and, on ablated models, with the direction removed."
 )
 
-PURPOSE = (
-    "Voxprint AI Plotweaver creative writing. Two private tiers ship from the "
-    "same source and imatrix: a 24 GB card and a 16 GB card, each with "
-    "min_vram_gb set from measured weights plus KV."
-)
-
 
 def template_path(repo: Path) -> Path:
     path = repo / "templates" / "model_card.md.jinja"
@@ -44,6 +39,43 @@ def licence_text(repo: Path) -> str:
     if not path.is_file():
         raise ToolMissingError(f"missing {path}", code="licence_missing")
     return path.read_text(encoding="utf-8").strip()
+
+
+def _unexpected_mode(mode: Never) -> Never:
+    raise StageError(f"unhandled mode {mode}", code="card_mode")
+
+
+def card_base_model(model: ModelPlan) -> str:
+    """Hub id this GGUF was quantized from.
+
+    Requants use the abliterated upstream. Ablations use the source repo
+    (the T-Bank repo for T-lite and T-pro).
+    """
+    mode = model.mode
+    if mode == "requant":
+        return model.repo
+    if mode == "ablate":
+        return model.repo
+    _unexpected_mode(mode)
+
+
+def calibration_note(model: ModelPlan) -> str:
+    mode = model.mode
+    if mode == "requant":
+        return (
+            "This requant does not repeat the upstream ablation and does not include "
+            "that author's calibration set. The importance matrix and the eval prompts "
+            "are original text in src/voxprint_forge/data, under the Apache-2.0 licence "
+            "recorded in src/voxprint_forge/data/LICENCES.md."
+        )
+    if mode == "ablate":
+        return (
+            "The refusal direction is calibrated on original prompts in "
+            "src/voxprint_forge/data/harmful.txt and harmless.txt. Those files, the "
+            "importance-matrix text, and the eval prompts are original Apache-2.0 text. "
+            "See src/voxprint_forge/data/LICENCES.md. No third-party corpus is included."
+        )
+    _unexpected_mode(mode)
 
 
 def what_changed(model: ModelPlan, ablation: dict[str, object] | None) -> str:
@@ -85,18 +117,18 @@ def render_card(
         return html.render(
             model_id=model.id,
             title=f"Voxprint {model.id}",
-            base_model=model.base_model,
+            card_base=card_base_model(model),
+            foundation=model.base_model,
             revision=model.revision,
             licence=model.licence,
-            upstream_repo=model.repo,
             what_changed=what_changed(model, ablation),
+            calibration=calibration_note(model),
             quant_lines=[
                 f"{item.get('name')}: {item.get('quant')} (min_vram_gb={item.get('min_vram_gb')})"
                 for item in tiers
             ],
             tiers=tiers,
             imatrix_note=imatrix_note,
-            purpose=PURPOSE,
             limits=LIMITS,
             credits=list(model.credits),
             apache_text=licence_text(repo),

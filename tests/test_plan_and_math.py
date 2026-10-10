@@ -104,19 +104,42 @@ def test_kaggle_version_and_privacy() -> None:
 def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     text = (ROOT / "scripts" / "bootstrap.sh").read_text(encoding="utf-8")
     assert "set -x" not in text
+    assert "set +x" in text
     assert "huggingface-cli login" not in text
-    assert "GH_TOKEN@" not in text
+    assert "hf auth login" not in text
+    assert "GH_TOKEN" not in text
+    assert "github.com" not in text
+    for banned in ("git clone", "git fetch", "git checkout", "git archive", "git push", "git -c"):
+        assert banned not in text
     assert "/dev/tty" in text
     assert "HF_TOKEN" in text
     assert "KAGGLE_API_TOKEN" in text
     assert "CMAKE_CUDA_ARCHITECTURES" in text
-    assert "988190680d5a89fce97de3c20df2c2813731fd61" in text
+    assert "progress.log" in text
+    assert "cleanup_secrets" in text
+    assert "stored_tokens" in text
+    assert ".kaggle" in text
+    assert "access_token" in text
+    assert "unset HF_TOKEN" in text
+    assert "Ubuntu 24.04" in text
     assert "verify-logins" in text
+    rev = (ROOT / "scripts" / "llama.rev").read_text(encoding="utf-8").strip()
+    assert rev == "988190680d5a89fce97de3c20df2c2813731fd61"
+    assert rev in (ROOT / "plans" / "plan.toml").read_text(encoding="utf-8")
+    bundle = (ROOT / "scripts" / "make_vm_bundle.sh").read_text(encoding="utf-8")
+    assert "archive --format=tar" in bundle
+    assert "VERSION" in bundle
+    assert "llama.rev" in bundle
     vm = (ROOT / "docs" / "VM.md").read_text(encoding="utf-8")
     assert "HF_TOKEN" in vm and "KAGGLE_API_TOKEN" in vm and "140" in vm
+    assert "tmux new -s forge 'bash scripts/bootstrap.sh'" in vm
+    assert "make_vm_bundle.sh" in vm
+    assert "Ubuntu 24.04" in vm
+    assert "GH_TOKEN" not in vm
     cli = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
     assert "private=True" in cli
     assert "isPrivate" in cli
+    assert "base_model_relation" in cli
 
 
 def test_bad_plan_sha(tmp_path: Path) -> None:
