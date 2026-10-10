@@ -10,8 +10,16 @@ from voxprint_forge.errors import StageError
 from voxprint_forge.fitmath import Arch, fits_budget, gib, min_vram_gb, quant_rank
 from voxprint_forge.plan import Plan, Tier
 
-_MODEL = re.compile(r"model buffer size\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*MiB", re.IGNORECASE)
-_KV = re.compile(r"KV buffer size\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*MiB", re.IGNORECASE)
+# b11476 prints "%12s model buffer size" and "%10s KV buffer size" with the backend name.
+# CPU_Mapped is often first. CUDA_Host is host memory and is not the card.
+_DEVICE_MODEL = re.compile(
+    r"(?P<device>[A-Za-z0-9_]+)\s+model buffer size\s*=\s*(?P<mib>[0-9]+(?:\.[0-9]+)?)\s*MiB",
+    re.IGNORECASE,
+)
+_DEVICE_KV = re.compile(
+    r"(?P<device>[A-Za-z0-9_]+)\s+KV buffer size\s*=\s*(?P<mib>[0-9]+(?:\.[0-9]+)?)\s*MiB",
+    re.IGNORECASE,
+)
 _MIB = 1024 * 1024
 
 
@@ -21,6 +29,15 @@ class Candidate:
     weights: int
     path: Path
     origin: str
+
+
+@dataclass(frozen=True)
+class BufferReport:
+    """CUDA device totals. `devices` is one entry per CUDA* buffer, excluding *_Host."""
+
+    weights_bytes: int
+    kv_bytes: int
+    devices: dict[str, dict[str, float]]
 
 
 @dataclass(frozen=True)
@@ -91,12 +108,43 @@ def choose_cache(
     return "q4_0", []
 
 
-def parse_buffers(log: str) -> tuple[int, int]:
-    model = _MODEL.search(log)
-    kv = _KV.search(log)
-    if model is None or kv is None:
-        raise StageError("llama-server log has no model/KV buffer sizes", code="measure_log")
-    return int(float(model.group(1)) * _MIB), int(float(kv.group(1)) * _MIB)
+def _cuda_device(name: str) -> bool:
+    folded = name.lower()
+    if folded.endswith("_host"):
+        return False
+    return folded.startswith("cuda")
+
+
+def _mib_bytes(mib: float) -> int:
+    return int(round(mib * _MIB))
+
+
+def parse_buffers(log: str) -> BufferReport:
+    """Sum CUDA* model and KV buffers. CPU_Mapped and *_Host are not the card."""
+    weights: dict[str, float] = {}
+    kv: dict[str, float] = {}
+    for match in _DEVICE_MODEL.finditer(log):
+        device = match.group("device")
+        if not _cuda_device(device):
+            continue
+        weights[device] = weights.get(device, 0.0) + float(match.group("mib"))
+    for match in _DEVICE_KV.finditer(log):
+        device = match.group("device")
+        if not _cuda_device(device):
+            continue
+        kv[device] = kv.get(device, 0.0) + float(match.group("mib"))
+    if not weights or not kv:
+        raise StageError("llama-server log has no CUDA model/KV buffer sizes", code="measure_log")
+    names = sorted(set(weights) | set(kv))
+    devices = {
+        name: {"weights_mib": weights.get(name, 0.0), "kv_mib": kv.get(name, 0.0)}
+        for name in names
+    }
+    return BufferReport(
+        weights_bytes=_mib_bytes(sum(weights.values())),
+        kv_bytes=_mib_bytes(sum(kv.values())),
+        devices=devices,
+    )
 
 
 def measurement_fits(

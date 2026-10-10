@@ -356,9 +356,18 @@ def _file_record(dest: Path, tier: str, quant: str) -> dict[str, object]:
 
 def _run_quantize(host: Host, gguf: Path, imatrix: Path, dest: Path, quant: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.is_file():
+    sidecar = Path(str(dest) + ".sha256")
+    # A failed llama-quantize leaves a partial GGUF. The next attempt must not keep it.
+    if dest.is_file() and sidecar.is_file():
         return
-    host.runner.run(quantize_argv(tool("llama-quantize"), gguf, dest, quant, imatrix))
+    if dest.exists():
+        dest.unlink()
+    try:
+        host.runner.run(quantize_argv(tool("llama-quantize"), gguf, dest, quant, imatrix))
+    except StageError:
+        if dest.exists():
+            dest.unlink()
+        raise
     if not dest.is_file():
         raise StageError(f"quantize did not write {dest.name}", code="quantize")
     write_sha256(dest, sha256_file(dest))
@@ -510,10 +519,10 @@ def _measure(
             cache=cache,
         )
         done = host.runner.capture_until(argv, pattern="KV buffer size")
-        weights, kv = parse_buffers(done.stdout + done.stderr)
+        report = parse_buffers(done.stdout + done.stderr)
         fits = measurement_fits(
-            weights,
-            kv,
+            report.weights_bytes,
+            report.kv_bytes,
             budget_gb=tier.budget_gb,
             headroom_gb=plan.headroom_gb,
         )
@@ -521,8 +530,9 @@ def _measure(
             {
                 "ctx": ctx,
                 "cache": cache,
-                "weights_bytes": weights,
-                "kv_bytes": kv,
+                "weights_bytes": report.weights_bytes,
+                "kv_bytes": report.kv_bytes,
+                "devices": report.devices,
                 "fits": fits,
                 "nvidia_used_bytes": host.nvidia_used(),
             }

@@ -4,15 +4,56 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Queue
 
 from voxprint_forge.errors import StageError, ToolMissingError
 
 TAG = "b11476"
 COMMIT = "988190680d5a89fce97de3c20df2c2813731fd61"
+
+
+def _pump(stream, sink: Queue[str | None]) -> None:
+    try:
+        for line in stream:
+            sink.put(line)
+    except (OSError, ValueError):
+        return
+    finally:
+        sink.put(None)
+
+
+def _kill_tree(proc: subprocess.Popen[str]) -> None:
+    """Stop the process and anything it spawned. A blocked pipe must not keep it alive."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
 
 
 @dataclass
@@ -43,38 +84,55 @@ class Runner:
         return Completed(argv=argv, returncode=0, stdout=proc.stdout, stderr=proc.stderr)
 
     def capture_until(self, argv: list[str], *, pattern: str, timeout: float = 180) -> Completed:
-        """Run a long-lived tool until stdout contains pattern, then stop it."""
+        """Run until stdout contains pattern. The read never blocks past timeout.
+
+        A reader thread fills a queue, so a silent process still hits the
+        deadline. On timeout the whole process group is killed.
+        """
         try:
             proc = subprocess.Popen(
                 argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise ToolMissingError(f"missing {argv[0]}", code="tool_missing") from exc
         lines: list[str] = []
-        deadline = time.monotonic() + timeout
+        sink: Queue[str | None] = Queue()
         assert proc.stdout is not None
+        thread = threading.Thread(target=_pump, args=(proc.stdout, sink), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + timeout
+        timed_out = False
         try:
-            while time.monotonic() < deadline:
-                line = proc.stdout.readline()
-                if not line:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = sink.get(timeout=remaining)
+                except Empty:
+                    timed_out = True
+                    break
+                if line is None:
                     break
                 lines.append(line)
-                if pattern in "".join(lines):
+                if pattern in line or pattern in "".join(lines):
                     break
         finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
+            _kill_tree(proc)
         text = "".join(lines)
         if pattern not in text:
-            raise StageError(f"{Path(argv[0]).name} did not report {pattern}", code="tool_output")
+            tail = text[-500:]
+            if timed_out:
+                raise StageError(
+                    f"{Path(argv[0]).name} timed out after {timeout:.0f}s before {pattern}: {tail}",
+                    code="tool_timeout",
+                )
+            raise StageError(f"{Path(argv[0]).name} did not report {pattern}: {tail}", code="tool_output")
         return Completed(argv=argv, returncode=0, stdout=text, stderr="")
 
 
@@ -171,6 +229,8 @@ def perplexity_argv(binary: str, model: Path, corpus: Path, *, chunks: int, ctx:
         "99",
         "-fa",
         "on",
+        "--fit",
+        "off",
     ]
 
 
@@ -202,6 +262,9 @@ def server_argv(
         str(port),
         "-np",
         "1",
+        "-v",
+        "--fit",
+        "off",
     ]
 
 
@@ -224,8 +287,10 @@ def cli_argv(binary: str, model: Path, prompt: str, *, n_predict: int, ctx: int,
         cache,
         "-ctv",
         cache,
-        "--no-conversation",
+        "--single-turn",
         "--no-display-prompt",
         "--temp",
         "0.7",
+        "--fit",
+        "off",
     ]
