@@ -6,8 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Never
 
-from jinja2 import Environment, StrictUndefined
-
+from voxprint_forge.cardenv import card_environment
 from voxprint_forge.errors import StageError, ToolMissingError
 from voxprint_forge.plan import ModelPlan
 
@@ -120,7 +119,7 @@ def render_card(
 ) -> str:
     """Render the model card markdown for these tiers."""
     template = template_path(repo).read_text(encoding="utf-8")
-    env = Environment(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
+    env = card_environment(keep_trailing_newline=True)
     try:
         html = env.from_string(template)
         return html.render(

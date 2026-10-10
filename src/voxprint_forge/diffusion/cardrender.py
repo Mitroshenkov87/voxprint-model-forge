@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from jinja2 import Environment, StrictUndefined
-
+from voxprint_forge.cardenv import card_environment
 from voxprint_forge.errors import ToolMissingError
 
 MODIFICATION_NOTICE = "Modified by Voxprint: dtype conversion."
@@ -65,7 +64,7 @@ def licence_text(repo: Path) -> str:
 
 def render_canvas_card(repo: Path, card: CardContext) -> str:
     """Render a canvas model card from ``card``."""
-    env = Environment(undefined=StrictUndefined, autoescape=False)
+    env = card_environment()
     template = env.from_string(template_path(repo).read_text(encoding="utf-8"))
     return template.render(
         title=card.title,

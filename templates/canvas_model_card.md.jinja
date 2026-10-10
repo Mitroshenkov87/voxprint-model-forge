@@ -26,11 +26,13 @@ pipeline_tag: {{ pipeline_tag }}
 
 ## Method
 
-{{ method }}
+{# Forge-authored method. No upstream name or eval text. -#}
+{{ method|safe }}
 
 ## Calibration data
 
-{{ calibration }}
+{# Forge-authored calibration line. No upstream name or eval text. -#}
+{{ calibration|safe }}
 
 ## Quantization
 
@@ -46,7 +48,8 @@ pipeline_tag: {{ pipeline_tag }}
 
 ## Known limits
 
-{{ limits }}
+{# Forge-authored limits. No upstream name or eval text. -#}
+{{ limits|safe }}
 
 ## Credits
 
@@ -56,11 +59,13 @@ pipeline_tag: {{ pipeline_tag }}
 
 ## Modification notice
 
-{{ modification_notice }}
+{# Forge-authored notice. No upstream name or eval text. -#}
+{{ modification_notice|safe }}
 
 ## License
 
-{{ apache_text }}
+{# Forge-authored licence line and Apache URL. Not the upstream licence tag. -#}
+{{ apache_text|safe }}
 
 ## Made for Voxprint AI Media Suite
 
