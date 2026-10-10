@@ -123,6 +123,10 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "unset HF_TOKEN" in text
     assert "Ubuntu 24.04" in text
     assert "verify-logins" in text
+    assert "apt-get install -y cmake build-essential ninja-build" in text
+    assert "/usr/local/cuda/bin" in text
+    assert "LD_LIBRARY_PATH" in text
+    assert "bootstrap.lock" in text
     rev = (ROOT / "scripts" / "llama.rev").read_text(encoding="utf-8").strip()
     assert rev == "988190680d5a89fce97de3c20df2c2813731fd61"
     assert rev in (ROOT / "plans" / "plan.toml").read_text(encoding="utf-8")

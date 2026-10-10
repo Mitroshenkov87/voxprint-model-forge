@@ -1,0 +1,69 @@
+---
+license: apache-2.0
+base_model:
+{% for item in base_models %}
+- {{ item }}
+{% endfor %}
+base_model_relation: quantized
+tags:
+{% for tag in tags %}
+- {{ tag }}
+{% endfor %}
+language:
+{% for lang in language %}
+- {{ lang }}
+{% endfor %}
+pipeline_tag: {{ pipeline_tag }}
+---
+
+# {{ title }}
+
+## Base model
+
+{% for line in base_lines %}
+- {{ line }}
+{% endfor %}
+
+## Method
+
+{{ method }}
+
+## Calibration data
+
+{{ calibration }}
+
+## Quantization
+
+{% for line in quant_lines %}
+- {{ line }}
+{% endfor %}
+
+## Evaluation
+
+{% for line in eval_lines %}
+- {{ line }}
+{% endfor %}
+
+## Known limits
+
+{{ limits }}
+
+## Credits
+
+{% for name in credits %}
+- {{ name }}
+{% endfor %}
+
+## Modification notice
+
+{{ modification_notice }}
+
+## Apache-2.0
+
+```
+{{ apache_text }}
+```
+
+## Made for Voxprint AI Media Suite
+
+[Voxprint AI Canvas](https://github.com/Mitroshenkov87/voxprint-canvas) loads these weights for text-to-image and image-to-image. Tiers are selected with the VRAM hints in MODELS.md.

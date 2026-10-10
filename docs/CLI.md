@@ -74,6 +74,14 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 
 `templates/model_card.md.jinja` renders `README.md`. The file starts with Hugging Face YAML: `license: apache-2.0`, `base_model` (the abliterated upstream for a requant, the T-Bank repo for T-lite and T-pro), `base_model_relation: quantized`, tags `voxprint`, `gguf`, `abliterated`, `llama.cpp`, `imatrix`, `russian`, `language: [ru, en]`, and `pipeline_tag: text-generation`. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits, then `## Made for Voxprint AI Media Suite` with the Plotweaver link. `huggingface_hub.ModelCard` parses that front matter.
 
+## Canvas
+
+`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares private image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. See `docs/CANVAS.md`.
+
+Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 min. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running.
+
+Exit codes are the same table as the rest of the CLI. Uploads are private. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
+
 ## Fit
 
 `fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. The gate uses computed weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.

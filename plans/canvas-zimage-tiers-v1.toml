@@ -1,0 +1,72 @@
+# Canvas add-on. Three resumable parts, each with its own private upload.
+# Minutes are the A100 estimates: base 55, ControlNet 25, Edit 55.
+
+[run]
+id = "canvas-zimage-tiers-v1"
+min_free_gb = 120
+
+[[parts]]
+id = "base"
+estimate_min = 55
+output_name = "Tongyi-MAI--Z-Image-Turbo-voxprint"
+hf_repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo"
+kaggle_slug = "voxprint-mirror-z-image-turbo"
+min_free_gb = 120
+
+[[parts.sources]]
+id = "turbo"
+repo = "Tongyi-MAI/Z-Image-Turbo"
+revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+licence = "apache-2.0"
+
+[[parts.sources]]
+id = "base"
+repo = "Tongyi-MAI/Z-Image"
+revision = "04cc4abb7c5069926f75c9bfde9ef43d49423021"
+licence = "apache-2.0"
+allow = [
+  "transformer/**",
+  "text_encoder/**",
+  "vae/**",
+  "tokenizer/**",
+  "scheduler/**",
+  "model_index.json",
+]
+
+[[parts]]
+id = "controlnet"
+estimate_min = 25
+output_name = "alibaba-pai--Z-Image-Turbo-Fun-Controlnet-Union-2.1-voxprint"
+hf_repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
+kaggle_slug = "voxprint-mirror-z-image-turbo-controlnet-union-2.1"
+min_free_gb = 80
+
+[[parts.sources]]
+id = "controlnet"
+repo = "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+revision = "5155fc56d17821007d6f62ac192c09e0f0e72016"
+licence = "apache-2.0"
+files = [
+  "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+  "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+]
+
+[[parts.sources]]
+id = "turbo"
+repo = "Tongyi-MAI/Z-Image-Turbo"
+revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+licence = "apache-2.0"
+
+[[parts]]
+id = "edit"
+estimate_min = 55
+output_name = "Qwen--Qwen-Image-Edit-2511-voxprint"
+hf_repo = "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
+kaggle_slug = "voxprint-mirror-qwen-image-edit-2511"
+min_free_gb = 100
+
+[[parts.sources]]
+id = "edit"
+repo = "Qwen/Qwen-Image-Edit-2511"
+revision = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+licence = "apache-2.0"

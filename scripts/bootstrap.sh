@@ -20,6 +20,7 @@ cleanup_secrets() {
   if [[ -n "${FORGE_OUT:-}" ]]; then
     rm -f "$FORGE_OUT/hf-home/token" || true
     rm -rf "$FORGE_OUT/hf-home/stored_tokens" || true
+    rm -f "$FORGE_OUT/bootstrap.lock" || true
   fi
   local dir
   for dir in "$home/.cache" "$home/.config" /tmp; do
@@ -87,6 +88,7 @@ if [[ "$OS_ID" != "ubuntu" || "$OS_VER" != "24.04" ]]; then
 fi
 
 mkdir -p "$FORGE_OUT/logs" "$FORGE_OUT/stages" "$HF_HOME"
+printf '%s\n' "$$" > "$FORGE_OUT/bootstrap.lock"
 # Scrub before the log file. The prompt above goes only to the terminal.
 exec > >(python3 "$ROOT/scripts/logscrub.py" | tee -a "$FORGE_OUT/logs/bootstrap.log") 2>&1
 
@@ -102,6 +104,40 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
   exit 9
 fi
 nvidia-smi
+
+if ! command -v cmake >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+  if [[ "$(id -u)" -eq 0 ]]; then
+    apt-get update && apt-get install -y cmake build-essential ninja-build || true
+  else
+    sudo -n apt-get update && sudo -n apt-get install -y cmake build-essential ninja-build || true
+  fi
+fi
+if ! command -v cmake >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+  printf 'cmake, build-essential, or ninja-build is still missing after apt-get install -y cmake build-essential ninja-build\n' >&2
+  exit 9
+fi
+
+if ! command -v nvcc >/dev/null 2>&1; then
+  export PATH="/usr/local/cuda/bin:${PATH}"
+  cuda_lib=""
+  if [[ -d /usr/local/cuda/lib64 ]]; then
+    cuda_lib="/usr/local/cuda/lib64"
+  fi
+  if [[ -d /usr/local/cuda/lib ]]; then
+    if [[ -n "$cuda_lib" ]]; then
+      cuda_lib="${cuda_lib}:/usr/local/cuda/lib"
+    else
+      cuda_lib="/usr/local/cuda/lib"
+    fi
+  fi
+  if [[ -n "$cuda_lib" ]]; then
+    export LD_LIBRARY_PATH="${cuda_lib}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+fi
+if ! command -v nvcc >/dev/null 2>&1; then
+  printf 'nvcc is missing. Expected /usr/local/cuda/bin/nvcc on PATH (CUDA 13.4).\n' >&2
+  exit 9
+fi
 
 if ! command -v python3 >/dev/null 2>&1; then
   printf 'python3 is missing\n' >&2

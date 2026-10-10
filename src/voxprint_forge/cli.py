@@ -33,6 +33,12 @@ def main(argv: list[str] | None = None) -> int:
     fit = sub.add_parser("fit")
     fit.add_argument("--model", required=True)
     fit.add_argument("--budget-gb", type=float, action="append", default=None)
+    canvas = sub.add_parser("canvas")
+    canvas_sub = canvas.add_subparsers(dest="canvas_command", required=True)
+    canvas_run = canvas_sub.add_parser("run")
+    canvas_run.add_argument("canvas_plan", type=Path, metavar="PLAN")
+    canvas_run.add_argument("--force", action="store_true")
+    canvas_run.add_argument("--deadline", default=None)
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -69,6 +75,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
+    if args.command == "canvas":
+        # diffusers is an optional extra and must not load for LLM commands.
+        from voxprint_forge.diffusion.cli import execute
+
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        return execute(
+            repo=root,
+            plan_path=args.canvas_plan,
+            forge_out=forge_out,
+            force=bool(args.force),
+            deadline_text=args.deadline,
+        )
     plan_path = args.plan or (root / "plans" / "plan.toml")
     if args.command == "verify-logins":
         return verify_logins()
