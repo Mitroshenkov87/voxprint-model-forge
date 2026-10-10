@@ -144,6 +144,7 @@ def _channel(value: str) -> float:
 
 
 def relative_luminance(color: str) -> float:
+    """Relative luminance of a ``#RRGGBB`` colour."""
     text = color.removeprefix("#")
     red = _channel(text[0:2])
     green = _channel(text[2:4])
@@ -152,6 +153,7 @@ def relative_luminance(color: str) -> float:
 
 
 def contrast_ratio(foreground: str, background: str) -> float:
+    """WCAG contrast ratio of two ``#RRGGBB`` colours."""
     lighter = max(relative_luminance(foreground), relative_luminance(background))
     darker = min(relative_luminance(foreground), relative_luminance(background))
     return (lighter + 0.05) / (darker + 0.05)

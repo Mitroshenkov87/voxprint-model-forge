@@ -30,10 +30,12 @@ EXCLUDED_REPOS = frozenset(
 
 
 def normalise_repo(repo: str) -> str:
+    """Strip a Hub URL down to ``owner/name``."""
     return repo.strip().lower()
 
 
 def assert_repo_allowed(repo: str) -> None:
+    """Raise when this repo id is not an allowed weight source."""
     name = normalise_repo(repo)
     if not name:
         return

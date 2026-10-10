@@ -73,6 +73,7 @@ def upload_drive(
     model_id: str,
     date: str,
 ) -> list[dict[str, object]]:
+    """Upload artifacts to the configured Drive remote and return records."""
     env = _child_env()
     remote = _remote_name()
     folder = f"Voxprint/model-forge/{date}/{model_id}"

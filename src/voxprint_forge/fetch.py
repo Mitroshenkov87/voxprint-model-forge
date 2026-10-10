@@ -15,6 +15,7 @@ from voxprint_forge.scrub import scrub
 
 
 class Downloader(Protocol):
+    """Something that can fetch one pinned file into ``dest``."""
     def fetch(self, repo: str, revision: str, filename: str, dest: Path, *, optional: bool = False) -> None:
         """Write `filename` from `repo`@`revision` to `dest`."""
 
@@ -26,6 +27,7 @@ class HfDownloader:
         self._token = token
 
     def fetch(self, repo: str, revision: str, filename: str, dest: Path, *, optional: bool = False) -> None:
+        """Download one Hub file and verify its sha256."""
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             downloaded = hf_hub_download(

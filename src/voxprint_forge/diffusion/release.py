@@ -70,6 +70,7 @@ def release_canvas(
     token: str | None,
     parts_text: str | None,
 ) -> dict[str, object]:
+    """Upload canvas parts that were deferred."""
     selected = _canvas_ids(parts_text)
     layout = Layout(forge_out)
     results: list[dict[str, object]] = []
@@ -121,5 +122,6 @@ def release_canvas_plan(
     token: str | None,
     parts_text: str | None,
 ) -> dict[str, object]:
+    """Load a canvas plan and upload its deferred parts."""
     plan = load_canvas_plan(plan_path)
     return release_canvas(repo=repo, plan=plan, forge_out=forge_out, token=token, parts_text=parts_text)

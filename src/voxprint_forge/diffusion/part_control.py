@@ -158,6 +158,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
 
 
 def run_control(ctx: Ctx) -> dict[str, object]:
+    """Prepare, score, and publish the ControlNet tier."""
     check_disk(ctx)
     progress(ctx, "start", 0, ctx.part.estimate_min)
     run_stage(ctx, "fetch", lambda: _fetch(ctx))

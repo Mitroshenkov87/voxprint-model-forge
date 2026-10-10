@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -31,53 +32,109 @@ from voxprint_forge.upload import HubRemote, verify_logins
 from voxprint_forge.version import version_line
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="forge")
+def build_parser() -> argparse.ArgumentParser:
+    """The forge argument parser. The CLI reference is generated from this."""
+    # Python 3.14 colors help when stdout is a terminal. The reference is plain text.
+    kwargs: dict[str, bool] = {}
+    if "color" in inspect.signature(argparse.ArgumentParser).parameters:
+        kwargs["color"] = False
+    parser = argparse.ArgumentParser(prog="forge", formatter_class=_Help, **kwargs)
     parser.add_argument("--version", action="version", version=version_line())
-    parser.add_argument("--json", action="store_true")
-    parser.add_argument("--root", type=Path, default=None)
-    parser.add_argument("--plan", type=Path, default=None)
-    parser.add_argument("--forge-out", type=Path, default=None)
+    parser.add_argument("--json", action="store_true", help="Print one JSON object on stdout.")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Repo root. Default: search from the working directory.",
+    )
+    parser.add_argument("--plan", type=Path, default=None, help="Plan TOML. Default: plans/plan.toml.")
+    parser.add_argument("--forge-out", type=Path, default=None, help="Output root. Default: the plan output directory.")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("plan-summary")
-    sub.add_parser("verify-logins")
-    sub.add_parser("preflight")
-    sub.add_parser("status")
-    accounts = sub.add_parser("accounts")
+    sub.add_parser("plan-summary", help="Print the plan's time estimate.")
+    sub.add_parser("verify-logins", help="Check Hugging Face and Kaggle logins.")
+    sub.add_parser("preflight", help="Run the seconds-long checks and print the report.")
+    sub.add_parser("status", help="Read status.json and report stalled or failed work.")
+    accounts = sub.add_parser("accounts", help="Store Hugging Face, Kaggle, and Drive credentials in the OS keyring.")
     account_sub = accounts.add_subparsers(dest="accounts_command", required=True)
-    account_add = account_sub.add_parser("add")
+    account_add = account_sub.add_parser("add", help="Save a token for one target.")
     account_add.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
     account_add.add_argument("--token", default="")
     account_add.add_argument("--login", choices=("paste", "browser"), default="paste")
-    account_sub.add_parser("list")
-    account_test = account_sub.add_parser("test")
+    account_sub.add_parser("list", help="Show connected account names.")
+    account_test = account_sub.add_parser("test", help="Check one stored connection.")
     account_test.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
-    account_remove = account_sub.add_parser("remove")
+    account_remove = account_sub.add_parser("remove", help="Delete one stored credential.")
     account_remove.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
-    sources = sub.add_parser("sources")
+    sources = sub.add_parser("sources", help="Record that a consumer has finished with a shared download.")
     source_sub = sources.add_subparsers(dest="sources_command", required=True)
-    source_release = source_sub.add_parser("release")
+    source_release = source_sub.add_parser("release", help="Release one source for one consumer.")
     source_release.add_argument("--source", required=True)
     source_release.add_argument("--consumer", required=True)
-    run = sub.add_parser("run-all")
-    run.add_argument("--jobs", type=int, default=None)
+    run = sub.add_parser("run-all", help="Run every enabled model through upload.")
+    run.add_argument("--jobs", type=int, default=None, help="How many models run at once. Default: FORGE_JOBS or 1.")
+    stage_help = {
+        "fetch": "Download pinned files for one model.",
+        "abliterate": "Run the refusal-direction ablation for one model.",
+        "quantize": "Build the importance matrix and GGUF quants.",
+        "eval": "Record perplexity, refusal rate, and prose samples.",
+        "card": "Render the model card.",
+        "publish-prep": "Write the registry draft.",
+        "upload": "Upload private files and verify sha256 and size.",
+    }
     for name in ("fetch", "abliterate", "quantize", "eval", "card", "publish-prep", "upload"):
-        command = sub.add_parser(name)
-        command.add_argument("--model", required=True)
-    fit = sub.add_parser("fit")
-    fit.add_argument("--model", required=True)
-    fit.add_argument("--budget-gb", type=float, action="append", default=None)
-    canvas = sub.add_parser("canvas")
+        command = sub.add_parser(name, help=stage_help[name])
+        command.add_argument("--model", required=True, help="Model id from the plan.")
+    fit = sub.add_parser("fit", help="Measure quants and record the VRAM/RAM split for each tier.")
+    fit.add_argument("--model", required=True, help="Model id from the plan.")
+    fit.add_argument(
+        "--budget-gb",
+        type=float,
+        action="append",
+        default=None,
+        help="Keep tiers of this size. Repeatable.",
+    )
+    canvas = sub.add_parser("canvas", help="Prepare canvas image tiers.")
     canvas_sub = canvas.add_subparsers(dest="canvas_command", required=True)
-    canvas_run = canvas_sub.add_parser("run")
+    canvas_run = canvas_sub.add_parser("run", help="Run a canvas plan.")
     canvas_run.add_argument("canvas_plan", type=Path, metavar="PLAN")
-    canvas_run.add_argument("--force", action="store_true")
-    canvas_run.add_argument("--defer-upload", action="store_true")
-    canvas_run.add_argument("--deadline", default=None)
-    canvas_upload = canvas_sub.add_parser("upload")
+    canvas_run.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
+    canvas_run.add_argument("--defer-upload", action="store_true", help="Prepare files and skip the upload.")
+    canvas_run.add_argument("--deadline", default=None, help="ISO time. Skip parts that would miss it.")
+    canvas_upload = canvas_sub.add_parser("upload", help="Upload parts that were deferred.")
     canvas_upload.add_argument("canvas_plan", type=Path, metavar="PLAN")
-    canvas_upload.add_argument("--parts", default=None)
-    canvas_upload.add_argument("--force", action="store_true")
+    canvas_upload.add_argument("--parts", default=None, help="Comma-separated part ids. Default: the whole plan.")
+    canvas_upload.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
+    return parser
+
+
+class _Help(argparse.HelpFormatter):
+    """Help text at 88 columns. The usage line stays unwrapped.
+
+    Python 3.12 splits a subparser's ``{cmd} ...`` and may wrap the ellipsis.
+    Python 3.14 keeps that token together. A wide usage line is the same on both.
+    """
+
+    def __init__(self, prog: str) -> None:
+        super().__init__(prog, width=88)
+
+    def _format_usage(
+        self,
+        usage: str | None,
+        actions: list[argparse.Action],
+        groups: list[argparse._ArgumentGroup],
+        prefix: str | None,
+    ) -> str:
+        saved = self._width
+        self._width = 10_000
+        try:
+            return super()._format_usage(usage, actions, groups, prefix)
+        finally:
+            self._width = saved
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the forge CLI and return the process exit code."""
+    parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:

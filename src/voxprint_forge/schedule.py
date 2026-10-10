@@ -19,6 +19,7 @@ class Gate:
 
     @contextmanager
     def slot(self, *, gpu: bool) -> Iterator[None]:
+        """Hold one job slot, and the GPU lock when ``gpu`` is set."""
         self._slots.acquire()
         got_gpu = False
         try:

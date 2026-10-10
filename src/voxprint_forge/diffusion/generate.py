@@ -97,6 +97,7 @@ def _as_tensor(output: object) -> torch.Tensor:
 
 
 def save_avif(image: torch.Tensor, path: Path) -> None:
+    """Write an RGB image as AVIF."""
     path.parent.mkdir(parents=True, exist_ok=True)
     array = image.detach().clamp(0, 1).mul(255).round().to(dtype=torch.uint8).permute(1, 2, 0).cpu().numpy()
     Image.fromarray(array, mode="RGB").save(path, format="AVIF")
@@ -109,6 +110,7 @@ def _cosine(left: torch.Tensor, right: torch.Tensor) -> float:
 
 
 class ClipScorer:
+    """CLIP similarity of a text prompt or another image."""
     def __init__(self, device: torch.device) -> None:
         self.device = device
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
@@ -116,6 +118,7 @@ class ClipScorer:
         self.model.eval()
 
     def text_image(self, image: Image.Image, text: str) -> float:
+        """Cosine similarity of this image and a text prompt."""
         image_inputs = self.processor(images=image, return_tensors="pt")
         text_inputs = self.processor(text=[text], return_tensors="pt", padding=True)
         pixels = image_inputs["pixel_values"].to(self.device)
@@ -128,6 +131,7 @@ class ClipScorer:
         return _cosine(image_features[0], text_features[0])
 
     def image_image(self, left: Image.Image, right: Image.Image) -> float:
+        """Cosine similarity of two images."""
         inputs = self.processor(images=[left, right], return_tensors="pt")
         pixels = inputs["pixel_values"].to(self.device)
         with torch.no_grad():
@@ -295,6 +299,7 @@ def evaluate_base(
     grid_path: Path,
     progress: Progress | None = None,
 ) -> dict[str, object]:
+    """Score the base tier against turbo and write the contact sheet."""
     device = _cuda()
     metric = _lpips_net(device)
     clip = ClipScorer(device)
@@ -404,6 +409,7 @@ def evaluate_control(
     work_dir: Path,
     progress: Progress | None = None,
 ) -> dict[str, object]:
+    """Score the ControlNet tier and write its contact sheets."""
     device = _cuda()
     metric = _lpips_net(device)
     clip = ClipScorer(device)
@@ -551,6 +557,7 @@ def evaluate_edit(
     grid_path: Path,
     progress: Progress | None = None,
 ) -> dict[str, object]:
+    """Score the edit tier and write its contact sheet."""
     device = _cuda()
     metric = _lpips_net(device)
     clip = ClipScorer(device)

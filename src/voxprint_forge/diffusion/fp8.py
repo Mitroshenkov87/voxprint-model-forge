@@ -63,6 +63,7 @@ def keep_bf16(name: str, profile: Profile) -> bool:
 
 
 def quantize_this(name: str, tensor: torch.Tensor, profile: Profile) -> bool:
+    """True when this tensor is one the profile quantizes to FP8."""
     if not tensor.is_floating_point() or tensor.ndim < 2:
         return False
     return not keep_bf16(name, profile)
@@ -106,6 +107,7 @@ def quantize_state(tensors: dict[str, torch.Tensor], profile: Profile) -> dict[s
 
 
 def save_quantized(tensors: dict[str, torch.Tensor], path: Path) -> None:
+    """Write a safetensors file of already quantized tensors."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cpu = {name: tensor.detach().cpu().contiguous() for name, tensor in tensors.items()}
     save_file(cpu, str(path), metadata={"format": FORMAT})
@@ -131,6 +133,7 @@ def dequant_state(tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
 
 
 def read_format(path: Path) -> str | None:
+    """Read the weight dtype recorded in a safetensors header."""
     with safe_open(str(path), framework="pt", device="cpu") as handle:
         meta = handle.metadata() or {}
     value = meta.get("format")
@@ -138,4 +141,5 @@ def read_format(path: Path) -> str | None:
 
 
 def dequant_file(path: Path) -> dict[str, torch.Tensor]:
+    """Load an FP8 safetensors file back to BF16 tensors."""
     return dequant_state(load_file(str(path)))

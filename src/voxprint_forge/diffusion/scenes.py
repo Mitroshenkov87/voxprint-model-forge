@@ -111,11 +111,13 @@ def inpaint_mask(size: int = 1024) -> torch.Tensor:
 
 
 def downscale(rgb: torch.Tensor, size: int = 128) -> torch.Tensor:
+    """Resize an RGB tensor to a square of ``size`` pixels."""
     scaled = functional.interpolate(rgb.unsqueeze(0), size=(size, size), mode="bilinear", align_corners=False)
     return scaled.squeeze(0).clamp(0, 1)
 
 
 def contact_sheet(cells: list[torch.Tensor], columns: int) -> torch.Tensor:
+    """Tile RGB tensors into one grid with this many columns."""
     if not cells:
         raise ValueError("contact sheet has no cells")
     columns = max(1, columns)

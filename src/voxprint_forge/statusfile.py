@@ -21,14 +21,17 @@ _STAGE: ContextVar[str] = ContextVar("forge_stage", default="start")
 
 
 def set_stage(name: str) -> None:
+    """Remember the stage name heartbeats should report."""
     _STAGE.set(name)
 
 
 def current_stage() -> str:
+    """Stage name set by ``set_stage``, or an empty string."""
     return _STAGE.get()
 
 
 def status_path(forge_out: Path) -> Path:
+    """Path of ``status.json`` under forge-out."""
     return forge_out / "status.json"
 
 
@@ -67,6 +70,7 @@ def update_item(
     pid: int | None = None,
     uploads: dict[str, str] | None = None,
 ) -> None:
+    """Update one model's row in ``status.json``."""
     path = status_path(forge_out)
     with _LOCK:
         payload = _read(path)
@@ -96,6 +100,7 @@ def update_item(
 
 
 def read_status(forge_out: Path) -> dict[str, object]:
+    """Load ``status.json``, or an empty document when it is missing."""
     return _read(status_path(forge_out))
 
 
@@ -166,6 +171,7 @@ class Heartbeat:
         self._thread: threading.Thread | None = None
 
     def pulse(self) -> None:
+        """Rewrite the status row so a watcher can see the process is alive."""
         update_item(
             self.forge_out,
             self.item_id,
@@ -207,5 +213,6 @@ def beating(
     pct: int = 0,
     eta_min: float = 0,
 ) -> Iterator[None]:
+    """Context manager that pulses the status row until the stage ends."""
     with Heartbeat(forge_out, item_id, stage, pct=pct, eta_min=eta_min):
         yield

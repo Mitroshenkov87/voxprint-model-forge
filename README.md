@@ -4,7 +4,11 @@ Internal tooling for preparing models used by the Voxprint AI Media Suite: ablit
 
 ## Product vision
 
-Voxprint AI Model Forge (Aleksandr, 2026-10-10) is a standalone desktop application, not part of the end-user suite and not embedded in any app. It runs on the user's own RTX 40+ machine and prepares models: tracks new upstream releases, abliterates (removes refusals), quantizes (GGUF/imatrix) to fit VRAM targets such as 16 GB with headroom, evaluates (quality, refusal rate, speed, peak VRAM), and publishes pinned model cards and checksums that suite apps download. Interfaces: a GUI for manual use, and a full CLI with --json and documented exit codes from day one, because a bot connects to it as a client; a plugin for Grok Bot (and a shareable bot template) is planned. Repo: Mitroshenkov87/voxprint-model-forge (private for now, Apache-2.0). Owner: Voxprint AI Model Forge (took over from Voxprint AI Plotweaver on 2026-10-10). Its own GitHub Pages page comes later with the rest. Suite rules apply (Apache-2.0, local-first, opt-in telemetry, forward-only hardware). Model Forge uses its own Apache-2.0 refusal-direction ablation; Heretic (AGPL-3.0) is never bundled in or invoked by Model Forge.
+Voxprint AI Model Forge (Aleksandr, 2026-10-10) is a standalone desktop application, not part of the end-user suite and not embedded in any app. It runs on the user's own RTX 40+ machine and prepares models: tracks new upstream releases, abliterates (removes refusals), quantizes (GGUF/imatrix) to fit VRAM targets such as 16 GB with headroom, evaluates (quality, refusal rate, speed, peak VRAM), and publishes pinned model cards and checksums that suite apps download. Interfaces: a GUI for manual use, and a full CLI with --json and documented exit codes from day one, because a bot connects to it as a client; a plugin for Grok Bot (and a shareable bot template) is planned. Repo: Mitroshenkov87/voxprint-model-forge (private for now, Apache-2.0). Owner: Voxprint AI Model Forge (took over from Voxprint AI Plotweaver on 2026-10-10). Suite rules apply (Apache-2.0, local-first, opt-in telemetry, forward-only hardware). Model Forge uses its own Apache-2.0 refusal-direction ablation; Heretic (AGPL-3.0) is never bundled in or invoked by Model Forge.
+
+## Roadmap
+
+The public roadmap is [ROADMAP.md](ROADMAP.md). The API docs, the CLI reference, and that roadmap are published at <https://mitroshenkov87.github.io/voxprint-model-forge/>.
 
 ## License
 

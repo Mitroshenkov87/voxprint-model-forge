@@ -24,6 +24,7 @@ _SILENT = frozenset({"convert", "quality", "upload", "upload-deferred"})
 
 @dataclass
 class Ctx:
+    """Paths, plan, and host for one canvas part."""
     repo: Path
     forge_out: Path
     plan: CanvasPlan
@@ -34,20 +35,25 @@ class Ctx:
 
     @property
     def upstream(self) -> Path:
+        """Scratch directory of upstream weights for this part."""
         return self.forge_out / "work" / self.plan.id / "upstream" / self.part.id
 
     @property
     def output(self) -> Path:
+        """Directory of files this part publishes."""
         return self.forge_out / "work" / self.plan.id / self.part.output_name
 
     def marker(self, stage: str) -> Path:
+        """Marker path for one stage of this part."""
         return self.layout.stage(self.plan.id, f"{self.part.id}-{stage}")
 
     def done(self, stage: str) -> bool:
+        """True when this stage's marker already exists."""
         return read_marker(self.marker(stage)) is not None
 
 
 def run_stage(ctx: Ctx, name: str, fn: Callable[[], dict[str, object]]) -> dict[str, object]:
+    """Run a stage unless its marker says it already finished."""
     set_stage(name)
     existing = read_marker(ctx.marker(name))
     if existing is not None:
@@ -65,28 +71,33 @@ def run_stage(ctx: Ctx, name: str, fn: Callable[[], dict[str, object]]) -> dict[
 
 
 def check_disk(ctx: Ctx) -> None:
+    """Raise when the part's disk budget is not free."""
     set_stage("disk")
     need = ctx.part.min_free_gb * (1024**3)
     ensure_free(ctx.forge_out, need, ctx.part.id)
 
 
 def write_notice(output: Path) -> None:
+    """Write the licence notice next to published weights."""
     output.mkdir(parents=True, exist_ok=True)
     (output / "NOTICE").write_text(NOTICE_TEXT, encoding="utf-8")
 
 
 def write_json(path: Path, payload: object) -> None:
+    """Write JSON with a trailing newline."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def progress(ctx: Ctx, stage: str, pct: int, eta_min: float) -> None:
+    """Record this stage's percent and remaining minutes."""
     set_stage(stage)
     append_progress(ctx.forge_out / "progress.log", model=ctx.part.id, stage=stage, pct=pct, eta_min=eta_min)
     update_item(ctx.forge_out, ctx.part.id, stage=stage, pct=pct, eta_min=eta_min, state="RUNNING")
 
 
 def delete_intermediates(path: Path) -> None:
+    """Remove a scratch directory if it exists."""
     if path.exists():
         shutil.rmtree(path)
 
@@ -109,6 +120,7 @@ def finish_part(ctx: Ctx) -> None:
 
 
 def source_dir(ctx: Ctx, source_id: str) -> Path:
+    """Shared or legacy directory for one downloaded source."""
     shared = shared_sources(ctx) / source_id
     if shared.is_dir():
         return shared
@@ -119,5 +131,6 @@ def source_dir(ctx: Ctx, source_id: str) -> Path:
 
 
 def token_from_env() -> str | None:
+    """``HF_TOKEN`` when it is set, otherwise None."""
     value = os.environ.get("HF_TOKEN", "").strip()
     return value or None

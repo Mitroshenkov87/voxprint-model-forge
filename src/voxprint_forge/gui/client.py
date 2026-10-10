@@ -34,6 +34,7 @@ def forge_args(command: str, *, plan: str, root: str, forge_out: str, model: str
 
 
 class SubprocessForge:
+    """Runs ``forge --json`` in a subprocess and returns the parsed object."""
     def __call__(self, args: list[str], env: dict[str, str]) -> dict[str, object]:
         merged = os.environ.copy()
         merged.update(env)
@@ -60,6 +61,7 @@ class SubprocessForge:
 
 
 def result_of(payload: dict[str, object]) -> dict[str, object]:
+    """The ``result`` object from a forge JSON payload."""
     result = payload.get("result")
     if isinstance(result, dict):
         return result
@@ -67,6 +69,7 @@ def result_of(payload: dict[str, object]) -> dict[str, object]:
 
 
 def format_checks(payload: dict[str, object]) -> str:
+    """Plain-text lines for a preflight report."""
     result = result_of(payload)
     checks = result.get("checks")
     lines: list[str] = []
@@ -89,6 +92,7 @@ def format_checks(payload: dict[str, object]) -> str:
 
 
 def status_items(payload: dict[str, object]) -> list[dict[str, object]]:
+    """Model rows from a ``forge status`` payload."""
     items = result_of(payload).get("items")
     if not isinstance(items, list):
         return []

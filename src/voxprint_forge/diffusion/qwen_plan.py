@@ -13,6 +13,7 @@ from voxprint_forge.errors import PlanError
 
 @dataclass(frozen=True)
 class QwenPlan:
+    """The loaded Qwen-Image plan."""
     id: str
     min_free_gb: int
     int4: str
@@ -96,6 +97,7 @@ def _source(row: dict[str, object]) -> Source:
 
 
 def load_qwen_plan(path: Path) -> QwenPlan:
+    """Load and check a Qwen-Image plan TOML file."""
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:

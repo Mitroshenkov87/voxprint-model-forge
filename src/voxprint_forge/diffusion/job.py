@@ -109,6 +109,7 @@ def run_job(
     now: Callable[[], datetime] | None = None,
     defer_upload: bool = False,
 ) -> dict[str, object]:
+    """Run the canvas parts that still fit before the deadline."""
     clock = now or (lambda: datetime.now(timezone.utc))
     layout = Layout(forge_out)
     forge_out.mkdir(parents=True, exist_ok=True)

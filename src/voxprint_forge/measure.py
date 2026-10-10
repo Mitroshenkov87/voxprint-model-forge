@@ -25,6 +25,7 @@ _MIB = 1024 * 1024
 
 @dataclass(frozen=True)
 class Candidate:
+    """One quant file: name, weight bytes, path, and whether it was reused or quantized."""
     quant: str
     weights: int
     path: Path
@@ -42,6 +43,7 @@ class BufferReport:
 
 @dataclass(frozen=True)
 class Measurement:
+    """One context's measured weights, KV, and whether it fit."""
     ctx: int
     cache: str
     weights_bytes: int
@@ -69,6 +71,11 @@ def fitting_candidates(
     headroom_gb: float,
     cache: str,
 ) -> list[Candidate]:
+    """Quants whose weights plus KV fit the card, best rank first.
+
+    This is the on-GPU shortlist. The fit stage still tries an offload of a higher quant before it accepts a lower quant
+    from this list.
+    """
     ranked = sorted(candidates, key=lambda item: quant_rank(item.quant), reverse=True)
     chosen: list[Candidate] = []
     for cand in ranked:
@@ -94,6 +101,7 @@ def choose_cache(
     budget_gb: float,
     headroom_gb: float,
 ) -> tuple[str, list[Candidate]]:
+    """Prefer q8_0 KV. Use q4_0 only when no quant fits with q8_0."""
     for cache in ("q8_0", "q4_0"):
         fitting = fitting_candidates(
             candidates,
@@ -180,8 +188,14 @@ def measurement_fits(
     budget_gb: float,
     headroom_gb: float,
 ) -> bool:
+    """True when measured CUDA weights plus KV fit the card budget.
+
+    Host and ``*_Host`` buffers are not the card. The gate is the same weights-plus-KV test as ``fits_budget``,
+    including headroom. ``nvidia-smi`` usage is recorded separately and is not the gate.
+    """
     return fits_budget(weights_bytes, kv_bytes, budget_gb=budget_gb, headroom_gb=headroom_gb)
 
 
 def tier_min_vram(weights_bytes: int, kv_bytes: int, headroom_gb: float) -> int:
+    """Smallest 16 or 24 GB card that holds this peak plus headroom."""
     return min_vram_gb(gib(weights_bytes + kv_bytes), headroom_gb)

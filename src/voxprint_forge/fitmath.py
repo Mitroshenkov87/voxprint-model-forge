@@ -2,6 +2,8 @@
 
 The check is weights + KV, not the whole CUDA context. Headroom (default 3 GB
 on a 16 or 24 GB card) is what remains for compute buffers and the desktop.
+A quant that fails this on-GPU check can still be kept when an offload split
+fits in VRAM and RAM. See ``voxprint_forge.placement``.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ _BLOCK = {"q8_0": 34, "q4_0": 18}
 
 @dataclass(frozen=True)
 class Arch:
+    """Layer counts and head sizes used to estimate KV bytes."""
     full_layers: int
     full_kv_heads: int
     full_head_dim: int
@@ -26,6 +29,12 @@ class Arch:
     swa_window: int = 0
 
     def kv_bytes(self, ctx: int, cache: str) -> int:
+        """KV cache bytes for this context and cache type.
+
+        Full-attention layers use the whole context. Sliding-window layers use ``min(ctx, swa_window)``. ``q8_0`` is 34
+        bytes per 32 values and ``q4_0`` is 18. ``f16`` is 2 bytes per value. The fit gate compares weights plus this
+        estimate to the card budget minus headroom.
+        """
         if cache not in _BLOCK and cache != "f16":
             raise ValueError(f"unsupported KV cache type {cache}")
         full_values = self.full_layers * self.full_kv_heads * self.full_head_dim * 2 * ctx
@@ -45,11 +54,16 @@ def _value_bytes(values: int, cache: str) -> int:
 
 
 def gib(num_bytes: int | float) -> float:
+    """Convert a byte count to gibibytes."""
     return float(num_bytes) / GIB
 
 
 def budget_bytes(budget_gb: float, headroom_gb: float) -> int:
-    """Maximum weights + KV. Headroom stays free on the named card."""
+    """Maximum weights plus KV on the card.
+
+    Headroom stays free. On a 16 or 24 GB tier the plan uses 3 GB, so weights
+    and KV together must fit in 13 or 21 GiB.
+    """
     return int((budget_gb - headroom_gb) * GIB)
 
 
@@ -60,11 +74,21 @@ def fits_budget(
     budget_gb: float,
     headroom_gb: float,
 ) -> bool:
+    """True when weights plus KV fit on the card after headroom.
+
+    The budget is ``(budget_gb - headroom_gb)`` GiB. Headroom (3 GB on the 16 and 24 GB tiers) stays free for compute
+    buffers and the desktop. This is the on-GPU fit gate. A quant that fails it can still be kept when an offload split
+    fits.
+    """
     return weights_bytes + kv_bytes <= budget_bytes(budget_gb, headroom_gb)
 
 
 def min_vram_gb(weights_plus_kv_gib: float, headroom_gb: float) -> int:
-    """Smallest suite card (16 or 24) that holds weights + KV plus headroom."""
+    """Smallest suite card (16 or 24) that holds weights plus KV and headroom.
+
+    Anything above 24 GB is rounded up to the next whole gigabyte. The value
+    is what the registry records as ``min_vram_gb`` for the tier.
+    """
     need = weights_plus_kv_gib + headroom_gb
     if need <= 16:
         return 16
@@ -119,13 +143,19 @@ QUANT_BPW = {
 
 
 def quant_rank(name: str) -> int:
+    """Higher means a better quant when several fit the same tier."""
     return QUANT_RANK.get(name, 0)
 
 
 def quant_bpw(name: str) -> float:
+    """Bits per weight used by the preflight size estimate."""
     return QUANT_BPW.get(name, 16.0)
 
 
 def estimate_weights_bytes(params_b: float, quant: str) -> int:
-    """param count times bits per weight. params_b is billions of parameters."""
+    """Parameter count times bits per weight.
+
+    ``params_b`` is billions of parameters. Preflight uses this before a file
+    exists. The fit stage later replaces it with the real GGUF size.
+    """
     return int(params_b * 1_000_000_000 * quant_bpw(quant) / 8)

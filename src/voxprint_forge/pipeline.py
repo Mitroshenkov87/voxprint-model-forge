@@ -128,6 +128,7 @@ def _no_probe() -> int | None:
 
 @dataclass
 class Host:
+    """Runner, downloader, and remote used by one pipeline process."""
     runner: Runner
     downloader: Downloader
     remote: Remote
@@ -211,6 +212,7 @@ def run_all(
     *,
     jobs: int = 1,
 ) -> dict[str, object]:
+    """Run every enabled model and write the manifest."""
     start = host.now()
     progress = _tracker(plan, layout, host, None)
     enabled = list(plan.enabled_models())
@@ -295,6 +297,7 @@ def run_model(
     progress: Progress | None = None,
     gate: Gate | None = None,
 ) -> dict[str, object]:
+    """Run one model from fetch through ``stop_after``."""
     if stop_after not in ORDER:
         raise UsageError(f"unknown stage {stop_after}", code="usage")
     tracker = _tracker(plan, layout, host, progress)
@@ -364,6 +367,7 @@ def run_model(
 
 
 def default_ablate(source: Path, dest: Path, weight_bytes: int, free_vram: int | None) -> dict[str, object]:
+    """Abliterate ``source`` into ``dest`` and return the ablation record."""
     root = data_dir()
     result = abliterate_directory(
         source,

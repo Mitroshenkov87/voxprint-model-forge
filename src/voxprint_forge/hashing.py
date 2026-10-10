@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 def sha256_file(path: Path, chunk: int = 1024 * 1024) -> str:
+    """sha256 hex digest of a file, read in chunks."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while True:

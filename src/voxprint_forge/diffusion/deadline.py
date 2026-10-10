@@ -26,6 +26,7 @@ def resolve_deadline(flag: str | None) -> datetime | None:
 
 
 def remaining_min(deadline: datetime, now: datetime) -> float:
+    """Minutes left until ``deadline``."""
     return (deadline - now).total_seconds() / 60.0
 
 

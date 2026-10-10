@@ -59,6 +59,7 @@ def _kill_tree(proc: subprocess.Popen[str]) -> None:
 
 @dataclass
 class Completed:
+    """Argv, return code, and captured stdout and stderr."""
     argv: list[str]
     returncode: int
     stdout: str
@@ -69,6 +70,7 @@ class Runner:
     """Subprocess runner. Tests subclass this and skip the binary."""
 
     def run(self, argv: list[str], *, cwd: Path | None = None) -> Completed:
+        """Run argv to completion and raise when the return code is not 0."""
         try:
             proc = subprocess.run(
                 argv,
@@ -138,6 +140,7 @@ class Runner:
 
 
 def bin_dir() -> Path | None:
+    """``FORGE_LLAMA_BIN`` when it is set, otherwise None."""
     raw = os.environ.get("FORGE_LLAMA_BIN", "")
     if raw:
         return Path(raw)
@@ -145,6 +148,7 @@ def bin_dir() -> Path | None:
 
 
 def src_dir() -> Path | None:
+    """``FORGE_LLAMA_SRC`` when it is set, otherwise None."""
     raw = os.environ.get("FORGE_LLAMA_SRC", "")
     if raw:
         return Path(raw)
@@ -152,6 +156,7 @@ def src_dir() -> Path | None:
 
 
 def tool(name: str) -> str:
+    """Path of a llama.cpp binary, from ``FORGE_LLAMA_BIN`` or ``PATH``."""
     folder = bin_dir()
     if folder is not None:
         candidate = folder / name
@@ -167,6 +172,7 @@ def tool(name: str) -> str:
 
 
 def convert_script() -> Path:
+    """Path of ``convert_hf_to_gguf.py`` under ``FORGE_LLAMA_SRC``."""
     folder = src_dir()
     if folder is None:
         raise ToolMissingError("FORGE_LLAMA_SRC is not set (needs convert_hf_to_gguf.py)", code="tool_missing")
@@ -177,6 +183,7 @@ def convert_script() -> Path:
 
 
 def convert_argv(script: Path, source: Path, outfile: Path) -> list[str]:
+    """Argv that converts a safetensors directory to an F16 GGUF."""
     return [
         os.environ.get("FORGE_PYTHON") or sys.executable,
         str(script),
@@ -189,6 +196,7 @@ def convert_argv(script: Path, source: Path, outfile: Path) -> list[str]:
 
 
 def imatrix_argv(binary: str, model: Path, corpus: Path, outfile: Path, *, chunks: int, ctx: int) -> list[str]:
+    """Argv for llama-imatrix. ``--fit`` stays off."""
     return [
         binary,
         "-m",
@@ -212,10 +220,12 @@ def imatrix_argv(binary: str, model: Path, corpus: Path, outfile: Path, *, chunk
 
 
 def quantize_argv(binary: str, source: Path, outfile: Path, quant: str, imatrix: Path) -> list[str]:
+    """Argv for llama-quantize with an importance matrix."""
     return [binary, "--imatrix", str(imatrix), str(source), str(outfile), quant]
 
 
 def perplexity_argv(binary: str, model: Path, corpus: Path, *, chunks: int, ctx: int) -> list[str]:
+    """Argv for llama-perplexity. ``--fit`` stays off."""
     return [
         binary,
         "-m",
@@ -244,6 +254,7 @@ def server_argv(
     cache: str,
     extra: tuple[str, ...] = (),
 ) -> list[str]:
+    """Argv for llama-server. Extra split flags sit before ``-v --fit off``."""
     return [
         binary,
         "-m",
@@ -272,6 +283,7 @@ def server_argv(
 
 
 def cli_argv(binary: str, model: Path, prompt: str, *, n_predict: int, ctx: int, cache: str) -> list[str]:
+    """Argv for one llama-cli sample. ``--fit`` stays off."""
     return [
         binary,
         "-m",

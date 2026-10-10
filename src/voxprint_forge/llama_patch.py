@@ -17,6 +17,7 @@ _CHKTXT_PATH = Path(__file__).resolve().parent / "data" / "llama_b11476_chktxt.t
 
 
 def chktxt() -> str:
+    """The pre-tokenizer text the T-lite converter must contain."""
     return _CHKTXT_PATH.read_text(encoding="utf-8")
 
 T_LITE_HASH = "e9b7dbd66e0308c6e89983d5b6e1ca047106d862879a0fd33a12c8491b91ec5c"
@@ -40,10 +41,12 @@ def pretokenizer_hash(token_ids: list[int]) -> str:
 
 
 def ids_match(hf_ids: list[int], llama_ids: list[int]) -> bool:
+    """True when the Hub and llama.cpp token id lists are equal."""
     return hf_ids == llama_ids
 
 
 def parse_llama_tokenize(text: str) -> list[int]:
+    """Parse token ids from llama-tokenize output."""
     ids: list[int] = []
     for token in text.replace(",", " ").split():
         body = token.strip()
@@ -53,6 +56,7 @@ def parse_llama_tokenize(text: str) -> list[int]:
 
 
 def recognised(source: str) -> bool:
+    """True when this converter source already has the T-lite pre-tokenizer hash."""
     return T_LITE_HASH in source and 'res = "qwen2"' in source
 
 
@@ -68,6 +72,7 @@ def apply_t_lite(path: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Patch or check the llama.cpp converter and return an exit code."""
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
         print("usage: python -m voxprint_forge.llama_patch conversion/base.py", file=sys.stderr)

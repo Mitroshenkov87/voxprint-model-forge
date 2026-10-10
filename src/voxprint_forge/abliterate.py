@@ -28,6 +28,7 @@ Encode = Callable[[str], torch.Tensor]
 
 @dataclass(frozen=True)
 class AblationResult:
+    """Layer index, direction norm, how many matrices changed, and resident or layer mode."""
     layer: int
     direction_norm: float
     matrices: int
@@ -35,7 +36,11 @@ class AblationResult:
 
 
 def orthogonalize_weight(weight: torch.Tensor, direction: torch.Tensor) -> torch.Tensor:
-    """Project the refusal direction out of a [out, in] matrix."""
+    """Project the refusal direction out of a ``[out, in]`` matrix.
+
+    The update is ``W := W - r r^T W`` with ``r`` a unit vector. A matrix whose
+    output size does not match the direction is returned unchanged.
+    """
     if weight.ndim != 2:
         raise StageError("orthogonalize expects a 2D weight", code="abliterate_shape")
     hidden = direction.shape[0]
@@ -47,6 +52,11 @@ def orthogonalize_weight(weight: torch.Tensor, direction: torch.Tensor) -> torch
 
 
 def difference_of_means(harmful: torch.Tensor, harmless: torch.Tensor) -> torch.Tensor:
+    """Unit refusal direction from mean residuals.
+
+    ``harmful`` and ``harmless`` are ``[n, hidden]`` last-token residuals. The direction is their mean gap, divided by
+    its length. A zero gap is an error: there is nothing to remove.
+    """
     if harmful.ndim != 2 or harmless.ndim != 2:
         raise StageError("activations must be [n, hidden]", code="abliterate_shape")
     delta = harmful.mean(dim=0) - harmless.mean(dim=0)
@@ -60,6 +70,11 @@ def select_direction(
     harmful_by_layer: dict[int, torch.Tensor],
     harmless_by_layer: dict[int, torch.Tensor],
 ) -> tuple[int, torch.Tensor]:
+    """Layer whose mean harmful-minus-harmless gap is longest, and that unit direction.
+
+    Each map is layer index to ``[n, hidden]`` residuals. The chosen layer is the largest gap, which is the direction
+    the orthogonalisation step removes.
+    """
     best_layer = -1
     best_norm = -1.0
     best: torch.Tensor | None = None
@@ -78,6 +93,7 @@ def select_direction(
 
 
 def decoder_layers(model: nn.Module) -> list[nn.Module]:
+    """Decoder blocks from ``model.layers`` or ``model.model.layers``."""
     layers = getattr(model, "layers", None)
     if isinstance(layers, nn.ModuleList):
         return list(layers)
@@ -90,6 +106,11 @@ def decoder_layers(model: nn.Module) -> list[nn.Module]:
 
 
 def apply_orthogonalization(model: nn.Module, direction: torch.Tensor) -> int:
+    """Remove the refusal direction from writing matrices and return how many changed.
+
+    Writing matrices are the leaves in ``WRITE_LEAVES`` (attention output and MLP down projection) whose output size
+    matches the direction. Each is updated as ``W := W - r r^T W``. Zero matches is an error.
+    """
     count = 0
     hidden = direction.shape[0]
     with torch.no_grad():
@@ -127,6 +148,7 @@ def collect_last_token(
     device: torch.device,
     mode: str,
 ) -> dict[int, torch.Tensor]:
+    """Last-token residual at every decoder layer for these prompts."""
     layers = decoder_layers(model)
     captured: dict[int, list[torch.Tensor]] = {index: [] for index in range(len(layers))}
     hooks: list[torch.utils.hooks.RemovableHandle] = []
@@ -200,6 +222,7 @@ def abliterate_module(
     device: torch.device | None = None,
     mode: str = "layer",
 ) -> AblationResult:
+    """Pick the refusal direction and orthogonalise this module. Returns the result record."""
     if not harmful or not harmless:
         raise StageError("ablation needs harmful and harmless prompts", code="abliterate_prompts")
     chosen = device or torch.device("cpu")
@@ -216,10 +239,12 @@ def abliterate_module(
 
 
 def gpu_can_hold(weight_bytes: int, free_vram_bytes: int, margin_bytes: int = 6 * 1024**3) -> bool:
+    """True when free VRAM covers the weights plus the margin."""
     return weight_bytes + margin_bytes < free_vram_bytes
 
 
 def choose_mode(weight_bytes: int, free_vram_bytes: int | None) -> str:
+    """``resident`` when the GPU can hold the weights, otherwise ``layer``."""
     if free_vram_bytes is None:
         return "layer"
     if gpu_can_hold(weight_bytes, free_vram_bytes):
@@ -228,6 +253,7 @@ def choose_mode(weight_bytes: int, free_vram_bytes: int | None) -> str:
 
 
 def save_ablated(model: nn.Module, tokenizer: object, dest: Path) -> None:
+    """Write the ablated model and tokenizer into ``dest``."""
     dest.mkdir(parents=True, exist_ok=True)
     save = getattr(model, "save_pretrained", None)
     if not callable(save):
@@ -239,6 +265,7 @@ def save_ablated(model: nn.Module, tokenizer: object, dest: Path) -> None:
 
 
 def load_hf(source: Path, *, offload_dir: Path | None, dtype: torch.dtype = torch.bfloat16) -> tuple[nn.Module, object]:
+    """Load a local causal LM and tokenizer, optionally offloading layers to disk."""
     kwargs: dict[str, object] = {
         "torch_dtype": dtype,
         "low_cpu_mem_usage": True,
@@ -253,6 +280,7 @@ def load_hf(source: Path, *, offload_dir: Path | None, dtype: torch.dtype = torc
 
 
 def encode_with_tokenizer(tokenizer: object) -> Encode:
+    """Return a prompt encoder that uses this tokenizer."""
     def encode(text: str) -> torch.Tensor:
         encoded = tokenizer(text, return_tensors="pt")  # type: ignore[operator]
         return encoded["input_ids"]
@@ -270,6 +298,12 @@ def abliterate_directory(
     free_vram_bytes: int | None,
     offload_dir: Path | None = None,
 ) -> AblationResult:
+    """Abliterate a local model directory and save the result.
+
+    ``resident`` keeps the model on the GPU when ``weight_bytes`` fits in free VRAM with margin. ``layer`` moves one
+    decoder block at a time so a smaller card can run the same orthogonalisation. The returned record is the layer, the
+    direction norm, the matrix count, and the mode.
+    """
     mode = choose_mode(weight_bytes, free_vram_bytes)
     device = torch.device("cuda" if mode == "resident" and torch.cuda.is_available() else "cpu")
     if mode == "layer" and torch.cuda.is_available():

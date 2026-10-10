@@ -12,6 +12,7 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 
 
 def env_defer_upload() -> bool:
+    """True when ``FORGE_DEFER_UPLOAD`` asks to skip the upload."""
     return os.environ.get("FORGE_DEFER_UPLOAD", "").strip().lower() in _TRUE
 
 
@@ -43,5 +44,6 @@ def write_local_files(
 
 
 def drop_marker(path: Path) -> None:
+    """Delete a marker file if it exists."""
     if path.is_file():
         path.unlink()
