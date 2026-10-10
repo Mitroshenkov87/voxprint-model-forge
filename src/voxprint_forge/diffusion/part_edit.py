@@ -55,6 +55,7 @@ def _convert(ctx: Ctx) -> dict[str, object]:
     link_or_copy(shared_sources(ctx) / "upstream-sha256.json", output / "upstream-sha256.json")
     shards = write_fp8_shards(edit / "transformer", output, EDIT_FP8_PREFIX, "edit_transformer")
     copy_config(edit / "transformer", output / EDIT_TRANSFORMER_CONFIG)
+    # Part C owns this conversion. The source is the Edit-2511 download, never part D.
     write_fp8_file(edit / "text_encoder", output / EDIT_ENCODER_FP8, "edit_encoder")
     for folder in ("vae", "processor", "tokenizer", "text_encoder"):
         src = edit / folder
@@ -121,7 +122,7 @@ def _card(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
         base_lines=(
             f"Quantized from: `{source.repo}`",
             f"Revision: `{source.revision}`",
-            "Text encoder: Qwen2.5-VL-7B",
+            "Text encoder: Qwen2.5-VL-7B, converted by this part from Qwen-Image-Edit-2511",
             "Licence of the weights: Apache-2.0",
             f"Card date: {today_stamp()}",
         ),
@@ -171,7 +172,10 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         hf_repo=ctx.part.hf_repo,
         kaggle_slug=ctx.part.kaggle_slug,
         title="Voxprint Qwen-Image-Edit-2511",
-        description="Private Voxprint dtype conversion of Qwen-Image-Edit-2511. Apache-2.0.",
+        description=(
+            "Private Voxprint dtype conversion of Qwen-Image-Edit-2511. Apache-2.0. "
+            "This part converts the shared Qwen2.5-VL-7B encoder."
+        ),
         tiers=tiers,
         variations={variation: variation_names},
         repo=source.repo,

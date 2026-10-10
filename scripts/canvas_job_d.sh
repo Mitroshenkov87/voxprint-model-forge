@@ -212,7 +212,7 @@ progress_line() {
 }
 progress_line canvas-qwen-image-2512 start 0 120
 
-# Positional command, then flags. Default parts is D. --parts C,E selects edit then the encoder.
+# Positional command, then flags. Omitted --parts selects D, which is retired unless --force.
 args=(run "$ROOT/plans/canvas-qwen-image-2512-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")
 if [[ -n "$PARTS" ]]; then
   args+=(--parts "$PARTS")

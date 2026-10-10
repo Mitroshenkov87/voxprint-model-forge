@@ -31,6 +31,7 @@ class QwenPlan:
     edit_revision: str
     edit_encoder_fp8: str
     encoder_pins: dict[str, str]
+    retired: tuple[str, ...] = ()
     consumes_plan: str = ""
     consumes_sources: tuple[str, ...] = ()
 
@@ -81,6 +82,20 @@ def _pins(row: dict[str, object]) -> dict[str, str]:
     return found
 
 
+def _retired(row: dict[str, object]) -> tuple[str, ...]:
+    value = row.get("retired")
+    if not isinstance(value, list) or not value:
+        raise PlanError("run.retired must list qwen, encoder, or both", code="plan_shape")
+    allowed = ("qwen", "encoder")
+    found: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or item not in allowed:
+            raise PlanError(f"retired part {item!r} must be qwen or encoder", code="plan_shape")
+        if item not in found:
+            found.append(item)
+    return tuple(found)
+
+
 def _source(row: dict[str, object]) -> Source:
     revision = _revision(_require_str(row, "revision", "source"), "source")
     licence = _require_str(row, "licence", "source")
@@ -121,6 +136,7 @@ def load_qwen_plan(path: Path) -> QwenPlan:
         if not isinstance(listed, list) or not listed or not all(isinstance(item, str) and item for item in listed):
             raise PlanError("consumes sources must be a list of source ids", code="plan_shape")
         consumes_sources = tuple(listed)
+    retired = _retired(run)
     int4 = _require_str(run, "int4", "run")
     if int4 != INT4_MODE:
         raise PlanError(
@@ -145,6 +161,7 @@ def load_qwen_plan(path: Path) -> QwenPlan:
         edit_revision=_revision(_require_str(edit, "revision", "edit"), "edit"),
         edit_encoder_fp8=_require_str(edit, "encoder_fp8", "edit"),
         encoder_pins=pins,
+        retired=retired,
         consumes_plan=consumes_plan,
         consumes_sources=consumes_sources,
     )

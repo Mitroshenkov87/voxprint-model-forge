@@ -1,4 +1,7 @@
-# Part D. Qwen-Image-2512 FP8, official-only INT4 (deferred), encoder dedupe.
+# Parts D and E are retired. Qwen-Image-2512 is not a Canvas generator.
+# The job code stays. --parts D or E refuses unless --force.
+# Part C (Qwen-Image-Edit-2511) owns the Qwen2.5-VL-7B encoder.
+# A forced part D links that file. It does not write one.
 # This is not the three-part canvas plan. A running canvas_job.sh does not read it.
 # Minutes: this rental 120, reuse planning 280, recompute planning 340, encoder 15.
 
@@ -6,6 +9,7 @@
 id = "canvas-qwen-image-2512"
 min_free_gb = 120
 int4 = "deferred"
+retired = ["qwen", "encoder"]
 estimate_min = 120
 estimate_min_reuse = 280
 estimate_min_recompute = 340

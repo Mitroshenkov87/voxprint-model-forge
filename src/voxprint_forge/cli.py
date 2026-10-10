@@ -200,6 +200,7 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
             forge_out=forge_out,
             token=token,
             parts_text=parts,
+            force=force,
         )
 
 

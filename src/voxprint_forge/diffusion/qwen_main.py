@@ -17,7 +17,7 @@ from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.diffusion.guard import llm_job_running
 from voxprint_forge.diffusion.qwen_guard import canvas_ac_running
 from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
-from voxprint_forge.diffusion.qwen_select import parse_parts
+from voxprint_forge.diffusion.qwen_select import parse_parts, refuse_retired
 from voxprint_forge.diffusion.qwen_spec import PLAN_NAME
 from voxprint_forge.errors import EXIT_STAGE, EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, UsageError
 from voxprint_forge.jsonio import emit
@@ -47,6 +47,7 @@ def execute(
         )
     plan = load_qwen_plan(plan_path)
     parts = parse_parts(parts_text)
+    refuse_retired(parts, plan.retired, force=force)
     deadline = resolve_deadline(deadline_text)
     from voxprint_forge.diffusion.qwen_job import run_selected
 
@@ -118,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
                 forge_out=forge_out,
                 token=os.environ.get("HF_TOKEN", "").strip() or None,
                 parts_text=args.parts,
+                force=bool(args.force),
             )
         else:
             result = execute(
