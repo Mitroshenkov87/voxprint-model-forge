@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,9 +19,11 @@ from diffusers import (
     ZImagePipeline,
 )
 from PIL import Image
+from safetensors import safe_open
 from transformers import CLIPModel, CLIPProcessor
 
 from voxprint_forge.diffusion.alias import alias_key as _alias_key
+from voxprint_forge.diffusion.controlnet_union import places_for_count, union_config
 from voxprint_forge.diffusion.fp8 import dequant_state
 from voxprint_forge.diffusion.policy import decide_base, decide_control, decide_edit
 from voxprint_forge.diffusion.prompts import (
@@ -28,9 +32,8 @@ from voxprint_forge.diffusion.prompts import (
     CONTROL_PROMPTS,
     CONTROL_SEEDS,
     CONTROL_TYPES,
-    EDIT_PAIRS,
-    EDIT_SEEDS,
     INPAINT_PROMPTS,
+    edit_budget,
 )
 from voxprint_forge.diffusion.scenes import (
     canny_map,
@@ -144,6 +147,25 @@ def _lpips_value(metric: torch.nn.Module, left: Image.Image, right: Image.Image,
 
     with torch.no_grad():
         return float(metric(prep(left), prep(right)).mean())
+
+
+def _cn_load(path: object) -> ZImageControlNetModel:
+    """Load a Union 2.1 single file with the VideoX-Fun layer map.
+
+    diffusers reads a 3-layer lite file as the v1 net (control_in_dim 16) and then
+    rejects control_all_x_embedder. Lite places are [0, 10, 20], from
+    config/z_image/z_image_control_2.1_lite.yaml.
+    """
+    with safe_open(str(path), framework="pt") as handle:
+        layers = sorted({int(key.split(".")[1]) for key in handle.keys() if key.startswith("control_layers.")})
+    if not layers:
+        raise StageError(f"{path} has no control_layers", code="controlnet")
+    folder = tempfile.mkdtemp(prefix="forge-cn21-")
+    (Path(folder) / "config.json").write_text(
+        json.dumps(union_config(places_for_count(len(layers)))),
+        encoding="utf-8",
+    )
+    return ZImageControlNetModel.from_single_file(str(path), config=folder, torch_dtype=torch.bfloat16)
 
 
 def _apply(module: torch.nn.Module, state: dict[str, torch.Tensor]) -> None:
@@ -389,7 +411,7 @@ def evaluate_control(
     dequant_path = work_dir / "lite-dequant-bf16.safetensors"
     materialise_bf16([lite_fp8], dequant_path)
     samples = _control_samples()
-    bf16_net = ZImageControlNetModel.from_single_file(str(lite_bf16), torch_dtype=torch.bfloat16)
+    bf16_net = _cn_load(lite_bf16)
     pipe = ZImageControlNetPipeline.from_pretrained(
         str(turbo_dir),
         controlnet=bf16_net,
@@ -412,7 +434,7 @@ def evaluate_control(
             )
         )
         _tick(progress, "control-bf16", done, len(samples))
-    pipe.controlnet = ZImageControlNetModel.from_single_file(str(dequant_path), torch_dtype=torch.bfloat16).to(device)
+    pipe.controlnet = _cn_load(dequant_path).to(device)
     cands: list[Image.Image] = []
     for done, (prompt, seed, _kind, control) in enumerate(samples, start=1):
         cands.append(
@@ -466,7 +488,7 @@ def _inpaint(
     progress: Progress | None,
 ) -> tuple[list[Image.Image], list[Image.Image]]:
     del metric, clip
-    net = ZImageControlNetModel.from_single_file(str(lite_bf16), torch_dtype=torch.bfloat16)
+    net = _cn_load(lite_bf16)
     pipe = ZImageControlNetInpaintPipeline.from_pretrained(
         str(turbo_dir),
         controlnet=net,
@@ -497,7 +519,7 @@ def _inpaint(
             ).images[0]
         )
         _tick(progress, "inpaint-bf16", index + 1, len(INPAINT_PROMPTS))
-    pipe.controlnet = ZImageControlNetModel.from_single_file(str(dequant_path), torch_dtype=torch.bfloat16).to(device)
+    pipe.controlnet = _cn_load(dequant_path).to(device)
     cands: list[Image.Image] = []
     for index, (prompt, scene, mask, control) in enumerate(prepared):
         cands.append(
@@ -535,10 +557,11 @@ def evaluate_edit(
     pipe = QwenImageEditPlusPipeline.from_pretrained(str(edit_dir), torch_dtype=torch.bfloat16)
     pipe.to(device)
     _quiet(pipe)
+    pairs, seeds = edit_budget()
     prepared = [
         (instruction, seed, _pil(render_scene(scene_seed, IMAGE_SIZE)))
-        for instruction, scene_seed in EDIT_PAIRS
-        for seed in EDIT_SEEDS
+        for instruction, scene_seed in pairs
+        for seed in seeds
     ]
     total = len(prepared)
     editor = pipe

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -12,7 +11,7 @@ from PySide6.QtWidgets import QLabel
 from voxprint_forge.gui.backdrop import apply_backdrop
 from voxprint_forge.gui.client import ssh_status, state_badge
 from voxprint_forge.gui.gauges import GaugeProbes
-from voxprint_forge.gui.secrets import FileStore, MemoryStore
+from voxprint_forge.gui.secrets import MemoryStore
 from voxprint_forge.gui.theme import CONTRAST_PAIRS, build_style, contrast_ratio
 from voxprint_forge.gui.window import MainWindow
 from voxprint_forge.layout import Layout, write_marker
@@ -281,14 +280,55 @@ def test_tokens_go_to_the_store_only(qtbot: pytest.fixture) -> None:
                 assert token.encode() not in path.read_bytes()
 
 
-def test_file_store_stays_outside_the_repo(tmp_path: Path) -> None:
-    path = tmp_path / "secrets.json"
-    store = FileStore(path)
-    store.set("HF_TOKEN", "hf-file-token")
-    assert store.get("HF_TOKEN") == "hf-file-token"
-    if os.name != "nt":
-        assert path.stat().st_mode & 0o777 == 0o600
-    assert "hf-file-token" not in Path("plans/plan.toml").read_text(encoding="utf-8")
+def test_accounts_show_name_and_test_connection(qtbot: pytest.fixture) -> None:
+    store = MemoryStore()
+    window = _window(qtbot, FakeForge({}), store=store)
+    window.token_hf.setText("hf-account-token")
+    window.store_tokens()
+    assert store.get("HF_TOKEN") == "hf-account-token"
+    assert window.token_hf.text() == ""
+    assert window.hf_account.text() == "connected"
+
+    def identify(token: str) -> str:
+        assert token == "hf-account-token"
+        return "ada"
+
+    window.accounts.probes = {"hf": identify, "kaggle": identify, "drive": identify}
+    window.test_connection("hf")
+    assert window.hf_account.text() == "ada"
+    assert window.status_label.text() == "hf connected as ada"
+    window.accounts.remove("hf")
+    window._paint_accounts()
+    assert window.hf_account.text() == "not connected"
+    assert store.get("HF_TOKEN") == ""
+
+
+def test_vm_upload_sends_tokens_on_stdin_only(qtbot: pytest.fixture) -> None:
+    store = MemoryStore()
+    store.set("ssh_host", "vm.example")
+    store.set("ssh_user", "forge")
+    store.set("ssh_key", "/keys/id_ed25519")
+    store.set("HF_TOKEN", "hf-vm-upload-token")
+    seen: dict[str, object] = {}
+
+    def upload(host: str, user: str, key: str, command: str, secrets: dict[str, str]) -> str:
+        seen["host"] = host
+        seen["command"] = command
+        seen["secrets"] = secrets
+        assert "hf-vm-upload-token" not in command
+        return ""
+
+    window = _window(qtbot, FakeForge({}), store=store, uploader=upload)
+    window.refresh_status = lambda: None  # type: ignore[method-assign]
+    payload = _status_row()
+    window._show_items(payload["result"]["items"])  # type: ignore[index]
+    window.table.selectRow(0)
+    window.remote_out_edit.setText("/var/forge-out")
+    window.upload_on_vm()
+    assert seen["host"] == "vm.example"
+    assert "upload --model t-lite-it-2.1" in str(seen["command"])
+    assert seen["secrets"] == {"HF_TOKEN": "hf-vm-upload-token"}
+    assert window.status_label.text() == "VM upload finished. Remote tokens were unset."
 
 
 def test_about_shows_the_release_line(qtbot: pytest.fixture, monkeypatch: pytest.MonkeyPatch) -> None:

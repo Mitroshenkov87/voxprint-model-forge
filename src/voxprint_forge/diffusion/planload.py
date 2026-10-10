@@ -25,6 +25,7 @@ class Source:
     licence: str
     files: tuple[str, ...]
     allow: tuple[str, ...]
+    consumers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ def _source(row: object, where: str) -> Source:
         licence=_require_str(row, "licence", where),
         files=_strings(row, "files"),
         allow=_strings(row, "allow"),
+        consumers=_strings(row, "consumers"),
     )
 
 

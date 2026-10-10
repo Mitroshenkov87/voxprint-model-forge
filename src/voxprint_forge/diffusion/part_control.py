@@ -6,9 +6,10 @@ from voxprint_forge.diffusion.cardrender import CardContext, render_canvas_card,
 from voxprint_forge.diffusion.common import (
     Ctx,
     check_disk,
-    delete_intermediates,
+    finish_part,
     progress,
     run_stage,
+    shared_sources,
     source_dir,
     write_json,
     write_notice,
@@ -32,7 +33,9 @@ from voxprint_forge.errors import StageError
 
 def _fetch(ctx: Ctx) -> dict[str, object]:
     ctx.upstream.mkdir(parents=True, exist_ok=True)
-    fetch_sources(ctx.part.sources, ctx.upstream, ctx.token)
+    dest = shared_sources(ctx)
+    dest.mkdir(parents=True, exist_ok=True)
+    fetch_sources(ctx.part.sources, dest, ctx.token)
     return {"fetched": [source.id for source in ctx.part.sources]}
 
 
@@ -41,7 +44,7 @@ def _convert(ctx: Ctx) -> dict[str, object]:
     output = ctx.output
     output.mkdir(parents=True, exist_ok=True)
     write_notice(output)
-    link_or_copy(ctx.upstream / "upstream-sha256.json", output / "upstream-sha256.json")
+    link_or_copy(shared_sources(ctx) / "upstream-sha256.json", output / "upstream-sha256.json")
     full_mode = passthrough_or_bf16(control / CONTROL_FULL_UPSTREAM, output / CONTROL_FULL_BF16)
     lite_bf16 = ctx.upstream / "lite-bf16.safetensors"
     lite_mode = passthrough_or_bf16(control / CONTROL_LITE_UPSTREAM, lite_bf16)
@@ -136,7 +139,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
     variation = "16gb-fp8" if lite_name == CONTROL_LITE_FP8 else "16gb-bf16"
     if not remote:
         rows = write_local_files(ctx.output, tiers, control.repo, control.revision)
-        delete_intermediates(ctx.upstream)
+        finish_part(ctx)
         return {"files": rows}
     records = publish_output(
         output=ctx.output,
@@ -150,7 +153,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         revision=control.revision,
         staging=ctx.upstream / "kaggle-staging",
     )
-    delete_intermediates(ctx.upstream)
+    finish_part(ctx)
     return {"files": records}
 
 

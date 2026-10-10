@@ -12,6 +12,7 @@ from pathlib import Path
 
 from voxprint_forge.diffusion.names import NOTICE_TEXT
 from voxprint_forge.diffusion.planload import CanvasPlan, Part
+from voxprint_forge.diffusion.retain import consumers_for, release_consumer, source_store
 from voxprint_forge.disk import ensure_free
 from voxprint_forge.errors import StageError
 from voxprint_forge.layout import Layout, read_marker, write_marker
@@ -90,10 +91,30 @@ def delete_intermediates(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def shared_sources(ctx: Ctx) -> Path:
+    return source_store(ctx.forge_out, ctx.plan.id)
+
+
+def finish_part(ctx: Ctx) -> None:
+    """Drop this part's scratch tree. Shared sources stay until every consumer has released."""
+    delete_intermediates(ctx.upstream)
+    for source in ctx.part.sources:
+        release_consumer(
+            ctx.forge_out,
+            ctx.plan.id,
+            source.id,
+            ctx.part.id,
+            consumers_for(ctx.plan, source.id),
+        )
+
+
 def source_dir(ctx: Ctx, source_id: str) -> Path:
+    shared = shared_sources(ctx) / source_id
+    if shared.is_dir():
+        return shared
     path = ctx.upstream / source_id
     if not path.is_dir():
-        raise StageError(f"missing download {path}", code="weights_missing")
+        raise StageError(f"missing download {shared}", code="weights_missing")
     return path
 
 

@@ -7,6 +7,9 @@ import os
 import sys
 from pathlib import Path
 
+from voxprint_forge.accounts import execute_accounts
+from voxprint_forge.diffusion.planload import load_canvas_plan
+from voxprint_forge.diffusion.retain import consumers_for, release_consumer
 from voxprint_forge.errors import (
     EXIT_STAGE,
     EXIT_UNEXPECTED,
@@ -40,6 +43,22 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("verify-logins")
     sub.add_parser("preflight")
     sub.add_parser("status")
+    accounts = sub.add_parser("accounts")
+    account_sub = accounts.add_subparsers(dest="accounts_command", required=True)
+    account_add = account_sub.add_parser("add")
+    account_add.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
+    account_add.add_argument("--token", default="")
+    account_add.add_argument("--login", choices=("paste", "browser"), default="paste")
+    account_sub.add_parser("list")
+    account_test = account_sub.add_parser("test")
+    account_test.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
+    account_remove = account_sub.add_parser("remove")
+    account_remove.add_argument("--target", required=True, choices=("hf", "kaggle", "drive"))
+    sources = sub.add_parser("sources")
+    source_sub = sources.add_subparsers(dest="sources_command", required=True)
+    source_release = source_sub.add_parser("release")
+    source_release.add_argument("--source", required=True)
+    source_release.add_argument("--consumer", required=True)
     run = sub.add_parser("run-all")
     run.add_argument("--jobs", type=int, default=None)
     for name in ("fetch", "abliterate", "quantize", "eval", "card", "publish-prep", "upload"):
@@ -149,8 +168,25 @@ def _jobs(explicit: int | None) -> int:
     return explicit
 
 
+def _release_source(root: Path, plan_path: Path, forge_out: Path, source_id: str, consumer: str) -> dict[str, object]:
+    plan = load_canvas_plan(plan_path)
+    names = consumers_for(plan, source_id)
+    if consumer not in names:
+        raise UsageError(f"{consumer} is not a consumer of {source_id}", code="usage")
+    removed = release_consumer(forge_out, plan.id, source_id, consumer, names)
+    return {"source": source_id, "consumer": consumer, "removed": removed, "consumers": list(names)}
+
+
 def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
+    if args.command == "accounts":
+        return execute_accounts(args)
+    if args.command == "sources":
+        if args.sources_command != "release":
+            raise UsageError(f"unknown sources command {args.sources_command}", code="usage")
+        plan_path = args.plan or (root / "plans" / "canvas-zimage-tiers-v1.toml")
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        return _release_source(root, plan_path, forge_out, str(args.source), str(args.consumer))
     if args.command == "status":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
         if not status_path(forge_out).is_file():

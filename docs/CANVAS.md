@@ -8,11 +8,11 @@ Three private image-model parts, after the LLM bootstrap on the same A100. Unpac
 | controlnet | Union 2.1 lite FP8, full BF16 | 25 min |
 | edit | Qwen-Image-Edit-2511 FP8 | 55 min |
 
-Total when every part runs: 135 min. Each part uploads to its own private Hugging Face repo and a private Kaggle model, then deletes that part's FP32/BF16 download intermediates. Finished tier files stay in `~/forge-out`.
+Total when every part runs: 135 min. Each part uploads to its own private Hugging Face repo and a private Kaggle model, then deletes that part's scratch directory. Shared downloads live in `~/forge-out/work/<job>/sources/<id>` until every name in that source's `consumers` list has released. Base and turbo stay for controlnet, part D (`qwen`), and bake-off. Edit stays for part D and bake-off. The controlnet file has no later consumer and is removed when that part finishes. `forge --plan plans/canvas-zimage-tiers-v1.toml sources release --source turbo --consumer bake-off` records the external bake-off and deletes the tree when it was the last name. Finished tier files stay in `~/forge-out`.
 
 `FORGE_DEADLINE` (or `--deadline`) is an ISO time. Before a part starts, the job skips it when the estimate is longer than the time remaining and records `deferred to next rental`. Equal time still runs.
 
-The job refuses to start while `scripts/bootstrap.sh` is alive (`~/forge-out/bootstrap.lock` with a live pid, or that process on the machine) unless you pass `--force`. A tmux session named `forge` can outlive the script, so the session name is not the signal.
+The job refuses to start while `scripts/bootstrap.sh` is alive (`~/forge-out/bootstrap.lock` with a live pid, or a real `bash scripts/bootstrap.sh` / `python -m voxprint_forge` process) unless you pass `--force`. A tmux server whose command line still contains the pane command is not a job.
 
 ## Operator steps
 

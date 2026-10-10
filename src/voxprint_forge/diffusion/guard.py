@@ -44,28 +44,77 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _pgrep_bootstrap() -> bool:
-    # The bracket keeps this pgrep from matching its own command line.
-    found = subprocess.run(
-        ["pgrep", "-f", "[s]cripts/bootstrap.sh"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return found.returncode == 0
+_SHELLS = {"bash", "bash.exe", "sh", "dash", "zsh", "zsh.exe"}
+_PYTHONS = {"python", "python3", "python.exe", "python3.exe", "forge", "forge.exe"}
 
 
-def llm_job_running(forge_out: Path, *, pgrep: Callable[[], bool] | None = None) -> bool:
-    """True when bootstrap.lock names a live pid, or bootstrap.sh is in the process list.
+def _basename(token: str) -> str:
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name
 
-    A stale lock whose pid is gone does not block. A tmux session named forge
-    can linger after the script exits, so the session name is not the signal.
+
+def cmdline_is_job(cmdline: str) -> bool:
+    """True for a forge or bootstrap process. A tmux server line is not a job."""
+    text = cmdline.replace("\0", " ").strip()
+    if not text:
+        return False
+    first = text.split()[0]
+    base = _basename(first)
+    if base == "tmux" or base.startswith("tmux"):
+        return False
+    bootstrap = "scripts/bootstrap.sh" in text or "scripts\\bootstrap.sh" in text
+    if bootstrap and (base in _SHELLS or base == "bootstrap.sh"):
+        return True
+    lowered = text.lower()
+    if base not in _PYTHONS and "python" not in base:
+        return False
+    if "voxprint_forge" in lowered:
+        return True
+    padded = f" {lowered} "
+    return " forge " in padded and "forge-gui" not in lowered
+
+
+def _process_cmdlines() -> list[str]:
+    if sys.platform == "win32":
+        found = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return [line.strip() for line in found.stdout.splitlines() if line.strip()]
+    root = Path("/proc")
+    if not root.is_dir():
+        return []
+    lines: list[str] = []
+    for entry in root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if raw:
+            lines.append(raw.replace(b"\0", b" ").decode("utf-8", "replace").strip())
+    return lines
+
+
+def llm_job_running(forge_out: Path, *, processes: Callable[[], list[str]] | None = None) -> bool:
+    """True when bootstrap.lock names a live pid, or a real forge/python job is running.
+
+    A stale lock whose pid is gone does not block. The tmux server command line
+    can still contain ``scripts/bootstrap.sh`` after the pane exits, so a process
+    whose executable is tmux is not a job.
     """
     lock = forge_out / "bootstrap.lock"
     if lock.is_file():
         pid_text = lock.read_text(encoding="utf-8").strip()
         if pid_text.isdigit() and _pid_alive(int(pid_text)):
             return True
-    if pgrep is not None:
-        return pgrep()
-    return _pgrep_bootstrap()
+    lines = (processes or _process_cmdlines)()
+    return any(cmdline_is_job(line) for line in lines)

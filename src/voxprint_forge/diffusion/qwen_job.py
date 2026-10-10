@@ -50,6 +50,7 @@ from voxprint_forge.diffusion.qwen_spec import (
     QWEN_TRUE_CFG,
     ZIMAGE_PLAN,
 )
+from voxprint_forge.diffusion.retain import release_consumed
 from voxprint_forge.diffusion.sources import fetch_sources
 from voxprint_forge.diffusion.weights import (
     copy_config,
@@ -317,6 +318,7 @@ def _upload(
     if not remote:
         rows = write_local_files(ctx.output, tiers, source.repo, source.revision)
         delete_intermediates(ctx.upstream_root)
+        _release_canvas_sources(ctx)
         return {"files": rows, "encoder": status}
     records = publish_output(
         output=ctx.output,
@@ -334,7 +336,15 @@ def _upload(
         staging=ctx.upstream_root / "kaggle-staging",
     )
     delete_intermediates(ctx.upstream_root)
+    _release_canvas_sources(ctx)
     return {"files": records, "encoder": status}
+
+
+def _release_canvas_sources(ctx: QwenCtx) -> None:
+    """Part D is a consumer of the canvas downloads. Release it; delete only if it was last."""
+    if not ctx.plan.consumes_plan or not ctx.plan.consumes_sources:
+        return
+    release_consumed(ctx.forge_out, ctx.repo, ctx.plan.consumes_plan, ctx.plan.consumes_sources, "qwen")
 
 
 def _refresh(ctx: QwenCtx, quality: dict[str, object]) -> None:

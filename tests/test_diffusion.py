@@ -229,12 +229,17 @@ def test_canvas_card_front_matter() -> None:
 def test_llm_lock_and_canvas_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FORGE_DEADLINE", raising=False)
     (tmp_path / "bootstrap.lock").write_text(f"{os.getpid()}\n")
-    assert llm_job_running(tmp_path, pgrep=lambda: False) is True
+    assert llm_job_running(tmp_path, processes=lambda: []) is True
     stale = tmp_path / "stale"
     stale.mkdir()
     (stale / "bootstrap.lock").write_text("99999999\n")
-    assert llm_job_running(stale, pgrep=lambda: False) is False
-    assert llm_job_running(stale, pgrep=lambda: True) is True
+    assert llm_job_running(stale, processes=lambda: []) is False
+    assert llm_job_running(stale, processes=lambda: ["python -m voxprint_forge run-all"]) is True
+    assert llm_job_running(stale, processes=lambda: ["bash scripts/bootstrap.sh"]) is True
+    assert (
+        llm_job_running(stale, processes=lambda: ["tmux new-session -s forge bash scripts/bootstrap.sh"])
+        is False
+    )
     from voxprint_forge.cli import main
     from voxprint_forge.diffusion.cli import main as canvas_main
 
