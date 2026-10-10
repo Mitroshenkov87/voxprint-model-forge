@@ -91,7 +91,7 @@ base_model = "google/gemma-4-31B-it"
 already_abliterated = true
 source_format = "gguf"
 credits = ["paperscarecrow", "Google"]
-note = "24 GB tier reuses paperscarecrow Q4_K_M only. mradermacher Q5_K_M quantizes a different ablation (wangzhang) and is about 20.35 GiB plus about 1 GiB of KV at 16k, over the 21 GiB cap, so it is not pinned."
+note = "24 GB tier reuses paperscarecrow Q4_K_M only. mradermacher Q5_K_M quantizes a different ablation (wangzhang) and is about 20.35 GiB plus about 1 GiB of KV at 16k, over the 21 GiB cap, so it is not pinned. The 16 GB card tier budgets 13 GB for weights plus KV: IQ3_M landed at 14.4 GB and does not fit, so the ladder continues through IQ3_XXS and IQ2_M."
 
 [models.arch]
 full_layers = 10
@@ -124,9 +124,9 @@ quants = ["Q4_K_M"]
 
 [[models.tiers]]
 name = "16gb"
-budget_gb = 16
+budget_gb = 13
 kind = "quantize"
-quants = ["IQ4_XS", "IQ3_M", "Q3_K_M"]
+quants = ["IQ4_XS", "IQ3_M", "Q3_K_M", "IQ3_XXS", "IQ2_M"]
 
 [[models]]
 id = "t-lite-it-2.1"
@@ -202,6 +202,13 @@ size = 0
 role = "sidecar"
 quant = ""
 path = "generation_config.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "model.safetensors.index.json"
 sha256 = ""
 size = 0
 
@@ -354,6 +361,13 @@ size = 0
 role = "sidecar"
 quant = ""
 path = "tokenizer_config.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "model.safetensors.index.json"
 sha256 = ""
 size = 0
 

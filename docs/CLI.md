@@ -23,6 +23,8 @@ On failure the object also has `error.code` and `error.message`.
 | 8 | Plan failed to load |
 | 9 | A required tool is missing |
 
+`forge status` uses a shorter set, because Hardware Watchdog polls it: 0 when every item is running or finished, 3 when a running item's heartbeat is older than 180 seconds or its pid is gone, 4 when any item is `STAGEFAIL` or `FAILED` or `status.json` is missing. Those two numbers are not the licence and checksum codes above. The other commands keep the table.
+
 ## Install
 
 Python 3.12 or newer. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
@@ -33,7 +35,13 @@ pip install -e ".[dev]"
 
 ## Commands
 
+`forge --version` prints `X.Y.Z · build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. The first codename is Charash.
+
 `forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
+
+`forge preflight --plan PLAN` checks, in a few seconds, that the converter Python has torch, transformers, and gguf; that each enabled safetensors model answers HEAD for `model.safetensors.index.json` at the pinned revision; that the T-lite pre-tokenizer hash is registered on the pinned converter; that some quant on every quantize tier fits the tier budget (parameters times bits per weight, plus q8_0 KV at the longest plan context); that free disk covers the plan's pinned files; that RAM covers the smallest quant; that `HF_TOKEN` and `KAGGLE_API_TOKEN` are set unless `FORGE_DEFER_UPLOAD=1`; and that the llama.cpp binaries are present or cmake, ninja, and nvcc are on `PATH`. `run-all` and the stage commands run this check before any download or quant. `--json` prints the report.
+
+`forge status` reads `~/forge-out/status.json`. Each model or canvas part has `stage`, `pct`, `eta_min`, `last_heartbeat`, `pid`, `state`, and `error`. A `RUNNING` or `READY` item whose heartbeat is older than 180 seconds, or whose pid is dead, is reported as `stalled`.
 
 `forge verify-logins` checks `HF_TOKEN` with the Hub API and `KAGGLE_API_TOKEN` with `kaggle` (or `uvx kaggle`) 2.2 or newer. It does not write a token file.
 
@@ -41,7 +49,9 @@ pip install -e ".[dev]"
 
 `forge publish-prep` writes the local card and a registry draft. It does not upload.
 
-`forge upload` and `forge run-all` upload after the model is finished. `run-all` does this per model, then writes the manifest.
+`forge upload` and `forge run-all` upload a model as soon as that model is READY. A failure is `STAGEFAIL <stage>` for that model and the others keep going. `run-all --jobs N` (or `FORGE_JOBS`, default 1; `scripts/vm_run.sh` exports 2) overlaps CPU quantize of one model with GPU work of another. The run prints one line per model: `READY`, `UPLOADED`, `STAGEFAIL <stage>`, or `DEFERRED`. `ALL-DONE` is printed only when no model failed. A failed model makes the process exit 6.
+
+`FORGE_DEFER_UPLOAD=1` leaves the model `READY`, writes `<id>-upload-deferred`, and does not write the upload marker, so a later run can upload. When Hugging Face and Kaggle both fail, the same files are copied with rclone to `Voxprint/model-forge/<date>/<model>`. Configure the remote with `RCLONE_CONFIG_*`, or set `FORGE_DRIVE_TOKEN` or `FORGE_DRIVE_SERVICE_ACCOUNT` (never a token file). The remote name defaults to `forge` (`FORGE_DRIVE_REMOTE`). After the copy, `rclone sha256sum` must match the local file.
 
 Global flags precede the subcommand. `scripts/vm_run.sh` runs:
 
@@ -77,6 +87,14 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 | `FORGE_LLAMA_BIN` | Directory with `llama-quantize`, `llama-imatrix`, `llama-server`, `llama-cli`, `llama-perplexity` |
 | `FORGE_LLAMA_SRC` | llama.cpp checkout that contains `convert_hf_to_gguf.py` |
 | `FORGE_ROOT` | Repo root, if it is not the working directory |
+| `FORGE_PYTHON` | Interpreter for `convert_hf_to_gguf.py`. Defaults to the forge interpreter |
+| `FORGE_JOBS` | Parallel models for `run-all` when `--jobs` is omitted. Default 1 |
+| `FORGE_DEFER_UPLOAD` | `1` / `true` / `yes` / `on` skips upload and leaves the model READY |
+| `FORGE_HEARTBEAT_S` | Seconds between progress lines during quantize, imatrix, fit, eval, and upload. Default 60 |
+| `FORGE_DRIVE_TOKEN` | OAuth token for the Drive fallback. Passed only in the rclone environment |
+| `FORGE_DRIVE_SERVICE_ACCOUNT` | Service-account JSON for the Drive fallback, as a string |
+| `FORGE_DRIVE_REMOTE` | rclone remote name. Default `forge` |
+| `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version` |
 
 ## Model card
 

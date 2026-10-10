@@ -19,6 +19,7 @@ from diffusers import (
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
+from voxprint_forge.diffusion.alias import alias_key as _alias_key
 from voxprint_forge.diffusion.fp8 import dequant_state
 from voxprint_forge.diffusion.policy import decide_base, decide_control, decide_edit
 from voxprint_forge.diffusion.prompts import (
@@ -149,8 +150,9 @@ def _apply(module: torch.nn.Module, state: dict[str, torch.Tensor]) -> None:
     current = module.state_dict()
     device = next(module.parameters()).device
     mapped: dict[str, torch.Tensor] = {}
-    for key, value in state.items():
-        if key not in current:
+    for raw_key, value in state.items():
+        key = _alias_key(raw_key, current)
+        if key is None:
             continue
         tensor = value.detach()
         target = current[key]

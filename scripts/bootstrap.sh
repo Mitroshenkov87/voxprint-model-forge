@@ -213,6 +213,10 @@ if [[ "$BUNDLED_LLAMA" != "$LLAMA_COMMIT" ]]; then
   exit 9
 fi
 
+export FORGE_PYTHON="${FORGE_PYTHON:-$VENV/bin/python}"
+# T-lite-it-2.1 Qwen2 pre-tokenizer. Idempotent. See docs/VM.md.
+"$FORGE_PYTHON" -m voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"
+
 if [[ ! -f "$FORGE_OUT/stages/llama-cpp.done" ]]; then
   cmake -S "$LLAMA_SRC" -B "$FORGE_OUT/llama-build" \
     -DGGML_CUDA=ON \
@@ -234,3 +238,4 @@ printf 'results: %s\n' "$FORGE_OUT/forge-results-${stamp}.tar"
 printf 'copy back: %s\n' "$FORGE_OUT/manifests/${stamp}-a100.json"
 printf 'copy back: %s\n' "$FORGE_OUT/manifests/${stamp}-a100.MODELS.md"
 progress_line bootstrap done 100 0
+printf 'ALL-DONE\n'

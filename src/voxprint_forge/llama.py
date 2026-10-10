@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -177,7 +178,7 @@ def convert_script() -> Path:
 
 def convert_argv(script: Path, source: Path, outfile: Path) -> list[str]:
     return [
-        os.environ.get("FORGE_PYTHON", "python3"),
+        os.environ.get("FORGE_PYTHON") or sys.executable,
         str(script),
         str(source),
         "--outtype",

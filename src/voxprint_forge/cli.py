@@ -7,18 +7,29 @@ import os
 import sys
 from pathlib import Path
 
-from voxprint_forge.errors import EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, PlanError, UsageError
+from voxprint_forge.errors import (
+    EXIT_STAGE,
+    EXIT_UNEXPECTED,
+    EXIT_USAGE,
+    ForgeError,
+    PlanError,
+    UsageError,
+)
 from voxprint_forge.fetch import HfDownloader
 from voxprint_forge.jsonio import emit
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
 from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
+from voxprint_forge.preflight import run_preflight
+from voxprint_forge.statusfile import inspect_status, status_path
 from voxprint_forge.upload import HubRemote, verify_logins
+from voxprint_forge.version import version_line
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="forge")
+    parser.add_argument("--version", action="version", version=version_line())
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--root", type=Path, default=None)
     parser.add_argument("--plan", type=Path, default=None)
@@ -26,7 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan-summary")
     sub.add_parser("verify-logins")
-    sub.add_parser("run-all")
+    sub.add_parser("preflight")
+    sub.add_parser("status")
+    run = sub.add_parser("run-all")
+    run.add_argument("--jobs", type=int, default=None)
     for name in ("fetch", "abliterate", "quantize", "eval", "card", "publish-prep", "upload"):
         command = sub.add_parser(name)
         command.add_argument("--model", required=True)
@@ -51,8 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_USAGE
     try:
         result = _dispatch(args)
-        code = 0
-        emit(args.command, result, ok=True, exit_code=code, json_mode=args.json)
+        code = _exit_code(args.command, result)
+        emit(args.command, result, ok=code == 0, exit_code=code, json_mode=args.json)
         return code
     except ForgeError as exc:
         emit(
@@ -112,8 +126,41 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
         )
 
 
+def _exit_code(command: str, result: object) -> int:
+    if not isinstance(result, dict):
+        return 0
+    if command == "status":
+        return int(result.get("exit_code", 4))
+    if result.get("ok") is False:
+        return EXIT_STAGE
+    return 0
+
+
+def _jobs(explicit: int | None) -> int:
+    if explicit is None:
+        text = os.environ.get("FORGE_JOBS", "1").strip() or "1"
+        try:
+            explicit = int(text)
+        except ValueError as exc:
+            raise UsageError(f"FORGE_JOBS {text!r} is not an integer", code="usage") from exc
+    if explicit < 1:
+        raise UsageError("jobs must be at least 1", code="usage")
+    return explicit
+
+
 def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
+    if args.command == "status":
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        if not status_path(forge_out).is_file():
+            return {
+                "items": [],
+                "stalled": False,
+                "failed": True,
+                "exit_code": 4,
+                "error": "status.json is missing",
+            }
+        return inspect_status(forge_out)
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
@@ -142,8 +189,12 @@ def _dispatch(args: argparse.Namespace) -> object:
     forge_out = args.forge_out or plan.output_dir.parent
     layout = Layout(forge_out)
     host = _live_host()
+    if args.command in {"preflight", "run-all"} or args.command in ORDER:
+        report = run_preflight(plan, root, forge_out)
+        if args.command == "preflight":
+            return report
     if args.command == "run-all":
-        return run_all(plan, host, root, layout)
+        return run_all(plan, host, root, layout, jobs=_jobs(args.jobs))
     model_id = str(args.model)
     model = next((item for item in plan.models if item.id == model_id), None)
     if model is None:

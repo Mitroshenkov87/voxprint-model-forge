@@ -15,8 +15,13 @@ export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
 export GIT_TERMINAL_PROMPT=0
 mkdir -p "$FORGE_OUT/logs" "$HF_HOME"
 
+export FORGE_PYTHON="${FORGE_PYTHON:-$VENV/bin/python}"
+export FORGE_JOBS="${FORGE_JOBS:-2}"
+
 # Global flags precede the subcommand. argparse rejects them after run-all.
+"$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" preflight
 "$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" run-all
+printf 'ALL-DONE\n'
 
 # Hub snapshots are copies of weights the work tree already consumed.
 rm -rf "$HF_HOME/hub"

@@ -1,0 +1,27 @@
+name: release
+
+# Title matches `forge --version` when BUILD.json offset is 0 and the codename is Charash.
+run-name: 0.1.0 · build ${{ github.run_number }} "Charash"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Print the release identity
+        env:
+          PYTHONPATH: src
+        run: |
+          line="$(python -c 'from voxprint_forge.version import version_line; print(version_line())')"
+          printf '%s\n' "$line"
+          expected="0.1.0 · build ${GITHUB_RUN_NUMBER} \"Charash\""
+          test "$line" = "$expected"
