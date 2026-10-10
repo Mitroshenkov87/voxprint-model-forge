@@ -122,6 +122,14 @@ def test_edit_eval_frees_between_stages() -> None:
     assert bf16 < first < trans < second < enc < last
 
 
+def _git_bash() -> str:
+    """Git bash on Windows. System32\\bash.exe is a stub and is not used."""
+    if os.name != "nt":
+        return "bash"
+    git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+    return str(git_bash) if git_bash.is_file() else "bash"
+
+
 def test_rented_vm_logs_in_once_and_local_does_not(tmp_path: Path) -> None:
     script = ROOT / "scripts" / "vm_logins.sh"
     venv_bin = tmp_path / "venv" / "bin"
@@ -134,24 +142,27 @@ def test_rented_vm_logs_in_once_and_local_does_not(tmp_path: Path) -> None:
     home.mkdir()
     out.mkdir()
     env = {
-        "HOME": str(home),
-        "VENV": str(tmp_path / "venv"),
-        "FORGE_OUT": str(out),
+        "HOME": home.as_posix(),
+        "VENV": (tmp_path / "venv").as_posix(),
+        "FORGE_OUT": out.as_posix(),
         "HF_TOKEN": "hf-secret-value",
         "KAGGLE_API_TOKEN": "kaggle-secret-value",
         "FORGE_HOST_KIND": "local",
         "PATH": os.environ.get("PATH", ""),
     }
-    subprocess.run(["bash", "-c", f'source "{script}"; persist_rented_vm_logins'], check=True, env=env)
+    command = [_git_bash(), "-c", f'source "{script.as_posix()}"; persist_rented_vm_logins']
+    subprocess.run(command, check=True, env=env)
     assert not (out / "hf-args").exists()
     assert not (home / ".kaggle" / "access_token").exists()
     env["FORGE_HOST_KIND"] = "rented-vm"
-    subprocess.run(["bash", "-c", f'source "{script}"; persist_rented_vm_logins'], check=True, env=env)
+    subprocess.run(command, check=True, env=env)
     assert (out / "hf-args").read_text(encoding="utf-8") == "auth login --token hf-secret-value\n"
     token_path = home / ".kaggle" / "access_token"
     assert token_path.read_text(encoding="utf-8").strip() == "kaggle-secret-value"
-    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
     text = script.read_text(encoding="utf-8")
+    assert "chmod 600" in text
     assert "set +x" in text
     assert "unset HF_TOKEN" not in text
     assert "huggingface-cli login" not in text
