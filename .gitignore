@@ -6,10 +6,16 @@
 *.onnx
 models/
 imatrix/*.dat
+out/
 # Python
 __pycache__/
 *.pyc
 .venv/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 # Logs and debug dumps
 *.log
 *.local.*

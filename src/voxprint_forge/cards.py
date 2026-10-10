@@ -1,0 +1,108 @@
+"""Render the model card from templates/model_card.md.jinja."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from jinja2 import Environment, StrictUndefined
+
+from voxprint_forge.errors import StageError, ToolMissingError
+from voxprint_forge.plan import ModelPlan
+
+MODIFICATION_NOTICE = (
+    "Modified from the base model named above by Voxprint AI Model Forge. "
+    "Changes are requantization and, where the plan says so, an in-house "
+    "difference-of-means refusal-direction ablation. The Apache-2.0 licence "
+    "below covers this card and the Forge code. Upstream weights keep the "
+    "licence recorded in this card."
+)
+
+LIMITS = (
+    "Refusals are reduced. This is not a production safety filter and it is "
+    "not for safety-critical use. Russian prose is a short sample, not a "
+    "fluency benchmark; read it before shipping a tier. Quality moves with "
+    "the quant and, on ablated models, with the direction removed."
+)
+
+PURPOSE = (
+    "Voxprint AI Plotweaver creative writing. Two private tiers ship from the "
+    "same source and imatrix: a 24 GB card and a 16 GB card, each with "
+    "min_vram_gb set from measured weights plus KV."
+)
+
+
+def template_path(repo: Path) -> Path:
+    path = repo / "templates" / "model_card.md.jinja"
+    if not path.is_file():
+        raise ToolMissingError(f"missing {path}", code="template_missing")
+    return path
+
+
+def licence_text(repo: Path) -> str:
+    path = repo / "LICENSE"
+    if not path.is_file():
+        raise ToolMissingError(f"missing {path}", code="licence_missing")
+    return path.read_text(encoding="utf-8").strip()
+
+
+def what_changed(model: ModelPlan, ablation: dict[str, object] | None) -> str:
+    if model.mode == "requant" or model.already_abliterated:
+        return (
+            f"Requant of upstream abliterated {model.repo} at revision {model.revision}. "
+            "Forge does not repeat that ablation. The 24 GB tier reuses a pinned "
+            "upstream GGUF when one fits; the 16 GB tier is quantized here."
+        )
+    if model.mode == "ablate":
+        layer = "the layer with the largest gap" if not ablation else f"layer {ablation.get('layer')}"
+        mode = "" if not ablation else f" Compute mode: {ablation.get('mode')}."
+        return (
+            "Own difference-of-means refusal-direction ablation. The direction is the "
+            "normalised gap between the mean last-token residual on harmful prompts and "
+            f"the mean on harmless prompts, taken at {layer}. Writing matrices whose "
+            "output size matches the hidden size (o_proj, out_proj, down_proj, wo, "
+            "dense_4h_to_h) are orthogonalised: W := W - r r^T W. "
+            "Calibration prompts are original Apache-2.0 text shipped with Forge "
+            "(src/voxprint_forge/data/LICENCES.md)."
+            f"{mode}"
+        )
+    raise StageError(f"unhandled mode {model.mode}", code="card_mode")
+
+
+def render_card(
+    repo: Path,
+    model: ModelPlan,
+    tiers: list[dict[str, object]],
+    *,
+    ablation: dict[str, object] | None,
+    imatrix_note: str,
+    stamped: str | None = None,
+) -> str:
+    template = template_path(repo).read_text(encoding="utf-8")
+    env = Environment(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
+    try:
+        html = env.from_string(template)
+        return html.render(
+            model_id=model.id,
+            title=f"Voxprint {model.id}",
+            base_model=model.base_model,
+            revision=model.revision,
+            licence=model.licence,
+            upstream_repo=model.repo,
+            what_changed=what_changed(model, ablation),
+            quant_lines=[
+                f"{item.get('name')}: {item.get('quant')} (min_vram_gb={item.get('min_vram_gb')})"
+                for item in tiers
+            ],
+            tiers=tiers,
+            imatrix_note=imatrix_note,
+            purpose=PURPOSE,
+            limits=LIMITS,
+            credits=list(model.credits),
+            apache_text=licence_text(repo),
+            modification_notice=MODIFICATION_NOTICE,
+            stamped=stamped or date.today().isoformat(),
+            params_b=model.params_b,
+        )
+    except Exception as exc:
+        raise StageError(f"model card render failed: {exc}", code="card") from exc

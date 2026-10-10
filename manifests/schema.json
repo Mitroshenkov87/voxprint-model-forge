@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Forge A100 manifest",
+  "type": "object",
+  "required": ["date", "plan", "models"],
+  "properties": {
+    "date": {"type": "string"},
+    "plan": {"type": "string"},
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "files"],
+        "properties": {
+          "id": {"type": "string"},
+          "base_model": {"type": "string"},
+          "revision": {"type": "string"},
+          "licence": {"type": "string"},
+          "skipped": {"type": "boolean"},
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "sha256", "size", "sources"],
+              "properties": {
+                "name": {"type": "string"},
+                "sha256": {"type": "string"},
+                "size": {"type": "integer"},
+                "tier": {"type": "string"},
+                "quant": {"type": "string"},
+                "min_vram_gb": {"type": ["integer", "null"]},
+                "sources": {
+                  "type": "object",
+                  "required": ["hf", "kaggle", "torrent"],
+                  "properties": {
+                    "hf": {"type": "string"},
+                    "kaggle": {"type": "string"},
+                    "torrent": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

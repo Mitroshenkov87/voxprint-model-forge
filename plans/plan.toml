@@ -1,0 +1,473 @@
+# A100 80GB run. Disabled models stay in this file and are not executed.
+# Headroom is 3 GB, so weights + KV must be <= 13 GiB on a 16 GB card and <= 21 GiB on a 24 GB card.
+
+[run]
+name = "a100-80gb"
+output_dir = "~/forge-out/work"
+wall_clock_budget_min = 150
+headroom_gb = 3.0
+imatrix_chunks = 8
+imatrix_ctx = 512
+refusal_limit = 4
+ppl_chunks = 1
+prose_samples = 1
+contexts = [8192, 16384]
+llama_cpp_tag = "b11476"
+llama_cpp_commit = "988190680d5a89fce97de3c20df2c2813731fd61"
+artifact_host = ""
+
+[run.estimates_min]
+bootstrap_build = 12
+huihui-qwen36-27b = 45
+gemma4-31b = 48
+"t-lite-it-2.1" = 35
+"t-pro-it-2.1" = 80
+
+[[models]]
+id = "huihui-qwen36-27b"
+enabled = true
+optional = false
+estimate_min = 45
+mode = "requant"
+repo = "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+revision = "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3"
+licence = "apache-2.0"
+params_b = 27
+base_model = "Qwen/Qwen3.6-27B"
+already_abliterated = true
+source_format = "gguf"
+credits = ["huihui-ai", "Qwen"]
+note = "24 GB tier reuses the same-author Q5_K GGUF (filename has no _M; size matches K_M). Q4_K is the fallback if Q5 misses the 21 GiB cap. 16 GB tier is our imatrix quant. Upstream Q3_K is not reused."
+
+[models.arch]
+full_layers = 16
+full_kv_heads = 4
+full_head_dim = 256
+
+[[models.files]]
+role = "source"
+quant = "F16"
+path = "Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gguf"
+sha256 = "5edad8e7c1f81d9cfd5f5226ac3a59f24c73a1ad66733221643c611067aa9027"
+size = 54657732928
+
+[[models.files]]
+role = "reuse"
+quant = "Q5_K_M"
+path = "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf"
+sha256 = "a4fd0da6216fb8b9a74e25a688a118b001888b704e17f5c851c2bd80f4f5e284"
+size = 19535700288
+
+[[models.files]]
+role = "reuse"
+quant = "Q4_K_M"
+path = "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q4_K.gguf"
+sha256 = "1654c3cbde5561bb2b8fd60b6400f3fb6561aab5a00b69366936b9368cf5bd6b"
+size = 16810713408
+
+[[models.tiers]]
+name = "24gb"
+budget_gb = 24
+kind = "reuse"
+quants = ["Q5_K_M", "Q4_K_M"]
+
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS", "IQ3_M", "Q3_K_M"]
+
+[[models]]
+id = "gemma4-31b"
+enabled = true
+optional = false
+estimate_min = 48
+mode = "requant"
+repo = "paperscarecrow/Gemma-4-31B-it-abliterated"
+revision = "2491ee58472b82a2372d288f982943b9d5e6a82c"
+licence = "apache-2.0"
+params_b = 31
+base_model = "google/gemma-4-31B-it"
+already_abliterated = true
+source_format = "gguf"
+credits = ["paperscarecrow", "Google"]
+note = "24 GB tier reuses paperscarecrow Q4_K_M only. mradermacher Q5_K_M quantizes a different ablation (wangzhang) and is about 20.35 GiB plus about 1 GiB of KV at 16k, over the 21 GiB cap, so it is not pinned."
+
+[models.arch]
+full_layers = 10
+full_kv_heads = 4
+full_head_dim = 512
+swa_layers = 50
+swa_kv_heads = 16
+swa_head_dim = 256
+swa_window = 1024
+
+[[models.files]]
+role = "source"
+quant = "F16"
+path = "gemma-4-31b-abliterated-f16.gguf"
+sha256 = "981949755cf98504ef74e2f7d1ce679fce38f62d7afbec44e2951c95e5408204"
+size = 61413183104
+
+[[models.files]]
+role = "reuse"
+quant = "Q4_K_M"
+path = "gemma-4-31b-abliterated-Q4_K_M.gguf"
+sha256 = "380f2f50f441225e669ab1541220985387bf3933573cd2f4f7e667f3790e73a3"
+size = 18687057536
+
+[[models.tiers]]
+name = "24gb"
+budget_gb = 24
+kind = "reuse"
+quants = ["Q4_K_M"]
+
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS", "IQ3_M", "Q3_K_M"]
+
+[[models]]
+id = "t-lite-it-2.1"
+enabled = true
+optional = false
+estimate_min = 35
+mode = "ablate"
+repo = "t-tech/T-lite-it-2.1"
+revision = "d125c970c553de58fcee3c937d5e4867d4a448d8"
+licence = "apache-2.0"
+params_b = 8
+base_model = "Qwen/Qwen3-8B"
+already_abliterated = false
+source_format = "safetensors"
+credits = ["T-Bank (T-Tech)", "Qwen"]
+note = "Ablate this revision. Do not fetch smkrv/T-lite-it-2.1-abl-GGUF. 24 GB tier is Q5_K_M or Q4_K_M. 16 GB tier is IQ4_XS or IQ3_M."
+
+[models.arch]
+full_layers = 36
+full_kv_heads = 8
+full_head_dim = 128
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00001-of-00004.safetensors"
+sha256 = "3b7e59ce73acd21a7b9a504a09b39f8806a1b04dc46dcc8c8b54d0fb4f58f711"
+size = 4900234272
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00002-of-00004.safetensors"
+sha256 = "869e6f3e9c706256a165117b50a03897e546fe3153a4cd5fc0efa7da5b9f3460"
+size = 4915960368
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00003-of-00004.safetensors"
+sha256 = "0f80e1fb2a7104c2a368a96891c9031feac3a20b071d7c6dc1f45d29787502e6"
+size = 4983068496
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00004-of-00004.safetensors"
+sha256 = "30d6f2d2dc0ad9acaf2672b5b27e07df45c9ad65919dc37d333a1f103346b0e1"
+size = 1578206840
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "config.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "tokenizer.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "tokenizer_config.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "generation_config.json"
+sha256 = ""
+size = 0
+
+[[models.tiers]]
+name = "24gb"
+budget_gb = 24
+kind = "quantize"
+quants = ["Q5_K_M", "Q4_K_M"]
+
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS", "IQ3_M"]
+
+[[models]]
+id = "t-pro-it-2.1"
+enabled = true
+optional = true
+estimate_min = 80
+mode = "ablate"
+repo = "t-tech/T-pro-it-2.1"
+revision = "a677a7c27bb8820c816fbcf578d912acedcf4439"
+licence = "apache-2.0"
+params_b = 32
+base_model = "Qwen/Qwen3-32B"
+already_abliterated = false
+source_format = "safetensors"
+credits = ["T-Bank (T-Tech)", "Qwen"]
+note = "Optional. Run only when the remaining model-work budget covers estimate_min."
+
+[models.arch]
+full_layers = 64
+full_kv_heads = 8
+full_head_dim = 128
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00001-of-00014.safetensors"
+sha256 = "d601ae50cefd6e8ccf5eb479655f9a2a2d07b6de477c6c4a1f44107ed505194d"
+size = 4929778304
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00002-of-00014.safetensors"
+sha256 = "e3936334869762c5741e7d4134f9e1a72959d7b1fcb1c8adfdbc11027f791e05"
+size = 4875989696
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00003-of-00014.safetensors"
+sha256 = "51824bc81b830b0c70ba3121b5f91aa73770b9d37c3ecbc4bb5c73e8fb6cce7a"
+size = 4875989720
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00004-of-00014.safetensors"
+sha256 = "9bb186bba0165a5aa06476d6c8491c6d7b4fb74ea74f86d5666251e22b7396fb"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00005-of-00014.safetensors"
+sha256 = "b9aa5b29c471c84ef2570908816292a4714d3a40bb3f22e072518ad3c715457d"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00006-of-00014.safetensors"
+sha256 = "cbbe6fc7587ba46bfdc69714a40c6e68ecec1fb758a3cb7f733ddd8e149c67f2"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00007-of-00014.safetensors"
+sha256 = "7e08752792647e68d4c1a82129394f7ed342c245a878b518931c12cfcef43bfb"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00008-of-00014.safetensors"
+sha256 = "aef80803981b69bc048bcbb638f4ace4207b75df2b4a90634a216b93904f2d5c"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00009-of-00014.safetensors"
+sha256 = "7d4539357664e413bb4184405ec3fd6df53187f7d8f62f09e2cdd7a4a88fa072"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00010-of-00014.safetensors"
+sha256 = "a87b1a0e0cba7b0887e9ee4d1c6ded20230eab73b91750597722781afe4a70d9"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00011-of-00014.safetensors"
+sha256 = "4a512acc16dfa3b4d1a1a807c5927d30dfd54a15beb8cc0c4c3f8d979e95cfc8"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00012-of-00014.safetensors"
+sha256 = "9aa42c3d0e23d2fec126bfc087df1635e5ef3df5cc13e1a886a63662907c5bb9"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00013-of-00014.safetensors"
+sha256 = "b6f65f885cbffc4461c5a1e0a241d7b7f8680fd8c310d8309593b7cd9fa6dec0"
+size = 4875989752
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00014-of-00014.safetensors"
+sha256 = "5e65b359e5fe92836ae7ae03af89a7648abbb28d0706ccfcee81525dbeab2cf6"
+size = 2077614760
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "config.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "tokenizer.json"
+sha256 = ""
+size = 0
+
+[[models.files]]
+role = "sidecar"
+quant = ""
+path = "tokenizer_config.json"
+sha256 = ""
+size = 0
+
+[[models.tiers]]
+name = "24gb"
+budget_gb = 24
+kind = "quantize"
+quants = ["Q5_K_M", "Q4_K_M"]
+
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["IQ4_XS", "IQ3_M"]
+
+[[models]]
+id = "mistral-small-3.2-24b"
+enabled = false
+optional = false
+estimate_min = 0
+mode = "ablate"
+repo = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+revision = "95a6d26c4bfb886c58daf9d3f7332c857cb27b43"
+licence = "apache-2.0"
+params_b = 24
+base_model = "mistralai/Mistral-Small-3.1-24B-Base-2503"
+already_abliterated = false
+source_format = "safetensors"
+credits = ["Mistral AI"]
+note = "Disabled for the A100 run. Mistral Small 4 119B is out of scope. consolidated.safetensors is not pinned."
+
+[models.arch]
+full_layers = 40
+full_kv_heads = 8
+full_head_dim = 128
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00001-of-00010.safetensors"
+sha256 = "91831c2ce219df0ce63bc33c6249e5cb01db8d93816bcebf975f1c406286520e"
+size = 4883550696
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00002-of-00010.safetensors"
+sha256 = "8ffe80706a66b2f5ef1fb058806ccf09f124ec4ad38af7a377e44ab1ee2fd664"
+size = 4781593336
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00003-of-00010.safetensors"
+sha256 = "99ec66e891f9563f568734eadfc5b7701e04620e8e163d4d5755277a3b50cf2f"
+size = 4886472224
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00004-of-00010.safetensors"
+sha256 = "e1df1527b12b1eb5cbd9a50914f9e6eb24e885ec830a3c16b5eed6ad0b53a396"
+size = 4781593376
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00005-of-00010.safetensors"
+sha256 = "3556ac03f47c24eb8ad27c237e25baad639c651d9596fd72cb1523137bf56163"
+size = 4781593368
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00006-of-00010.safetensors"
+sha256 = "2c41e6f80f2b5ca384ce703eac048a13daf2aff689c3acca66a8943f45338aae"
+size = 4886472248
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00007-of-00010.safetensors"
+sha256 = "62a725f154f6ba942a36b5cc450db2b2df32f434e3224558c789bc04fa05fd36"
+size = 4781593376
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00008-of-00010.safetensors"
+sha256 = "3a1a6ac77e6434418bb7273b68a7b3534fed5217c990061c92a8f990dd6ab20e"
+size = 4781593368
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00009-of-00010.safetensors"
+sha256 = "e1fffc9bb2b77d4d2382c1bd9053e9d017741d67ca00cc6f77034a294f2f5cfd"
+size = 4886472248
+
+[[models.files]]
+role = "source"
+quant = "BF16"
+path = "model-00010-of-00010.safetensors"
+sha256 = "116ef7ae6fa0fd46b478324e4aa6a49f448afed900ca9f71d4fbd3d02289bbd4"
+size = 4571866320
+
+[[models.tiers]]
+name = "24gb"
+budget_gb = 24
+kind = "quantize"
+quants = ["Q5_K_M", "Q4_K_M"]
+
+[[models.tiers]]
+name = "16gb"
+budget_gb = 16
+kind = "quantize"
+quants = ["Q5_K_M", "Q4_K_M"]

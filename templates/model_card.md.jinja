@@ -1,0 +1,75 @@
+# {{ title }}
+
+Private weights for Voxprint AI Plotweaver. This repository is private.
+
+## Base model
+
+- Base: `{{ base_model }}`
+- Upstream: `{{ upstream_repo }}`
+- Revision: `{{ revision }}`
+- Licence of the weights: `{{ licence }}`
+- Parameters: {{ params_b }}B
+- Card date: {{ stamped }}
+
+## What changed
+
+{{ what_changed }}
+
+## Quantization
+
+Importance matrix: {{ imatrix_note }}
+
+{% for line in quant_lines %}
+- {{ line }}
+{% endfor %}
+
+KV cache preference is q8_0, then q4_0 when q8_0 does not fit. Fit is weights + KV, with headroom left for compute buffers.
+
+## Purpose
+
+{{ purpose }}
+
+## Evaluation
+
+{% for tier in tiers %}
+### {{ tier.name }} / {{ tier.quant }}
+
+- min_vram_gb: {{ tier.min_vram_gb }}
+- budget_gb: {{ tier.budget_gb }}
+- perplexity: {{ tier.perplexity }}
+- refusal rate EN: {{ tier.refusal_en }}
+- refusal rate RU: {{ tier.refusal_ru }}
+- peak weights+KV:
+{% for row in tier.measurements %}
+  - ctx {{ row.ctx }}: weights {{ row.weights_bytes }} bytes, KV {{ row.kv_bytes }} bytes, fits {{ row.fits }}, nvidia-smi used {{ row.nvidia_used_bytes }}
+{% endfor %}
+- sample prose:
+{% for sample in tier.prose %}
+
+```
+{{ sample }}
+```
+
+{% endfor %}
+{% endfor %}
+
+## Known limits
+
+{{ limits }}
+
+## Credits
+
+{% for name in credits %}
+- {{ name }}
+{% endfor %}
+- llama.cpp (GGUF conversion, imatrix, quantization, runtime)
+
+## Modification notice
+
+{{ modification_notice }}
+
+## Apache-2.0
+
+```
+{{ apache_text }}
+```

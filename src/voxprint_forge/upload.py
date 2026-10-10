@@ -1,0 +1,560 @@
+"""Private Hugging Face and Kaggle uploads. A stage is done only after sha256 and size match."""
+
+from __future__ import annotations
+
+import csv
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from huggingface_hub import HfApi
+
+from voxprint_forge.errors import StageError, ToolMissingError, UsageError
+from voxprint_forge.hashing import sha256_file
+from voxprint_forge.scrub import scrub
+
+try:
+    import hf_transfer as _hf_transfer
+except ImportError:
+    _hf_transfer = None
+
+DELAYS = (2, 4, 8, 16)
+FRAMEWORK = "gguf"
+
+
+@dataclass(frozen=True)
+class Artifact:
+    path: Path
+    name: str
+    sha256: str
+    size: int
+    tier: str
+    quant: str
+    kind: str
+
+
+class Remote(Protocol):
+    def check_hf(self) -> str: ...
+
+    def check_kaggle(self) -> str: ...
+
+    def hf_private_repo(self, repo_id: str) -> str: ...
+
+    def hf_upload(self, repo_id: str, path: Path, name: str) -> None: ...
+
+    def hf_stat(self, repo_id: str, name: str) -> tuple[str | None, int]: ...
+
+    def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str: ...
+
+    def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str: ...
+
+    def kaggle_stat(self, handle: str, name: str) -> tuple[str | None, int]: ...
+
+
+def hf_user() -> str:
+    user = os.environ.get("HF_USER", "").strip()
+    if not user:
+        raise UsageError("HF_USER is not set", code="hf_user")
+    return user
+
+
+def kaggle_user() -> str:
+    return os.environ.get("KAGGLE_USER", "mitroshenkov87").strip() or "mitroshenkov87"
+
+
+def repo_slug(model_id: str) -> str:
+    return f"voxprint-{model_id}"
+
+
+def variation_slug(tier: str, quant: str) -> str:
+    return f"{tier}-{quant.lower().replace('_', '-')}"
+
+
+def hf_file_url(repo_id: str, name: str) -> str:
+    return f"https://huggingface.co/{repo_id}/blob/main/{name}"
+
+
+def kaggle_variation_url(owner: str, slug: str, variation: str) -> str:
+    return f"https://www.kaggle.com/models/{owner}/{slug}/{FRAMEWORK}/{variation}"
+
+
+def model_metadata(owner: str, slug: str, title: str, description: str) -> dict[str, object]:
+    return {
+        "ownerSlug": owner,
+        "title": title,
+        "slug": slug,
+        "subtitle": "Voxprint AI Plotweaver private GGUF",
+        "isPrivate": True,
+        "description": description,
+        "publishTime": "",
+        "provenanceSources": "",
+        "licenseName": "Apache 2.0",
+    }
+
+
+def variation_metadata(owner: str, slug: str, variation: str, overview: str) -> dict[str, object]:
+    return {
+        "ownerSlug": owner,
+        "modelSlug": slug,
+        "instanceSlug": variation,
+        "framework": FRAMEWORK,
+        "overview": overview,
+        "usage": overview,
+        "licenseName": "Apache 2.0",
+        "fineTunable": False,
+        "trainingData": [],
+        "modelInstanceType": "Unspecified",
+        "baseModelInstance": "",
+        "externalBaseModelUrl": "",
+    }
+
+
+def assert_private_metadata(payload: dict[str, object]) -> None:
+    if payload.get("isPrivate") is not True:
+        raise StageError("refusing a model that is not private", code="upload_public")
+
+
+def parse_kaggle_version(text: str) -> tuple[int, int]:
+    match = re.search(r"(\d+)\.(\d+)", text)
+    if match is None:
+        raise ToolMissingError(f"cannot read kaggle version from {text!r}", code="kaggle_version")
+    return int(match.group(1)), int(match.group(2))
+
+
+def require_kaggle_version(text: str) -> tuple[int, int]:
+    major, minor = parse_kaggle_version(text)
+    if (major, minor) < (2, 2):
+        raise ToolMissingError(f"kaggle CLI {major}.{minor} is older than 2.2", code="kaggle_version")
+    return major, minor
+
+
+def _matched(remote_sha: str | None, remote_size: int, local_sha: str, local_size: int) -> bool:
+    return remote_size == local_size and remote_sha == local_sha
+
+
+def upload_verified(
+    action: Callable[[], None],
+    stat: Callable[[], tuple[str | None, int]],
+    *,
+    local_sha: str,
+    local_size: int,
+    attempts: int,
+    sleep: Callable[[float], None],
+) -> None:
+    last = "remote sha256/size did not match"
+    for attempt in range(attempts):
+        action()
+        remote_sha, remote_size = stat()
+        if _matched(remote_sha, remote_size, local_sha, local_size):
+            return
+        last = f"remote sha256={remote_sha} size={remote_size} != {local_sha} {local_size}"
+        if attempt + 1 < attempts:
+            sleep(DELAYS[min(attempt, len(DELAYS) - 1)])
+    raise StageError(scrub(last), code="upload_mismatch")
+
+
+def publish_private(
+    remote: Remote,
+    artifacts: Sequence[Artifact],
+    *,
+    model_id: str,
+    title: str,
+    description: str,
+    attempts: int,
+    sleep: Callable[[float], None],
+    work: Path,
+) -> list[dict[str, object]]:
+    """Upload every artifact to a private HF repo and one private Kaggle variation per tier."""
+    if not artifacts:
+        raise StageError(f"{model_id} has nothing to upload", code="upload_empty")
+    user = hf_user()
+    owner = kaggle_user()
+    slug = repo_slug(model_id)
+    repo_id = f"{user}/{slug}"
+    remote.hf_private_repo(repo_id)
+    model_dir = work / "kaggle-model"
+    if model_dir.exists():
+        shutil.rmtree(model_dir)
+    model_dir.mkdir(parents=True)
+    meta = model_metadata(owner, slug, title, description)
+    assert_private_metadata(meta)
+    (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    remote.kaggle_private_model(owner, slug, model_dir)
+
+    records: list[dict[str, object]] = []
+    for artifact in artifacts:
+        upload_verified(
+            lambda artifact=artifact: remote.hf_upload(repo_id, artifact.path, artifact.name),
+            lambda artifact=artifact: remote.hf_stat(repo_id, artifact.name),
+            local_sha=artifact.sha256,
+            local_size=artifact.size,
+            attempts=attempts,
+            sleep=sleep,
+        )
+        records.append(
+            {
+                "name": artifact.name,
+                "sha256": artifact.sha256,
+                "size": artifact.size,
+                "tier": artifact.tier,
+                "quant": artifact.quant,
+                "kind": artifact.kind,
+                "min_vram_gb": None,
+                "sources": {
+                    "hf": hf_file_url(repo_id, artifact.name),
+                    "kaggle": "",
+                    "torrent": "placeholder",
+                },
+            }
+        )
+
+    by_tier: dict[str, list[Artifact]] = {}
+    shared = [item for item in artifacts if item.tier in ("", "shared")]
+    for artifact in artifacts:
+        if artifact.kind == "gguf":
+            by_tier.setdefault(artifact.tier, []).append(artifact)
+    for tier, group in by_tier.items():
+        gguf = group[0]
+        variation = variation_slug(tier, gguf.quant)
+        folder = work / "kaggle" / variation
+        if folder.exists():
+            shutil.rmtree(folder)
+        folder.mkdir(parents=True)
+        names = []
+        for item in [gguf, *shared, *_sidecars(artifacts, gguf)]:
+            target = folder / item.name
+            if not target.exists():
+                shutil.copy2(item.path, target)
+            names.append(item.name)
+        overview = description[:4000]
+        instance = variation_metadata(owner, slug, variation, overview)
+        (folder / "model-instance-metadata.json").write_text(
+            json.dumps(instance, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        bundled = [item for item in artifacts if item.name in names]
+        page = kaggle_variation_url(owner, slug, variation)
+
+        def _send(folder: Path = folder, variation: str = variation) -> str:
+            return remote.kaggle_upload_variation(owner, slug, variation, folder)
+
+        _verify_bundle(
+            _send,
+            bundled,
+            remote,
+            attempts=attempts,
+            sleep=sleep,
+        )
+        for name in names:
+            for record in records:
+                if record["name"] == name:
+                    sources = record["sources"]
+                    if isinstance(sources, dict):
+                        sources["kaggle"] = page
+    for record in records:
+        sources = record["sources"]
+        if isinstance(sources, dict) and not sources.get("kaggle"):
+            raise StageError(f"{record['name']} has no verified Kaggle URL", code="upload_kaggle")
+    return records
+
+
+def _verify_bundle(
+    send: Callable[[], str],
+    bundled: Sequence[Artifact],
+    remote: Remote,
+    *,
+    attempts: int,
+    sleep: Callable[[float], None],
+) -> None:
+    last = "remote sha256/size did not match"
+    for attempt in range(attempts):
+        handle = send()
+        mismatched = False
+        for artifact in bundled:
+            remote_sha, remote_size = remote.kaggle_stat(handle, artifact.name)
+            if not _matched(remote_sha, remote_size, artifact.sha256, artifact.size):
+                mismatched = True
+                last = (
+                    f"{artifact.name} remote sha256={remote_sha} size={remote_size} "
+                    f"!= {artifact.sha256} {artifact.size}"
+                )
+                break
+        if not mismatched:
+            return
+        if attempt + 1 < attempts:
+            sleep(DELAYS[min(attempt, len(DELAYS) - 1)])
+    raise StageError(scrub(last), code="upload_mismatch")
+
+
+def _sidecars(artifacts: Sequence[Artifact], gguf: Artifact) -> list[Artifact]:
+    stem = gguf.name + ".sha256"
+    return [item for item in artifacts if item.name == stem]
+
+
+def enable_fast_transfer() -> None:
+    if _hf_transfer is not None:
+        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+
+def kaggle_argv() -> list[str]:
+    found = shutil.which("kaggle")
+    if found:
+        return [found]
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        raise ToolMissingError("kaggle CLI is not installed and uvx is missing", code="tool_missing")
+    return [uvx, "kaggle"]
+
+
+class HubRemote:
+    """Live HF + Kaggle client. Tokens are read from the environment and never written."""
+
+    def __init__(self, hf_token: str | None, kaggle_token: str | None) -> None:
+        self._hf_token = hf_token
+        self._kaggle_token = kaggle_token
+        enable_fast_transfer()
+
+    def check_hf(self) -> str:
+        if not self._hf_token:
+            raise UsageError("HF_TOKEN is not set", code="hf_token")
+        try:
+            who = HfApi(token=self._hf_token).whoami()
+        except Exception as exc:
+            raise UsageError(scrub(f"Hugging Face login failed: {exc}"), code="hf_login") from None
+        name = str(who.get("name", "")) if isinstance(who, dict) else ""
+        if not name:
+            raise UsageError("Hugging Face login failed", code="hf_login")
+        return name
+
+    def check_kaggle(self) -> str:
+        if not self._kaggle_token:
+            raise UsageError("KAGGLE_API_TOKEN is not set", code="kaggle_token")
+        version = _kaggle(self._kaggle_token, ["--version"])
+        require_kaggle_version(version.stdout + version.stderr)
+        owner = kaggle_user()
+        listed = _kaggle(
+            self._kaggle_token,
+            ["models", "list", "--owner", owner, "--page-size", "1"],
+        )
+        if listed.returncode != 0:
+            raise UsageError(scrub(f"Kaggle login failed: {listed.stderr}"), code="kaggle_login")
+        return owner
+
+    def hf_private_repo(self, repo_id: str) -> str:
+        if not self._hf_token:
+            raise UsageError("HF_TOKEN is not set", code="hf_token")
+        api = HfApi(token=self._hf_token)
+        try:
+            api.create_repo(repo_id, private=True, exist_ok=True, repo_type="model")
+            info = api.repo_info(repo_id)
+            if not info.private:
+                api.update_repo_visibility(repo_id, private=True)
+                info = api.repo_info(repo_id)
+        except Exception as exc:
+            raise StageError(scrub(str(exc)), code="upload_hf") from None
+        if not info.private:
+            raise StageError(f"{repo_id} is public; refusing to upload", code="upload_public")
+        return f"https://huggingface.co/{repo_id}"
+
+    def hf_upload(self, repo_id: str, path: Path, name: str) -> None:
+        api = HfApi(token=self._hf_token)
+        try:
+            api.upload_file(
+                path_or_fileobj=str(path),
+                path_in_repo=name,
+                repo_id=repo_id,
+                commit_message=f"Add {name}",
+            )
+        except Exception as exc:
+            raise StageError(scrub(str(exc)), code="upload_hf") from None
+
+    def hf_stat(self, repo_id: str, name: str) -> tuple[str | None, int]:
+        api = HfApi(token=self._hf_token)
+        try:
+            infos = api.get_paths_info(repo_id, paths=[name])
+        except Exception as exc:
+            raise StageError(scrub(str(exc)), code="upload_hf") from None
+        if not infos:
+            return None, 0
+        item = infos[0]
+        lfs = getattr(item, "lfs", None)
+        sha = getattr(lfs, "sha256", None) if lfs is not None else None
+        size = int(getattr(item, "size", 0) or 0)
+        return (str(sha) if sha else None), size
+
+    def kaggle_private_model(self, owner: str, slug: str, folder: Path) -> str:
+        meta_path = folder / "model-metadata.json"
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise StageError("model metadata is not an object", code="upload_kaggle")
+        assert_private_metadata(payload)
+        created = _kaggle(self._require_kaggle(), ["models", "create", "-p", str(folder)])
+        text = created.stdout + created.stderr
+        if created.returncode != 0 and "exist" not in text.lower():
+            raise StageError(scrub(text), code="upload_kaggle")
+        if created.returncode != 0:
+            updated = _kaggle(self._require_kaggle(), ["models", "update", "-p", str(folder)])
+            if updated.returncode != 0:
+                raise StageError(scrub(updated.stderr or updated.stdout), code="upload_kaggle")
+        self._assert_kaggle_private(owner, slug)
+        return f"https://www.kaggle.com/models/{owner}/{slug}"
+
+    def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str:
+        created = _kaggle(
+            self._require_kaggle(),
+            [
+                "models",
+                "variations",
+                "create",
+                "-p",
+                str(folder),
+                "-q",
+                "-r",
+                "skip",
+                "--ignore-patterns",
+                "model-instance-metadata.json",
+            ],
+        )
+        text = created.stdout + created.stderr
+        handle = f"{owner}/{slug}/{FRAMEWORK}/{variation}"
+        if created.returncode != 0:
+            versioned = _kaggle(
+                self._require_kaggle(),
+                [
+                    "models",
+                    "variations",
+                    "versions",
+                    "create",
+                    handle,
+                    "-p",
+                    str(folder),
+                    "-n",
+                    "voxprint forge upload",
+                    "-q",
+                    "-r",
+                    "skip",
+                    "--ignore-patterns",
+                    "model-instance-metadata.json",
+                ],
+            )
+            if versioned.returncode != 0:
+                raise StageError(scrub(versioned.stderr or text), code="upload_kaggle")
+        return handle
+
+    def kaggle_stat(self, handle: str, name: str) -> tuple[str | None, int]:
+        listed = _kaggle(
+            self._require_kaggle(),
+            ["models", "variations", "files", handle, "-v", "--page-size", "100"],
+        )
+        if listed.returncode != 0:
+            raise StageError(scrub(listed.stderr or listed.stdout), code="upload_kaggle")
+        size = _csv_size(listed.stdout, name)
+        digest = _kaggle_sha(self._require_kaggle(), handle, name)
+        return digest, size
+
+    def _require_kaggle(self) -> str:
+        if not self._kaggle_token:
+            raise UsageError("KAGGLE_API_TOKEN is not set", code="kaggle_token")
+        return self._kaggle_token
+
+    def _assert_kaggle_private(self, owner: str, slug: str) -> None:
+        with tempfile.TemporaryDirectory(prefix="forge-kaggle-meta-") as tmp:
+            fetched = _kaggle(self._require_kaggle(), ["models", "get", f"{owner}/{slug}", "-p", tmp])
+            if fetched.returncode != 0:
+                raise StageError(scrub(fetched.stderr or fetched.stdout), code="upload_kaggle")
+            payload = json.loads((Path(tmp) / "model-metadata.json").read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("isPrivate") is not True:
+            raise StageError(f"{owner}/{slug} is not private; refusing to upload", code="upload_public")
+
+
+def _kaggle(token: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+    config = Path(tempfile.mkdtemp(prefix="forge-kaggle-"))
+    env = os.environ.copy()
+    env["KAGGLE_API_TOKEN"] = token
+    env["KAGGLE_CONFIG_DIR"] = str(config)
+    try:
+        return subprocess.run(
+            [*kaggle_argv(), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        shutil.rmtree(config, ignore_errors=True)
+
+
+def _csv_size(text: str, name: str) -> int:
+    lines = text.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        if line.lower().startswith("name,"):
+            start = index
+            break
+    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+    for row in reader:
+        if row.get("name") == name:
+            return int(row.get("total_bytes") or 0)
+    return 0
+
+
+def latest_version_number(text: str) -> int:
+    """Highest versionNumber in a `kaggle models variations versions list -v` CSV."""
+    lines = text.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        if "versionnumber" in line.lower():
+            start = index
+            break
+    numbers: list[int] = []
+    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+    for row in reader:
+        raw = ""
+        for key, value in row.items():
+            if key and key.lower() == "versionnumber" and value:
+                raw = value.strip()
+                break
+        if raw.isdigit():
+            numbers.append(int(raw))
+    return max(numbers) if numbers else 1
+
+
+def _kaggle_sha(token: str, handle: str, name: str) -> str | None:
+    listed = _kaggle(token, ["models", "variations", "versions", "list", handle, "-v"])
+    version = latest_version_number(listed.stdout) if listed.returncode == 0 else 1
+    with tempfile.TemporaryDirectory(prefix="forge-kaggle-hash-") as tmp:
+        downloaded = _kaggle(
+            token,
+            [
+                "models",
+                "variations",
+                "versions",
+                "download",
+                f"{handle}/{version}",
+                "-p",
+                tmp,
+                "-q",
+            ],
+        )
+        if downloaded.returncode != 0:
+            return None
+        matches = list(Path(tmp).rglob(name))
+        if not matches:
+            return None
+        return sha256_file(matches[0])
+
+
+def verify_logins(remote: Remote | None = None) -> dict[str, str]:
+    client = remote if remote is not None else HubRemote(
+        os.environ.get("HF_TOKEN"),
+        os.environ.get("KAGGLE_API_TOKEN"),
+    )
+    return {"hf": client.check_hf(), "kaggle": client.check_kaggle()}

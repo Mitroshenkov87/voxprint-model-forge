@@ -1,0 +1,86 @@
+# Forge CLI
+
+`forge` prepares GGUF tiers for Voxprint AI Plotweaver. The GUI is later. A bot can drive every command. Add `--json` for one JSON object on stdout. Logs stay on stderr.
+
+```json
+{"ok": true, "command": "plan-summary", "exit_code": 0, "result": "..."}
+```
+
+On failure the object also has `error.code` and `error.message`.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, including a clean skip of an optional model that did not fit the clock |
+| 1 | Unexpected error |
+| 2 | Usage, including a missing token when a command needs one |
+| 3 | Licence refused |
+| 4 | Checksum mismatch |
+| 5 | Download failed |
+| 6 | Stage failed, including an upload whose remote sha256 or size never matched |
+| 7 | Disk short of the next stage. Finished quants stay on disk |
+| 8 | Plan failed to load |
+| 9 | A required tool is missing |
+
+## Install
+
+Python 3.12 or newer. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Commands
+
+`forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
+
+`forge verify-logins` checks `HF_TOKEN` with the Hub API and `KAGGLE_API_TOKEN` with `kaggle` (or `uvx kaggle`) 2.2 or newer. It does not write a token file.
+
+`forge fetch|abliterate|quantize|fit|eval|card|publish-prep|upload --model ID` runs through that stage. Later stages resume earlier markers under `~/forge-out/stages/<id>/`. `fit` accepts repeatable `--budget-gb`.
+
+`forge publish-prep` writes the local card and a registry draft. It does not upload.
+
+`forge upload` and `forge run-all` upload after the model is finished. `run-all` does this per model, then writes the manifest.
+
+## Private upload
+
+Uploads go to private destinations only.
+
+- Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=True`. Files are the selected GGUF for each tier, the imatrix, `README.md`, and the `.sha256` sidecars. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
+- Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. The CLI is `kaggle` or `uvx kaggle`, version 2.2 or newer. The API token is passed only in the child environment. A temporary config directory is deleted after each call.
+
+Nothing is made public. If a remote repo is public, the stage stops and does not upload. After each upload the remote sha256 and size must match the local file. The client retries with backoff (2s, 4s, 8s, 16s). The `upload` marker is written only after both sides match. Local deliverables stay on disk until that match. F16 and safetensors intermediates are removed once the quants and the imatrix exist.
+
+The run summary lists every uploaded file with its sha256, Hugging Face URL, and Kaggle URL.
+
+## Manifest
+
+`run-all` writes `manifests/<date>-a100.json` and `manifests/<date>-a100.MODELS.md` into the repo and into `~/forge-out/manifests/`. `torrent` is the placeholder `placeholder`. With `GH_TOKEN` set, the same files are committed and pushed using `git -c http.extraHeader=...`. The token is not stored in git config. Without `GH_TOKEN`, the process prints:
+
+```bash
+git add manifests/<date>-a100.json manifests/<date>-a100.MODELS.md
+git commit -m "Record A100 sha256 manifest <date>"
+git push
+```
+
+## Environment
+
+| Variable | Role |
+| --- | --- |
+| `HF_TOKEN` | Hub read and private upload. Not logged. |
+| `HF_USER` | Hub account that owns the private model repos |
+| `KAGGLE_API_TOKEN` | Kaggle CLI auth. Not logged. |
+| `KAGGLE_USER` | Kaggle owner. Default `mitroshenkov87` |
+| `GH_TOKEN` | Private clone and optional manifest push. Not logged. |
+| `FORGE_LLAMA_BIN` | Directory with `llama-quantize`, `llama-imatrix`, `llama-server`, `llama-cli`, `llama-perplexity` |
+| `FORGE_LLAMA_SRC` | llama.cpp checkout that contains `convert_hf_to_gguf.py` |
+| `FORGE_ROOT` | Repo root, if it is not the working directory |
+
+## Model card
+
+`templates/model_card.md.jinja` renders `README.md`. The card includes the base model, revision, licence, what changed (in-house ablation or a requant of an upstream abliterated model), quant types, imatrix, Plotweaver purpose, 16/24 GB tiers, measured VRAM, perplexity, RU and EN refusal rates, a prose sample, limits, credits, the Apache-2.0 text from `LICENSE`, and a modification notice.
+
+## Fit
+
+`fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. The gate uses computed weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.

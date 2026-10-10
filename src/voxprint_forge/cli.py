@@ -1,0 +1,127 @@
+"""forge command line. `--json` prints one object; logs stay on stderr."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from voxprint_forge.errors import EXIT_UNEXPECTED, EXIT_USAGE, ForgeError, PlanError, UsageError
+from voxprint_forge.fetch import HfDownloader
+from voxprint_forge.jsonio import emit
+from voxprint_forge.layout import Layout
+from voxprint_forge.llama import Runner
+from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
+from voxprint_forge.plan import format_estimates, load_plan
+from voxprint_forge.upload import HubRemote, verify_logins
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="forge")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--root", type=Path, default=None)
+    parser.add_argument("--plan", type=Path, default=None)
+    parser.add_argument("--forge-out", type=Path, default=None)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("plan-summary")
+    sub.add_parser("verify-logins")
+    sub.add_parser("run-all")
+    for name in ("fetch", "abliterate", "quantize", "eval", "card", "publish-prep", "upload"):
+        command = sub.add_parser(name)
+        command.add_argument("--model", required=True)
+    fit = sub.add_parser("fit")
+    fit.add_argument("--model", required=True)
+    fit.add_argument("--budget-gb", type=float, action="append", default=None)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        code = exc.code
+        return code if isinstance(code, int) else EXIT_USAGE
+    try:
+        result = _dispatch(args)
+        code = 0
+        emit(args.command, result, ok=True, exit_code=code, json_mode=args.json)
+        return code
+    except ForgeError as exc:
+        emit(
+            args.command,
+            None,
+            ok=False,
+            exit_code=exc.exit_code,
+            json_mode=args.json,
+            error=str(exc),
+            error_code=exc.code,
+        )
+        return exc.exit_code
+    except Exception as exc:
+        emit(
+            args.command,
+            None,
+            ok=False,
+            exit_code=EXIT_UNEXPECTED,
+            json_mode=args.json,
+            error=str(exc),
+            error_code="unexpected",
+        )
+        return EXIT_UNEXPECTED
+
+
+def _dispatch(args: argparse.Namespace) -> object:
+    root = _repo_root(args.root)
+    plan_path = args.plan or (root / "plans" / "plan.toml")
+    if args.command == "verify-logins":
+        return verify_logins()
+    if not plan_path.is_file():
+        raise PlanError(f"missing plan {plan_path}", code="plan_io")
+    plan = load_plan(plan_path)
+    if args.command == "plan-summary":
+        return format_estimates(plan)
+    forge_out = args.forge_out or plan.output_dir.parent
+    layout = Layout(forge_out)
+    host = _live_host()
+    if args.command == "run-all":
+        return run_all(plan, host, root, layout)
+    model_id = str(args.model)
+    model = next((item for item in plan.models if item.id == model_id), None)
+    if model is None:
+        raise UsageError(f"unknown model {model_id}", code="usage")
+    if not model.enabled:
+        raise UsageError(f"{model_id} is disabled in the plan", code="usage")
+    budgets = None
+    if args.command == "fit" and args.budget_gb:
+        budgets = {float(item) for item in args.budget_gb}
+    stop = args.command
+    if stop not in ORDER:
+        raise UsageError(f"unknown stage {stop}", code="usage")
+    return run_model(plan, model, host, root, layout, stop_after=stop, budgets=budgets)
+
+
+def _live_host() -> Host:
+    hf_token = os.environ.get("HF_TOKEN")
+    kaggle_token = os.environ.get("KAGGLE_API_TOKEN")
+    return Host(
+        runner=Runner(),
+        downloader=HfDownloader(hf_token),
+        remote=HubRemote(hf_token, kaggle_token),
+    )
+
+
+def _repo_root(explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit
+    env = os.environ.get("FORGE_ROOT")
+    if env:
+        return Path(env)
+    cwd = Path.cwd()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "plans" / "plan.toml").is_file():
+            return candidate
+    packaged = Path(__file__).resolve().parents[2]
+    if (packaged / "plans" / "plan.toml").is_file():
+        return packaged
+    raise UsageError("cannot find the forge repo; pass --root", code="root")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
