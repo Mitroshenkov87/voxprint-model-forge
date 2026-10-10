@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -477,6 +478,57 @@ def test_fetch_checksum(tmp_path: Path) -> None:
     with pytest.raises(ChecksumError):
         ensure_pinned(downloader, pinned, tmp_path / "a.gguf")
     assert not (tmp_path / "a.gguf").exists()
+
+
+def test_vm_run_invocation_dry_runs_a_tiny_model(
+    tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del llama_bin
+    script = (ROOT / "scripts/vm_run.sh").read_text(encoding="utf-8")
+    command = '"$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" run-all'
+    assert command in script
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    forge = venv / "forge"
+    forge.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FORGE_OUT/argv.txt"\n', encoding="utf-8")
+    forge.chmod(0o755)
+    captured = tmp_path / "captured"
+    captured.mkdir()
+    env = os.environ.copy()
+    env["FORGE_OUT"] = str(captured)
+    env["FORGE_VENV"] = str(tmp_path / "venv")
+    subprocess.run(["bash", str(ROOT / "scripts/vm_run.sh")], check=True, env=env, cwd=ROOT)
+    argv = (captured / "argv.txt").read_text(encoding="utf-8").splitlines()
+    assert argv[-1] == "run-all"
+    assert argv.index("--plan") < argv.index("run-all")
+    assert argv.index("--root") < argv.index("run-all")
+    assert argv.index("--forge-out") < argv.index("run-all")
+
+    source = b"SRC" * 40
+    reuse = b"RE" * 80
+    plan_path = _plan(tmp_path, source, reuse)
+    repo = _scratch_repo(tmp_path)
+    host = _host(FakeDownloader({"source.gguf": source, "q5.gguf": reuse}), FakeRemote())
+    monkeypatch.setattr("voxprint_forge.cli._live_host", lambda: host)
+    from voxprint_forge.cli import main
+
+    rejected = main(
+        ["run-all", "--plan", str(plan_path), "--root", str(repo), "--forge-out", str(tmp_path / "bad")]
+    )
+    assert rejected == 2
+    code = main(
+        [
+            "--plan",
+            str(plan_path),
+            "--root",
+            str(repo),
+            "--forge-out",
+            str(tmp_path / "good"),
+            "run-all",
+        ]
+    )
+    assert code == 0
+    assert (tmp_path / "good" / "stages" / "tiny" / "upload.json").is_file()
 
 
 def test_cli_plan_summary_and_usage() -> None:

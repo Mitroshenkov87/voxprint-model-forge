@@ -125,6 +125,15 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     assert "verify-logins" in text
     assert "apt-get install -y cmake build-essential ninja-build" in text
     assert "/usr/local/cuda/bin" in text
+    assert 'export HF_USER="${HF_USER:-Mitroshenkov87}"' in text
+    assert "non-interactive" in text
+    assert "preflight cmake ninja nvcc ok" in text
+    assert "assert_calibration" in text
+    vm_run = (ROOT / "scripts/vm_run.sh").read_text(encoding="utf-8")
+    assert '"$VENV/bin/forge" --plan "$ROOT/plans/plan.toml" --root "$ROOT" --forge-out "$FORGE_OUT" run-all' in vm_run
+    assert "run-all --plan" not in vm_run
+    plan_text = (ROOT / "plans/plan.toml").read_text(encoding="utf-8")
+    assert "imatrix_chunks = 128" in plan_text
     assert "LD_LIBRARY_PATH" in text
     assert "bootstrap.lock" in text
     rev = (ROOT / "scripts" / "llama.rev").read_text(encoding="utf-8").strip()

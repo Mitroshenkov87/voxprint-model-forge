@@ -32,14 +32,16 @@ cleanup_secrets() {
 }
 trap cleanup_secrets EXIT INT TERM
 
+# A tmux pty can exist before anyone attaches, and /dev/tty can be readable
+# when stdin is not a terminal. Prompt only for a real interactive stdin.
 prompt_secret() {
   local name="$1"
   set +x
   if [[ -n "${!name:-}" ]]; then
     return 0
   fi
-  if [[ ! -r /dev/tty ]]; then
-    printf '%s is not set and there is no terminal to prompt\n' "$name" >&2
+  if [[ ! -t 0 || ! -r /dev/tty ]]; then
+    printf '%s is not set. Export it before starting. This run is non-interactive, so it will not prompt.\n' "$name" >&2
     exit 2
   fi
   local value
@@ -50,18 +52,10 @@ prompt_secret() {
   export "$name"
 }
 
+export HF_USER="${HF_USER:-Mitroshenkov87}"
+export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 prompt_secret HF_TOKEN
 prompt_secret KAGGLE_API_TOKEN
-if [[ -z "${HF_USER:-}" ]]; then
-  if [[ ! -r /dev/tty ]]; then
-    printf 'HF_USER is not set\n' >&2
-    exit 2
-  fi
-  printf 'HF_USER: ' >/dev/tty
-  IFS= read -r HF_USER </dev/tty
-  export HF_USER
-fi
-export KAGGLE_USER="${KAGGLE_USER:-mitroshenkov87}"
 
 if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
   printf 'Run bash scripts/bootstrap.sh from the extracted bundle.\n' >&2
@@ -138,6 +132,11 @@ if ! command -v nvcc >/dev/null 2>&1; then
   printf 'nvcc is missing. Expected /usr/local/cuda/bin/nvcc on PATH (CUDA 13.4).\n' >&2
   exit 9
 fi
+if ! command -v cmake >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1 || ! command -v nvcc >/dev/null 2>&1; then
+  printf 'preflight failed: cmake, ninja, and nvcc must be on PATH\n' >&2
+  exit 9
+fi
+printf 'preflight cmake ninja nvcc ok\n'
 
 if ! command -v python3 >/dev/null 2>&1; then
   printf 'python3 is missing\n' >&2
@@ -148,6 +147,22 @@ PYTHONPATH="$ROOT/src" python3 -c '
 from pathlib import Path
 from voxprint_forge.plan import format_estimates, load_plan
 print(format_estimates(load_plan(Path("'"$ROOT"'/plans/plan.toml"))))
+'
+
+PYTHONPATH="$ROOT/src" python3 -c '
+import sys
+from pathlib import Path
+from voxprint_forge.calibration import assert_calibration, tokens_required
+from voxprint_forge.errors import ForgeError
+from voxprint_forge.plan import load_plan
+plan = load_plan(Path("'"$ROOT"'/plans/plan.toml"))
+try:
+    count = assert_calibration(plan)
+except ForgeError as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(exc.exit_code)
+need = tokens_required(plan.imatrix_ctx, plan.imatrix_chunks)
+print(f"preflight calibration tokens {count} >= {need}")
 '
 
 eval "$(PYTHONPATH="$ROOT/src" python3 -c '

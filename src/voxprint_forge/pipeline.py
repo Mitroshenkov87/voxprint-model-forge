@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import time
@@ -272,6 +273,23 @@ def _source_gguf(model: ModelPlan, work: Path) -> Path:
     return work / "source" / Path(chosen.path).name
 
 
+def _imatrix_corpus(layout: Layout, model_id: str) -> Path:
+    """Default corpus is imatrix.txt. FORGE_IMATRIX_RU=1 appends the public-domain Russian slice."""
+    base = data_dir() / "imatrix.txt"
+    if os.environ.get("FORGE_IMATRIX_RU", "").strip() != "1":
+        return base
+    extra = data_dir() / "imatrix-ru-pd.txt"
+    if not extra.is_file():
+        return base
+    combined = layout.model_dir(model_id) / "imatrix-corpus.txt"
+    combined.parent.mkdir(parents=True, exist_ok=True)
+    combined.write_text(
+        base.read_text(encoding="utf-8") + "\n" + extra.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return combined
+
+
 def _imatrix(plan: Plan, model: ModelPlan, host: Host, layout: Layout, gguf: Path) -> dict[str, object]:
     marker = layout.stage(model.id, "imatrix")
     dest = layout.model_dir(model.id) / "imatrix.gguf"
@@ -283,7 +301,7 @@ def _imatrix(plan: Plan, model: ModelPlan, host: Host, layout: Layout, gguf: Pat
             imatrix_argv(
                 tool("llama-imatrix"),
                 gguf,
-                data_dir() / "imatrix.txt",
+                _imatrix_corpus(layout, model.id),
                 dest,
                 chunks=plan.imatrix_chunks,
                 ctx=plan.imatrix_ctx,
