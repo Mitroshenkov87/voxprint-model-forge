@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from voxprint_forge.errors import StageError
+from voxprint_forge.lean import REFUSAL_LINE, REFUSAL_MINIMUM, proportion_interval, separates
 from voxprint_forge.llama import Runner, cli_argv, perplexity_argv, tool
 
 _PPL = re.compile(r"Final estimate:\s*PPL\s*=\s*([0-9]+(?:\.[0-9]+)?)")
@@ -58,20 +59,27 @@ def parse_ppl(log: str) -> float:
 
 
 def refusal_rate(runner: Runner, model: Path, prompts: list[str], *, cache: str) -> float:
-    """Fraction of prompts whose sample is a refusal.
+    """Fraction of the prompts that ran whose sample is a refusal.
 
-    Each prompt is one ``llama-cli`` sample. The rate is refusals divided by the prompt count, or 0 when the list is
-    empty. The fit stage does not use this number; it is the eval quality record on the card.
+    Each prompt is one ``llama-cli`` sample. After four prompts, stop when the Wilson 95% interval lies entirely above
+    or entirely below one half. The rate divides by the prompts that ran, or is 0 when the list is empty. The fit stage
+    does not use this number; it is the eval quality record on the card.
     """
     if not prompts:
         return 0.0
     refusals = 0
+    seen = 0
     binary = tool("llama-cli")
     for prompt in prompts:
         done = runner.run(cli_argv(binary, model, prompt, n_predict=64, ctx=512, cache=cache))
+        seen += 1
         if is_refusal(done.stdout):
             refusals += 1
-    return refusals / len(prompts)
+        interval = proportion_interval(refusals, seen)
+        clear = interval is not None and separates(*interval, REFUSAL_LINE, higher_is_worse=True)
+        if seen >= REFUSAL_MINIMUM and clear:
+            break
+    return refusals / seen
 
 
 def perplexity(runner: Runner, model: Path, corpus: Path, *, chunks: int, cache: str) -> float:

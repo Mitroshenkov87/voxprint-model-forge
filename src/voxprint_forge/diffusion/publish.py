@@ -122,6 +122,11 @@ def _shared_names(output: Path) -> list[str]:
         "checks/grid-inpaint.avif",
         "upstream-sha256.json",
     ]
+    checks = output / "checks"
+    if checks.is_dir():
+        for path in sorted(checks.rglob("*")):
+            if path.is_file() and path.relative_to(checks).parts[0].startswith("review"):
+                names.append(str(path.relative_to(output)))
     return [name for name in names if (output / name).is_file()]
 
 

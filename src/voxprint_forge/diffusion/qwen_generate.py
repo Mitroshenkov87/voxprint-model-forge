@@ -14,21 +14,22 @@ from diffusers import QwenImagePipeline
 from voxprint_forge.diffusion.generate import (
     ClipScorer,
     _apply,
-    _cells,
     _component,
     _cpu_state,
     _cuda,
     _dequant,
     _lpips_net,
+    _next_chunk,
     _pair_stats,
     _quiet,
+    _score_series,
+    _text_pair_decided,
     _tick,
-    save_avif,
+    _write_review,
 )
-from voxprint_forge.diffusion.prompts import BASE_PROMPTS, BASE_SEEDS
+from voxprint_forge.diffusion.prompts import LEAN_BASE_PROMPTS, LEAN_BASE_SEEDS, LEAN_MINIMUM
 from voxprint_forge.diffusion.qwen_policy import decide_qwen_fp8
 from voxprint_forge.diffusion.qwen_spec import QWEN_SIZE, QWEN_STEPS, QWEN_TRUE_CFG
-from voxprint_forge.diffusion.scenes import contact_sheet
 
 Progress = Callable[[str, int, int], None]
 
@@ -53,27 +54,53 @@ def evaluate_qwen(
     grid_path: Path,
     progress: Progress | None = None,
 ) -> dict[str, object]:
-    """32 prompts x 2 seeds at 1328. One BF16 pass, then one dequantized FP8 pass."""
+    """A few hard prompts at the Qwen size. Stop when the LPIPS interval decides the gate."""
     device = _cuda()
     metric = _lpips_net(device)
     clip = ClipScorer(device)
     pipe = QwenImagePipeline.from_pretrained(str(model_dir), torch_dtype=torch.bfloat16)
     pipe.to(device)
     _quiet(pipe)
-    prepared = [(prompt, seed) for prompt in BASE_PROMPTS for seed in BASE_SEEDS]
+    prepared = [(prompt, seed) for prompt in LEAN_BASE_PROMPTS for seed in LEAN_BASE_SEEDS]
     total = len(prepared)
-    refs = []
-    for done, (prompt, seed) in enumerate(prepared, start=1):
-        refs.append(_one_image(pipe, device, prompt, seed))
-        _tick(progress, "qwen-bf16", done, total)
-    prompts = [prompt for prompt, _seed in prepared]
     transformer_state = _cpu_state(pipe.transformer)
-    _apply(pipe.transformer, _dequant(transformer_fp8))
-    candidates = [_one_image(pipe, device, prompt, seed) for prompt, seed in prepared]
+    fp8_state = _dequant(transformer_fp8)
+    refs = []
+    candidates = []
+    prompts: list[str] = []
+    seeds: list[int] = []
+    lpips_scores: list[float] = []
+    drops: list[float] = []
+    while True:
+        chunk = _next_chunk(
+            prepared,
+            len(prompts),
+            decided=_text_pair_decided(lpips_scores, drops),
+            minimum=LEAN_MINIMUM,
+        )
+        if not chunk:
+            break
+        _apply(pipe.transformer, transformer_state)
+        for prompt, seed in chunk:
+            refs.append(_one_image(pipe, device, prompt, seed))
+            prompts.append(prompt)
+            seeds.append(seed)
+            _tick(progress, "qwen-bf16", len(prompts), total)
+        _apply(pipe.transformer, fp8_state)
+        fresh = []
+        for prompt, seed in chunk:
+            fresh.append(_one_image(pipe, device, prompt, seed))
+            _tick(progress, "qwen-fp8", len(candidates) + len(fresh), total)
+        candidates.extend(fresh)
+        start = len(prompts) - len(chunk)
+        scores, chunk_drops = _score_series(
+            refs[start:], candidates[start:], prompts[start:], metric, clip, device, image_score=False
+        )
+        lpips_scores.extend(scores)
+        drops.extend(chunk_drops)
     summary = _pair_stats(refs, candidates, prompts, metric, clip, device, image_score=False)
-    _apply(pipe.transformer, transformer_state)
     del pipe
     torch.cuda.empty_cache()
-    save_avif(contact_sheet(_cells(list(zip(refs, candidates, strict=True))), 2), grid_path)
+    _write_review(grid_path, refs, candidates, prompts, seeds)
     decision = decide_qwen_fp8(float(summary["lpips_mean"]), float(summary["clip_drop"]))
     return {"components": {"qwen-transformer": _component(summary, decision)}}

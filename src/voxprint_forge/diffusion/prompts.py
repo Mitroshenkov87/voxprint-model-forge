@@ -103,6 +103,24 @@ CONTROL_SEEDS: tuple[int, ...] = (0, 1)
 CONTROL_TYPES: tuple[str, ...] = ("canny", "depth", "pose")
 EDIT_SEEDS: tuple[int, ...] = (0, 1)
 
+# Hard cases, tried in this order. The full catalogues stay for reference.
+LEAN_BASE_PROMPTS: tuple[str, ...] = tuple(BASE_PROMPTS[index] for index in (26, 16, 11, 15, 21, 14, 27, 20))
+LEAN_BASE_SEEDS: tuple[int, ...] = (0,)
+LEAN_MINIMUM = 4
+LEAN_CONTROL: tuple[tuple[int, str], ...] = (
+    (0, "pose"),
+    (1, "depth"),
+    (2, "canny"),
+    (6, "pose"),
+    (5, "depth"),
+    (4, "canny"),
+)
+LEAN_CONTROL_MINIMUM = 3
+LEAN_INPAINT: tuple[str, ...] = tuple(INPAINT_PROMPTS[index] for index in (2, 0, 6, 4))
+LEAN_INPAINT_MINIMUM = 2
+LEAN_EDIT: tuple[tuple[str, int], ...] = tuple(EDIT_PAIRS[index] for index in (1, 0, 2, 6, 12, 23))
+LEAN_EDIT_MINIMUM = 4
+
 
 def edit_budget(home: Path | None = None) -> tuple[tuple[tuple[str, int], ...], tuple[int, ...]]:
     """Trim Edit eval to 8 pairs and seed 0 when ~/forge-out/EDIT_TRIM exists."""

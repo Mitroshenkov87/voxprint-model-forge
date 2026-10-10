@@ -10,6 +10,10 @@ Voxprint AI Model Forge (Aleksandr, 2026-10-10) is a standalone desktop applicat
 
 The public roadmap is [ROADMAP.md](ROADMAP.md). The API docs, the CLI reference, and that roadmap are published at <https://mitroshenkov87.github.io/voxprint-model-forge/>.
 
+## Testing
+
+Checks follow [docs/TESTING.md](docs/TESTING.md). CI is the cheap tier: CLI, dry runs, and JSON contracts on plain Linux and Windows, with remotes mocked. GPU evals use a few hard cases and stop when the confidence interval decides the gate. A person reviews a few full-resolution labelled frames.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party models keep their own licences; record both code and weights licences in each model card.
