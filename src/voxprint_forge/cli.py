@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -33,7 +34,11 @@ from voxprint_forge.version import version_line
 
 def build_parser() -> argparse.ArgumentParser:
     """The forge argument parser. The CLI reference is generated from this."""
-    parser = argparse.ArgumentParser(prog="forge", formatter_class=_help)
+    # Python 3.14 colors help when stdout is a terminal. The reference is plain text.
+    kwargs: dict[str, bool] = {}
+    if "color" in inspect.signature(argparse.ArgumentParser).parameters:
+        kwargs["color"] = False
+    parser = argparse.ArgumentParser(prog="forge", formatter_class=_Help, **kwargs)
     parser.add_argument("--version", action="version", version=version_line())
     parser.add_argument("--json", action="store_true", help="Print one JSON object on stdout.")
     parser.add_argument(
@@ -102,8 +107,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _help(prog: str) -> argparse.HelpFormatter:
-    return argparse.HelpFormatter(prog, width=88)
+class _Help(argparse.HelpFormatter):
+    """Help text at 88 columns. The usage line stays unwrapped.
+
+    Python 3.12 splits a subparser's ``{cmd} ...`` and may wrap the ellipsis.
+    Python 3.14 keeps that token together. A wide usage line is the same on both.
+    """
+
+    def __init__(self, prog: str) -> None:
+        super().__init__(prog, width=88)
+
+    def _format_usage(
+        self,
+        usage: str | None,
+        actions: list[argparse.Action],
+        groups: list[argparse._ArgumentGroup],
+        prefix: str | None,
+    ) -> str:
+        saved = self._width
+        self._width = 10_000
+        try:
+            return super()._format_usage(usage, actions, groups, prefix)
+        finally:
+            self._width = saved
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -8,5 +8,5 @@ The repository README is the operator guide. This site is generated from the
 code.
 
 - [Roadmap](roadmap.md)
-- [CLI reference](cli.md), generated from `forge`
+- [CLI reference](cli-reference.md), generated from `forge`
 - [API](api.md), generated from docstrings

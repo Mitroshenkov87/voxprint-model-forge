@@ -1,4 +1,4 @@
-"""Write docs/cli.md from the forge parser."""
+"""Write docs/cli-reference.md from the forge parser."""
 
 from __future__ import annotations
 
@@ -32,14 +32,14 @@ def _section(parser: argparse.ArgumentParser, title: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Write docs/cli.md, or exit 1 when ``--check`` finds it stale."""
+    """Write docs/cli-reference.md, or exit 1 when ``--check`` finds it stale."""
     args = list(sys.argv[1:] if argv is None else argv)
     text = render()
-    path = Path("docs/cli.md")
+    path = Path("docs/cli-reference.md")
     if "--check" in args:
         current = path.read_text(encoding="utf-8") if path.is_file() else ""
         if current != text:
-            print("docs/cli.md does not match the forge parser", file=sys.stderr)
+            print("docs/cli-reference.md does not match the forge parser", file=sys.stderr)
             return 1
         return 0
     path.parent.mkdir(parents=True, exist_ok=True)

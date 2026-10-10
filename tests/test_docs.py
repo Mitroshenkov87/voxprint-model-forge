@@ -23,4 +23,4 @@ def test_public_docstrings_cover_at_least_65_percent() -> None:
 
 
 def test_cli_reference_matches_the_parser() -> None:
-    assert (ROOT / "docs" / "cli.md").read_text(encoding="utf-8") == render()
+    assert (ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8") == render()

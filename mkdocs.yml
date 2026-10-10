@@ -14,7 +14,7 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Roadmap: roadmap.md
-  - CLI: cli.md
+  - CLI: cli-reference.md
   - API: api.md
 markdown_extensions:
   - pymdownx.snippets:
