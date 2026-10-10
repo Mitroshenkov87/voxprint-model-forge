@@ -1,0 +1,16 @@
+# Models and large artifacts
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.onnx
+models/
+imatrix/*.dat
+# Python
+__pycache__/
+*.pyc
+.venv/
+# Logs and debug dumps
+*.log
+*.local.*
+scripts/_*.json
