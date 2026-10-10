@@ -194,6 +194,7 @@ def _publish_hub(
     sleep: Callable[[float], None] = time.sleep,
     attempts: int = 4,
     staging: Path | None = None,
+    on_verified: Callable[[str], None] | None = None,
 ) -> list[dict[str, object]]:
     """Upload every output file. A variation is done only when sha256 and size match."""
     client = remote if remote is not None else HubRemote(
@@ -225,6 +226,8 @@ def _publish_hub(
             attempts=attempts,
             sleep=sleep,
         )
+    if on_verified is not None:
+        on_verified("hf")
 
     owner = kaggle_user()
     stage_root = staging or (output.parent / "kaggle-staging" / kaggle_slug)
@@ -299,6 +302,8 @@ def _publish_hub(
         )
     if stage_root.exists():
         shutil.rmtree(stage_root)
+    if on_verified is not None:
+        on_verified("kaggle")
     return records
 
 
@@ -340,6 +345,7 @@ def publish_output(
     sleep: Callable[[float], None] = time.sleep,
     attempts: int = 4,
     staging: Path | None = None,
+    on_verified: Callable[[str], None] | None = None,
 ) -> list[dict[str, object]]:
     """Upload to Hugging Face and Kaggle. Drive is the fallback when both fail."""
     try:
@@ -357,6 +363,7 @@ def publish_output(
             sleep=sleep,
             attempts=attempts,
             staging=staging,
+            on_verified=on_verified,
         )
     except ForgeError as exc:
         artifacts = _drive_artifacts(output)
@@ -364,9 +371,12 @@ def publish_output(
             raise
         day = datetime.now(timezone.utc).date().isoformat()
         try:
-            return upload_drive(artifacts, model_id=kaggle_slug, date=day)
+            records = upload_drive(artifacts, model_id=kaggle_slug, date=day)
         except ForgeError as drive_exc:
             raise StageError(
                 f"HF/Kaggle failed ({exc}); Drive failed ({drive_exc})",
                 code="upload",
             ) from drive_exc
+        if on_verified is not None:
+            on_verified("drive")
+        return records

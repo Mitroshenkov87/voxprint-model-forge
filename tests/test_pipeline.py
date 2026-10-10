@@ -324,6 +324,7 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     assert str(manifest) in instructions
     progress = (layout.root / "progress.log").read_text(encoding="utf-8")
     assert "tiny" in progress and "upload" in progress and "%" in progress
+    assert not (layout.model_dir("tiny") / "source").exists()
 
 
 def test_mismatch_does_not_mark_upload(tmp_path: Path, llama_bin: None) -> None:
@@ -346,7 +347,7 @@ def test_mismatch_does_not_mark_upload(tmp_path: Path, llama_bin: None) -> None:
     assert not layout.stage("tiny", "upload").is_file()
     quants = list((layout.model_dir("tiny") / "quants").rglob("*.gguf"))
     assert quants
-    assert not (layout.model_dir("tiny") / "source").exists()
+    assert (layout.model_dir("tiny") / "source").is_dir()
 
 
 def test_failed_quantize_removes_the_partial_gguf(tmp_path: Path, llama_bin: None) -> None:
@@ -494,8 +495,8 @@ def test_disk_short(tmp_path: Path, llama_bin: None, monkeypatch: pytest.MonkeyP
         )
 
 
-def _boom(path: Path, need: int, what: str) -> int:
-    del path, need, what
+def _boom(path: Path, need: int, what: str, **_kwargs: object) -> int:
+    del path, need, what, _kwargs
     raise DiskShortError("short", code="disk_short")
 
 

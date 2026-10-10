@@ -7,6 +7,7 @@ from voxprint_forge.diffusion.common import (
     Ctx,
     check_disk,
     finish_part,
+    on_mirror_verified,
     progress,
     run_stage,
     shared_sources,
@@ -152,6 +153,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         repo=control.repo,
         revision=control.revision,
         staging=ctx.upstream / "kaggle-staging",
+        on_verified=lambda target: on_mirror_verified(ctx, target),
     )
     finish_part(ctx)
     return {"files": records}

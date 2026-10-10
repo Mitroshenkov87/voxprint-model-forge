@@ -35,3 +35,21 @@ images.
 
 `~/forge-out/EDIT_TRIM` can only shrink the edit list. It does not turn the
 lean list back into the 24-pair catalogue.
+
+## Eager disk freeing
+
+These checks stay on the CPU. Remotes are mocked. Nothing in this tier needs a GPU.
+
+After a model's or a part's final files match on one mirror, delete that item's
+source weights, f16/bf16 GGUF, safetensors downloads, and upload staging. A
+Hugging Face match is the remote sha256, or for a small file the size plus the
+hash of the downloaded bytes. A shared source stays while any later name in
+its `consumers` list has not released.
+
+A disk check does not wait while those leftovers exist. It lists
+verified-uploaded sources, finished staging, stale partials that have no
+`.sha256`, and orphaned Hugging Face cache blobs, deletes each one, logs the
+path and the size, then checks free space again. Deleting a snapshot directory
+only removes symlinks. The bytes go when
+`scan_cache_dir().delete_revisions(...).execute()` runs, or when a blob that
+no snapshot still references is removed.

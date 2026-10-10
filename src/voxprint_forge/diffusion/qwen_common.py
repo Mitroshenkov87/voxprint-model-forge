@@ -11,6 +11,7 @@ from voxprint_forge.diffusion.qwen_plan import QwenPlan
 from voxprint_forge.disk import ensure_free
 from voxprint_forge.layout import Layout, read_marker, write_marker
 from voxprint_forge.progress import append_progress
+from voxprint_forge.reclaim import delete_logged, hub_cache
 from voxprint_forge.statusfile import beating, set_stage, update_item
 
 _SILENT = frozenset({"convert", "quality", "upload", "upload-deferred"})
@@ -68,10 +69,19 @@ def run_stage(ctx: QwenCtx, name: str, fn: Callable[[], dict[str, object]]) -> d
 
 
 def check_disk(ctx: QwenCtx) -> None:
-    """Raise when the part's disk budget is not free."""
+    """Reclaim leftovers, then raise when the part's disk budget is still not free."""
     set_stage("disk")
     need = ctx.plan.min_free_gb * (1024**3)
-    ensure_free(ctx.forge_out, need, "qwen")
+    ensure_free(ctx.forge_out, need, "qwen", forge_out=ctx.forge_out, cache_dir=hub_cache())
+
+
+def on_qwen_mirror(ctx: QwenCtx, target: str) -> None:
+    """Delete the Qwen download once a mirror has the finals. Keep Kaggle staging until then."""
+    delete_logged(ctx.source_dir)
+    delete_logged(ctx.upstream_root / "upstream-sha256.json")
+    if target == "hf":
+        return
+    delete_logged(ctx.upstream_root / "kaggle-staging")
 
 
 def progress(ctx: QwenCtx, stage: str, pct: int, eta_min: float) -> None:

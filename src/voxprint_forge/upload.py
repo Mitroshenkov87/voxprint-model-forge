@@ -220,6 +220,7 @@ def publish_private(
     sleep: Callable[[float], None],
     work: Path,
     targets: tuple[str, ...] | None = None,
+    on_verified: Callable[[str], None] | None = None,
 ) -> list[dict[str, object]]:
     """Upload every artifact to the selected private hubs. Default is Hugging Face and Kaggle."""
     if not artifacts:
@@ -275,6 +276,8 @@ def publish_private(
                 },
             }
         )
+    if want_hf and on_verified is not None:
+        on_verified("hf")
 
     if not want_kaggle:
         return records
@@ -325,6 +328,8 @@ def publish_private(
         sources = record["sources"]
         if isinstance(sources, dict) and not sources.get("kaggle"):
             raise StageError(f"{record['name']} has no verified Kaggle URL", code="upload_kaggle")
+    if on_verified is not None:
+        on_verified("kaggle")
     return records
 
 
