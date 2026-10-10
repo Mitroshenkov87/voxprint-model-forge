@@ -147,6 +147,32 @@ def parse_buffers(log: str) -> BufferReport:
     )
 
 
+def placement_bytes(log: str) -> tuple[int, int, int]:
+    """CUDA model bytes, CUDA KV bytes, and host bytes that an offload must hold.
+
+    ``CPU_Mapped`` is the weight file mapping, not an extra allocation, so it is
+    left out. CPU and ``*_Host`` KV buffers, and non-mapped CPU model buffers, count.
+    """
+    cuda_weights = 0.0
+    cuda_kv = 0.0
+    host = 0.0
+    for match in _DEVICE_MODEL.finditer(log):
+        device = match.group("device")
+        mib = float(match.group("mib"))
+        if _cuda_device(device):
+            cuda_weights += mib
+        elif device.lower() != "cpu_mapped":
+            host += mib
+    for match in _DEVICE_KV.finditer(log):
+        device = match.group("device")
+        mib = float(match.group("mib"))
+        if _cuda_device(device):
+            cuda_kv += mib
+        else:
+            host += mib
+    return _mib_bytes(cuda_weights), _mib_bytes(cuda_kv), _mib_bytes(host)
+
+
 def measurement_fits(
     weights_bytes: int,
     kv_bytes: int,

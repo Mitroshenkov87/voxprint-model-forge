@@ -23,6 +23,7 @@ from voxprint_forge.drive import upload_drive
 from voxprint_forge.errors import ForgeError, StageError, UsageError
 from voxprint_forge.evaluate import data_dir, evaluate_model, read_lines
 from voxprint_forge.fetch import Downloader, ensure_pinned
+from voxprint_forge.fitmath import budget_bytes, quant_rank
 from voxprint_forge.hashing import sha256_file, write_sha256
 from voxprint_forge.layout import Layout, read_marker, write_marker
 from voxprint_forge.llama import (
@@ -37,14 +38,16 @@ from voxprint_forge.llama import (
 from voxprint_forge.manifest import summary_lines, write_run_manifest
 from voxprint_forge.measure import (
     Candidate,
-    choose_cache,
     fit_contexts,
     measurement_fits,
     parse_buffers,
+    placement_bytes,
     tier_min_vram,
 )
 from voxprint_forge.outcome import summarise
+from voxprint_forge.placement import Split, options_for, split_fits
 from voxprint_forge.plan import ModelPlan, Plan, Tier
+from voxprint_forge.preflight import memory_status
 from voxprint_forge.progress import Progress
 from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
@@ -603,37 +606,17 @@ def _select_reuse(
     contexts: tuple[int, ...],
 ) -> dict[str, object] | None:
     pins = [item for item in model.reuse_files() if item.quant in tier.quants]
-    rough = [
-        Candidate(item.quant, item.size, layout.model_dir(model.id) / "reuse" / Path(item.path).name, "reuse")
-        for item in pins
-    ]
-    _cache, fitting = choose_cache(
-        rough,
-        model.arch,
-        contexts,
-        budget_gb=tier.budget_gb,
-        headroom_gb=plan.headroom_gb,
-    )
-    ordered = []
-    for cand in fitting:
-        pin = next(item for item in pins if item.quant == cand.quant and item.size == cand.weights)
-        ordered.append(pin)
+    ram = memory_status()[1]
+    ordered = sorted(pins, key=lambda item: quant_rank(item.quant), reverse=True)
     for pin in ordered:
+        if not _declares_fit(plan, model, tier, pin.size, contexts, ram):
+            continue
         dest = layout.model_dir(model.id) / "reuse" / Path(pin.path).name
         ensure_pinned(host.downloader, pin, dest)
         candidate = Candidate(pin.quant, dest.stat().st_size, dest, "reuse")
-        cache, still = choose_cache(
-            [candidate],
-            model.arch,
-            contexts,
-            budget_gb=tier.budget_gb,
-            headroom_gb=plan.headroom_gb,
-        )
-        if not still:
-            continue
-        measured = _measure(plan, tier, host, candidate, cache)
-        if _gate_ok(measured, contexts):
-            return _tier_payload(tier, candidate, cache, measured, plan.headroom_gb, contexts)
+        chosen = _try_candidate(plan, model, tier, host, candidate, contexts, ram)
+        if chosen is not None:
+            return chosen
     return None
 
 
@@ -662,18 +645,119 @@ def _first_measured(
     candidates: list[Candidate],
     contexts: tuple[int, ...],
 ) -> dict[str, object]:
-    cache, fitting = choose_cache(
-        candidates,
-        model.arch,
-        contexts,
-        budget_gb=tier.budget_gb,
-        headroom_gb=plan.headroom_gb,
-    )
-    for candidate in fitting:
-        measured = _measure(plan, tier, host, candidate, cache)
-        if _gate_ok(measured, contexts):
-            return _tier_payload(tier, candidate, cache, measured, plan.headroom_gb, contexts)
+    ram = memory_status()[1]
+    ranked = sorted(candidates, key=lambda item: quant_rank(item.quant), reverse=True)
+    for candidate in ranked:
+        chosen = _try_candidate(plan, model, tier, host, candidate, contexts, ram)
+        if chosen is not None:
+            return chosen
     raise StageError(f"{model.id} tier {tier.name} has no quant inside the budget", code="fit_miss")
+
+
+def _declares_fit(
+    plan: Plan,
+    model: ModelPlan,
+    tier: Tier,
+    weights: int,
+    contexts: tuple[int, ...],
+    ram_bytes: int,
+) -> bool:
+    for cache in ("q8_0", "q4_0"):
+        if _fitting_splits(plan, model, tier, weights, contexts, cache, ram_bytes):
+            return True
+    return False
+
+
+def _fitting_splits(
+    plan: Plan,
+    model: ModelPlan,
+    tier: Tier,
+    weights: int,
+    contexts: tuple[int, ...],
+    cache: str,
+    ram_bytes: int,
+) -> tuple[Split, ...]:
+    kv = max(model.arch.kv_bytes(ctx, cache) for ctx in contexts)
+    return tuple(
+        split
+        for split in options_for(
+            weights,
+            kv,
+            moe_layers=model.moe_layers,
+            expert_fraction=model.expert_fraction,
+            encoder_gib=model.encoder_gib,
+        )
+        if split_fits(
+            split,
+            budget_gb=tier.budget_gb,
+            headroom_gb=plan.headroom_gb,
+            ram_bytes=ram_bytes,
+        )
+    )
+
+
+def _try_candidate(
+    plan: Plan,
+    model: ModelPlan,
+    tier: Tier,
+    host: Host,
+    candidate: Candidate,
+    contexts: tuple[int, ...],
+    ram_bytes: int,
+) -> dict[str, object] | None:
+    """Best cache whose split fits. GPU is measured alone when the formula says it fits.
+
+    A measured miss, or a formula miss, tries the later offloads of that same quant
+    before the caller moves on to a lower quant. Encoder offload and sequential
+    loading have no llama-server flag, so those two are the byte formula.
+    """
+    for cache in ("q8_0", "q4_0"):
+        fitting = list(_fitting_splits(plan, model, tier, candidate.weights, contexts, cache, ram_bytes))
+        if not fitting:
+            continue
+        pending = fitting
+        if fitting[0].name == "gpu":
+            measured = _measure(plan, tier, host, candidate, cache, ram_budget=ram_bytes)
+            if _gate_ok(measured, contexts):
+                return _tier_payload(tier, candidate, cache, measured, plan.headroom_gb, contexts, fitting[0])
+            pending = fitting[1:]
+        for split in pending:
+            if not split.flags:
+                rows = _formula_rows(plan, cache, split)
+                return _tier_payload(tier, candidate, cache, rows, plan.headroom_gb, contexts, split)
+            measured = _measure(
+                plan,
+                tier,
+                host,
+                candidate,
+                cache,
+                extra=split.flags,
+                split_name=split.name,
+                ram_budget=ram_bytes,
+            )
+            if _gate_ok(measured, contexts):
+                return _tier_payload(tier, candidate, cache, measured, plan.headroom_gb, contexts, split)
+    return None
+
+
+def _formula_rows(plan: Plan, cache: str, split: Split) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for ctx in plan.contexts:
+        rows.append(
+            {
+                "ctx": ctx,
+                "cache": cache,
+                "weights_bytes": split.vram_bytes,
+                "kv_bytes": 0,
+                "devices": {},
+                "fits": True,
+                "nvidia_used_bytes": None,
+                "split": split.name,
+                "ram_bytes": split.ram_bytes,
+                "measured": False,
+            }
+        )
+    return rows
 
 
 def _measure(
@@ -682,6 +766,10 @@ def _measure(
     host: Host,
     candidate: Candidate,
     cache: str,
+    *,
+    extra: tuple[str, ...] = (),
+    split_name: str = "gpu",
+    ram_budget: int = 0,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for ctx in plan.contexts:
@@ -691,27 +779,64 @@ def _measure(
             ctx=ctx,
             port=_free_port(),
             cache=cache,
+            extra=extra,
         )
         done = host.runner.capture_until(argv, pattern="KV buffer size")
-        report = parse_buffers(done.stdout + done.stderr)
-        fits = measurement_fits(
-            report.weights_bytes,
-            report.kv_bytes,
-            budget_gb=tier.budget_gb,
-            headroom_gb=plan.headroom_gb,
-        )
+        text = done.stdout + done.stderr
+        if split_name == "gpu":
+            report = parse_buffers(text)
+            weights = report.weights_bytes
+            kv = report.kv_bytes
+            devices: dict[str, dict[str, float]] = report.devices
+            host_bytes = 0
+            fits = measurement_fits(
+                weights,
+                kv,
+                budget_gb=tier.budget_gb,
+                headroom_gb=plan.headroom_gb,
+            )
+        else:
+            weights, kv, host_bytes = placement_bytes(text)
+            devices = {}
+            fits = _offload_fits(
+                weights,
+                kv,
+                host_bytes,
+                budget_gb=tier.budget_gb,
+                headroom_gb=plan.headroom_gb,
+                ram_budget=ram_budget,
+            )
         rows.append(
             {
                 "ctx": ctx,
                 "cache": cache,
-                "weights_bytes": report.weights_bytes,
-                "kv_bytes": report.kv_bytes,
-                "devices": report.devices,
+                "weights_bytes": weights,
+                "kv_bytes": kv,
+                "devices": devices,
                 "fits": fits,
                 "nvidia_used_bytes": host.nvidia_used(),
+                "split": split_name,
+                "ram_bytes": host_bytes,
+                "measured": True,
             }
         )
     return rows
+
+
+def _offload_fits(
+    cuda_weights: int,
+    cuda_kv: int,
+    host_bytes: int,
+    *,
+    budget_gb: float,
+    headroom_gb: float,
+    ram_budget: int,
+) -> bool:
+    if cuda_weights == 0 and cuda_kv == 0 and host_bytes == 0:
+        return False
+    if cuda_weights + cuda_kv > budget_bytes(budget_gb, headroom_gb):
+        return False
+    return host_bytes <= ram_budget
 
 
 def _gate_ok(rows: list[dict[str, object]], contexts: tuple[int, ...]) -> bool:
@@ -726,6 +851,7 @@ def _tier_payload(
     measured: list[dict[str, object]],
     headroom_gb: float,
     contexts: tuple[int, ...],
+    split: Split,
 ) -> dict[str, object]:
     digest = sha256_file(candidate.path)
     write_sha256(candidate.path, digest)
@@ -740,6 +866,9 @@ def _tier_payload(
         "sha256": digest,
         "size": candidate.path.stat().st_size,
         "cache": cache,
+        "split": split.name,
+        "split_flags": list(split.flags),
+        "ram_bytes": split.ram_bytes,
         "min_vram_gb": tier_min_vram(peak, 0, headroom_gb),
         "measurements": measured,
     }
@@ -837,6 +966,9 @@ def _publish_prep(model: ModelPlan, layout: Layout, card: dict[str, object]) -> 
                 "tier": tier["name"],
                 "quant": tier["quant"],
                 "min_vram_gb": tier["min_vram_gb"],
+                "split": tier.get("split", "gpu"),
+                "split_flags": list(tier.get("split_flags", [])),
+                "ram_bytes": tier.get("ram_bytes", 0),
                 "sources": {"hf": "", "kaggle": "", "torrent": "placeholder"},
             }
             for tier in tiers
@@ -916,11 +1048,15 @@ def _upload(
     elif "drive" in targets:
         records = upload_drive(artifacts, model_id=model.id, date=date)
     flags = _target_flags(records, targets, hub_failed=hub_failed)
-    vram = {str(tier["name"]): tier["min_vram_gb"] for tier in tiers}
+    by_tier = {str(tier["name"]): tier for tier in tiers}
     for record in records:
         tier_name = str(record.get("tier", ""))
-        if record.get("kind") == "gguf" and tier_name in vram:
-            record["min_vram_gb"] = vram[tier_name]
+        chosen = by_tier.get(tier_name)
+        if record.get("kind") == "gguf" and chosen is not None:
+            record["min_vram_gb"] = chosen["min_vram_gb"]
+            record["split"] = chosen.get("split", "gpu")
+            record["split_flags"] = list(chosen.get("split_flags", []))
+            record["ram_bytes"] = chosen.get("ram_bytes", 0)
     payload = {
         "id": model.id,
         "base_model": model.base_model,

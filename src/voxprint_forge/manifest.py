@@ -42,6 +42,8 @@ def models_markdown(payload: dict[str, object]) -> str:
                 lines.append(f"  - sha256: `{item.get('sha256')}`")
                 lines.append(f"  - size: {item.get('size')}")
                 lines.append(f"  - min_vram_gb: {item.get('min_vram_gb')}")
+                lines.append(f"  - split: `{item.get('split', 'gpu')}`")
+                lines.append(f"  - ram_bytes: {item.get('ram_bytes', 0)}")
                 lines.append(f"  - hf: {sources.get('hf', '')}")
                 lines.append(f"  - kaggle: {sources.get('kaggle', '')}")
                 lines.append(f"  - torrent: {sources.get('torrent', 'placeholder')}")

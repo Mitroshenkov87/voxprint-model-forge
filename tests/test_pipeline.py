@@ -290,6 +290,10 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     repo = _scratch_repo(tmp_path)
     layout = Layout(tmp_path / "forge-out")
     result = run_all(plan, _host(downloader, remote), repo, layout)
+    fit = json.loads(layout.stage("tiny", "fit").read_text(encoding="utf-8"))
+    assert {tier["split"] for tier in fit["tiers"]} == {"gpu"}
+    assert all(tier["split_flags"] == [] for tier in fit["tiers"])
+    assert "split: `gpu`" in result["manifest"]["markdown"]
     assert "q4-huge.gguf" not in downloader.calls
     assert "q5.gguf" in downloader.calls
     assert remote.hf_private == ["voxprint-tests/voxprint-tiny"]
