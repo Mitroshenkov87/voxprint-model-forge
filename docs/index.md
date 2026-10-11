@@ -1,4 +1,4 @@
-# Voxprint AI Model Forge
+# VOXPrint AI Model Forge
 
 Model Forge prepares models for the Voxprint AI Media Suite: ablation,
 quantization, evaluation, model cards, and checksums. It is not part of the

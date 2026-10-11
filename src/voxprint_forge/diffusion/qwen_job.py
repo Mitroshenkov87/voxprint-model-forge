@@ -317,7 +317,7 @@ def _upload(
         output=ctx.output,
         hf_repo=ctx.plan.hf_repo,
         kaggle_slug=ctx.plan.kaggle_slug,
-        title="Voxprint Qwen-Image-2512",
+        title="VOXPrint Qwen-Image-2512",
         description=(
             "Private Voxprint dtype conversion of Qwen-Image-2512. Apache-2.0. "
             "INT4 is deferred. The text encoder belongs to part C and is linked, not written here."
@@ -782,7 +782,7 @@ def _release_encoder(ctx: QwenCtx, *, explicit: bool) -> dict[str, object] | Non
             output=stage,
             hf_repo=ctx.plan.hf_repo,
             kaggle_slug=ctx.plan.kaggle_slug,
-            title="Voxprint Qwen-Image-2512 text encoder",
+            title="VOXPrint Qwen-Image-2512 text encoder",
             description="Voxprint FP8 text encoder. Apache-2.0. A reused encoder is not copied.",
             tiers={fp8.name: ("24gb", 24, source.repo, source.revision)},
             variations={"24gb-fp8": [fp8.name]},

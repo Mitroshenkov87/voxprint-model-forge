@@ -25,6 +25,11 @@ LIMITS = (
 )
 
 
+def hub_title(name: str) -> str:
+    """Hugging Face and Kaggle title. The model id is not rewritten."""
+    return f"VOXPrint {name}"
+
+
 def template_path(repo: Path) -> Path:
     """Path of ``templates/model_card.md.jinja`` in the repo."""
     path = repo / "templates" / "model_card.md.jinja"
@@ -124,7 +129,7 @@ def render_card(
         html = env.from_string(template)
         return html.render(
             model_id=model.id,
-            title=f"Voxprint {model.id}",
+            title=hub_title(model.id),
             card_base=card_base_model(model),
             foundation=model.base_model,
             revision=model.revision,

@@ -1,7 +1,7 @@
 [project]
 name = "voxprint-forge"
 version = "0.1.0"
-description = "Voxprint AI Model Forge: prepare, quantize, measure, and card local GGUF models."
+description = "VOXPrint AI Model Forge: prepare, quantize, measure, and card local GGUF models."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
@@ -42,6 +42,24 @@ gui = [
 [project.scripts]
 forge = "voxprint_forge.cli:main"
 forge-gui = "voxprint_forge.gui.__main__:main"
+voxprint-forge-cli = "voxprint_forge.cli:main"
+
+[project.gui-scripts]
+voxprint-model-forge = "voxprint_forge.gui.__main__:main"
+
+# Display names and install paths. There is no installer in this repo.
+# An upgrade moves an older program folder here, updates shortcuts and PATH,
+# and leaves %LOCALAPPDATA%\Voxprint and ~/.local/share/voxprint in place.
+[tool.voxprint.install]
+display-name = "VOXPrint AI Model Forge"
+start-menu-folder = "VOXPrint AI Suite"
+shortcut-name = "VOXPrint AI Model Forge"
+windows-dir = 'C:\Program Files\VOXPrint AI Suite\Model Forge'
+linux-dir = "/opt/voxprint-ai-suite/model-forge"
+gui-exe = "voxprint-model-forge.exe"
+cli-exe = "voxprint-forge-cli.exe"
+user-data = '%LOCALAPPDATA%\Voxprint'
+linux-data = "~/.local/share/voxprint"
 
 [build-system]
 requires = ["setuptools>=69"]

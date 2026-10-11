@@ -258,7 +258,7 @@ def publish_step(ctx: StageContext) -> dict[str, object]:
     smoke = work / "smoke" / "smoke.json"
     card = render_int4_card(
         ctx.repo,
-        title="Voxprint Wan2.2-T2V-A14B GGUF and FP8",
+        title="VOXPrint Wan2.2-T2V-A14B GGUF and FP8",
         base_models=(f"{WAN_WEIGHT_REPO}@{WAN_WEIGHT_REVISION}",),
         pipeline_tag="text-to-video",
         quant_lines=tuple(path.name for path in weights),
