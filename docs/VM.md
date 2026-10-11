@@ -168,4 +168,26 @@ Free space under 15 percent exits 2 (`error.code` `disk_floor`) after verified s
 
 Required total: 1260 minutes on an A100 (21 h at the 15 h quant midpoint; about 18 h if quant finishes in 12 h and about 24 h if it takes 18 h) and 860 minutes on an H100. The H100 quant step is planned at 1.8×. Optional Qwen-Image adds 1010 minutes on an A100 and 610 on an H100 (quant 900 or 500, export 20, eval 60, publish 25, reclaim 5), for 2270 and 1470 minutes. The Wan block is 190 minutes on either GPU. On sm_89 or newer the FP8 baseline uses native FP8 tensor cores. On an A100, FP8 is emulated and weight-only, and the comparison records that speed comparisons vs FP8 are not representative. The pinned nunchaku wheel lists sm_75, sm_80, sm_86, sm_89, and sm_120a, so INT4 eval on an H100 may fail to launch; quant files can still be published, and sources stay until a mirror is verified. On the live GPU, identity, hands, and text stay unset, so the winner is the fastest arm that fits 16 GB (smi peak at most 15.0 GiB), otherwise 24 GB (23.0 GiB). The dry-run scores are synthetic and are not that measurement.
 
-Proven here: the CPU one-block chain (calib, fast INT4 rank 8, convert, Nunchaku key shapes), the issue 116 scale broadcast, and a QuantFunc r128 header check that plans the missing `img_mod` `smooth_factor` keys. The Linux and Windows vitoom wheels share the Qwen loader, so the gap is that loader's `SVDQW8A16Linear` mods against QuantFunc's W4A16 packing, not a Linux-only wheel. Unproven here: loading QuantFunc r128 or r32 through that shim on an A100, nunchaku kernel numerics, `--smoke-tiny` wall clock on an RTX 4090, RTX 5090, or A10, and the 12–18 h full quant. The planned full quant remains 900 minutes on an A100 and 500 minutes on an H100.
+Proven here: the CPU one-block chain (calib, fast INT4 rank 8, convert, Nunchaku key shapes), the issue 116 scale broadcast, and a QuantFunc r128 header check that plans the missing `img_mod` `smooth_factor` keys. Unproven here: loading QuantFunc r128 or r32 through the shim on the Linux wheel, nunchaku kernel numerics on that wheel, and the 12–18 h full quant. The planned full quant remains 900 minutes on an A100 and 500 minutes on an H100.
+
+## Windows laptop smoke
+
+`scripts/smoke_laptop.ps1` is the unattended check for a wiped Windows 11 machine with an RTX 4090 Laptop (16 GB, sm_89). It does not prompt and it does not read a token. It installs uv into the user profile, builds a Python 3.12 venv under `%LOCALAPPDATA%\VoxprintForgeSmoke`, and installs torch 2.11 from the cu130 index plus the pinned Windows vitoom wheel `nunchaku-1.3.0.dev20260629` (cp312, cu130, sha256 `ddc015bfa6fc6b84957532823c23418f5b986cb61e3c02c97a646cfe2a1fd955`). That wheel is not the Linux wheel `dev20260622` (cp311, cu128) used on the H100. A pass proves the QuantFunc smooth shim and the nunchaku kernels on Windows sm_89. It does not prove the Linux wheel.
+
+Before the long quant, run a Linux preflight on the H100 itself. It is about five minutes once the weights are on disk. A non-zero exit means do not start the 12–18 h quant:
+
+```bash
+export HF_TOKEN=...
+bash scripts/vm_run_diffusion_int4.sh --preflight
+```
+
+`--preflight` runs smoke-tiny and a QuantFunc r128 `from_pretrained` through the shim, prints `PREFLIGHT-OK`, and exits. The long quant does not start in that process.
+
+Fetch the laptop script from the tag and launch it with no console. A dropped remote session leaves the log and `result.json` in place:
+
+```powershell
+irm https://raw.githubusercontent.com/Mitroshenkov87/voxprint-model-forge/diffusion-int4-v4-smoke1/scripts/smoke_laptop.ps1 -OutFile "$env:TEMP\smoke_laptop.ps1"
+Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:TEMP\smoke_laptop.ps1" -WindowStyle Hidden
+```
+
+Results are `%LOCALAPPDATA%\VoxprintForgeSmoke\results\<timestamp>\` (`result.json` schema `voxprint-forge-smoke-laptop/1`, WebP images, `smoke.log`). The path is printed and written to `%LOCALAPPDATA%\VoxprintForgeSmoke\latest.txt`. `-Steps` selects `smoke-tiny`, `quantfunc`, and `zimage`. The default time cap is 90 minutes. `-KeepVenv` keeps the venv. The Hugging Face cache and model weights are deleted either way. Exit 0 is every selected step passed, 1 is a failed or skipped step, 2 is setup, and 3 is no suitable GPU.

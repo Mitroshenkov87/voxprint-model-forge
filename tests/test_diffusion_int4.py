@@ -441,6 +441,8 @@ def test_script_documents_the_rental_contract() -> None:
         "FORGE_HOST_KIND",
         "--dry-run",
         "--smoke-tiny",
+        "--preflight",
+        "PREFLIGHT-OK",
         "--qwen-image",
         "watch.json",
         "status.json",
