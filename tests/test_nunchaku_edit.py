@@ -587,7 +587,7 @@ def test_offline_fp8_resolves_the_base_before_load(isolated: Path, monkeypatch: 
     )
     assert downloaded["n"] == 1
     assert seen["local_files_only"] is True
-    assert str(seen["base"]).endswith(f"bases/{family}")
+    assert Path(str(seen["base"])) == edit.cache_dir() / "bases" / family
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     edit._load_fp8({"family": family, "kind": "fp8", "strategy": "mirror-dequant", "fp8_files": []})
     assert downloaded["n"] == 1
