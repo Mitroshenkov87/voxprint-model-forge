@@ -7,7 +7,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from voxprint_forge.diffusion.int4.pins import SCHEMA, StepEstimate, expected_minutes, planned_steps
+from voxprint_forge.diffusion.int4.gpu import planning_gpu, step_minutes, total_minutes
+from voxprint_forge.diffusion.int4.pins import SCHEMA, StepEstimate, planned_steps
 
 
 def watch_path(explicit: Path | None = None) -> Path:
@@ -29,8 +30,10 @@ def build_watch(
     qwen_image: bool,
     done: set[str],
     running: str = "",
+    gpu: str | None = None,
 ) -> dict[str, object]:
-    """Watch document for the selected steps."""
+    """Watch document for the selected steps on one planning GPU."""
+    chosen = gpu if gpu in {"a100", "h100"} else planning_gpu()
     steps = planned_steps(qwen_image=qwen_image)
     jobs: list[dict[str, object]] = []
     for step in steps:
@@ -38,7 +41,7 @@ def build_watch(
         jobs.append(
             {
                 "id": step.step_id,
-                "expected_min": step.expected_min,
+                "expected_min": step_minutes(step, chosen),
                 "state": state,
                 "note": step.note,
             }
@@ -47,7 +50,8 @@ def build_watch(
     return {
         "schema": SCHEMA,
         "updated": _now(),
-        "expected_min": expected_minutes(qwen_image=qwen_image),
+        "gpu": chosen,
+        "expected_min": total_minutes(steps, chosen),
         "done": finished,
         "jobs": jobs,
     }
@@ -61,9 +65,23 @@ def write_watch(path: Path, payload: dict[str, object]) -> None:
     os.replace(tmp, path)
 
 
-def estimates_text(steps: tuple[StepEstimate, ...]) -> str:
-    """Plain-text planning table."""
-    lines = [f"{step.step_id}  {step.expected_min} min  {step.note}" for step in steps]
-    total = sum(step.expected_min for step in steps)
-    lines.append(f"total  {total} min")
+_GPU_LABEL = {"a100": "A100 80GB", "h100": "H100 80GB"}
+
+
+def estimates_text(steps: tuple[StepEstimate, ...], gpu: str) -> str:
+    """Plain-text planning table for one GPU."""
+    lines = [_GPU_LABEL.get(gpu, gpu)]
+    lines.extend(f"{step.step_id}  {step_minutes(step, gpu)} min  {step.note}" for step in steps)
+    lines.append(f"total  {total_minutes(steps, gpu)} min")
     return "\n".join(lines)
+
+
+def estimates_report(steps: tuple[StepEstimate, ...]) -> str:
+    """A100 and H100 tables, plus which table this process will follow."""
+    return "\n\n".join(
+        [
+            f"planning gpu: {planning_gpu()}",
+            estimates_text(steps, "a100"),
+            estimates_text(steps, "h100"),
+        ]
+    )

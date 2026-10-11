@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# One resumable diffusion-int4 run for a fresh Ubuntu A100 80GB
-# (immers.cloud teslaa100-1.16.128.320).
+# One resumable diffusion-int4 run for a fresh Ubuntu A100 or H100 80GB
+# (immers.cloud teslaa100-1.16.128.320 or h100-1.16.128.320).
+# sm_80 is an A100. sm_90 is an H100. The H100 quant step is planned at 1.8x.
+# Torch wheels are cu128, which covers sm_80 and sm_90. llama.cpp is built for 80;90.
 # FORGE_HOST_KIND=local (default) keeps tokens in the process only.
 # FORGE_HOST_KIND=rented-vm logs in once and leaves the logins for the rental.
 # This script does not enable command tracing and does not unset tokens.
@@ -128,10 +130,36 @@ if [[ "$DRY" -eq 1 ]]; then
 fi
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  printf 'nvidia-smi is missing. This rental expects an A100.\n' >&2
+  printf 'nvidia-smi is missing. This rental expects an A100 or H100 80GB.\n' >&2
   exit 9
 fi
 nvidia-smi >/dev/null
+detect_gpu() {
+  local line cap sm
+  line="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader | head -n 1 || true)"
+  cap="${line##*,}"
+  cap="${cap#"${cap%%[![:space:]]*}"}"
+  cap="${cap%"${cap##*[![:space:]]}"}"
+  if [[ -z "$cap" || "$cap" != *.* ]]; then
+    printf 'nvidia-smi did not report a compute capability. This rental expects an A100 or H100 80GB.\n' >&2
+    exit 9
+  fi
+  export FORGE_GPU_NAME="${line%%,*}"
+  FORGE_GPU_NAME="${FORGE_GPU_NAME#"${FORGE_GPU_NAME%%[![:space:]]*}"}"
+  FORGE_GPU_NAME="${FORGE_GPU_NAME%"${FORGE_GPU_NAME##*[![:space:]]}"}"
+  export FORGE_COMPUTE_CAP="$cap"
+  sm="sm_${cap//./}"
+  case "$cap" in
+    8.0) export FORGE_GPU=a100 ;;
+    9.0) export FORGE_GPU=h100 ;;
+    *) export FORGE_GPU=other ;;
+  esac
+  printf 'gpu %s %s compute %s (%s)\n' "$FORGE_GPU" "$sm" "$FORGE_COMPUTE_CAP" "$FORGE_GPU_NAME"
+  if [[ "$sm" == "sm_90" ]]; then
+    printf 'note: the pinned vitoom-nunchaku wheel lists sm_75 sm_80 sm_86 sm_89 sm_120a. sm_90 INT4 eval may fail to launch. Quant files can still be published if eval fails. Sources stay until a mirror is verified.\n'
+  fi
+}
+detect_gpu
 if ! command -v nvcc >/dev/null 2>&1; then
   export PATH="/usr/local/cuda/bin:${PATH}"
 fi
@@ -191,6 +219,7 @@ if [[ ! -x "$VENV_WAN/bin/python" ]]; then
   uv venv --python 3.11 "$VENV_WAN"
 fi
 
+# cu128 wheels cover sm_80 (A100) and sm_90 (H100).
 uv pip install --python "$VENV_INT4" "torch==2.11.*" "torchvision==0.26.*" --index-url https://download.pytorch.org/whl/cu128
 uv pip install --python "$VENV_INT4" -e "$ROOT" -e "$SRC/deepcompressor"
 uv pip install --python "$VENV_INT4" "diffusers==0.37.1" "transformers==4.57.6"
@@ -210,7 +239,7 @@ if [[ ! -x "$SRC/llama.cpp/build/bin/llama-quantize" ]]; then
     printf 'lcpp.patch does not apply to llama.cpp %s\n' "c8c07d658a6cefc5a50cfdf6be7d726503612303" >&2
     exit 6
   fi
-  cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=80
+  cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="80;90"
   cmake --build "$SRC/llama.cpp/build" --target llama-quantize -j "$(nproc)"
 fi
 

@@ -8,13 +8,15 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal, Never
 
 from safetensors.torch import load_file
 
-from voxprint_forge.diffusion.fp8 import dequant_state
+from voxprint_forge.diffusion.fp8 import FP8_MAX, dequant_state
 from voxprint_forge.diffusion.int4.calib import gate_prompts, load_prompts
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.evalrule import Arm
+from voxprint_forge.diffusion.int4.gpu import device_fp8_report
 from voxprint_forge.diffusion.int4.pins import (
     EDIT_STEPS,
     EDIT_TRUE_CFG,
@@ -25,7 +27,10 @@ from voxprint_forge.diffusion.int4.pins import (
     QWEN_EDIT_REPO,
     QWEN_EDIT_REVISION,
 )
-from voxprint_forge.errors import ToolMissingError
+from voxprint_forge.errors import StageError, ToolMissingError
+
+Fp8ExecMode = Literal["native", "emulated"]
+Fp8Layout = Literal["diffusers", "shards"]
 
 try:
     import torch
@@ -167,7 +172,7 @@ def measure_live(ctx: StageContext, target: str) -> list[Arm]:
         if kind == "nunchaku":
             pipe = load_edit_pipeline(path)
         else:
-            pipe = load_fp8_edit(path)
+            pipe = load_fp8_edit(path, mode=_live_fp8_mode())
         peak, seconds = _time_pipe(pipe, cases, image_root)
         arms.append(Arm(arm_id, peak, seconds, None, None, None, None, rank))
         del pipe
@@ -212,7 +217,7 @@ def time_cases(
     return aggregate_case(peaks, seconds)
 
 
-def fp8_layout(path: Path) -> str:
+def fp8_layout(path: Path) -> Fp8Layout:
     """Return ``diffusers`` or ``shards`` for a FP8 comparison directory."""
     if path.is_dir() and (path / "model_index.json").is_file():
         return "diffusers"
@@ -221,32 +226,185 @@ def fp8_layout(path: Path) -> str:
     raise ToolMissingError(f"{path} is not a diffusers folder or an FP8 shard directory", code="tool_missing")
 
 
-def load_fp8_edit(path: Path):
+def _unexpected_layout(layout: Never) -> Never:
+    raise ToolMissingError(f"unhandled FP8 layout {layout}", code="tool_missing")
+
+
+def _unexpected_fp8_mode(mode: Never) -> Never:
+    raise StageError(f"unhandled FP8 baseline mode {mode}", code="fp8_mode")
+
+
+def _live_fp8_mode() -> Fp8ExecMode:
+    """Native on sm_89+. Unknown and emulated capabilities run weight-only BF16."""
+    mode = str(device_fp8_report(probe=True)["mode"])
+    if mode == "native":
+        return "native"
+    if mode == "emulated" or mode == "unknown":
+        return "emulated"
+    raise StageError(f"unhandled FP8 baseline mode {mode}", code="fp8_mode")
+
+
+def _read_shards(path: Path) -> dict[str, torch.Tensor]:
+    tensors: dict[str, torch.Tensor] = {}
+    for shard in sorted(path.glob("*.safetensors")):
+        tensors.update(load_file(str(shard)))
+    return tensors
+
+
+def _fp8_pairs(
+    tensors: dict[str, torch.Tensor],
+) -> tuple[dict[str, torch.Tensor], dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+    """Split BF16 leftovers from float8 weights and their scales."""
+    scales = {
+        name[: -len(".scale_weight")]: value for name, value in tensors.items() if name.endswith(".scale_weight")
+    }
+    rest: dict[str, torch.Tensor] = {}
+    pairs: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+    for name, tensor in tensors.items():
+        if name.endswith(".scale_weight"):
+            continue
+        if tensor.dtype == torch.float8_e4m3fn:
+            scale = scales.get(name)
+            if scale is None:
+                raise StageError(f"{name} is fp8 without a scale", code="fp8_scale")
+            pairs[name] = (tensor, scale)
+            continue
+        if tensor.is_floating_point() and tensor.dtype != torch.bfloat16:
+            rest[name] = tensor.to(dtype=torch.bfloat16)
+        else:
+            rest[name] = tensor
+    return rest, pairs
+
+
+def _install_scaled_linear(linear: torch.nn.Linear, weight: torch.Tensor, scale: torch.Tensor) -> None:
+    """Point one Linear at a float8 weight. The forward uses ``torch._scaled_mm`` on CUDA."""
+    linear.weight = torch.nn.Parameter(weight.detach().contiguous(), requires_grad=False)
+    linear.register_buffer("_fp8_scale", scale.detach().to(dtype=torch.float32).reshape(()), persistent=False)
+
+    def forward(incoming: torch.Tensor, _linear: torch.nn.Linear = linear) -> torch.Tensor:
+        return _fp8_linear_forward(_linear, incoming)
+
+    linear.forward = forward  # type: ignore[method-assign]
+
+
+def _fp8_linear_forward(linear: torch.nn.Linear, incoming: torch.Tensor) -> torch.Tensor:
+    """Tensor-wise FP8 matmul. The second matrix stays column-major."""
+    if torch is None:
+        raise ToolMissingError("native FP8 needs torch", code="tool_missing")
+    leading = incoming.shape[:-1]
+    flat = incoming.reshape(-1, incoming.shape[-1]).to(dtype=torch.bfloat16)
+    amax = flat.detach().abs().amax()
+    if not torch.isfinite(amax):
+        amax = torch.zeros((), device=flat.device, dtype=torch.float32)
+    scale_a = torch.clamp(amax.float() / FP8_MAX, min=torch.finfo(torch.float32).tiny)
+    activation = (flat.float() / scale_a).to(torch.float8_e4m3fn)
+    scale_b = getattr(linear, "_fp8_scale").to(device=flat.device, dtype=torch.float32).reshape(1)
+    produced = torch._scaled_mm(
+        activation,
+        linear.weight.t(),
+        scale_a=scale_a.reshape(1),
+        scale_b=scale_b,
+        out_dtype=torch.bfloat16,
+    )
+    if isinstance(produced, tuple):
+        produced = produced[0]
+    if linear.bias is not None:
+        produced = produced + linear.bias.to(dtype=produced.dtype)
+    return produced.reshape(*leading, produced.shape[-1])
+
+
+def bind_fp8_linears(module: torch.nn.Module, pairs: dict[str, tuple[torch.Tensor, torch.Tensor]]) -> int:
+    """Replace matching Linear weights with float8 storage. Returns how many were bound."""
+    if torch is None:
+        raise ToolMissingError("native FP8 needs torch", code="tool_missing")
+    bound = 0
+    for name, linear in module.named_modules():
+        if not isinstance(linear, torch.nn.Linear):
+            continue
+        found = pairs.get(f"{name}.weight")
+        if found is None:
+            continue
+        weight, scale = found
+        _install_scaled_linear(linear, weight, scale)
+        bound += 1
+    return bound
+
+
+def _require_native_bindings(bound: int) -> None:
+    if bound == 0:
+        raise StageError(
+            "native FP8 attached no Linear modules. Refusing to time a BF16 pipeline as a native FP8 baseline.",
+            code="fp8_native",
+        )
+
+
+def _base_edit_pipe():
+    assert torch is not None
+    assert QwenImageEditPlusPipeline is not None
+    local = os.environ.get("FORGE_QWEN_EDIT", "").strip()
+    base = local or QWEN_EDIT_REPO
+    return QwenImageEditPlusPipeline.from_pretrained(
+        base,
+        revision=None if local else QWEN_EDIT_REVISION,
+        torch_dtype=torch.bfloat16,
+    )
+
+
+def _apply_native(pipe: object, shard_root: Path) -> None:
+    assert torch is not None
+    tensors = _read_shards(shard_root)
+    rest, pairs = _fp8_pairs(tensors)
+    transformer = pipe.transformer
+    if rest:
+        transformer.load_state_dict(rest, strict=False)
+    _require_native_bindings(bind_fp8_linears(transformer, pairs))
+
+
+def _load_emulated(path: Path, layout: Fp8Layout):
+    assert torch is not None
+    assert QwenImageEditPlusPipeline is not None
+    if layout == "diffusers":
+        return QwenImageEditPlusPipeline.from_pretrained(str(path), torch_dtype=torch.bfloat16)
+    if layout == "shards":
+        pipe = _base_edit_pipe()
+        pipe.transformer.load_state_dict(dequant_state(_read_shards(path)), strict=False)
+        return pipe
+    return _unexpected_layout(layout)
+
+
+def _load_native(path: Path, layout: Fp8Layout):
+    assert torch is not None
+    assert QwenImageEditPlusPipeline is not None
+    if layout == "diffusers":
+        pipe = QwenImageEditPlusPipeline.from_pretrained(str(path), torch_dtype=torch.bfloat16)
+        shard_root = path / "transformer" if (path / "transformer").is_dir() else path
+        _apply_native(pipe, shard_root)
+        return pipe
+    if layout == "shards":
+        pipe = _base_edit_pipe()
+        _apply_native(pipe, path)
+        return pipe
+    return _unexpected_layout(layout)
+
+
+def load_fp8_edit(path: Path, *, mode: Fp8ExecMode = "emulated"):
     """Load the FP8 comparison pipeline.
 
-    A directory with ``model_index.json`` loads as a diffusers folder.
-    Canvas ``voxprint-fp8-v1`` transformer shards are dequantized into the
-    base Qwen-Image-Edit-2511 pipeline (``FORGE_QWEN_EDIT`` or the Hub repo).
+    ``emulated`` dequantizes canvas shards to BF16 (sm_80 weight-only).
+    ``native`` keeps float8 Linear weights and runs ``torch._scaled_mm`` on
+    sm_89 or newer. A directory with ``model_index.json`` is a diffusers
+    folder. Shards load into ``FORGE_QWEN_EDIT`` or the Hub repo.
     """
     require_edit_runtime()
     assert torch is not None
     assert QwenImageEditPlusPipeline is not None
     layout = fp8_layout(path)
-    if layout == "diffusers":
-        pipe = QwenImageEditPlusPipeline.from_pretrained(str(path), torch_dtype=torch.bfloat16)
-    elif layout == "shards":
-        base = os.environ.get("FORGE_QWEN_EDIT", "").strip() or QWEN_EDIT_REPO
-        pipe = QwenImageEditPlusPipeline.from_pretrained(
-            base,
-            revision=None if os.environ.get("FORGE_QWEN_EDIT", "").strip() else QWEN_EDIT_REVISION,
-            torch_dtype=torch.bfloat16,
-        )
-        tensors: dict[str, torch.Tensor] = {}
-        for shard in sorted(path.glob("*.safetensors")):
-            tensors.update(load_file(str(shard)))
-        pipe.transformer.load_state_dict(dequant_state(tensors), strict=False)
+    if mode == "emulated":
+        pipe = _load_emulated(path, layout)
+    elif mode == "native":
+        pipe = _load_native(path, layout)
     else:
-        raise ToolMissingError(f"unhandled FP8 layout {layout}", code="tool_missing")
+        pipe = _unexpected_fp8_mode(mode)
     pipe.enable_model_cpu_offload()
     return pipe
 

@@ -150,6 +150,15 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_USAGE
     try:
         result = _dispatch(args)
+        if (
+            not args.json
+            and args.command == "diffusion-int4"
+            and getattr(args, "int4_command", "") == "estimates"
+            and isinstance(result, dict)
+            and isinstance(result.get("text"), str)
+        ):
+            print(result["text"])
+            return 0
         code = _exit_code(args.command, result)
         emit(args.command, result, ok=code == 0, exit_code=code, json_mode=args.json)
         return code

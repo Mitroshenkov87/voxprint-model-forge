@@ -81,7 +81,10 @@ WAN_SMOKE_STEPS = 4
 
 @dataclass(frozen=True)
 class StepEstimate:
-    """One resumable step and its planning time on an A100 80GB."""
+    """One resumable step and its planning time on an A100 80GB.
+
+    An H100 80GB uses the same table except the quant steps, which are 1.8x faster.
+    """
 
     step_id: str
     expected_min: int
@@ -97,7 +100,7 @@ QWEN_EDIT_STEPS: tuple[StepEstimate, ...] = (
     StepEstimate(
         "qwen-edit-2511-quant",
         900,
-        "fast_int4, SVD rank 256. Planning figure 15 h; the A100 range is 12-18 h.",
+        "fast_int4, SVD rank 256. 15 h on an A100 80GB (12-18 h). 500 min on an H100 80GB.",
     ),
     StepEstimate(
         "qwen-edit-2511-export",
@@ -153,7 +156,7 @@ QWEN_IMAGE_STEPS: tuple[StepEstimate, ...] = (
     StepEstimate(
         "qwen-image-quant",
         900,
-        "Optional fast_int4, SVD rank 256. Same 12-18 h range.",
+        "Optional fast_int4, SVD rank 256. 900 min on A100, 500 min on H100.",
     ),
     StepEstimate(
         "qwen-image-export",
@@ -187,5 +190,5 @@ def planned_steps(*, qwen_image: bool) -> tuple[StepEstimate, ...]:
 
 
 def expected_minutes(*, qwen_image: bool) -> int:
-    """Sum of the planning minutes for the selected steps."""
+    """A100 planning total. H100 totals are ``gpu.total_minutes``."""
     return sum(step.expected_min for step in planned_steps(qwen_image=qwen_image))

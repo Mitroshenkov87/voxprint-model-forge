@@ -13,6 +13,7 @@ from voxprint_forge.diffusion.int4.calib import gate_prompts, image_root, load_p
 from voxprint_forge.diffusion.int4.config import collect_argv, convert_argv, quant_argv, write_configs
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.evalrule import Arm, decide_winner, dry_run_arms
+from voxprint_forge.diffusion.int4.gpu import device_fp8_report
 from voxprint_forge.diffusion.int4.measure import measure_live
 from voxprint_forge.diffusion.int4.patch import apply_checkout
 from voxprint_forge.diffusion.int4.pins import (
@@ -171,6 +172,7 @@ def eval_step(ctx: StageContext, target: TargetName) -> dict[str, object]:
         "passed": decision.passed,
         "arms": [_arm_dict(arm) for arm in arms],
         "dry_run": ctx.dry_run,
+        "fp8_baseline": device_fp8_report(probe=not ctx.dry_run),
     }
     path = ctx.job(target) / "comparison.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,6 +293,11 @@ def _eval_lines(comparison: dict[str, object]) -> tuple[str, ...]:
     ]
     if comparison.get("dry_run") is True:
         lines.append("Dry-run scores are synthetic.")
+    baseline = comparison.get("fp8_baseline")
+    if isinstance(baseline, dict):
+        note = baseline.get("note")
+        if isinstance(note, str) and note:
+            lines.append(note)
     return tuple(lines)
 
 

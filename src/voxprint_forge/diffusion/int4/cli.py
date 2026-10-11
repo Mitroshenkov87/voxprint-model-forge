@@ -10,8 +10,9 @@ from pathlib import Path
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.disk import guard_disk, reclaim_verified
 from voxprint_forge.diffusion.int4.fetch import fetch_weights
+from voxprint_forge.diffusion.int4.gpu import planning_gpu, step_minutes, total_minutes
 from voxprint_forge.diffusion.int4.markers import done_dir
-from voxprint_forge.diffusion.int4.pins import DEFAULT_SVD_RANK, DISK_FLOOR, SCHEMA, expected_minutes, planned_steps
+from voxprint_forge.diffusion.int4.pins import DEFAULT_SVD_RANK, DISK_FLOOR, SCHEMA, planned_steps
 from voxprint_forge.diffusion.int4.stage import format_estimates, run
 from voxprint_forge.diffusion.int4.watch import watch_path
 from voxprint_forge.errors import EXIT_UNEXPECTED, ForgeError, UsageError
@@ -65,15 +66,30 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
     command = str(getattr(args, "command", None) or getattr(args, "int4_command", ""))
     forge_out = args.forge_out or Path.home() / "forge-out"
     if command == "estimates":
-        text = format_estimates(qwen_image=bool(args.qwen_image))
+        steps = planned_steps(qwen_image=bool(args.qwen_image))
+        gpu = planning_gpu()
         return {
             "schema": SCHEMA,
-            "expected_min": expected_minutes(qwen_image=bool(args.qwen_image)),
+            "gpu": gpu,
+            "expected_min": total_minutes(steps, gpu),
+            "gpus": {
+                name: {
+                    "expected_min": total_minutes(steps, name),
+                    "steps": [
+                        {
+                            "id": step.step_id,
+                            "expected_min": step_minutes(step, name),
+                            "note": step.note,
+                        }
+                        for step in steps
+                    ],
+                }
+                for name in ("a100", "h100")
+            },
             "steps": [
-                {"id": step.step_id, "expected_min": step.expected_min, "note": step.note}
-                for step in planned_steps(qwen_image=bool(args.qwen_image))
+                {"id": step.step_id, "expected_min": step_minutes(step, gpu), "note": step.note} for step in steps
             ],
-            "text": text,
+            "text": format_estimates(qwen_image=bool(args.qwen_image)),
         }
     if command == "fetch":
         token = os.environ.get("HF_TOKEN")
@@ -111,6 +127,11 @@ def execute(args: argparse.Namespace, *, repo: Path, json_mode: bool) -> int:
     command = str(getattr(args, "command", None) or getattr(args, "int4_command", ""))
     try:
         result = perform(args, repo)
+        if command == "estimates" and not json_mode and isinstance(result, dict):
+            text = result.get("text")
+            if isinstance(text, str):
+                print(text)
+                return 0
         emit(command, result, ok=True, exit_code=0, json_mode=json_mode)
         return 0
     except ForgeError as exc:

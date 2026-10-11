@@ -124,7 +124,7 @@ The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`
 
 ## Diffusion INT4 rental
 
-This is a separate session from the LLM bootstrap. The box is a fresh Ubuntu A100 80GB (`immers.cloud` `teslaa100-1.16.128.320`). Export `FORGE_HOST_KIND=rented-vm` so the script logs in once and leaves `HF_TOKEN` in place. The script does not unset tokens and does not enable command tracing.
+This is a separate session from the LLM bootstrap. The box is a fresh Ubuntu A100 or H100 80GB (`immers.cloud` `teslaa100-1.16.128.320` or `h100-1.16.128.320`). Export `FORGE_HOST_KIND=rented-vm` so the script logs in once and leaves `HF_TOKEN` in place. The script does not unset tokens and does not enable command tracing. It reads `nvidia-smi` (`sm_80` A100, `sm_90` H100), exports `FORGE_GPU` and `FORGE_COMPUTE_CAP`, and prints the A100 and H100 minute tables. Torch 2.11 comes from the cu128 index. `llama-quantize` is built for `80;90`.
 
 ```bash
 export HF_TOKEN=...
@@ -140,18 +140,18 @@ Preflight requires `nvidia-smi`, `nvcc`, `git`, `cmake`, and `ninja`, then clone
 
 Free space under 15 percent exits 2 (`error.code` `disk_floor`) after verified sources are deleted. Uploads run at the end of each model's publish step. Sources are deleted only after a mirror sha256 matches. `~/watch.json` lists the jobs. `~/forge-out/status.json` is the heartbeat file. `ALL-DONE` is printed only after a zero exit.
 
-| Step | Minutes |
-| --- | --- |
-| Qwen-Edit-2511 calibration | 30 |
-| Qwen-Edit-2511 INT4 r256 | 900 (planning 15 h; the A100 range is 12–18 h) |
-| Nunchaku export | 20 |
-| Eval against QuantFunc r128, r256, and FP8 | 90 |
-| Edit card, sha256, upload | 25 |
-| Edit source delete | 5 |
-| Wan GGUF Q4_K_M and Q5_K_M, both experts | 100 |
-| Wan FP8 | 40 |
-| Wan smoke, 5 frames at 832×480, 4 steps | 20 |
-| Wan card, sha256, upload | 25 |
-| Wan source delete | 5 |
+| Step | A100 minutes | H100 minutes |
+| --- | --- | --- |
+| Qwen-Edit-2511 calibration | 30 | 30 |
+| Qwen-Edit-2511 INT4 r256 | 900 (planning 15 h; the A100 range is 12–18 h) | 500 |
+| Nunchaku export | 20 | 20 |
+| Eval against QuantFunc r128, r256, and FP8 | 90 | 90 |
+| Edit card, sha256, upload | 25 | 25 |
+| Edit source delete | 5 | 5 |
+| Wan GGUF Q4_K_M and Q5_K_M, both experts | 100 | 100 |
+| Wan FP8 | 40 | 40 |
+| Wan smoke, 5 frames at 832×480, 4 steps | 20 | 20 |
+| Wan card, sha256, upload | 25 | 25 |
+| Wan source delete | 5 | 5 |
 
-Required total: 1260 minutes (21 h) at the 15 h quant midpoint, about 18 h if quant finishes in 12 h and about 24 h if it takes 18 h. Optional Qwen-Image adds 1010 minutes (quant 900, export 20, eval 60, publish 25, reclaim 5). The Wan block is 190 minutes. On the live GPU, identity, hands, and text stay unset, so the winner is the fastest arm that fits 16 GB (smi peak at most 15.0 GiB), otherwise 24 GB (23.0 GiB). The dry-run scores are synthetic and are not that measurement.
+Required total: 1260 minutes on an A100 (21 h at the 15 h quant midpoint; about 18 h if quant finishes in 12 h and about 24 h if it takes 18 h) and 860 minutes on an H100. The H100 quant step is planned at 1.8×. Optional Qwen-Image adds 1010 minutes on an A100 and 610 on an H100 (quant 900 or 500, export 20, eval 60, publish 25, reclaim 5), for 2270 and 1470 minutes. The Wan block is 190 minutes on either GPU. On sm_89 or newer the FP8 baseline uses native FP8 tensor cores. On an A100, FP8 is emulated and weight-only, and the comparison records that speed comparisons vs FP8 are not representative. The pinned nunchaku wheel lists sm_75, sm_80, sm_86, sm_89, and sm_120a, so INT4 eval on an H100 may fail to launch; quant files can still be published, and sources stay until a mirror is verified. On the live GPU, identity, hands, and text stay unset, so the winner is the fastest arm that fits 16 GB (smi peak at most 15.0 GiB), otherwise 24 GB (23.0 GiB). The dry-run scores are synthetic and are not that measurement.

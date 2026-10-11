@@ -1,6 +1,6 @@
 # Diffusion INT4
 
-`forge diffusion-int4` is the Phase 1 stage for an A100 80GB rental. It wraps pinned tools. It does not reimplement SVDQuant.
+`forge diffusion-int4` is the Phase 1 stage for an A100 or H100 80GB rental. It wraps pinned tools. It does not reimplement SVDQuant.
 
 ## Pins
 
@@ -38,22 +38,32 @@ Wan publishes Q4_K_M and Q5_K_M for the high-noise and low-noise experts, plus a
 
 ## Clock
 
-| Step | Minutes |
-| --- | --- |
-| `qwen-edit-2511-calib` | 30 |
-| `qwen-edit-2511-quant` | 900 |
-| `qwen-edit-2511-export` | 20 |
-| `qwen-edit-2511-eval` | 90 |
-| `qwen-edit-2511-publish` | 25 |
-| `qwen-edit-2511-reclaim` | 5 |
-| `wan-2.2-gguf` | 100 |
-| `wan-2.2-fp8` | 40 |
-| `wan-2.2-smoke` | 20 |
-| `wan-2.2-publish` | 25 |
-| `wan-2.2-reclaim` | 5 |
+The H100 quant step is planned at 1.8× the A100 step (900 minutes becomes 500). Other steps stay the same. `forge diffusion-int4 estimates` prints both columns. The run follows the H100 column when `FORGE_GPU=h100` or `FORGE_COMPUTE_CAP=9.0`. With neither set, the A100 column is the plan.
 
-Required total: 1260 minutes. Optional `qwen-image-*` adds quant 900, export 20, eval 60, publish 25, reclaim 5.
+| Step | A100 minutes | H100 minutes |
+| --- | --- | --- |
+| `qwen-edit-2511-calib` | 30 | 30 |
+| `qwen-edit-2511-quant` | 900 | 500 |
+| `qwen-edit-2511-export` | 20 | 20 |
+| `qwen-edit-2511-eval` | 90 | 90 |
+| `qwen-edit-2511-publish` | 25 | 25 |
+| `qwen-edit-2511-reclaim` | 5 | 5 |
+| `wan-2.2-gguf` | 100 | 100 |
+| `wan-2.2-fp8` | 40 | 40 |
+| `wan-2.2-smoke` | 20 | 20 |
+| `wan-2.2-publish` | 25 | 25 |
+| `wan-2.2-reclaim` | 5 | 5 |
+
+Required total: 1260 minutes on an A100, 860 minutes on an H100. Optional `qwen-image-*` adds quant 900 (A100) or 500 (H100), export 20, eval 60, publish 25, reclaim 5. Optional total: 2270 minutes on an A100, 1470 minutes on an H100.
+
+## GPU
+
+`sm_80` is an A100. `sm_90` is an H100. The script reads `nvidia-smi` and exports `FORGE_GPU` (`a100`, `h100`, or `other`) and `FORGE_COMPUTE_CAP`. A capability other than 9.0 keeps the A100 minute table.
+
+FP8 tensor cores start at sm_89. On sm_89 or newer the FP8 baseline keeps float8 weights and runs them with native FP8 tensor cores. On an A100 the same baseline is emulated and weight-only, and `comparison.json` records that speed comparisons vs FP8 are not representative. A run that cannot read a compute capability records that same caveat and times the baseline as weight-only BF16.
+
+Torch 2.11 and torchvision 0.26 come from the cu128 wheel index, which includes sm_80 and sm_90. `llama-quantize` is built with `CMAKE_CUDA_ARCHITECTURES=80;90`. The pinned vitoom-nunchaku wheel lists sm_75, sm_80, sm_86, sm_89, and sm_120a. On an H100 the INT4 eval may fail to launch. Quantization uses deepcompressor. If eval fails, sources stay until a mirror is verified.
 
 ## Script
 
-`scripts/vm_run_diffusion_int4.sh` is the non-interactive entry for a fresh Ubuntu A100. `FORGE_HOST_KIND=local` (the default) does not write token files. `FORGE_HOST_KIND=rented-vm` logs in once and leaves the logins. `--dry-run` is what CI runs. Exit codes match `docs/CLI.md`, with the 15 percent floor as exit 2.
+`scripts/vm_run_diffusion_int4.sh` is the non-interactive entry for a fresh Ubuntu A100 or H100 80GB. `FORGE_HOST_KIND=local` (the default) does not write token files. `FORGE_HOST_KIND=rented-vm` logs in once and leaves the logins. `--dry-run` is what CI runs. Exit codes match `docs/CLI.md`, with the 15 percent floor as exit 2.
