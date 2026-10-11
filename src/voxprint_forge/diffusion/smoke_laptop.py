@@ -17,6 +17,7 @@ import hashlib
 import importlib
 import json
 import math
+import os
 import subprocess
 import sys
 import threading
@@ -46,6 +47,7 @@ from voxprint_forge.diffusion.nunchaku_edit import (
     ZIMAGE_STEPS,
     asset_dir,
 )
+from voxprint_forge.diffusion.smoke_prefetch import DownloadError
 from voxprint_forge.errors import UsageError
 
 SCHEMA = "voxprint-forge-smoke-laptop/1"
@@ -55,14 +57,14 @@ DEFAULT_MINUTES = 90
 MIN_CC = (8, 6)
 MIN_VRAM_MIB = 14_000
 FITS_16GB_MIB = 15.0 * 1024
-StepId = Literal["smoke-tiny", "quantfunc", "zimage"]
-STEP_ORDER: tuple[StepId, ...] = ("smoke-tiny", "quantfunc", "zimage")
+StepId = Literal["smoke-tiny", "quantfunc", "zimage", "calib-quant-timing"]
+STEP_ORDER: tuple[StepId, ...] = ("smoke-tiny", "quantfunc", "zimage", "calib-quant-timing")
 Runner = Callable[[], dict[str, object]]
 WHEEL_URL = f"https://huggingface.co/{WHEEL_REPO}/resolve/{WHEEL_REVISION}/{WINDOWS_WHEEL.filename}"
 
 
 def parse_steps(text: str) -> tuple[StepId, ...]:
-    """Return the requested steps in smoke order. Empty means all three."""
+    """Return the requested steps in smoke order. Empty means every step."""
     raw = [item.strip() for item in text.split(",") if item.strip()]
     if not raw:
         return STEP_ORDER
@@ -141,6 +143,8 @@ def run_plan(
         started = now()
         try:
             record = runners[step_id]()
+        except DownloadError:
+            raise
         except Exception as exc:
             record = {
                 "id": step_id,
@@ -176,6 +180,8 @@ def result_document(
     versions: dict[str, str],
     started: str,
     error: str | None = None,
+    nunchaku: dict[str, object] | None = None,
+    extrapolation: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the ``voxprint-forge-smoke-laptop/1`` document."""
     return {
@@ -189,7 +195,9 @@ def result_document(
         "seconds_cap": seconds_cap,
         "steps_requested": list(selected),
         "versions": versions,
+        "nunchaku": nunchaku,
         "gpu": gpu,
+        "extrapolation": extrapolation,
         "steps": records,
     }
 
@@ -212,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--steps", default=",".join(STEP_ORDER))
     parser.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
     parser.add_argument("--seconds", type=float, default=None)
+    parser.add_argument("--blocks", type=int, default=2)
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--resume-from", type=Path, default=None)
     parser.add_argument("--forge-out", type=Path, default=None)
     parser.add_argument("--quantfunc", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -221,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             return _run(args)
     except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except DownloadError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     unexpected: Never = args.command
@@ -261,73 +275,124 @@ def _run(args: argparse.Namespace) -> int:
     if args.results is None or args.repo is None or args.cache is None:
         print("run needs --results, --repo, and --cache", file=sys.stderr)
         return 2
+    if int(args.blocks) < 1:
+        print("blocks must be at least 1", file=sys.stderr)
+        return 2
     selected = parse_steps(str(args.steps))
     seconds_cap = float(args.minutes) * 60.0 if args.seconds is None else float(args.seconds)
-    minutes_cap = seconds_cap / 60.0
     results = Path(args.results)
     results.mkdir(parents=True, exist_ok=True)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    deadline = time.monotonic() + seconds_cap
     gpu, gpu_error = _query_gpu()
-    versions = _versions()
+    nunchaku = probe_nunchaku()
+    versions = _versions(nunchaku)
     path = results / "result.json"
-    if gpu_error is not None or gpu is None or not suitable_gpu(
-        int(gpu["memory_mib"]),
-        int(gpu["compute_major"]),
-        int(gpu["compute_minor"]),
-    ):
-        reason = gpu_error or "GPU is below compute capability 8.6 or 14000 MiB"
-        payload = result_document(
-            records=[],
-            code=3,
-            results_dir=results,
-            minutes_cap=minutes_cap,
-            seconds_cap=seconds_cap,
-            selected=selected,
-            gpu=gpu,
-            versions=versions,
-            started=started,
-            error=reason,
-        )
-        write_result(path, payload)
-        print(reason, file=sys.stderr)
-        print(f"RESULTS {results}")
-        return 3
-    ctx = _Ctx(repo=Path(args.repo), results=results, cache=Path(args.cache), deadline=deadline)
-    runners: dict[StepId, Runner] = {
-        "smoke-tiny": lambda: _step_smoke_tiny(ctx),
-        "quantfunc": lambda: _step_quantfunc(ctx),
-        "zimage": lambda: _step_zimage(ctx),
-    }
+    previous = _load_previous(args.resume_from)
 
-    def clock() -> float:
-        return time.monotonic()
-
-    records: list[dict[str, object]] = []
-
-    def _store(partial: list[dict[str, object]], code: int, error: str | None = None) -> None:
+    def _store(
+        partial: list[dict[str, object]],
+        code: int,
+        error: str | None = None,
+        *,
+        deadline_seconds: float = seconds_cap,
+    ) -> None:
         write_result(
             path,
             result_document(
                 records=partial,
                 code=code,
                 results_dir=results,
-                minutes_cap=minutes_cap,
-                seconds_cap=seconds_cap,
+                minutes_cap=deadline_seconds / 60.0,
+                seconds_cap=deadline_seconds,
                 selected=selected,
                 gpu=gpu,
                 versions=versions,
                 started=started,
                 error=error,
+                nunchaku=nunchaku,
+                extrapolation=_extrapolation(partial),
             ),
         )
 
+    if gpu_error is not None or gpu is None or not suitable_gpu(
+        int(gpu["memory_mib"]),
+        int(gpu["compute_major"]),
+        int(gpu["compute_minor"]),
+    ):
+        reason = gpu_error or "GPU is below compute capability 8.6 or 14000 MiB"
+        _store([], 3, reason)
+        print(reason, file=sys.stderr)
+        print(f"RESULTS {results}")
+        return 3
+    from voxprint_forge.diffusion.smoke_timing import reuse_step
+
+    pending: list[StepId] = []
+    carried: dict[StepId, dict[str, object]] = {}
     for step_id in selected:
+        reused = reuse_step(previous, step_id, force=bool(args.force))
+        if reused is None:
+            pending.append(step_id)
+        else:
+            carried[step_id] = reused
+    try:
+        if pending:
+            from voxprint_forge.diffusion.smoke_prefetch import prefetch_weights
+
+            prefetch_weights(Path(args.cache), pending)
+    except DownloadError as exc:
+        carried_records = [carried[step_id] for step_id in selected if step_id in carried]
+        _store(carried_records, 2, str(exc))
+        print(str(exc), file=sys.stderr)
+        print(f"RESULTS {results}")
+        return 2
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    deadline = time.monotonic() + seconds_cap
+    ctx = _Ctx(
+        repo=Path(args.repo),
+        results=results,
+        cache=Path(args.cache),
+        deadline=deadline,
+        blocks=int(args.blocks),
+    )
+    runners: dict[StepId, Runner] = {
+        "smoke-tiny": lambda: _step_smoke_tiny(ctx),
+        "quantfunc": lambda: _step_quantfunc(ctx),
+        "zimage": lambda: _step_zimage(ctx),
+        "calib-quant-timing": lambda: _step_calib_quant(ctx),
+    }
+
+    def clock() -> float:
+        return time.monotonic()
+
+    records: list[dict[str, object]] = []
+    for step_id in selected:
+        reused = carried.get(step_id)
+        if reused is not None:
+            records.append(reused)
+            _print_step(reused)
+            _store(records, exit_code(records) if len(records) == len(selected) else 1)
+            continue
         if clock() >= deadline:
             records.append(_skipped(step_id, TIME_CAP_SKIP))
             _store(records, 1)
             continue
-        batch = run_plan((step_id,), runners, deadline=deadline, now=clock)
+        try:
+            batch = run_plan((step_id,), runners, deadline=deadline, now=clock)
+        except DownloadError as exc:
+            records.append(
+                {
+                    "id": step_id,
+                    "status": "fail",
+                    "seconds": 0.0,
+                    "error": str(exc),
+                    "notes": [str(exc)],
+                    "images": [],
+                }
+            )
+            _store(records, 2, str(exc))
+            print(str(exc), file=sys.stderr)
+            print(f"RESULTS {results}")
+            return 2
         records.extend(batch)
         _print_step(batch[0])
         _store(records, exit_code(records) if len(records) == len(selected) else 1)
@@ -340,11 +405,12 @@ def _run(args: argparse.Namespace) -> int:
 class _Ctx:
     """Paths and deadline for one laptop run."""
 
-    def __init__(self, *, repo: Path, results: Path, cache: Path, deadline: float) -> None:
+    def __init__(self, *, repo: Path, results: Path, cache: Path, deadline: float, blocks: int = 2) -> None:
         self.repo = repo
         self.results = results
         self.cache = cache
         self.deadline = deadline
+        self.blocks = blocks
 
 
 def _skipped(step_id: str, reason: str) -> dict[str, object]:
@@ -358,17 +424,70 @@ def _skipped(step_id: str, reason: str) -> dict[str, object]:
     }
 
 
-def _versions() -> dict[str, str]:
+def _versions(nunchaku: dict[str, object] | None = None) -> dict[str, str]:
     """Package versions. diffusers is imported here, on the smoke path only."""
     found: dict[str, str] = {"python": sys.version.split()[0]}
-    for name in ("torch", "diffusers", "transformers", "nunchaku"):
+    for name in ("torch", "diffusers", "transformers"):
         try:
             module = importlib.import_module(name)
         except ImportError:
             found[name] = "missing"
             continue
         found[name] = str(getattr(module, "__version__", "missing"))
+    wheel = None if nunchaku is None else nunchaku.get("version")
+    found["nunchaku"] = str(wheel) if wheel else "missing"
     return found
+
+
+def probe_nunchaku() -> dict[str, object]:
+    """Wheel version plus whether the Qwen, zero_cond_t, and smooth_factor paths import."""
+    version = "missing"
+    try:
+        version = importlib.metadata.version("nunchaku")
+    except importlib.metadata.PackageNotFoundError:
+        version = "missing"
+    qwen = False
+    zero_cond_t = False
+    smooth_factor = False
+    try:
+        module = importlib.import_module("nunchaku.models.transformers.transformer_qwenimage")
+    except ImportError:
+        module = None
+    if module is not None:
+        qwen = hasattr(module, "NunchakuQwenImageTransformer2DModel")
+        source_path = getattr(module, "__file__", None)
+        if isinstance(source_path, str):
+            text = Path(source_path).read_text(encoding="utf-8", errors="replace")
+            zero_cond_t = "zero_cond_t" in text
+    from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
+
+    smooth_factor = install_quantfunc_shim()
+    return {
+        "version": version,
+        "qwen": qwen,
+        "zero_cond_t": zero_cond_t,
+        "smooth_factor": smooth_factor,
+    }
+
+
+def _load_previous(path: Path | None) -> dict[str, object] | None:
+    if path is None:
+        return None
+    result = path / "result.json" if path.is_dir() else path
+    if not result.is_file():
+        return None
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _extrapolation(records: list[dict[str, object]]) -> dict[str, object] | None:
+    for record in records:
+        value = record.get("extrapolation")
+        if record.get("id") == "calib-quant-timing" and isinstance(value, dict):
+            return value
+    return None
 
 
 def _query_gpu() -> tuple[dict[str, object] | None, str | None]:
@@ -431,8 +550,12 @@ def _step_smoke_tiny(ctx: _Ctx) -> dict[str, object]:
         reference = model(**batch).sample.detach()
     if not install_quantfunc_shim():
         raise RuntimeError("nunchaku Qwen transformer is not importable")
+    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
     from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel
 
+    from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature
+
+    bind_qwen_config_signature(NunchakuQwenImageTransformer2DModel, QwenImageTransformer2DModel)
     loaded = NunchakuQwenImageTransformer2DModel.from_pretrained(
         str(dest),
         device="cuda",
@@ -580,12 +703,19 @@ def _load_quantfunc_transformer(weight: Path) -> object:
 
     if not install_quantfunc_shim():
         raise RuntimeError("nunchaku Qwen transformer is not importable")
+    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
     from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel
 
+    from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature
+
+    bind_qwen_config_signature(NunchakuQwenImageTransformer2DModel, QwenImageTransformer2DModel)
     return NunchakuQwenImageTransformer2DModel.from_pretrained(str(weight), torch_dtype=torch.bfloat16)
 
 
 def _load_edit_pipe(weight: Path, base: Path) -> object:
+    from voxprint_forge.diffusion.smoke_prefetch import weights_ready
+
+    weights_ready(weight, base)
     from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 
     transformer = _load_quantfunc_transformer(weight)
@@ -595,11 +725,14 @@ def _load_edit_pipe(weight: Path, base: Path) -> object:
         torch_dtype=torch.bfloat16,
         local_files_only=True,
     )
-    pipe.enable_model_cpu_offload()
+    _offload_16gb(pipe, transformer)
     return pipe
 
 
 def _load_zimage_pipe(weight: Path, base: Path) -> object:
+    from voxprint_forge.diffusion.smoke_prefetch import weights_ready
+
+    weights_ready(weight, base)
     from diffusers.pipelines.z_image.pipeline_z_image import ZImagePipeline
     from nunchaku.models.transformers.transformer_zimage import NunchakuZImageTransformer2DModel
 
@@ -611,8 +744,91 @@ def _load_zimage_pipe(weight: Path, base: Path) -> object:
         local_files_only=True,
         low_cpu_mem_usage=False,
     )
-    pipe.enable_model_cpu_offload()
+    _offload_16gb(pipe, transformer)
     return pipe
+
+
+def _offload_16gb(pipe: object, transformer: object) -> None:
+    """Keep the text encoder and VAE on CPU until the transformer file is loaded.
+
+    The caller finishes the transformer ``from_pretrained`` before this runs.
+    One block stays on the GPU. The text encoder and VAE move only for a forward.
+    """
+    if hasattr(transformer, "set_offload"):
+        transformer.set_offload(True, use_pin_memory=False, num_blocks_on_gpu=1)  # type: ignore[attr-defined]
+        exclude = getattr(pipe, "_exclude_from_cpu_offload", None)
+        if isinstance(exclude, list) and "transformer" not in exclude:
+            exclude.append("transformer")
+        pipe.enable_sequential_cpu_offload()  # type: ignore[attr-defined]
+        return
+    pipe.enable_model_cpu_offload()  # type: ignore[attr-defined]
+
+
+def _step_calib_quant(ctx: _Ctx) -> dict[str, object]:
+    """Time a short syh quant on the first N real blocks and extrapolate to 60 and an H100."""
+    started = time.perf_counter()
+    snapshot = ctx.cache / "weights" / "qwen-edit-2511"
+    config = snapshot / "transformer" / "config.json"
+    if not config.is_file():
+        raise RuntimeError(f"setup: download failed: missing {config}")
+
+    def measure() -> tuple[dict[str, object], list[str]]:
+        notes: list[str] = []
+        timed: dict[str, object] | None = None
+        remaining = max(1.0, ctx.deadline - time.monotonic())
+        if torch.cuda.is_available():
+            try:
+                from voxprint_forge.diffusion.smoke_timing import try_deepcompressor
+
+                timed = try_deepcompressor(
+                    ctx.cache,
+                    snapshot,
+                    ctx.results / "calib-quant",
+                    repo=ctx.repo,
+                    blocks=ctx.blocks,
+                    timeout=remaining,
+                )
+            except Exception as exc:
+                notes.append(f"cpu fallback: deepcompressor could not use CUDA: {type(exc).__name__}: {exc}")
+        else:
+            notes.append("cpu fallback: deepcompressor could not use CUDA")
+        if timed is None:
+            from voxprint_forge.diffusion.smoke_timing import CPU_FALLBACK, time_real_blocks
+
+            if not any(str(note).startswith(CPU_FALLBACK) for note in notes):
+                notes.append(CPU_FALLBACK)
+            timed = time_real_blocks(ctx.repo, snapshot, blocks=ctx.blocks, rank=8)
+        return timed, notes
+
+    timed, peak = _peak_mib(measure)
+    if not isinstance(timed, tuple):
+        raise RuntimeError("calibration timing returned nothing")
+    payload, notes = timed
+    extrapolation = payload["extrapolation"]
+    if not isinstance(extrapolation, dict):
+        raise RuntimeError("calibration timing did not report an extrapolation")
+    extra_notes = payload.get("notes")
+    if isinstance(extra_notes, list):
+        notes = [str(item) for item in extra_notes] + notes
+    sample_seconds = payload["sample_seconds"]
+    block_seconds = payload["block_seconds"]
+    per_sample = extrapolation["seconds_per_calibration_sample"]
+    per_block = extrapolation["seconds_per_block"]
+    return {
+        "id": "calib-quant-timing",
+        "status": "pass",
+        "seconds": round(time.perf_counter() - started, 3),
+        "error": None,
+        "notes": notes,
+        "images": [],
+        "blocks": ctx.blocks,
+        "seconds_per_calibration_sample": per_sample,
+        "seconds_per_block": per_block,
+        "sample_seconds": sample_seconds,
+        "block_seconds": block_seconds,
+        "peak_vram_mib": peak,
+        "extrapolation": extrapolation,
+    }
 
 
 def _one_edit(

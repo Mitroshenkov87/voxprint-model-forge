@@ -17,14 +17,16 @@ from voxprint_forge.diffusion.int4.pins import (
 )
 
 
-def fast_int4_yaml(*, rank: int = DEFAULT_SVD_RANK) -> str:
+def fast_int4_yaml(*, rank: int = DEFAULT_SVD_RANK, num_samples: int = 64) -> str:
     """Overlay on upstream ``int4.yaml`` and ``fast.yaml``. Later files win."""
     if rank < 1:
         raise ValueError(rank)
+    if num_samples < 1:
+        raise ValueError(num_samples)
     return (
         "quant:\n"
         "  calib:\n"
-        "    num_samples: 64\n"
+        f"    num_samples: {num_samples}\n"
         "  smooth:\n"
         "    proj:\n"
         "      num_grids: 10\n"
@@ -81,18 +83,20 @@ def model_yaml(target: TargetName) -> str:
     )
 
 
-def collect_yaml(prompt_file: Path) -> str:
+def collect_yaml(prompt_file: Path, *, num_samples: int = 64) -> str:
     """Collect config pointing at our prompt yaml."""
+    if num_samples < 1:
+        raise ValueError(num_samples)
     return (
         "collect:\n"
         "  root: datasets\n"
         "  dataset_name: voxprint\n"
         f"  data_path: {prompt_file.resolve().as_posix()}\n"
-        "  num_samples: 64\n"
+        f"  num_samples: {num_samples}\n"
     )
 
 
-def write_configs(work: Path, target: TargetName, *, rank: int) -> dict[str, Path]:
+def write_configs(work: Path, target: TargetName, *, rank: int, num_samples: int = 64) -> dict[str, Path]:
     """Write the model, fast_int4 overlay, and collect configs.
 
     omniconfig only accepts config files under the deepcompressor cwd
@@ -110,8 +114,8 @@ def write_configs(work: Path, target: TargetName, *, rank: int) -> dict[str, Pat
     collect = config_dir / "collect.yaml"
     prompts = config_dir / "prompts.yaml"
     model.write_text(model_yaml(target), encoding="utf-8")
-    overlay.write_text(fast_int4_yaml(rank=rank), encoding="utf-8")
-    collect.write_text(collect_yaml(prompts), encoding="utf-8")
+    overlay.write_text(fast_int4_yaml(rank=rank, num_samples=num_samples), encoding="utf-8")
+    collect.write_text(collect_yaml(prompts, num_samples=num_samples), encoding="utf-8")
     return {"model": model, "overlay": overlay, "collect": collect, "prompts": prompts}
 
 
