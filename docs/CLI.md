@@ -114,6 +114,14 @@ Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 mi
 
 Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
 
+## Diffusion INT4
+
+`forge diffusion-int4 run` quantizes Qwen-Image-Edit-2511 to SVDQuant INT4, compares it with QuantFunc r128, QuantFunc r256, and FP8, then does the same card and upload flow for Wan 2.2 T2V-A14B GGUF and FP8. `--qwen-image` adds an optional Qwen-Image INT4 r256 after Wan. `--svd-rank` defaults to 256. `--dry-run` is the CPU smoke: tiny files, no CUDA, no downloads.
+
+`forge diffusion-int4 estimates` prints the planning minutes. `forge diffusion-int4 disk-floor` exits 2 when free space stays under 15 percent after verified sources are deleted. JSON `error.code` is `disk_floor`. Exit 7 stays the general "next stage does not fit its byte budget" code. `forge diffusion-int4 fetch --dest DIR` downloads the Apache-2.0 QuantFunc files (sha256 checked), the Qwen-Image-Edit-2511 snapshot, the Wan experts, and the FP8 reference. A refused licence exits 3 and does not fall through to Drive.
+
+Markers are `~/.done/diffusion-int4/<step>` (`FORGE_DONE_DIR`). `~/watch.json` (`FORGE_WATCH`) lists the jobs, which are done, and the expected minutes. Heartbeats stay in `~/forge-out/status.json`. The rental script is `scripts/vm_run_diffusion_int4.sh`. Pins, the winner rule, and the minute table are in `docs/DIFFUSION-INT4.md`.
+
 ## Fit
 
 `fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. For each quant, best first, fit tries placements in order: everything on the GPU, KV in RAM (`--no-kv-offload`), MoE experts on CPU (`--n-cpu-moe`, when the plan sets `moe_layers` and `expert_fraction`), then a diffusion text encoder in RAM or sequential loading (when the plan sets `encoder_gib`). An offload that fits is kept instead of a smaller quant. GPU and flagged offloads are measured with llama-server on the target. Encoder offload and sequential loading have no llama-server flag, so those two are the byte formula. The fit marker, the registry draft, and the model card record the split that tier assumes. The gate uses on-card weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.

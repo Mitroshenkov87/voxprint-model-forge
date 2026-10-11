@@ -1,0 +1,86 @@
+{
+  "licence": "Apache-2.0",
+  "notes": "Original prompts and synthetic image refs for Voxprint calibration. Not photographs of real people. Not COCO and not MJHQ.",
+  "prompts": [
+    {
+      "id": "c1-identity-en",
+      "lang": "en",
+      "kinds": ["edit", "people"],
+      "case": "identity",
+      "prompt": "Change her black evening dress to a deep red silk evening dress; keep the same woman, face, hairstyle, pose, lighting, window and background unchanged.",
+      "image": "images/c1-evening.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["identity", "edit_fidelity"]
+    },
+    {
+      "id": "c1-identity-ru",
+      "lang": "ru",
+      "kinds": ["edit", "people"],
+      "case": "identity",
+      "prompt": "Смени чёрное вечернее платье на тёмно-красное шёлковое; сохрани то же лицо, ту же причёску, позу, свет, окно и фон.",
+      "image": "images/c1-evening.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["identity", "edit_fidelity"]
+    },
+    {
+      "id": "c2-hands-en",
+      "lang": "en",
+      "kinds": ["edit", "hands", "people"],
+      "case": "hands",
+      "prompt": "Make her raise her right hand toward the camera with an open palm and five clearly separated fingers; keep the same woman, face, dress and balcony unchanged.",
+      "image": "images/c2-hands.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["hands", "identity"]
+    },
+    {
+      "id": "c2-hands-ru",
+      "lang": "ru",
+      "kinds": ["edit", "hands", "people"],
+      "case": "hands",
+      "prompt": "Подними её правую руку к камере, ладонь открыта, пять отдельно различимых пальцев; сохрани то же лицо, платье и балкон.",
+      "image": "images/c2-hands.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["hands", "identity"]
+    },
+    {
+      "id": "c3-text-en",
+      "lang": "en",
+      "kinds": ["edit", "text"],
+      "case": "text",
+      "prompt": "Add a neon shop sign on the brick wall above her that reads \"VOXPRINT\" in bold white letters; keep the same woman, face, pose and street unchanged.",
+      "image": "images/c3-sign.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["text", "identity"]
+    },
+    {
+      "id": "c3-text-ru",
+      "lang": "ru",
+      "kinds": ["edit", "text"],
+      "case": "text",
+      "prompt": "Добавь неоновую вывеску на кирпичной стене над ней с надписью \"VOXPRINT\" белыми буквами; сохрани то же лицо, позу и улицу.",
+      "image": "images/c3-sign.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["text", "identity"]
+    },
+    {
+      "id": "people-platform-en",
+      "lang": "en",
+      "kinds": ["people"],
+      "case": "people",
+      "prompt": "An adult woman in a wool coat on a station platform, fully clothed, looking at the clock.",
+      "image": "images/people-platform.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["people"]
+    },
+    {
+      "id": "people-platform-ru",
+      "lang": "ru",
+      "kinds": ["people"],
+      "case": "people",
+      "prompt": "Взрослая женщина в шерстяном пальто на перроне, одета полностью, смотрит на часы.",
+      "image": "images/people-platform.png",
+      "image_licence": "Apache-2.0",
+      "checks": ["people"]
+    }
+  ]
+}

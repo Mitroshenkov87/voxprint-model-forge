@@ -62,8 +62,21 @@ def licence_text(repo: Path) -> str:
     )
 
 
-def render_canvas_card(repo: Path, card: CardContext) -> str:
-    """Render a canvas model card from ``card``."""
+def render_canvas_card(
+    repo: Path,
+    card: CardContext,
+    *,
+    method: str | None = None,
+    calibration: str | None = None,
+    limits: str | None = None,
+    modification_notice: str | None = None,
+) -> str:
+    """Render a canvas model card from ``card``.
+
+    The method, calibration, limits, and notice default to the FP8 text.
+    Callers that pass replacements must pass Forge-authored paragraphs,
+    because the template marks those four fields safe.
+    """
     env = card_environment()
     template = env.from_string(template_path(repo).read_text(encoding="utf-8"))
     return template.render(
@@ -73,13 +86,13 @@ def render_canvas_card(repo: Path, card: CardContext) -> str:
         pipeline_tag=card.pipeline_tag,
         tags=card.tags,
         language=card.language,
-        method=METHOD,
-        calibration=CALIBRATION,
+        method=METHOD if method is None else method,
+        calibration=CALIBRATION if calibration is None else calibration,
         quant_lines=card.quant_lines,
         eval_lines=card.eval_lines,
-        limits=LIMITS,
+        limits=LIMITS if limits is None else limits,
         credits=card.credits,
-        modification_notice=MODIFICATION_NOTICE,
+        modification_notice=MODIFICATION_NOTICE if modification_notice is None else modification_notice,
         apache_text=licence_text(repo),
         stamped=card.stamped,
     )

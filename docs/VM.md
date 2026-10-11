@@ -121,3 +121,37 @@ Right after each model, the `upload` stage pushes the finished GGUFs, the imatri
 Logins are verified before the build. A remote sha256 or size mismatch retries with backoff and does not mark the stage done. The summary lists each file with its sha256 and both URLs. `~/forge-out/manifests/<date>-a100.json` and the MODELS snippet are the failover list: Hugging Face, Kaggle, and a torrent placeholder. Copy them back; the VM does not push.
 
 The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`license`, `base_model`, `base_model_relation: quantized`, tags, `language`, `pipeline_tag`). `base_model` is the abliterated upstream for Huihui and Gemma, and the T-Bank repo for T-lite and T-pro. The body is the base and licence, method, calibration data and licences, quant types, evals, limits, and credits. A modification notice stays. `## License` is one line and a link to the Apache-2.0 text, not a fenced copy of the licence. A short "Made for Voxprint AI Media Suite" section links Plotweaver and records the 16 GB and 24 GB tiers with `min_vram_gb`.
+
+## Diffusion INT4 rental
+
+This is a separate session from the LLM bootstrap. The box is a fresh Ubuntu A100 80GB (`immers.cloud` `teslaa100-1.16.128.320`). Export `FORGE_HOST_KIND=rented-vm` so the script logs in once and leaves `HF_TOKEN` in place. The script does not unset tokens and does not enable command tracing.
+
+```bash
+export HF_TOKEN=...
+export HF_USER=Mitroshenkov87
+export FORGE_HOST_KIND=rented-vm
+export FORGE_DRIVE_TOKEN=...
+tmux new -s int4 'bash scripts/vm_run_diffusion_int4.sh'
+```
+
+`--dry-run` skips CUDA, clones, venvs, and the token prompt. `--qwen-image` adds the optional Qwen-Image INT4 steps. `--svd-rank` defaults to 256.
+
+Preflight requires `nvidia-smi`, `nvcc`, `git`, `cmake`, and `ninja`, then clones the pinned deepcompressor, ComfyUI-GGUF, llama.cpp `b3962`, and Wan2.2 trees. The deepcompressor `LICENSE` must say Apache License and Version 2.0 or the script exits 3. Two Python 3.11 venvs keep the vitoom-nunchaku wheel (cp311, torch 2.11, cu128) off the forge 3.14 stack. `fetch` then downloads QuantFunc (sha256 checked), Qwen-Image-Edit-2511, Wan2.2-T2V-A14B, and the FP8 reference. Set `FORGE_FP8_EDIT` to a local canvas part C tree to skip the public mirror.
+
+Free space under 15 percent exits 2 (`error.code` `disk_floor`) after verified sources are deleted. Uploads run at the end of each model's publish step. Sources are deleted only after a mirror sha256 matches. `~/watch.json` lists the jobs. `~/forge-out/status.json` is the heartbeat file. `ALL-DONE` is printed only after a zero exit.
+
+| Step | Minutes |
+| --- | --- |
+| Qwen-Edit-2511 calibration | 30 |
+| Qwen-Edit-2511 INT4 r256 | 900 (planning 15 h; the A100 range is 12–18 h) |
+| Nunchaku export | 20 |
+| Eval against QuantFunc r128, r256, and FP8 | 90 |
+| Edit card, sha256, upload | 25 |
+| Edit source delete | 5 |
+| Wan GGUF Q4_K_M and Q5_K_M, both experts | 100 |
+| Wan FP8 | 40 |
+| Wan smoke, 5 frames at 832×480, 4 steps | 20 |
+| Wan card, sha256, upload | 25 |
+| Wan source delete | 5 |
+
+Required total: 1260 minutes (21 h) at the 15 h quant midpoint, about 18 h if quant finishes in 12 h and about 24 h if it takes 18 h. Optional Qwen-Image adds 1010 minutes (quant 900, export 20, eval 60, publish 25, reclaim 5). The Wan block is 190 minutes. On the live GPU, identity, hands, and text stay unset, so the winner is the fastest arm that fits 16 GB (smi peak at most 15.0 GiB), otherwise 24 GB (23.0 GiB). The dry-run scores are synthetic and are not that measurement.

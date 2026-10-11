@@ -1,0 +1,59 @@
+# Diffusion INT4
+
+`forge diffusion-int4` is the Phase 1 stage for an A100 80GB rental. It wraps pinned tools. It does not reimplement SVDQuant.
+
+## Pins
+
+Checked 2026-10-11.
+
+| Tool | Commit | Licence |
+| --- | --- | --- |
+| [mit-han-lab/deepcompressor](https://github.com/mit-han-lab/deepcompressor) (the org also answers as nunchux-ai/deepcompressor) | `69f3473f5e1c1504bae35cc50c7858ef900a9b17` | Apache-2.0. Copyright 2024 Yujun Lin, Muyang Li, Zhekai Zhang, Haotian Tang, Shang Yang, Song Han. |
+| [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | `6ea2651e7df66d7585f6ffee804b20e92fb38b8a` | Apache-2.0 |
+| [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) tag `b3962` | `c8c07d658a6cefc5a50cfdf6be7d726503612303` | MIT |
+| [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) | `1ea34ff48f87168174e12956e200b1d908b1c5ff` | Apache-2.0 |
+| Wan-AI/Wan2.2-T2V-A14B | `c8c270b13ee05bfa474194ac9fb07a5868a97cea` | Apache-2.0 |
+| Qwen/Qwen-Image-Edit-2511 | `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9` | Apache-2.0 |
+| Qwen/Qwen-Image | `75e0b4be04f60ec59a75f475837eced720f823b6` | Apache-2.0 |
+| QuantFunc/Nunchaku-Qwen-Image-EDIT-2511 | `4ca543a1e91db4183ee16fd5aa5950e0b02803e5` | Apache-2.0 |
+| tonera/vitoom-nunchaku | `85bad5510d409570527b018387491fd0c81e4727` | Apache-2.0 wheel `nunchaku-1.3.0.dev20260622+cu12.8torch2.11-cp311-cp311-linux_x86_64.whl` |
+
+The March 2025 deepcompressor tree has no Qwen pipeline. The stage applies an idempotent patch: image-edit prompts, `DiffusionPipeline.from_pretrained` for names that start with `qwen-image`, and `true_cfg_scale` plus the calibration image. A checkout whose text does not match the anchors exits 6 (`patch_anchor`). `zero_cond_t` is true for Qwen-Image-Edit-2511 and false for Qwen-Image. Edit inference uses the vitoom wheel, in a Python 3.11 venv, because upstream Nunchaku does not apply that flag.
+
+## Calibration
+
+`data/diffusion_calib/` holds original Russian and English edit prompts (people, text, hands) and 16×16 synthetic swatches. Licences are in `data/diffusion_calib/LICENCES.md`. `FORGE_CALIB_IMAGE_DIR` can replace the swatch root. The English identity, hands, and text lines are the canvas hard cases. The winner gate uses those three. The Russian lines are calibration.
+
+## Winner
+
+When every arm has identity, hands, and text: identity within 0.05 of FP8, text exact, hands no worse than FP8. A 16 GB fit is an nvidia-smi peak of at most 15.0 GiB. A 24 GB fit is at most 23.0 GiB. A passing 16 GB arm wins over a passing 24 GB arm.
+
+On the live GPU those three scores stay unset, because this stage times the pipeline and does not run an identity or OCR model. The winner is then the fastest arm that fits 16 GB, otherwise 24 GB. No arm inside either cap exits 6 (`no_winner`) and leaves the sources in place. The published file is the local export for an `own-*` winner, the QuantFunc safetensors for `quantfunc-r128` or `quantfunc-r256`, or the FP8 tree for `fp8`. Dry-run scores are synthetic. They pick `own-r256` so the export path is what CI uploads to a local mirror.
+
+## Publish
+
+Public Hugging Face repos are `HF_USER/voxprint-<target>-svdquant-int4` and `HF_USER/voxprint-wan2.2-t2v-a14b` (`HF_USER` defaults to `Mitroshenkov87`). The card is `templates/canvas_model_card.md.jinja` with autoescape on. The licence gate is the same one as the rest of the forge: Apache-2.0, MIT, or another permissive tag, and a card with `## License`, `## Credits`, and `## Modification notice`. A refusal exits 3 and is not sent to Drive. Drive is the fallback and a backup copy after a Hub success. The folder id is `13qzgTnnkqvZrf_DK9fmymJ8ICdOuwDJT` (`FORGE_DRIVE_ROOT_FOLDER_ID` for that call). One verified mirror is enough. Sources are deleted only after that match.
+
+Wan publishes Q4_K_M and Q5_K_M for the high-noise and low-noise experts, plus a voxprint-fp8-v1 file per expert. The smoke test is the pinned `generate.py`: 5 frames, `832*480`, 4 steps, offload, on the bf16 checkpoint, before those sources are deleted.
+
+## Clock
+
+| Step | Minutes |
+| --- | --- |
+| `qwen-edit-2511-calib` | 30 |
+| `qwen-edit-2511-quant` | 900 |
+| `qwen-edit-2511-export` | 20 |
+| `qwen-edit-2511-eval` | 90 |
+| `qwen-edit-2511-publish` | 25 |
+| `qwen-edit-2511-reclaim` | 5 |
+| `wan-2.2-gguf` | 100 |
+| `wan-2.2-fp8` | 40 |
+| `wan-2.2-smoke` | 20 |
+| `wan-2.2-publish` | 25 |
+| `wan-2.2-reclaim` | 5 |
+
+Required total: 1260 minutes. Optional `qwen-image-*` adds quant 900, export 20, eval 60, publish 25, reclaim 5.
+
+## Script
+
+`scripts/vm_run_diffusion_int4.sh` is the non-interactive entry for a fresh Ubuntu A100. `FORGE_HOST_KIND=local` (the default) does not write token files. `FORGE_HOST_KIND=rented-vm` logs in once and leaves the logins. `--dry-run` is what CI runs. Exit codes match `docs/CLI.md`, with the 15 percent floor as exit 2.
