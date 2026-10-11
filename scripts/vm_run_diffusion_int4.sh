@@ -10,6 +10,12 @@
 # --own-edit auto is opt-in and can skip that quant when Phase 0 QuantFunc r128 passes.
 # --phase0-result is an eval and card baseline. A missing file does not change the plan.
 # --dry-run is the CPU smoke: tiny files, no CUDA, no clones, no token prompt.
+# --smoke-tiny is the one-block Qwen calib, INT4, convert, and one latent.
+# It exits before the token prompt, nvidia-smi, and the deepcompressor clone.
+# FORGE_SKIP_WAN=1 omits the Wan 2.2 clones, venv, and steps. The default still runs Wan.
+# FORGE_WAIT_FOR holds the live GPU stages until that file exists. --dry-run does not wait.
+# FORGE_PRIVATE_CALIB is an optional directory or private dataset id. Unset skips that set.
+# FORGE_COMMON_SRC is an optional directory on PYTHONPATH for voxprint_common in the cp311 venv.
 # Heartbeats land in $FORGE_OUT/status.json. The job list is ~/watch.json
 # unless --watch or FORGE_WATCH is set. Markers are ~/.done/diffusion-int4/<step>.
 set +x
@@ -24,6 +30,7 @@ FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"
 DONE_DIR="${FORGE_DONE_DIR:-$HOME/.done/diffusion-int4}"
 WATCH="${FORGE_WATCH:-$HOME/watch.json}"
 DRY=0
+SMOKE_TINY=0
 QWEN_IMAGE=0
 SVD_RANK=256
 OWN_EDIT="${FORGE_OWN_EDIT:-on}"
@@ -33,6 +40,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
       DRY=1
+      ;;
+    --smoke-tiny)
+      SMOKE_TINY=1
       ;;
     --qwen-image)
       QWEN_IMAGE=1
@@ -99,6 +109,9 @@ export FORGE_OUT FORGE_DONE_DIR="$DONE_DIR" FORGE_WATCH="$WATCH"
 EDIT_FLAGS=(--own-edit "$OWN_EDIT" --phase0-result "$PHASE0_RESULT")
 export FORGE_ROOT="$ROOT"
 export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+if [[ -n "${FORGE_COMMON_SRC:-}" ]]; then
+  export PYTHONPATH="${FORGE_COMMON_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+fi
 mkdir -p "$FORGE_OUT/logs" "$DONE_DIR"
 
 # Bash preflight. The Python disk-floor, which reclaims verified sources first,
@@ -122,6 +135,18 @@ prompt_secret() {
   printf -v "$name" '%s' "$value"
   export "$name"
 }
+
+if [[ "$SMOKE_TINY" -eq 1 ]]; then
+  PY="${FORGE_PYTHON:-python3}"
+  if ! command -v "$PY" >/dev/null 2>&1; then
+    PY=python
+  fi
+  export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+  printf 'smoke-tiny: one-block calib, ptq, convert, and one latent. No clone and no token.\n'
+  "$PY" -m voxprint_forge.diffusion.int4 --json --root "$ROOT" --forge-out "$FORGE_OUT" smoke-tiny
+  printf 'ALL-DONE\n'
+  exit 0
+fi
 
 if [[ "$DRY" -eq 0 ]]; then
   export HF_USER="${HF_USER:-Mitroshenkov87}"
@@ -216,6 +241,10 @@ mkdir -p "$SRC"
 
 clone_pin() {
   local url="$1" dest="$2" rev="$3"
+  if [[ -f "$dest/PIN" && "$(cat "$dest/PIN")" == "$rev" && "$(git -C "$dest" rev-parse HEAD 2>/dev/null)" == "$rev" ]]; then
+    printf 'pinned %s already at %s\n' "$dest" "$rev"
+    return 0
+  fi
   if [[ ! -d "$dest/.git" ]]; then
     git clone "$url" "$dest"
   fi
@@ -224,10 +253,12 @@ clone_pin() {
   printf '%s\n' "$rev" > "$dest/PIN"
 }
 
-clone_pin "https://github.com/mit-han-lab/deepcompressor" "$SRC/deepcompressor" "69f3473f5e1c1504bae35cc50c7858ef900a9b17"
-clone_pin "https://github.com/city96/ComfyUI-GGUF" "$SRC/ComfyUI-GGUF" "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
-clone_pin "https://github.com/ggml-org/llama.cpp" "$SRC/llama.cpp" "c8c07d658a6cefc5a50cfdf6be7d726503612303"
-clone_pin "https://github.com/Wan-Video/Wan2.2" "$SRC/Wan2.2" "1ea34ff48f87168174e12956e200b1d908b1c5ff"
+clone_pin "https://github.com/lantudou/deepcompressor2" "$SRC/deepcompressor" "019cbdeae7e2add52eaf4c27a361cfc1e57993b8"
+if [[ "${FORGE_SKIP_WAN:-0}" != "1" ]]; then
+  clone_pin "https://github.com/city96/ComfyUI-GGUF" "$SRC/ComfyUI-GGUF" "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
+  clone_pin "https://github.com/ggml-org/llama.cpp" "$SRC/llama.cpp" "c8c07d658a6cefc5a50cfdf6be7d726503612303"
+  clone_pin "https://github.com/Wan-Video/Wan2.2" "$SRC/Wan2.2" "1ea34ff48f87168174e12956e200b1d908b1c5ff"
+fi
 
 if ! grep -q "Apache License" "$SRC/deepcompressor/LICENSE"; then
   printf 'deepcompressor LICENSE is not Apache-2.0.\n' >&2
@@ -244,21 +275,29 @@ if [[ ! -x "$VENV_INT4/bin/python" ]]; then
   uv python install 3.11
   uv venv --python 3.11 "$VENV_INT4"
 fi
-if [[ ! -x "$VENV_WAN/bin/python" ]]; then
+if [[ "${FORGE_SKIP_WAN:-0}" != "1" && ! -x "$VENV_WAN/bin/python" ]]; then
   uv venv --python 3.11 "$VENV_WAN"
 fi
 
 # cu128 wheels cover sm_80 (A100) and sm_90 (H100).
 uv pip install --python "$VENV_INT4" "torch==2.11.*" "torchvision==0.26.*" --index-url https://download.pytorch.org/whl/cu128
-uv pip install --python "$VENV_INT4" -e "$ROOT" -e "$SRC/deepcompressor"
+# voxprint-forge and voxprint-common declare Python>=3.14. The vitoom wheel is cp311.
+# The forge package stays on PYTHONPATH. Set FORGE_COMMON_SRC to the directory that contains voxprint_common.
+# deepcompressor's poetry deps include "pyav" (not on PyPI), xformers (would re-pin torch) and LLM/video eval extras.
+# Install it with --no-deps plus the diffusion subset it imports.
+uv pip install --python "$VENV_INT4" --no-deps -e "$SRC/deepcompressor"
+uv pip install --python "$VENV_INT4" "tqdm>=4.66" "torchmetrics>=1.4" "ninja>=1.11.1" "datasets>=3.0,<4" "lm_eval>=0.4.2" jieba fuzzywuzzy rouge "python-Levenshtein>=0.26.1" "sentencepiece>=0.1.99" "omniconfig>=0.1.10" "protobuf>=5.26" "clean-fid>=0.1.35" "dominate>=2.9.1" "opencv-python>=4.10" "einops>=0.8" "timm>=1.0.7" "rotary-embedding-torch>=0.6.4" "ftfy>=6.2" "av>=13" "bs4" "image_reward @ git+https://github.com/THUDM/ImageReward.git@78f8051059b34fef8e0032ccb40561c23a2ddbbb"
+uv pip install --python "$VENV_INT4" "huggingface_hub>=0.26" "jinja2>=3.1" "safetensors>=0.4" "accelerate>=1.0" "gguf>=0.10" pillow
 uv pip install --python "$VENV_INT4" "diffusers==0.37.1" "transformers==4.57.6"
 WHEEL_URL="https://huggingface.co/tonera/vitoom-nunchaku/resolve/85bad5510d409570527b018387491fd0c81e4727/nunchaku-1.3.0.dev20260622+cu12.8torch2.11-cp311-cp311-linux_x86_64.whl"
 uv pip install --python "$VENV_INT4" "$WHEEL_URL"
 
+if [[ "${FORGE_SKIP_WAN:-0}" != "1" ]]; then
 uv pip install --python "$VENV_WAN" "torch==2.11.*" --index-url https://download.pytorch.org/whl/cu128
 uv pip install --python "$VENV_WAN" -r "$SRC/Wan2.2/requirements.txt" "gguf>=0.13.0" "safetensors"
+fi
 
-if [[ ! -x "$SRC/llama.cpp/build/bin/llama-quantize" ]]; then
+if [[ "${FORGE_SKIP_WAN:-0}" != "1" && ! -x "$SRC/llama.cpp/build/bin/llama-quantize" ]]; then
   patch="$SRC/ComfyUI-GGUF/tools/lcpp.patch"
   if git -C "$SRC/llama.cpp" apply --check "$patch" 2>/dev/null; then
     git -C "$SRC/llama.cpp" apply "$patch"
@@ -291,6 +330,14 @@ WEIGHTS="$SRC/weights"
   > "$FORGE_OUT/logs/diffusion-int4-fetch.json"
 # shellcheck disable=SC1091
 source "$WEIGHTS/exports.sh"
+
+# FORGE_WAIT_FOR: hold the GPU stages until another job (Phase 0) writes this file.
+if [[ -n "${FORGE_WAIT_FOR:-}" ]]; then
+  while [[ ! -f "$FORGE_WAIT_FOR" ]]; do
+    printf '%s waiting for %s\n' "$(date -Is)" "$FORGE_WAIT_FOR"
+    sleep 60
+  done
+fi
 
 disk_floor
 "$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates "${EDIT_FLAGS[@]}"

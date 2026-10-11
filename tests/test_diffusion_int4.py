@@ -13,7 +13,8 @@ import pytest
 import torch
 from safetensors import safe_open
 
-from voxprint_forge.diffusion.int4.calib import image_root, load_prompts
+from voxprint_forge.diffusion.int4 import calib, measure
+from voxprint_forge.diffusion.int4.calib import calibration_prompts, image_root, load_prompts
 from voxprint_forge.diffusion.int4.cli import main
 from voxprint_forge.diffusion.int4.config import fast_int4_yaml, quant_argv, write_configs
 from voxprint_forge.diffusion.int4.context import StageContext
@@ -48,9 +49,11 @@ from voxprint_forge.diffusion.int4.pins import (
     QUANTFUNC_R32_SHA256,
     QUANTFUNC_R128,
     QUANTFUNC_R128_SHA256,
+    QUANTFUNC_R256,
     QUANTFUNC_R256_SHA256,
     expected_minutes,
     planned_steps,
+    skip_wan,
 )
 from voxprint_forge.diffusion.int4.publish import live_drive, publish_verified, render_int4_card
 from voxprint_forge.diffusion.int4.qwen import _eval_lines, _winner_files, eval_step, publish_step, reclaim_sources
@@ -91,10 +94,12 @@ def test_calibration_covers_languages_and_image_refs(tmp_path: Path, monkeypatch
     assert load_prompts(ROOT)[0]["lang"] in {"ru", "en"}
 
 
-def test_fast_int4_rank_and_quant_argv(tmp_path: Path) -> None:
+def test_fast_int4_rank_and_quant_argv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FORGE_DEEPCOMPRESSOR", raising=False)
     assert "rank: 256" in fast_int4_yaml()
     assert "rank: 32" in fast_int4_yaml(rank=32)
     configs = write_configs(tmp_path, "qwen-image-edit-2511", rank=256)
+    assert configs["model"].parent == tmp_path / "configs"
     argv = quant_argv(tmp_path / "deepcompressor", configs, tmp_path / "quant")
     text = " ".join(argv)
     assert "int4.yaml" in text
@@ -435,6 +440,7 @@ def test_script_documents_the_rental_contract() -> None:
     for needle in (
         "FORGE_HOST_KIND",
         "--dry-run",
+        "--smoke-tiny",
         "--qwen-image",
         "watch.json",
         "status.json",
@@ -450,6 +456,13 @@ def test_script_documents_the_rental_contract() -> None:
         "--own-edit",
         "--phase0-result",
         "FORGE_OWN_EDIT:-on",
+        "FORGE_SKIP_WAN",
+        "FORGE_WAIT_FOR",
+        "FORGE_PRIVATE_CALIB",
+        "FORGE_COMMON_SRC",
+        "--no-deps",
+        "datasets>=3.0,<4",
+        "pinned %s already at %s",
     ):
         assert needle in text
 
@@ -744,6 +757,191 @@ def test_estimates_auto_prints_the_mirror_table(tmp_path: Path, capsys: pytest.C
     assert main(["--json", "--root", str(ROOT), "estimates", "--phase0-result", str(broken)]) == 6
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "phase0"
+
+
+def test_skip_wan_drops_steps_and_the_weight_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORGE_SKIP_WAN", "1")
+    assert skip_wan() is True
+    assert expected_minutes(qwen_image=False) == 1070
+    assert all(not step.step_id.startswith("wan-") for step in planned_steps(qwen_image=False))
+    seen: list[str] = []
+
+    def licence(repo: str, _revision: str, _token: str | None) -> str:
+        seen.append(repo)
+        return "apache-2.0"
+
+    def download(**kwargs: object) -> None:
+        path = Path(str(kwargs["local_dir"])) / str(kwargs["filename"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"bytes")
+
+    def good_hash(path: Path) -> str:
+        if path.name == QUANTFUNC_R128:
+            return QUANTFUNC_R128_SHA256
+        if path.name == QUANTFUNC_R32:
+            return QUANTFUNC_R32_SHA256
+        return QUANTFUNC_R256_SHA256
+
+    def snap(**kwargs: object) -> None:
+        folder = Path(str(kwargs["local_dir"]))
+        repo = str(kwargs["repo_id"])
+        assert not repo.startswith("Wan")
+        folder.mkdir(parents=True, exist_ok=True)
+        if repo.startswith("Qwen"):
+            (folder / "model_index.json").write_text("{}", encoding="utf-8")
+        else:
+            (folder / "transformer.safetensors").write_bytes(b"fp8")
+
+    monkeypatch.setattr("voxprint_forge.diffusion.int4.fetch.hf_hub_download", download)
+    monkeypatch.setattr("voxprint_forge.diffusion.int4.fetch.sha256_file", good_hash)
+    monkeypatch.setattr("voxprint_forge.diffusion.int4.fetch.snapshot_download", snap)
+    paths = fetch_weights(tmp_path / "ok", None, licence=licence)
+    assert paths["FORGE_WAN_CKPT"] == ""
+    assert all(not repo.startswith("Wan") for repo in seen)
+
+
+def test_configs_follow_the_deepcompressor_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    checkout = tmp_path / "deepcompressor"
+    monkeypatch.setenv("FORGE_DEEPCOMPRESSOR", str(checkout))
+    configs = write_configs(tmp_path / "work", "qwen-image-edit-2511", rank=8)
+    expected = checkout / "examples" / "diffusion" / "configs" / "voxprint" / "qwen-image-edit-2511"
+    assert configs["model"].parent == expected
+    assert configs["overlay"].is_file()
+
+
+def test_private_calib_is_optional(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calib._PRIVATE_NOTICES.clear()
+    monkeypatch.delenv("FORGE_PRIVATE_CALIB", raising=False)
+    public = calibration_prompts(ROOT)
+    assert [item["id"] for item in public] == [item["id"] for item in load_prompts(ROOT)]
+    assert "FORGE_PRIVATE_CALIB is unset" in capsys.readouterr().err
+    monkeypatch.setenv("FORGE_PRIVATE_CALIB", str(tmp_path / "missing"))
+    skipped = calibration_prompts(ROOT)
+    assert [item["id"] for item in skipped] == [item["id"] for item in public]
+    assert "could not be loaded" in capsys.readouterr().err
+    private = tmp_path / "private"
+    (private / "images").mkdir(parents=True)
+    (private / "images" / "hat.png").write_bytes(b"png")
+    (private / "prompts.json").write_text(
+        json.dumps(
+            {
+                "prompts": [
+                    {
+                        "id": "hat-1",
+                        "lang": "en",
+                        "kinds": ["edit"],
+                        "prompt": "Add a hat",
+                        "image": "images/hat.png",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FORGE_PRIVATE_CALIB", str(private))
+    rows = calibration_prompts(ROOT)
+    assert rows[-1]["id"] == "hat-1"
+    assert rows[-1]["prompt"] == "Add a hat"
+    assert Path(str(rows[-1]["image"])).is_file()
+    captured = capsys.readouterr().err
+    assert "Add a hat" not in captured
+
+    def snap(**kwargs: object) -> None:
+        folder = Path(str(kwargs["local_dir"]))
+        (folder / "images").mkdir(parents=True, exist_ok=True)
+        (folder / "images" / "hat.png").write_bytes(b"png")
+        (folder / "prompts.json").write_text(
+            json.dumps(
+                {
+                    "prompts": [
+                        {
+                            "id": "hat-hf",
+                            "prompt": "Add a hat",
+                            "image": "images/hat.png",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert kwargs["repo_type"] == "dataset"
+        assert kwargs["repo_id"] == "example/private-calib"
+
+    monkeypatch.setattr("voxprint_forge.diffusion.int4.calib.snapshot_download", snap)
+    monkeypatch.setenv("FORGE_PRIVATE_CALIB", "example/private-calib")
+    monkeypatch.setenv("FORGE_OUT", str(tmp_path / "out"))
+    remote = calibration_prompts(ROOT)
+    assert remote[-1]["id"] == "hat-hf"
+
+
+def test_eval_isolates_comparison_arms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    export = tmp_path / "work" / "diffusion-int4" / "qwen-image-edit-2511" / "export"
+    export.mkdir(parents=True)
+    (export / "model.safetensors").write_bytes(b"own")
+    quant = tmp_path / "quantfunc"
+    quant.mkdir()
+    (quant / QUANTFUNC_R128).write_bytes(b"a")
+    (quant / QUANTFUNC_R256).write_bytes(b"b")
+    fp8 = tmp_path / "fp8"
+    fp8.mkdir()
+    monkeypatch.setenv("FORGE_QUANTFUNC", str(quant))
+    monkeypatch.setenv("FORGE_FP8_EDIT", str(fp8))
+
+    def time_pipe(
+        _pipe: object,
+        _cases: list[dict[str, object]],
+        _images: Path,
+        save_dir: Path | None = None,
+        arm_id: str = "",
+    ) -> tuple[float, float]:
+        if arm_id == "quantfunc-r128":
+            raise RuntimeError("missing smooth_factor")
+        if save_dir is not None:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            (save_dir / f"{arm_id}-c1.png").write_bytes(b"png")
+        return 1000.0, 2.0
+
+    class _Cuda:
+        def empty_cache(self) -> None:
+            return None
+
+        def is_available(self) -> bool:
+            return True
+
+    monkeypatch.setattr(measure, "require_edit_runtime", lambda: None)
+    monkeypatch.setattr(measure, "QwenImageEditPlusPipeline", object())
+    monkeypatch.setattr(measure, "load_edit_pipeline", lambda _path: object())
+    monkeypatch.setattr(measure, "load_fp8_edit", lambda _path, mode: object())
+    monkeypatch.setattr(measure, "_time_pipe", time_pipe)
+    monkeypatch.setattr(measure, "_live_fp8_mode", lambda: "emulated")
+    monkeypatch.setattr(measure, "torch", type("Torch", (), {"cuda": _Cuda(), "bfloat16": None})())
+    ctx = StageContext(repo=ROOT, forge_out=tmp_path, dry_run=False, svd_rank=256)
+    arms = measure.measure_live(ctx, "qwen-image-edit-2511")
+    assert [arm.arm_id for arm in arms] == ["own-r256", "quantfunc-r256", "fp8"]
+    job = ctx.job("qwen-image-edit-2511")
+    assert (job / "eval-images" / "own-r256-c1.png").is_file()
+    errors = json.loads((job / "eval-errors.json").read_text(encoding="utf-8"))
+    assert "smooth_factor" in errors["quantfunc-r128"]
+
+    def own_fails(
+        _pipe: object,
+        _cases: list[dict[str, object]],
+        _images: Path,
+        save_dir: Path | None = None,
+        arm_id: str = "",
+    ) -> tuple[float, float]:
+        del save_dir
+        if arm_id.startswith("own-"):
+            raise RuntimeError("own export failed")
+        return 1.0, 1.0
+
+    monkeypatch.setattr(measure, "_time_pipe", own_fails)
+    with pytest.raises(RuntimeError, match="own export failed"):
+        measure.measure_live(ctx, "qwen-image-edit-2511")
 
 
 def test_forge_help_lists_diffusion_int4() -> None:

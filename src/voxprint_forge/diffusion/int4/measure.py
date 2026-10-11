@@ -1,7 +1,13 @@
-"""Optional GPU eval. diffusers and nunchaku are not installed on CPU CI."""
+"""Optional GPU eval.
+
+diffusers and nunchaku are imported on the first eval call. A CPU dry-run
+must not import diffusers, including when the package is installed for the
+one-block Qwen proof.
+"""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -13,7 +19,7 @@ from typing import Literal, Never
 from safetensors.torch import load_file
 
 from voxprint_forge.diffusion.fp8 import FP8_MAX, dequant_state
-from voxprint_forge.diffusion.int4.calib import gate_prompts, load_prompts
+from voxprint_forge.diffusion.int4.calib import gate_prompts, image_root, load_prompts
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.evalrule import Arm
 from voxprint_forge.diffusion.int4.gpu import device_fp8_report
@@ -27,6 +33,7 @@ from voxprint_forge.diffusion.int4.pins import (
     QWEN_EDIT_REPO,
     QWEN_EDIT_REVISION,
 )
+from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
 from voxprint_forge.errors import StageError, ToolMissingError
 
 Fp8ExecMode = Literal["native", "emulated"]
@@ -37,15 +44,8 @@ try:
 except ImportError:
     torch = None
 
-try:
-    from diffusers import QwenImageEditPlusPipeline
-except ImportError:
-    QwenImageEditPlusPipeline = None
-
-try:
-    from nunchaku import NunchakuQwenImageTransformer2DModel
-except ImportError:
-    NunchakuQwenImageTransformer2DModel = None
+QwenImageEditPlusPipeline = None
+NunchakuQwenImageTransformer2DModel = None
 
 try:
     from PIL import Image
@@ -53,8 +53,26 @@ except ImportError:
     Image = None
 
 
+def _bind_edit_stack() -> None:
+    """Import diffusers and nunchaku once, on the eval path."""
+    global QwenImageEditPlusPipeline, NunchakuQwenImageTransformer2DModel
+    if QwenImageEditPlusPipeline is None:
+        try:
+            from diffusers import QwenImageEditPlusPipeline as _pipeline
+        except ImportError:
+            _pipeline = None
+        QwenImageEditPlusPipeline = _pipeline
+    if NunchakuQwenImageTransformer2DModel is None:
+        try:
+            from nunchaku import NunchakuQwenImageTransformer2DModel as _transformer
+        except ImportError:
+            _transformer = None
+        NunchakuQwenImageTransformer2DModel = _transformer
+
+
 def require_edit_runtime() -> None:
     """Raise when the pinned edit stack cannot be imported."""
+    _bind_edit_stack()
     missing = [
         name
         for name, value in (
@@ -99,6 +117,8 @@ def _time_pipe(
     pipe: Callable[..., object],
     cases: list[dict[str, object]],
     image_root: Path,
+    save_dir: Path | None = None,
+    arm_id: str = "",
 ) -> tuple[float, float]:
     if Image is None or torch is None or not torch.cuda.is_available():
         raise ToolMissingError("edit eval needs Pillow, torch, and a CUDA device", code="tool_missing")
@@ -119,7 +139,7 @@ def _time_pipe(
         torch.cuda.reset_peak_memory_stats()
         thread.start()
         start = time.perf_counter()
-        pipe(
+        result = pipe(
             image=image,
             prompt=str(case["prompt"]),
             negative_prompt=" ",
@@ -127,6 +147,12 @@ def _time_pipe(
             num_inference_steps=EDIT_STEPS,
             generator=torch.Generator(device="cuda").manual_seed(0),
         )
+        if save_dir is not None:
+            images = getattr(result, "images", None)
+            if not images:
+                raise StageError(f"{arm_id} produced no eval image", code="eval_empty")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            images[0].save(save_dir / f"{arm_id}-{case['id']}.png")
         seconds.append(time.perf_counter() - start)
         stop.set()
         thread.join(timeout=1)
@@ -166,14 +192,27 @@ def measure_live(ctx: StageContext, target: str) -> list[Arm]:
         ("fp8", _weight("FORGE_FP8_EDIT", ""), None, "diffusers"),
     ]
     cases = gate_prompts(load_prompts(ctx.repo))
-    image_root = ctx.repo / "data" / "diffusion_calib"
+    images = image_root(ctx.repo)
+    save_dir = ctx.job(target) / "eval-images"
+    errors_path = ctx.job(target) / "eval-errors.json"
+    errors: dict[str, str] = {}
     arms: list[Arm] = []
     for arm_id, path, rank, kind in specs:
-        if kind == "nunchaku":
-            pipe = load_edit_pipeline(path)
-        else:
-            pipe = load_fp8_edit(path, mode=_live_fp8_mode())
-        peak, seconds = _time_pipe(pipe, cases, image_root)
+        try:
+            if kind == "nunchaku":
+                pipe = load_edit_pipeline(path)
+            else:
+                pipe = load_fp8_edit(path, mode=_live_fp8_mode())
+            peak, seconds = _time_pipe(pipe, cases, images, save_dir, arm_id)
+        except Exception as exc:
+            if arm_id.startswith("own-"):
+                raise
+            errors[arm_id] = f"{type(exc).__name__}: {exc}"[:2000]
+            print(f"EVAL-ARM-FAILED {arm_id}: {errors[arm_id][:300]}", flush=True)
+            errors_path.write_text(json.dumps(errors, indent=2) + "\n", encoding="utf-8")
+            if torch is not None:
+                torch.cuda.empty_cache()
+            continue
         arms.append(Arm(arm_id, peak, seconds, None, None, None, None, rank))
         del pipe
         torch.cuda.empty_cache()
@@ -189,6 +228,7 @@ def load_edit_pipeline(weight: Path, *, offload: str = "model"):
     assert torch is not None
     assert NunchakuQwenImageTransformer2DModel is not None
     assert QwenImageEditPlusPipeline is not None
+    install_quantfunc_shim()
     transformer = NunchakuQwenImageTransformer2DModel.from_pretrained(str(weight))
     pipe = QwenImageEditPlusPipeline.from_pretrained(
         QWEN_EDIT_REPO,

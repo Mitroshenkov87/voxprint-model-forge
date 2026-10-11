@@ -8,14 +8,23 @@ and Wan2.2 ``LICENSE.txt`` are Apache-2.0. llama.cpp tag ``b3962`` is MIT.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Literal
 
 TargetName = Literal["qwen-image-edit-2511", "qwen-image", "wan-2.2-a14b"]
 
-DEEPCOMPRESSOR_REPO = "https://github.com/mit-han-lab/deepcompressor"
+# nunchaku-ai/deepcompressor issue 104 is open: the nunchaku team has not
+# published Qwen-Image quant code. That repo redirects to nunchux-ai/deepcompressor.
+# main, deepcompressor-v0.2.0, v0.3.0, and lmquant-v0.0.0 have no
+# QwenImageTransformer2DModel factory. lantudou/deepcompressor2 branch syh is
+# Apache-2.0 and is six commits ahead of 69f3473, which is the base that raises
+# KeyError in DiffusionModelStruct.construct.
+DEEPCOMPRESSOR_REPO = "https://github.com/lantudou/deepcompressor2"
 DEEPCOMPRESSOR_MIRROR = "https://github.com/nunchux-ai/deepcompressor"
-DEEPCOMPRESSOR_COMMIT = "69f3473f5e1c1504bae35cc50c7858ef900a9b17"
+DEEPCOMPRESSOR_COMMIT = "019cbdeae7e2add52eaf4c27a361cfc1e57993b8"
+DEEPCOMPRESSOR_BRANCH = "syh"
+DEEPCOMPRESSOR_BASE_COMMIT = "69f3473f5e1c1504bae35cc50c7858ef900a9b17"
 DEEPCOMPRESSOR_LICENCE = "Apache-2.0"
 
 COMFY_GGUF_REPO = "https://github.com/city96/ComfyUI-GGUF"
@@ -199,10 +208,16 @@ MIRROR_STEPS: tuple[StepEstimate, ...] = (
 )
 
 
+def skip_wan() -> bool:
+    """True when ``FORGE_SKIP_WAN=1`` omits the Wan 2.2 steps."""
+    return os.environ.get("FORGE_SKIP_WAN", "").strip() == "1"
+
+
 def planned_steps(*, qwen_image: bool, mirror: bool = False) -> tuple[StepEstimate, ...]:
     """Steps that run for this invocation, in order."""
     steps = MIRROR_STEPS if mirror else QWEN_EDIT_STEPS
-    steps = steps + WAN_STEPS
+    if not skip_wan():
+        steps = steps + WAN_STEPS
     if qwen_image:
         return steps + QWEN_IMAGE_STEPS
     return steps
