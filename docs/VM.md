@@ -36,7 +36,7 @@ On a disposable rented VM, export `FORGE_HOST_KIND=rented-vm` before bootstrap o
 
 On the operator's own machine (`FORGE_HOST_KIND=local`, the default) the GUI and `accounts` keep credentials in the OS keyring. A GUI or `ssh` upload sends the keyring tokens on stdin for that one command, and that remote shell clears them before it exits. The local CLI still passes the Kaggle token only in a child environment and deletes that temporary config directory after each call. Local mode does not call `hf auth login` or `huggingface-cli login`.
 
-Bootstrap installs the `kaggle` CLI into `~/forge-out/venv`. Edit quality uses 8 pairs and seed 0 when `~/forge-out/EDIT_TRIM` exists. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, bootstrap exits 2 and does not prompt. A real interactive stdin still prompts once with `read -s` on `/dev/tty`.
+Bootstrap installs the `kaggle` CLI into `~/forge-out/venv`. Edit quality uses 8 pairs and seed 0 when `~/forge-out/EDIT_TRIM` exists. If `HF_TOKEN` or `KAGGLE_API_TOKEN` is unset and stdin is not a terminal, or `CI` or `FORGE_NONINTERACTIVE` is set, bootstrap exits 2 and does not open `/dev/tty`. A real interactive stdin, with neither of those variables set, still prompts once with `read -s` on `/dev/tty`.
 
 Re-attach: `tmux attach -t forge`.
 

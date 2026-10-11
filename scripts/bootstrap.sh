@@ -20,14 +20,19 @@ release_bootstrap_lock() {
 trap release_bootstrap_lock EXIT INT TERM
 
 # A tmux pty can exist before anyone attaches, and /dev/tty can be readable
-# when stdin is not a terminal. Prompt only for a real interactive stdin.
+# when stdin is not a terminal. On Windows CI, -t 0 is sometimes true while a
+# read from /dev/tty still blocks. Never open /dev/tty in those cases.
 prompt_secret() {
   local name="$1"
   set +x
   if [[ -n "${!name:-}" ]]; then
     return 0
   fi
-  if [[ ! -t 0 || ! -r /dev/tty ]]; then
+  if [[ -n "${CI:-}" || -n "${FORGE_NONINTERACTIVE:-}" || ! -t 0 ]]; then
+    printf '%s is not set. Export it before starting. This run is non-interactive, so it will not prompt.\n' "$name" >&2
+    exit 2
+  fi
+  if [[ ! -r /dev/tty ]]; then
     printf '%s is not set. Export it before starting. This run is non-interactive, so it will not prompt.\n' "$name" >&2
     exit 2
   fi

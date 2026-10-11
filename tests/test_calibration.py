@@ -117,12 +117,8 @@ def test_calibration_download_rejects_a_mismatched_body(tmp_path: Path, monkeypa
     assert not (tmp_path / "calibration" / "imatrix.txt.partial").exists()
 
 
-def test_bootstrap_refuses_a_missing_token_when_stdin_is_not_a_tty(tmp_path: Path) -> None:
-    env = os.environ.copy()
-    env.pop("HF_TOKEN", None)
-    env.pop("KAGGLE_API_TOKEN", None)
-    env["FORGE_OUT"] = tmp_path.as_posix()
-    proc = subprocess.run(
+def _bootstrap_missing_token(env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
         _bash(ROOT / "scripts/bootstrap.sh"),
         input=b"",
         capture_output=True,
@@ -130,5 +126,19 @@ def test_bootstrap_refuses_a_missing_token_when_stdin_is_not_a_tty(tmp_path: Pat
         timeout=5,
         check=False,
     )
+
+
+def test_bootstrap_refuses_a_missing_token_when_stdin_is_not_a_tty(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("KAGGLE_API_TOKEN", None)
+    env["FORGE_OUT"] = tmp_path.as_posix()
+    proc = _bootstrap_missing_token(env)
     assert proc.returncode == 2
     assert b"non-interactive" in proc.stderr
+    forced = dict(env)
+    forced.pop("CI", None)
+    forced["FORGE_NONINTERACTIVE"] = "1"
+    forced_proc = _bootstrap_missing_token(forced)
+    assert forced_proc.returncode == 2
+    assert b"non-interactive" in forced_proc.stderr
