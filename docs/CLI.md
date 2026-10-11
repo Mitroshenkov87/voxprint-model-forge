@@ -120,6 +120,30 @@ Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 mi
 
 Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
 
+## Nunchaku edit matrix
+
+`scripts/nunchaku_edit_test.sh` and `scripts/nunchaku_edit_test.ps1` run `python -m voxprint_forge.diffusion.nunchaku_edit`. This is not a `forge` subcommand. The tag is `nunchaku-test-1`. `--json` prints one result object on stdout. Logs stay on stderr. The scripts do not prompt.
+
+```bash
+bash scripts/nunchaku_edit_test.sh --json --smoke
+pwsh scripts/nunchaku_edit_test.ps1 --arms qwen-r128,qwen-r32,zimage-r128 --caps unconstrained,cap16
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--arms` | `qwen-r128`, `qwen-r32`, `zimage-r128`, `zimage-r256`. Default omits r256 |
+| `--cases` | `c1,c2,c3` for Qwen and `z1,z2,z3` for Z-Image |
+| `--out` | Default `results/nunchaku-edit/nunchaku-test-1/` |
+| `--mode` | `auto`, `model-offload`, or `block-offload` |
+| `--caps` | `unconstrained` and/or `cap16` (16/24 of a 24 GB card). Default is both |
+| `--smoke` | One case per arm. Qwen uses 20 steps instead of 40 |
+| `--cleanup` | Delete the INT4 safetensors after the run. Bases stay |
+| `--budget-min` | Default 90. r256 is dropped first when the budget is exceeded |
+
+`cap16` calls `torch.cuda.set_per_process_memory_fraction(16/24)`. `auto` tries model CPU offload and then block offload (`set_offload` with one pinned block, then sequential offload). Unconstrained Z-Image tries a resident GPU load first. A warm-up image is not included in `seconds_per_image`. `fits_16gb` is true when the nvidia-smi peak, sampled every 0.5 s, is at most 15.0 GiB.
+
+Exit codes for this script are separate from the `forge` table above: 0 pass, 1 a case failed or cap16 did not fit, 2 setup (wheel, sha256, disk, download), 3 no CUDA GPU, under 16 GB, or compute capability below 8.9. The wheel is the pinned vitoom-nunchaku build, checked by sha256. Upstream `nunchaku` is refused because it has no `zero_cond_t`. Resume markers are `~/.done/nunchaku-edit/<step>`. `result.json` uses schema `voxprint-forge-nunchaku-edit/1` and records the GPU, driver, torch, diffusers, nunchaku, wheel hash, and weight hash. See `docs/VM.md` for the 4090 steps.
+
 ## Fit
 
 `fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. For each quant, best first, fit tries placements in order: everything on the GPU, KV in RAM (`--no-kv-offload`), MoE experts on CPU (`--n-cpu-moe`, when the plan sets `moe_layers` and `expert_fraction`), then a diffusion text encoder in RAM or sequential loading (when the plan sets `encoder_gib`). An offload that fits is kept instead of a smaller quant. GPU and flagged offloads are measured with llama-server on the target. Encoder offload and sequential loading have no llama-server flag, so those two are the byte formula. The fit marker, the registry draft, and the model card record the split that tier assumes. The gate uses on-card weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.
