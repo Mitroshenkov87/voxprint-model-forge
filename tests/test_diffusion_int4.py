@@ -533,6 +533,7 @@ def test_script_dry_run(tmp_path: Path) -> None:
             "FORGE_DONE_DIR": str(tmp_path / "done"),
             "FORGE_WATCH": str(tmp_path / "watch.json"),
             "FORGE_HOST_KIND": "local",
+            "FORGE_PYTHON": sys.executable,
             "PYTHONPATH": site.getusersitepackages(),
         }
     )
