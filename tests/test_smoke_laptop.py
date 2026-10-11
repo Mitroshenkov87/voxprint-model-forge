@@ -35,16 +35,24 @@ BASH = ROOT / "scripts" / "vm_run_diffusion_int4.sh"
 
 
 def test_import_does_not_load_diffusers() -> None:
-    """A CPU test process that imports the smoke module must not import diffusers."""
+    """Importing the smoke module must not import diffusers or voxprint_common."""
     proc = subprocess.run(
         [
             sys.executable,
             "-c",
             "import sys\n"
+            "import builtins\n"
+            "real = builtins.__import__\n"
+            "def guarded(name, *args, **kwargs):\n"
+            "    if name == 'voxprint_common' or name.startswith('voxprint_common.'):\n"
+            "        raise ImportError(name)\n"
+            "    return real(name, *args, **kwargs)\n"
+            "builtins.__import__ = guarded\n"
             "import voxprint_forge.diffusion.smoke_laptop\n"
             "import voxprint_forge.diffusion.int4\n"
             "assert 'diffusers' not in sys.modules\n"
-            "assert 'voxprint_forge.diffusion.int4.stage' not in sys.modules\n",
+            "assert 'voxprint_forge.diffusion.int4.stage' not in sys.modules\n"
+            "assert 'voxprint_common' not in sys.modules\n",
         ],
         check=False,
         capture_output=True,
