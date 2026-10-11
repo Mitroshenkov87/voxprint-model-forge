@@ -12,6 +12,8 @@
 # --dry-run is the CPU smoke: tiny files, no CUDA, no clones, no token prompt.
 # --smoke-tiny is the one-block Qwen calib, INT4, convert, and one latent.
 # It exits before the token prompt, nvidia-smi, and the deepcompressor clone.
+# --preflight is the H100 gate: smoke-tiny plus a QuantFunc r128 load, then exit.
+# A non-zero status means do not start the 12-18 h quant. The quant does not run.
 # FORGE_SKIP_WAN=1 omits the Wan 2.2 clones, venv, and steps. The default still runs Wan.
 # FORGE_WAIT_FOR holds the live GPU stages until that file exists. --dry-run does not wait.
 # FORGE_PRIVATE_CALIB is an optional directory or private dataset id. Unset skips that set.
@@ -31,6 +33,7 @@ DONE_DIR="${FORGE_DONE_DIR:-$HOME/.done/diffusion-int4}"
 WATCH="${FORGE_WATCH:-$HOME/watch.json}"
 DRY=0
 SMOKE_TINY=0
+PREFLIGHT=0
 QWEN_IMAGE=0
 SVD_RANK=256
 OWN_EDIT="${FORGE_OWN_EDIT:-on}"
@@ -43,6 +46,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --smoke-tiny)
       SMOKE_TINY=1
+      ;;
+    --preflight)
+      PREFLIGHT=1
       ;;
     --qwen-image)
       QWEN_IMAGE=1
@@ -104,6 +110,15 @@ case "$OWN_EDIT" in
     exit 2
     ;;
 esac
+
+if [[ "$PREFLIGHT" -eq 1 && "$DRY" -eq 1 ]]; then
+  printf 'preflight needs the GPU venv, not --dry-run\n' >&2
+  exit 2
+fi
+if [[ "$PREFLIGHT" -eq 1 && "$SMOKE_TINY" -eq 1 ]]; then
+  printf 'preflight includes smoke-tiny; do not pass both\n' >&2
+  exit 2
+fi
 
 export FORGE_OUT FORGE_DONE_DIR="$DONE_DIR" FORGE_WATCH="$WATCH"
 EDIT_FLAGS=(--own-edit "$OWN_EDIT" --phase0-result "$PHASE0_RESULT")
@@ -330,6 +345,24 @@ WEIGHTS="$SRC/weights"
   > "$FORGE_OUT/logs/diffusion-int4-fetch.json"
 # shellcheck disable=SC1091
 source "$WEIGHTS/exports.sh"
+
+# About five minutes once the weights are cached. Failure aborts before the long quant.
+if [[ "$PREFLIGHT" -eq 1 ]]; then
+  printf 'preflight: smoke-tiny plus QuantFunc r128 load. The long quant does not start.\n'
+  set +e
+  "$PY" -m voxprint_forge.diffusion.smoke_laptop preflight \
+    --repo "$ROOT" \
+    --forge-out "$FORGE_OUT" \
+    --quantfunc "$FORGE_QUANTFUNC"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    printf 'preflight failed (%s). The long quant was not started.\n' "$status" >&2
+    exit "$status"
+  fi
+  printf 'PREFLIGHT-OK\n'
+  exit 0
+fi
 
 # FORGE_WAIT_FOR: hold the GPU stages until another job (Phase 0) writes this file.
 if [[ -n "${FORGE_WAIT_FOR:-}" ]]; then
