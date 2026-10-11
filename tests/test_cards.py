@@ -74,6 +74,8 @@ def test_model_card_front_matter_matches_hub_card() -> None:
             stamped="2026-10-10",
         )
         assert text.startswith("---\n")
+        body = text.split("---", 2)[2].lstrip()
+        assert body.startswith(f"# VOXPrint {model_id}\n")
         card = ModelCard(text)
         data = card.data.to_dict()
         assert card.data.license == "apache-2.0"

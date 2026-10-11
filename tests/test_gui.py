@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QLabel
+from voxprint_common.ui.splash import display_name
 from voxprint_common.ui.theme import CONTRAST_PAIRS, RED, build_style, contrast_ratio
 
 from voxprint_forge.gui.__main__ import IDENTITY_COLOUR, open_splash, splash_art
@@ -14,7 +15,7 @@ from voxprint_forge.gui.backdrop import apply_backdrop
 from voxprint_forge.gui.client import ssh_status, state_badge
 from voxprint_forge.gui.gauges import GaugeProbes
 from voxprint_forge.gui.secrets import MemoryStore
-from voxprint_forge.gui.window import MainWindow
+from voxprint_forge.gui.window import DISPLAY_NAME, MainWindow
 from voxprint_forge.layout import Layout, write_marker
 from voxprint_forge.preflight import memory_status
 from voxprint_forge.upload import selected_targets
@@ -105,10 +106,24 @@ def test_splash_uses_the_approved_art(qtbot: pytest.fixture) -> None:
     assert art.is_file()
     assert IDENTITY_COLOUR == "#a06020"
     splash = open_splash()
+    assert display_name(splash.build_info.app) == DISPLAY_NAME
     splash.set_stage("Opening Model Forge")
     splash.set_progress(1)
     splash.finish()
     del qtbot
+
+
+def test_window_title_uses_the_display_name(qtbot: pytest.fixture) -> None:
+    window = _window(qtbot, FakeForge({}))
+    assert window.windowTitle() == DISPLAY_NAME
+    title = window.findChild(QLabel, "title")
+    assert title is not None
+    assert title.text() == DISPLAY_NAME
+    dialog = window.show_about()
+    assert dialog.windowTitle() == f"About {DISPLAY_NAME}"
+    heading = dialog.findChild(QLabel, "title")
+    assert heading is not None
+    assert heading.text() == DISPLAY_NAME
 
 
 def test_icons_have_no_floppy_disk() -> None:

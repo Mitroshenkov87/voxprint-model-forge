@@ -171,7 +171,7 @@ def _upload(ctx: Ctx, quality: dict[str, object], *, remote: bool = True) -> dic
         output=ctx.output,
         hf_repo=ctx.part.hf_repo,
         kaggle_slug=ctx.part.kaggle_slug,
-        title="Voxprint Qwen-Image-Edit-2511",
+        title="VOXPrint Qwen-Image-Edit-2511",
         description=(
             "Private Voxprint dtype conversion of Qwen-Image-Edit-2511. Apache-2.0. "
             "This part converts the shared Qwen2.5-VL-7B encoder."

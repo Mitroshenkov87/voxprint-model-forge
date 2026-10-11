@@ -50,6 +50,8 @@ from voxprint_forge.version import version_line
 # Dark text on the suite error red. The failed chip is not a theme token.
 FAILED_TEXT = "#2a0a0a"
 FAILED_BG = RED
+# Human-facing name. Package ids, slugs, and data paths stay lower-case.
+DISPLAY_NAME = "VOXPrint AI Model Forge"
 
 SshPoll = Callable[[str, str, str, str], dict[str, object]]
 VmUpload = Callable[[str, str, str, str, dict[str, str]], str]
@@ -77,7 +79,7 @@ class MainWindow(QMainWindow):
         self.uploader = uploader or ssh_upload
         self._remote = False
         self._about: QDialog | None = None
-        self.setWindowTitle("Model Forge")
+        self.setWindowTitle(DISPLAY_NAME)
         self.setObjectName("root")
         self.resize(1100, 760)
         self._build()
@@ -105,7 +107,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("Model Forge")
+        title = QLabel(DISPLAY_NAME)
         title.setObjectName("title")
         self.version_label = QLabel(version_line())
         self.version_label.setObjectName("footer")
@@ -481,10 +483,10 @@ class MainWindow(QMainWindow):
         """Open the About dialog and return it."""
         dialog = QDialog(self)
         dialog.setObjectName("root")
-        dialog.setWindowTitle("About Model Forge")
+        dialog.setWindowTitle(f"About {DISPLAY_NAME}")
         dialog.setStyleSheet(self.styleSheet())
         body = QVBoxLayout(dialog)
-        heading = QLabel("Model Forge")
+        heading = QLabel(DISPLAY_NAME)
         heading.setObjectName("title")
         version = QLabel(version_line())
         version.setObjectName("aboutVersion")

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from voxprint_forge.abliterate import abliterate_directory
 from voxprint_forge.calibration import ensure_calibration
-from voxprint_forge.cards import render_card
+from voxprint_forge.cards import hub_title, render_card
 from voxprint_forge.components import place_weight
 from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.disk import ensure_free
@@ -1038,7 +1038,7 @@ def _upload(
                 host.remote,
                 artifacts,
                 model_id=model.id,
-                title=f"Voxprint {model.id}",
+                title=hub_title(model.id),
                 description=Path(str(card["path"])).read_text(encoding="utf-8"),
                 licence=model.licence,
                 attempts=host.attempts,

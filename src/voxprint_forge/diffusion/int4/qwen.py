@@ -258,7 +258,7 @@ def publish_step(ctx: StageContext, target: TargetName) -> dict[str, object]:
     winner = str(comparison.get("winner") or "")
     weights = _winner_files(ctx, target, winner)
     repo, revision, pipeline, _zero = _target_facts(target)
-    title = f"Voxprint {target} SVDQuant INT4 r{ctx.svd_rank}"
+    title = f"VOXPrint {target} SVDQuant INT4 r{ctx.svd_rank}"
     card = render_int4_card(
         ctx.repo,
         title=title,
@@ -376,7 +376,7 @@ def mirror_step(ctx: StageContext) -> dict[str, object]:
     eval_lines = (reason, "Wan 2.2 still runs.", *_baseline_eval_lines(ctx.phase0_baseline))
     card = render_int4_card(
         ctx.repo,
-        title="Voxprint mirror of QuantFunc Qwen-Image-Edit-2511 INT4",
+        title="VOXPrint mirror of QuantFunc Qwen-Image-Edit-2511 INT4",
         base_models=(f"{repo}@{revision}", f"{QUANTFUNC_REPO}@{QUANTFUNC_REVISION}"),
         pipeline_tag=pipeline,
         quant_lines=(

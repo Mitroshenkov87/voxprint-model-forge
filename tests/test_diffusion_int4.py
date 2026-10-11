@@ -170,7 +170,7 @@ def test_hub_failure_falls_through_to_drive(tmp_path: Path) -> None:
     (tmp_path / "weight.bin").write_bytes(b"weights")
     card = render_int4_card(
         ROOT,
-        title="Voxprint example",
+        title="VOXPrint example",
         base_models=("Qwen/Qwen-Image-Edit-2511@rev",),
         pipeline_tag="image-to-image",
         quant_lines=("int4",),
