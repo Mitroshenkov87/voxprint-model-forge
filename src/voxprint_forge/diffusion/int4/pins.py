@@ -8,6 +8,7 @@ and Wan2.2 ``LICENSE.txt`` are Apache-2.0. llama.cpp tag ``b3962`` is MIT.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Literal
 
@@ -199,10 +200,16 @@ MIRROR_STEPS: tuple[StepEstimate, ...] = (
 )
 
 
+def skip_wan() -> bool:
+    """True when ``FORGE_SKIP_WAN=1`` omits the Wan 2.2 steps."""
+    return os.environ.get("FORGE_SKIP_WAN", "").strip() == "1"
+
+
 def planned_steps(*, qwen_image: bool, mirror: bool = False) -> tuple[StepEstimate, ...]:
     """Steps that run for this invocation, in order."""
     steps = MIRROR_STEPS if mirror else QWEN_EDIT_STEPS
-    steps = steps + WAN_STEPS
+    if not skip_wan():
+        steps = steps + WAN_STEPS
     if qwen_image:
         return steps + QWEN_IMAGE_STEPS
     return steps

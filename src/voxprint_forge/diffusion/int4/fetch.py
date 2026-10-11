@@ -28,6 +28,7 @@ from voxprint_forge.diffusion.int4.pins import (
     QWEN_EDIT_REVISION,
     WAN_WEIGHT_REPO,
     WAN_WEIGHT_REVISION,
+    skip_wan,
 )
 from voxprint_forge.diffusion.names import EDIT_FP8_PREFIX
 from voxprint_forge.diffusion.sources import assert_apache
@@ -153,12 +154,13 @@ def fetch_weights(
     """Download every rental input and return the environment paths."""
     check = licence or assert_apache
     check(QUANTFUNC_REPO, QUANTFUNC_REVISION, token)
-    check(WAN_WEIGHT_REPO, WAN_WEIGHT_REVISION, token)
+    if not skip_wan():
+        check(WAN_WEIGHT_REPO, WAN_WEIGHT_REVISION, token)
     check(QWEN_EDIT_REPO, QWEN_EDIT_REVISION, token)
     fp8 = resolve_fp8(dest, forge_out, token)
     quantfunc = fetch_quantfunc(dest, token)
     qwen = fetch_qwen_edit(dest, token)
-    wan = fetch_wan(dest, token)
+    wan = "" if skip_wan() else fetch_wan(dest, token)
     paths = {
         "FORGE_FP8_EDIT": str(fp8),
         "FORGE_QUANTFUNC": str(quantfunc),
