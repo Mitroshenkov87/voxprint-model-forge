@@ -90,6 +90,7 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 | `HF_TOKEN` | Hub read and public upload. Not logged. |
 | `HF_USER` | Hub account that owns the public model repos |
 | `FORGE_HOST_KIND` | `local` (default) or `rented-vm`. See `docs/VM.md` |
+| `FORGE_NONINTERACTIVE` | When set, bootstrap does not open `/dev/tty` for a missing token |
 | `KAGGLE_API_TOKEN` | Kaggle CLI auth. Not logged. |
 | `KAGGLE_USER` | Kaggle owner. Default `mitroshenkov87` |
 | `FORGE_LLAMA_BIN` | Directory with `llama-quantize`, `llama-imatrix`, `llama-server`, `llama-cli`, `llama-perplexity` |

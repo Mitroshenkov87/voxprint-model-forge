@@ -117,6 +117,10 @@ def test_bootstrap_script_keeps_tokens_out_of_the_shell_trace() -> None:
     for banned in ("git clone", "git fetch", "git checkout", "git archive", "git push", "git -c"):
         assert banned not in text
     assert "/dev/tty" in text
+    before_tty_read = text.split("IFS= read -r -s value </dev/tty", 1)[0]
+    assert "${CI:-}" in before_tty_read
+    assert "FORGE_NONINTERACTIVE" in before_tty_read
+    assert "! -t 0" in before_tty_read
     assert "HF_TOKEN" in text
     assert "KAGGLE_API_TOKEN" in text
     assert "CMAKE_CUDA_ARCHITECTURES" in text
