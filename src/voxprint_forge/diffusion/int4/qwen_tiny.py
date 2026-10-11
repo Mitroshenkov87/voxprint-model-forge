@@ -26,6 +26,7 @@ from voxprint_forge.diffusion.int4.pins import SVD_GROUP
 from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
 from voxprint_forge.diffusion.int4.qwen_convert import convert_qwen_block, nunchaku_block_key_report
 from voxprint_forge.diffusion.int4.qwen_pack import packed_lowrank_rank
+from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature
 from voxprint_forge.errors import StageError
 
 try:
@@ -113,6 +114,7 @@ def smoke_tiny(
     if dest is None:
         raise StageError("smoke-tiny nunchaku load needs a checkpoint path", code="smoke_tiny")
     install_quantfunc_shim()
+    bind_qwen_config_signature(NunchakuQwenImageTransformer2DModel, QwenImageTransformer2DModel)
     loaded = NunchakuQwenImageTransformer2DModel.from_pretrained(
         str(dest),
         device="cuda",
@@ -332,14 +334,15 @@ def _quantize_block(
     captured: dict[str, list[torch.Tensor]],
     *,
     rank: int,
+    block_index: int = 0,
 ) -> dict[str, dict[str, torch.Tensor] | dict[str, tuple[torch.Tensor, torch.Tensor]]]:
     """Group-wise INT4 plus a rank-8 SVD branch. Modulation stays W4A16 without SVD."""
     state: dict[str, torch.Tensor] = {}
     scales: dict[str, torch.Tensor] = {}
     smooth: dict[str, torch.Tensor] = {}
     branches: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-    block = model.transformer_blocks[0]
-    prefix = "transformer_blocks.0"
+    block = model.transformer_blocks[block_index]
+    prefix = f"transformer_blocks.{block_index}"
     for name, parameter in block.named_parameters():
         if ".norm" in name and name.endswith(".weight"):
             state[f"{prefix}.{name}"] = parameter.detach().to(dtype=torch.bfloat16).cpu()

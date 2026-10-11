@@ -5,7 +5,7 @@ Unattended RTX 4090 laptop smoke. No prompts, no tokens, no tty.
 
 Fetch and launch (session drop is fine; the window is hidden):
 
-irm https://raw.githubusercontent.com/Mitroshenkov87/voxprint-model-forge/diffusion-int4-v4-smoke1/scripts/smoke_laptop.ps1 -OutFile "$env:TEMP\smoke_laptop.ps1"
+irm https://raw.githubusercontent.com/Mitroshenkov87/voxprint-model-forge/diffusion-int4-v4-smoke2/scripts/smoke_laptop.ps1 -OutFile "$env:TEMP\smoke_laptop.ps1"
 Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:TEMP\smoke_laptop.ps1" -WindowStyle Hidden
 
 Results: %LOCALAPPDATA%\VoxprintForgeSmoke\results\<timestamp>\result.json
@@ -14,8 +14,10 @@ The same path is printed and written to %LOCALAPPDATA%\VoxprintForgeSmoke\latest
 [CmdletBinding()]
 param(
     [switch]$KeepVenv,
-    [string]$Steps = 'smoke-tiny,quantfunc,zimage',
-    [int]$Minutes = 90
+    [switch]$Force,
+    [string]$Steps = 'smoke-tiny,quantfunc,zimage,calib-quant-timing',
+    [int]$Minutes = 90,
+    [int]$Blocks = 2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,13 +25,14 @@ $ConfirmPreference = 'None'
 $ProgressPreference = 'SilentlyContinue'
 $PSNativeCommandUseErrorActionPreference = $false
 $env:GIT_TERMINAL_PROMPT = '0'
+$env:HF_HUB_ENABLE_HF_TRANSFER = '1'
 $env:HF_HUB_DISABLE_TELEMETRY = '1'
 $env:HF_HUB_DISABLE_PROGRESS_BARS = '1'
 $env:PYTHONUNBUFFERED = '1'
 Remove-Item Env:HF_TOKEN -ErrorAction SilentlyContinue
 Remove-Item Env:HUGGING_FACE_HUB_TOKEN -ErrorAction SilentlyContinue
 
-$Tag = 'diffusion-int4-v4-smoke1'
+$Tag = 'diffusion-int4-v4-smoke2'
 $RepoUrl = 'https://github.com/Mitroshenkov87/voxprint-model-forge'
 $WheelName = 'nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp312-cp312-win_amd64.whl'
 $WheelSha = 'ddc015bfa6fc6b84957532823c23418f5b986cb61e3c02c97a646cfe2a1fd955'
@@ -39,6 +42,11 @@ $SmokeRoot = Join-Path $env:LOCALAPPDATA 'VoxprintForgeSmoke'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $Results = Join-Path $SmokeRoot "results\$Stamp"
 $Log = Join-Path $Results 'smoke.log'
+$Previous = $null
+$LatestFile = Join-Path $SmokeRoot 'latest.txt'
+if ((-not $Force) -and (Test-Path -LiteralPath $LatestFile)) {
+    $Previous = (Get-Content -LiteralPath $LatestFile -Raw).Trim()
+}
 New-Item -ItemType Directory -Force -Path $Results | Out-Null
 $Started = Get-Date
 $script:ExitCode = 2
@@ -122,21 +130,32 @@ try {
     Invoke-Setup $UvExe @(
         'pip', 'install', '--python', $Python,
         'diffusers==0.37.1', 'transformers==4.57.6',
-        'accelerate>=1.9', 'peft>=0.17', 'pillow', 'safetensors', 'huggingface_hub'
+        'accelerate>=1.9', 'peft>=0.17', 'pillow', 'safetensors', 'huggingface_hub',
+        'hf_xet', 'hf_transfer'
     ) 'diffusers pins'
 
     $WheelDir = Join-Path $SmokeRoot 'wheels'
     New-Item -ItemType Directory -Force -Path $WheelDir | Out-Null
     $WheelPath = Join-Path $WheelDir $WheelName
-    if (-not (Test-Path -LiteralPath $WheelPath)) {
-        Write-Log "downloading $WheelName"
-        Invoke-Setup 'curl.exe' @('-fsSL', '-o', $WheelPath, $WheelUrl) 'wheel download'
+    $HaveWheel = $false
+    if (Test-Path -LiteralPath $WheelPath) {
+        $Actual = (Get-FileHash -LiteralPath $WheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($Actual -eq $WheelSha) {
+            $HaveWheel = $true
+        }
     }
-    $Actual = (Get-FileHash -LiteralPath $WheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Actual -ne $WheelSha) {
-        Remove-Item -LiteralPath $WheelPath -Force -ErrorAction SilentlyContinue
-        Write-SetupResult "wheel sha256 $Actual != $WheelSha"
-        exit 2
+    if (-not $HaveWheel) {
+        Write-Log "downloading $WheelName"
+        Invoke-Setup 'curl.exe' @(
+            '-fL', '--retry', '8', '--retry-all-errors', '--retry-delay', '2',
+            '-C', '-', '-o', $WheelPath, $WheelUrl
+        ) 'wheel download'
+        $Actual = (Get-FileHash -LiteralPath $WheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($Actual -ne $WheelSha) {
+            Remove-Item -LiteralPath $WheelPath -Force -ErrorAction SilentlyContinue
+            Write-SetupResult "wheel sha256 $Actual != $WheelSha"
+            exit 2
+        }
     }
     Invoke-Setup $UvExe @('pip', 'install', '--python', $Python, '--no-deps', $WheelPath) 'nunchaku wheel'
 
@@ -147,18 +166,23 @@ try {
     $Cache = Join-Path $SmokeRoot 'cache'
     New-Item -ItemType Directory -Force -Path $Cache | Out-Null
 
-    $Elapsed = ((Get-Date) - $Started).TotalSeconds
-    $Remain = [Math]::Floor(($Minutes * 60) - $Elapsed)
-    if ($Remain -lt 1) {
-        $Remain = 0
+    Write-Log "python smoke compute_minutes=$Minutes blocks=$Blocks force=$Force"
+    $RunArgs = @(
+        '-m', 'voxprint_forge.diffusion.smoke_laptop', 'run',
+        '--results', $Results,
+        '--repo', $Checkout,
+        '--cache', $Cache,
+        '--steps', $Steps,
+        '--minutes', "$Minutes",
+        '--blocks', "$Blocks"
+    )
+    if ($Force) {
+        $RunArgs += '--force'
     }
-    Write-Log "python smoke seconds_left=$Remain"
-    & $Python -m voxprint_forge.diffusion.smoke_laptop run `
-        --results $Results `
-        --repo $Checkout `
-        --cache $Cache `
-        --steps $Steps `
-        --seconds $Remain *>> $Log
+    if ($Previous) {
+        $RunArgs += @('--resume-from', $Previous)
+    }
+    & $Python @RunArgs *>> $Log
     if ($null -eq $LASTEXITCODE) {
         $script:ExitCode = 2
     } else {
@@ -168,12 +192,16 @@ try {
     Write-SetupResult "$_"
     $script:ExitCode = 2
 } finally {
-    foreach ($name in @('hf', 'cache', 'wheels')) {
-        $path = Join-Path $SmokeRoot $name
-        if (Test-Path -LiteralPath $path) {
-            Write-Log "deleting $path"
-            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    if ($script:ExitCode -eq 0) {
+        foreach ($name in @('hf', 'cache', 'wheels')) {
+            $path = Join-Path $SmokeRoot $name
+            if (Test-Path -LiteralPath $path) {
+                Write-Log "deleting $path"
+                Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
+    } else {
+        Write-Log 'keeping the weight cache so a rerun can resume downloads'
     }
     if (-not $KeepVenv) {
         $venvPath = Join-Path $SmokeRoot 'venv'
