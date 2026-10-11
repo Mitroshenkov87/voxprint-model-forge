@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -13,7 +14,7 @@ from typing import Literal, Never
 from safetensors.torch import load_file
 
 from voxprint_forge.diffusion.fp8 import FP8_MAX, dequant_state
-from voxprint_forge.diffusion.int4.calib import gate_prompts, load_prompts
+from voxprint_forge.diffusion.int4.calib import gate_prompts, image_root, load_prompts
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.evalrule import Arm
 from voxprint_forge.diffusion.int4.gpu import device_fp8_report
@@ -99,6 +100,8 @@ def _time_pipe(
     pipe: Callable[..., object],
     cases: list[dict[str, object]],
     image_root: Path,
+    save_dir: Path | None = None,
+    arm_id: str = "",
 ) -> tuple[float, float]:
     if Image is None or torch is None or not torch.cuda.is_available():
         raise ToolMissingError("edit eval needs Pillow, torch, and a CUDA device", code="tool_missing")
@@ -119,7 +122,7 @@ def _time_pipe(
         torch.cuda.reset_peak_memory_stats()
         thread.start()
         start = time.perf_counter()
-        pipe(
+        result = pipe(
             image=image,
             prompt=str(case["prompt"]),
             negative_prompt=" ",
@@ -127,6 +130,12 @@ def _time_pipe(
             num_inference_steps=EDIT_STEPS,
             generator=torch.Generator(device="cuda").manual_seed(0),
         )
+        if save_dir is not None:
+            images = getattr(result, "images", None)
+            if not images:
+                raise StageError(f"{arm_id} produced no eval image", code="eval_empty")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            images[0].save(save_dir / f"{arm_id}-{case['id']}.png")
         seconds.append(time.perf_counter() - start)
         stop.set()
         thread.join(timeout=1)
@@ -166,14 +175,27 @@ def measure_live(ctx: StageContext, target: str) -> list[Arm]:
         ("fp8", _weight("FORGE_FP8_EDIT", ""), None, "diffusers"),
     ]
     cases = gate_prompts(load_prompts(ctx.repo))
-    image_root = ctx.repo / "data" / "diffusion_calib"
+    images = image_root(ctx.repo)
+    save_dir = ctx.job(target) / "eval-images"
+    errors_path = ctx.job(target) / "eval-errors.json"
+    errors: dict[str, str] = {}
     arms: list[Arm] = []
     for arm_id, path, rank, kind in specs:
-        if kind == "nunchaku":
-            pipe = load_edit_pipeline(path)
-        else:
-            pipe = load_fp8_edit(path, mode=_live_fp8_mode())
-        peak, seconds = _time_pipe(pipe, cases, image_root)
+        try:
+            if kind == "nunchaku":
+                pipe = load_edit_pipeline(path)
+            else:
+                pipe = load_fp8_edit(path, mode=_live_fp8_mode())
+            peak, seconds = _time_pipe(pipe, cases, images, save_dir, arm_id)
+        except Exception as exc:
+            if arm_id.startswith("own-"):
+                raise
+            errors[arm_id] = f"{type(exc).__name__}: {exc}"[:2000]
+            print(f"EVAL-ARM-FAILED {arm_id}: {errors[arm_id][:300]}", flush=True)
+            errors_path.write_text(json.dumps(errors, indent=2) + "\n", encoding="utf-8")
+            if torch is not None:
+                torch.cuda.empty_cache()
+            continue
         arms.append(Arm(arm_id, peak, seconds, None, None, None, None, rank))
         del pipe
         torch.cuda.empty_cache()

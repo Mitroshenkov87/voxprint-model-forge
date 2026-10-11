@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 from pathlib import Path
 
@@ -498,6 +499,149 @@ def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(edit, "prepare_runtime", _boom)
     assert edit.main(["--out", str(tmp_path / "b"), "--arms", "qwen-r128"]) == 2
+
+
+def test_reexec_compares_the_venv_prefix(tmp_path: Path) -> None:
+    caller = tmp_path / "caller"
+    cuda = tmp_path / "cuda"
+    caller.mkdir()
+    cuda.mkdir()
+    assert edit.should_reexec(cuda, prefix=caller) is True
+    assert edit.should_reexec(caller, prefix=caller) is False
+    shared = tmp_path / "uv-python"
+    shared.write_bytes(b"#!/bin/sh\n")
+    links: list[Path] = []
+    for root in (caller, cuda):
+        link = root / "bin" / "python"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            link.symlink_to(shared)
+        except OSError:
+            return
+        links.append(link)
+    assert links[0].resolve() == links[1].resolve()
+    assert edit.should_reexec(cuda, prefix=caller) is True
+
+
+def test_offline_fp8_resolves_the_base_before_load(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    family = "qwen-edit-2511"
+    downloaded = {"n": 0}
+
+    def boom(**_kwargs: object) -> None:
+        assert "HF_HUB_OFFLINE" not in os.environ
+        raise RuntimeError("hub down")
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setattr(edit, "snapshot_download", boom)
+    with pytest.raises(RuntimeError, match="hub down"):
+        edit._ensure_base(family)
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+    def snap(**kwargs: object) -> None:
+        assert "HF_HUB_OFFLINE" not in os.environ
+        raw = kwargs["ignore_patterns"]
+        assert isinstance(raw, list)
+        patterns = [str(item) for item in raw]
+        assert "transformer/*.safetensors" in patterns
+        assert "transformer/*" not in patterns
+        dest = Path(str(kwargs["local_dir"]))
+        (dest / "transformer").mkdir(parents=True, exist_ok=True)
+        (dest / "model_index.json").write_text("{}", encoding="utf-8")
+        (dest / "transformer" / "config.json").write_text("{}", encoding="utf-8")
+        downloaded["n"] += 1
+
+    monkeypatch.setattr(edit, "snapshot_download", snap)
+    seen: dict[str, object] = {}
+
+    class Pipe:
+        @classmethod
+        def from_pretrained(cls, base: str, **kwargs: object) -> Pipe:
+            seen["base"] = base
+            seen["local_files_only"] = kwargs.get("local_files_only")
+            return cls()
+
+    class Model:
+        @classmethod
+        def load_config(cls, path: str) -> dict[str, object]:
+            folder = Path(path)
+            assert folder.name == "transformer"
+            assert (folder / "config.json").is_file()
+            return {}
+
+        @classmethod
+        def from_config(cls, _config: dict[str, object]) -> Model:
+            return cls()
+
+        def load_state_dict(self, _state: dict[str, object], strict: bool = False) -> None:
+            del strict
+            return None
+
+    monkeypatch.setattr(edit, "QwenImageEditPlusPipeline", Pipe)
+    monkeypatch.setattr(edit, "QwenImageTransformer2DModel", Model)
+    dest = isolated / "cache" / "bases" / family
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "model_index.json").write_text("{}", encoding="utf-8")
+    edit._mark(edit.done_dir(), f"base-{family}", str(edit.BASES[family]["revision"]))
+    edit._load_fp8(
+        {"family": family, "kind": "fp8", "strategy": "mirror-dequant", "fp8_files": []}
+    )
+    assert downloaded["n"] == 1
+    assert seen["local_files_only"] is True
+    assert str(seen["base"]).endswith(f"bases/{family}")
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    edit._load_fp8({"family": family, "kind": "fp8", "strategy": "mirror-dequant", "fp8_files": []})
+    assert downloaded["n"] == 1
+
+
+def test_one_arm_failure_does_not_skip_the_rest(isolated: Path) -> None:
+    seen: list[str] = []
+
+    def spawn(job: dict[str, object]) -> dict[str, object]:
+        seen.append(str(job["arm"]))
+        if job["arm"] == "qwen-r128":
+            raise edit.SetupError("missing smooth_factor")
+        if job.get("kind") == "fp8":
+            raise edit.SetupError("offline base")
+        return _fit_payload(str(job["mode"]))
+
+    mirror = isolated / "fp8.safetensors"
+    mirror.write_bytes(b"z")
+    args = _options(isolated / "out", ["--arms", "qwen-r128,qwen-r32", "--caps", "cap16", "--smoke"])
+    code, result = edit.execute(
+        args,
+        spawn=spawn,
+        elapsed_min=lambda: 0.0,
+        gpu=_gpu(),
+        wheel=edit.WINDOWS_WHEEL,
+        mirror_lookup=lambda _name: [mirror],
+    )
+    assert code == 1
+    assert seen == ["qwen-r128", "qwen-r32", "qwen-fp8"]
+    assert [arm["id"] for arm in result["arms"]] == ["qwen-r128", "qwen-r32"]
+    assert result["arms"][0]["caps"]["cap16"]["error"] == "missing smooth_factor"
+    assert result["arms"][1]["caps"]["cap16"]["fits_16gb"] is True
+    assert result["baselines"][0]["status"] == "error"
+    assert result["baselines"][0]["error"] == "offline base"
+
+
+def test_missing_cuda_stops_before_later_arms(isolated: Path) -> None:
+    seen: list[str] = []
+
+    def spawn(job: dict[str, object]) -> dict[str, object]:
+        seen.append(str(job["arm"]))
+        raise edit.GpuError("no CUDA GPU")
+
+    args = _options(isolated / "fail", ["--arms", "qwen-r128,qwen-r32", "--caps", "cap16", "--smoke"])
+    with pytest.raises(edit.GpuError, match="no CUDA GPU"):
+        edit.execute(
+            args,
+            spawn=spawn,
+            elapsed_min=lambda: 0.0,
+            gpu=_gpu(),
+            wheel=edit.WINDOWS_WHEEL,
+            mirror_lookup=lambda _name: [],
+        )
+    assert seen == ["qwen-r128"]
 
 
 def test_docs_mention_the_matrix() -> None:

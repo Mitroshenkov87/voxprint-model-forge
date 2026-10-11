@@ -93,8 +93,17 @@ def collect_yaml(prompt_file: Path) -> str:
 
 
 def write_configs(work: Path, target: TargetName, *, rank: int) -> dict[str, Path]:
-    """Write the model, fast_int4 overlay, and collect configs."""
-    config_dir = work / "configs"
+    """Write the model, fast_int4 overlay, and collect configs.
+
+    omniconfig only accepts config files under the deepcompressor cwd
+    (``examples/diffusion``). When ``FORGE_DEEPCOMPRESSOR`` is set, the files
+    land there. Otherwise they stay under ``work/configs``.
+    """
+    checkout = os.environ.get("FORGE_DEEPCOMPRESSOR", "").strip()
+    if checkout:
+        config_dir = Path(checkout) / "examples" / "diffusion" / "configs" / "voxprint" / target
+    else:
+        config_dir = work / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
     model = config_dir / "model.yaml"
     overlay = config_dir / "fast_int4.yaml"

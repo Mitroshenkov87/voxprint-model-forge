@@ -634,7 +634,13 @@ def weight_bytes_needed(arms: list[str], root: Path, done: Path) -> int:
     for family in families:
         base = BASES[family]
         revision = str(base["revision"])
-        if not _marked(done, f"base-{family}", revision):
+        dest = root / "bases" / family
+        config = dest / "transformer" / "config.json"
+        if (
+            not _marked(done, f"base-{family}", revision)
+            or not (dest / "model_index.json").is_file()
+            or not config.is_file()
+        ):
             need += int(base["bytes"])
     return need + DISK_MARGIN
 
@@ -830,17 +836,22 @@ def execute(
             skipped.append({"id": arm, "reason": reason})
             continue
         for cap in options.caps:
-            payload = _run_cap(
-                arm=arm,
-                cap=cap,
-                mode=options.mode,
-                smoke=options.smoke,
-                requested=requested,
-                spawn=spawn,
-                out=out,
-                attempts=attempts,
-                memory_mib=gpu.memory_mib,
-            )
+            try:
+                payload = _run_cap(
+                    arm=arm,
+                    cap=cap,
+                    mode=options.mode,
+                    smoke=options.smoke,
+                    requested=requested,
+                    spawn=spawn,
+                    out=out,
+                    attempts=attempts,
+                    memory_mib=gpu.memory_mib,
+                )
+            except NunchakuError as exc:
+                if _machine_gpu_failure(exc):
+                    raise
+                payload = _cap_failure(str(exc), str(options.mode), gpu.memory_mib, cap)
             cap_results[(arm, cap)] = payload
     note = fp8_timing_note(gpu)
     baseline_rows: list[dict[str, object]] = []
@@ -853,7 +864,18 @@ def execute(
             baseline_rows.append(_with_fp8_note({"id": baseline, "status": reason, "caps": {}}, note))
             continue
         lookup = mirror_lookup if mirror_lookup is not None else _mirror_files
-        payload = _run_baseline(baseline, options, spawn, out, gpu, lookup)
+        try:
+            payload = _run_baseline(baseline, options, spawn, out, gpu, lookup)
+        except NunchakuError as exc:
+            if _machine_gpu_failure(exc):
+                raise
+            baseline_rows.append(
+                _with_fp8_note(
+                    {"id": baseline, "status": "error", "error": str(exc), "caps": {}},
+                    note,
+                )
+            )
+            continue
         baseline_rows.append(payload)
     code = EXIT_FAIL if not arms else decide_exit(arms, tuple(options.caps), cap_results)
     if "cap16" in options.caps and arms:
@@ -1145,7 +1167,7 @@ def prepare_runtime(argv: list[str], *, need_zimage: bool) -> None:
             _run(command)
         _assert_installed_sources(python, need_zimage=need_zimage)
         _mark(done, "wheel", spec.sha256)
-    if not _same_file(Path(sys.executable), python):
+    if should_reexec(venv, prefix=Path(sys.prefix)):
         _reexec(python, argv)
 
 
@@ -1435,22 +1457,38 @@ def _prepare_weights(arms: list[str]) -> None:
         _ensure_weight(ARMS[arm])
 
 
-def _ensure_base(family: str) -> None:
+def _base_ready(dest: Path) -> bool:
+    return (dest / "model_index.json").is_file() and (dest / "transformer" / "config.json").is_file()
+
+
+def _ensure_base(family: str) -> Path:
+    """Download the base snapshot, including ``transformer/config.json``.
+
+    Transformer weight files stay out. ``HF_HUB_OFFLINE`` is cleared only for
+    this download so a later ``from_pretrained(..., local_files_only=True)``
+    can load the snapshot that was just resolved.
+    """
     base = BASES[family]
     revision = str(base["revision"])
     dest = cache_dir() / "bases" / family
     done = done_dir()
-    if _marked(done, f"base-{family}", revision) and (dest / "model_index.json").is_file():
-        return
+    if _marked(done, f"base-{family}", revision) and _base_ready(dest):
+        return dest
     dest.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=str(base["repo"]),
-        revision=revision,
-        ignore_patterns=["transformer/*"],
-        local_dir=str(dest),
-        token=False,
-    )
+    offline = os.environ.pop("HF_HUB_OFFLINE", None)
+    try:
+        snapshot_download(
+            repo_id=str(base["repo"]),
+            revision=revision,
+            ignore_patterns=["transformer/*.safetensors", "transformer/*.bin", "transformer/*.pt"],
+            local_dir=str(dest),
+            token=False,
+        )
+    finally:
+        if offline is not None:
+            os.environ["HF_HUB_OFFLINE"] = offline
     _mark(done, f"base-{family}", revision)
+    return dest
 
 
 def _ensure_weight(spec: ArmSpec) -> None:
@@ -1540,7 +1578,6 @@ def _load_pipe(job: dict[str, object]) -> object:
     if diffusers is None or nunchaku is None:
         raise SetupError("diffusers and the vitoom-nunchaku wheel are required in this interpreter")
     family = str(job["family"])
-    base = str(job["base"])
     if str(job.get("kind")) == "fp8":
         return _load_fp8(job)
     weight = str(job["weight"])
@@ -1552,8 +1589,13 @@ def _load_pipe(job: dict[str, object]) -> object:
         pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
     else:
         raise SetupError(f"unknown family {family}")
+    base = str(_ensure_base(family))
     transformer = transformer_cls.from_pretrained(weight, torch_dtype=torch.bfloat16)
-    kwargs: dict[str, object] = {"transformer": transformer, "torch_dtype": torch.bfloat16}
+    kwargs: dict[str, object] = {
+        "transformer": transformer,
+        "torch_dtype": torch.bfloat16,
+        "local_files_only": True,
+    }
     if family == "z-image-turbo":
         kwargs["low_cpu_mem_usage"] = False
     return pipeline_cls.from_pretrained(base, **kwargs)
@@ -1567,10 +1609,11 @@ def _load_fp8(job: dict[str, object]) -> object:
     else:
         pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
         model_cls = _require_cls(ZImageTransformer2DModel, "ZImageTransformer2DModel")
+    base = str(_ensure_base(family))
     if str(job.get("strategy")) == "diffusers-layerwise":
         if job.get("fp8_timing_note"):
             raise SetupError("FP8 tensor-core casting is not used below compute capability 8.9")
-        pipe = pipeline_cls.from_pretrained(str(job["base"]), torch_dtype=torch.bfloat16)
+        pipe = pipeline_cls.from_pretrained(base, torch_dtype=torch.bfloat16, local_files_only=True)
         pipe.transformer.enable_layerwise_casting(
             storage_dtype=torch.float8_e4m3fn,
             compute_dtype=torch.bfloat16,
@@ -1582,10 +1625,12 @@ def _load_fp8(job: dict[str, object]) -> object:
         if read_format(path) not in {None, "voxprint-fp8-v1"}:
             continue
         state.update(dequant_file(path))
-    config = Path(str(job["base"])) / "transformer"
+    config = Path(base) / "transformer"
     transformer = model_cls.from_config(model_cls.load_config(str(config)))
     transformer.load_state_dict(state, strict=False)
-    return pipeline_cls.from_pretrained(str(job["base"]), transformer=transformer, torch_dtype=torch.bfloat16)
+    return pipeline_cls.from_pretrained(
+        base, transformer=transformer, torch_dtype=torch.bfloat16, local_files_only=True
+    )
 
 
 def _generate(pipe: object, family: str, case: dict[str, object], steps: int) -> object:
@@ -1751,11 +1796,37 @@ def _venv_python(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
-def _same_file(left: Path, right: Path) -> bool:
+def should_reexec(venv: Path, *, prefix: Path) -> bool:
+    """True when this process is not already inside ``venv``.
+
+    uv links every venv ``python`` at one managed interpreter, so comparing
+    resolved executables treats the caller and the CUDA venv as the same file.
+    """
     try:
-        return left.resolve() == right.resolve()
+        return prefix.resolve() != venv.resolve()
     except OSError:
-        return str(left) == str(right)
+        return str(prefix) != str(venv)
+
+
+def _machine_gpu_failure(exc: BaseException) -> bool:
+    if not isinstance(exc, GpuError):
+        return False
+    text = str(exc)
+    return "nvidia-smi not found" in text or "no CUDA GPU" in text
+
+
+def _cap_failure(message: str, mode: str, memory_mib: int, cap: str) -> dict[str, object]:
+    return {
+        "offload_mode": mode,
+        "error": message,
+        "fits_16gb": False,
+        "peak_vram_torch_mib": None,
+        "peak_vram_smi_mib": None,
+        "load_seconds": None,
+        "seconds_per_image": {},
+        "cases": [],
+        "memory_fraction": memory_fraction(cap, memory_mib),
+    }
 
 
 def _reexec(python: Path, argv: list[str]) -> None:

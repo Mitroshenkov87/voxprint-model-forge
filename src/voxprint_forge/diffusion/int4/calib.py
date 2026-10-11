@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+from huggingface_hub import snapshot_download
 
 from voxprint_forge.errors import PlanError
 
 REQUIRED_KINDS = frozenset({"edit", "people", "text", "hands"})
 REQUIRED_LANGS = frozenset({"ru", "en"})
 GATE_CASES = ("identity", "hands", "text")
+_PRIVATE_NOTICES: set[str] = set()
 
 
 def calib_dir(repo: Path) -> Path:
@@ -57,6 +61,82 @@ def load_prompts(repo: Path) -> list[dict[str, object]]:
             code="calib_coverage",
         )
     return [dict(item) for item in prompts if isinstance(item, dict)]
+
+
+def calibration_prompts(repo: Path) -> list[dict[str, object]]:
+    """Public prompts plus the optional ``FORGE_PRIVATE_CALIB`` set.
+
+    The variable is a directory or a private Hugging Face dataset id. When it
+    is unset or cannot be loaded, that set is skipped and the public prompts
+    still return.
+    """
+    return load_prompts(repo) + _private_prompts()
+
+
+def _warn_private(message: str) -> None:
+    if message in _PRIVATE_NOTICES:
+        return
+    _PRIVATE_NOTICES.add(message)
+    print(message, file=sys.stderr)
+
+
+def _private_prompts() -> list[dict[str, object]]:
+    raw = os.environ.get("FORGE_PRIVATE_CALIB", "").strip()
+    if not raw:
+        _warn_private("FORGE_PRIVATE_CALIB is unset; that calibration set is skipped.")
+        return []
+    try:
+        return _read_private(_private_root(raw))
+    except Exception:
+        _warn_private("FORGE_PRIVATE_CALIB could not be loaded; that calibration set is skipped.")
+        return []
+
+
+def _private_root(raw: str) -> Path:
+    path = Path(raw)
+    if path.is_dir():
+        return path
+    if _dataset_id(raw):
+        folder = _private_cache()
+        snapshot_download(repo_id=raw, repo_type="dataset", local_dir=str(folder))
+        if not folder.is_dir():
+            raise PlanError("private calibration download produced no directory", code="calib_private")
+        return folder
+    raise PlanError("private calibration path is not a directory", code="calib_private")
+
+
+def _dataset_id(raw: str) -> bool:
+    if Path(raw).is_absolute() or raw.startswith("."):
+        return False
+    owner, _slash, name = raw.partition("/")
+    return bool(owner) and bool(name) and "/" not in name and "\\" not in raw
+
+
+def _private_cache() -> Path:
+    root = os.environ.get("FORGE_OUT", "").strip()
+    base = Path(root) if root else Path.home() / ".cache" / "voxprint-forge"
+    return base / "private-calib"
+
+
+def _read_private(root: Path) -> list[dict[str, object]]:
+    path = root / "prompts.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    prompts = payload.get("prompts") if isinstance(payload, dict) else None
+    if not isinstance(prompts, list) or not prompts:
+        raise PlanError(f"{path} has no prompts", code="calib_private")
+    rows: list[dict[str, object]] = []
+    for item in prompts:
+        if not isinstance(item, dict) or not item.get("id") or not item.get("prompt") or not item.get("image"):
+            raise PlanError(f"{path} has an incomplete prompt", code="calib_private")
+        row = dict(item)
+        image = Path(str(row["image"]))
+        if not image.is_absolute():
+            image = root / image
+        if not image.is_file():
+            raise PlanError("private calibration image is missing", code="calib_private")
+        row["image"] = str(image.resolve())
+        rows.append(row)
+    return rows
 
 
 def gate_prompts(prompts: list[dict[str, object]]) -> list[dict[str, object]]:

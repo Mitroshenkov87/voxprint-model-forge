@@ -9,7 +9,13 @@ from pathlib import Path
 import torch
 from safetensors.torch import save_file
 
-from voxprint_forge.diffusion.int4.calib import gate_prompts, image_root, load_prompts, write_prompt_yaml
+from voxprint_forge.diffusion.int4.calib import (
+    calibration_prompts,
+    gate_prompts,
+    image_root,
+    load_prompts,
+    write_prompt_yaml,
+)
 from voxprint_forge.diffusion.int4.config import collect_argv, convert_argv, quant_argv, write_configs
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.evalrule import Arm, decide_winner, dry_run_arms
@@ -96,7 +102,7 @@ def _metadata(target: TargetName, rank: int) -> dict[str, str]:
 def prepare_configs(ctx: StageContext, target: TargetName) -> dict[str, Path]:
     """Write configs and the calibration yaml for one Qwen target."""
     work = ctx.job(target)
-    prompts = load_prompts(ctx.repo)
+    prompts = calibration_prompts(ctx.repo)
     configs = write_configs(work, target, rank=ctx.svd_rank)
     write_prompt_yaml(prompts, configs["prompts"], image_root=image_root(ctx.repo))
     return configs

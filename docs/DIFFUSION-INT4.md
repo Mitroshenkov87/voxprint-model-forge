@@ -22,7 +22,7 @@ The March 2025 deepcompressor tree has no Qwen pipeline. The stage applies an id
 
 ## Calibration
 
-`data/diffusion_calib/` holds original Russian and English edit prompts (people, text, hands) and 16×16 synthetic swatches. Licences are in `data/diffusion_calib/LICENCES.md`. `FORGE_CALIB_IMAGE_DIR` can replace the swatch root. The English identity, hands, and text lines are the canvas hard cases. The winner gate uses those three. The Russian lines are calibration.
+`data/diffusion_calib/` holds original Russian and English edit prompts (people, text, hands) and 16×16 synthetic swatches. Licences are in `data/diffusion_calib/LICENCES.md`. `FORGE_CALIB_IMAGE_DIR` can replace the swatch root. `FORGE_PRIVATE_CALIB` may be a directory or a private Hugging Face dataset id. When it is unset or cannot be loaded, that calibration set is skipped. The English identity, hands, and text lines are the canvas hard cases. The winner gate uses those three. The Russian lines are calibration.
 
 ## Winner
 
@@ -32,7 +32,7 @@ On the live GPU those three scores stay unset, because this stage times the pipe
 
 ## Own quant
 
-`--own-edit` defaults to `on`. That is the diffusion-int4-v1 plan: calibrate, quantize Qwen-Image-Edit-2511 INT4 r256, export, evaluate, publish, then Wan 2.2. Wan is unconditional.
+`--own-edit` defaults to `on`. That is the diffusion-int4-v1 plan: calibrate, quantize Qwen-Image-Edit-2511 INT4 r256, export, evaluate, publish, then Wan 2.2. Wan runs unless `FORGE_SKIP_WAN=1`, which omits those steps (190 minutes).
 
 `--phase0-result` points at a Phase 0 `result.json` (the rental default is `/workspace/vm-results/model-forge/nunchaku-test-1/result.json`). A missing file is ignored. A present file is copied into `comparison.json` as `phase0_baseline` and onto the card. It records QuantFunc `qwen-r128` and `qwen-r32` cap16 (`fits_16gb`, c1, c2, c3). It does not choose the winner. Invalid JSON exits 6 (`phase0`).
 
@@ -76,4 +76,4 @@ Torch 2.11 and torchvision 0.26 come from the cu128 wheel index, which includes 
 
 ## Script
 
-`scripts/vm_run_diffusion_int4.sh` is the non-interactive entry for a fresh Ubuntu A100 or H100 80GB. `FORGE_HOST_KIND=local` (the default) does not write token files. `FORGE_HOST_KIND=rented-vm` logs in once and leaves the logins. `--dry-run` is what CI runs. Exit codes match `docs/CLI.md`, with the 15 percent floor as exit 2.
+`scripts/vm_run_diffusion_int4.sh` is the non-interactive entry for a fresh Ubuntu A100 or H100 80GB. `FORGE_HOST_KIND=local` (the default) does not write token files. `FORGE_HOST_KIND=rented-vm` logs in once and leaves the logins. `--dry-run` is what CI runs. Exit codes match `docs/CLI.md`, with the 15 percent floor as exit 2. `FORGE_SKIP_WAN=1` skips the Wan clones, venv, and weight download. `FORGE_WAIT_FOR` is a file path; the live script sleeps until that file exists before the GPU stages. `--dry-run` does not wait. The cp311 venv installs deepcompressor with `--no-deps` plus its diffusion imports (`datasets>=3.0,<4`, `transformers==4.57.6`). voxprint-forge stays on `PYTHONPATH`. `FORGE_COMMON_SRC`, when set, is the directory that contains `voxprint_common`. A checkout whose `PIN` file and `HEAD` already match the pin skips `git fetch`. Generated deepcompressor configs go under `examples/diffusion/configs/voxprint/` when `FORGE_DEEPCOMPRESSOR` is set.
