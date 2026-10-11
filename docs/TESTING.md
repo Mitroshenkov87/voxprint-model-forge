@@ -40,6 +40,8 @@ lean list back into the 24-pair catalogue.
 
 These checks stay on the CPU. Remotes are mocked. Nothing in this tier needs a GPU.
 
+`tests/test_diffusion_int4.py` is the same tier for `forge diffusion-int4`. It runs `--dry-run` with tiny files, mocks Hub and Drive, and does not download weights or start CUDA. `scripts/vm_run_diffusion_int4.sh --dry-run` is the bash smoke on Linux. Windows CI reads the script and skips the bash process.
+
 After a model's or a part's final files match on one mirror, delete that item's
 source weights, f16/bf16 GGUF, safetensors downloads, and upload staging. A
 Hugging Face match is the remote sha256, or for a small file the size plus the

@@ -26,3 +26,15 @@ quality gates have the longer notes. Other public functions have one line.
 ::: voxprint_forge.pipeline
 
 ::: voxprint_forge.cli
+
+## Diffusion INT4
+
+::: voxprint_forge.diffusion.int4.pins
+
+::: voxprint_forge.diffusion.int4.gpu
+
+::: voxprint_forge.diffusion.int4.evalrule
+
+::: voxprint_forge.diffusion.int4.stage
+
+::: voxprint_forge.diffusion.int4.fetch

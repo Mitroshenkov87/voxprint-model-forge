@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 
 from voxprint_forge.accounts import execute_accounts
+from voxprint_forge.diffusion.int4.cli import (
+    add_commands as add_int4_commands,
+)
+from voxprint_forge.diffusion.int4.cli import (
+    perform as perform_int4,
+)
 from voxprint_forge.diffusion.planload import load_canvas_plan
 from voxprint_forge.diffusion.retain import consumers_for, release_consumer
 from voxprint_forge.errors import (
@@ -104,6 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
     canvas_upload.add_argument("canvas_plan", type=Path, metavar="PLAN")
     canvas_upload.add_argument("--parts", default=None, help="Comma-separated part ids. Default: the whole plan.")
     canvas_upload.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
+    int4 = sub.add_parser("diffusion-int4", help="SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.")
+    add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
     return parser
 
 
@@ -142,6 +150,15 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_USAGE
     try:
         result = _dispatch(args)
+        if (
+            not args.json
+            and args.command == "diffusion-int4"
+            and getattr(args, "int4_command", "") == "estimates"
+            and isinstance(result, dict)
+            and isinstance(result.get("text"), str)
+        ):
+            print(result["text"])
+            return 0
         code = _exit_code(args.command, result)
         emit(args.command, result, ok=code == 0, exit_code=code, json_mode=args.json)
         return code
@@ -256,6 +273,8 @@ def _dispatch(args: argparse.Namespace) -> object:
                 "error": "status.json is missing",
             }
         return inspect_status(forge_out)
+    if args.command == "diffusion-int4":
+        return perform_int4(args, root)
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))

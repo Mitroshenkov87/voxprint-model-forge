@@ -21,24 +21,31 @@ def _remote_name() -> str:
     return os.environ.get("FORGE_DRIVE_REMOTE", "forge").strip() or "forge"
 
 
+def _with_folder(env: dict[str, str]) -> dict[str, str]:
+    folder = env.get("FORGE_DRIVE_ROOT_FOLDER_ID", "").strip()
+    if folder:
+        env.setdefault(f"RCLONE_CONFIG_{_remote_name().upper()}_ROOT_FOLDER_ID", folder)
+    return env
+
+
 def _child_env() -> dict[str, str]:
     env = os.environ.copy()
     remote = _remote_name().upper()
     prefix = f"RCLONE_CONFIG_{remote}_"
     if env.get(prefix + "TYPE"):
-        return env
+        return _with_folder(env)
     token = env.get("FORGE_DRIVE_TOKEN", "").strip()
     account = env.get("FORGE_DRIVE_SERVICE_ACCOUNT", "").strip()
     if token:
         env[prefix + "TYPE"] = "drive"
         env[prefix + "SCOPE"] = "drive"
         env[prefix + "TOKEN"] = token
-        return env
+        return _with_folder(env)
     if account:
         env[prefix + "TYPE"] = "drive"
         env[prefix + "SCOPE"] = "drive"
         env[prefix + "SERVICE_ACCOUNT_CREDENTIALS"] = account
-        return env
+        return _with_folder(env)
     raise StageError(
         "Drive fallback needs RCLONE_CONFIG_* or FORGE_DRIVE_TOKEN or FORGE_DRIVE_SERVICE_ACCOUNT",
         code="drive_config",

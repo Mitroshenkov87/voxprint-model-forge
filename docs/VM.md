@@ -133,3 +133,37 @@ Default arms are QuantFunc Qwen-Image-Edit-2511 INT4 r128 and r32, plus nunchaku
 FP8 baselines are `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511` and `Mitroshenkov87/voxprint-mirror-z-image-turbo`, run once unconstrained when the dequantized weights fit. If the mirror is missing and the bf16 transformer is already on disk, the fallback is diffusers layerwise FP8. The script does not download the bf16 transformer. Base snapshots use `snapshot_download(..., ignore_patterns=["transformer/*"])` at the pinned revisions, with no token.
 
 Exit 0 means every requested cap finished and every cap16 nvidia-smi peak is at most 15.0 GiB. Exit 1 means a case failed or cap16 did not fit. Exit 2 is setup: wheel, hash, disk, or download. Exit 3 means no CUDA GPU, under 16 GB of VRAM, or compute capability below 8.9. Markers live in `~/.done/nunchaku-edit/`. `--cleanup` deletes only the INT4 files. Results land in `results/nunchaku-edit/nunchaku-test-1/` (`result.json` schema `voxprint-forge-nunchaku-edit/1`, WebP q95, `MESSAGE.md`) and are copied to `/workspace/vm-results/model-forge/nunchaku-test-1/` when that directory's parent exists.
+
+## Diffusion INT4 rental
+
+This is a separate session from the LLM bootstrap. The box is a fresh Ubuntu A100 or H100 80GB (`immers.cloud` `teslaa100-1.16.128.320` or `h100-1.16.128.320`). Export `FORGE_HOST_KIND=rented-vm` so the script logs in once and leaves `HF_TOKEN` in place. The script does not unset tokens and does not enable command tracing. It reads `nvidia-smi` (`sm_80` A100, `sm_90` H100), exports `FORGE_GPU` and `FORGE_COMPUTE_CAP`, and prints the A100 and H100 minute tables. Torch 2.11 comes from the cu128 index. `llama-quantize` is built for `80;90`.
+
+```bash
+export HF_TOKEN=...
+export HF_USER=Mitroshenkov87
+export FORGE_HOST_KIND=rented-vm
+export FORGE_DRIVE_TOKEN=...
+tmux new -s int4 'bash scripts/vm_run_diffusion_int4.sh'
+```
+
+`--dry-run` skips CUDA, clones, venvs, and the token prompt. `--qwen-image` adds the optional Qwen-Image INT4 steps. `--svd-rank` defaults to 256.
+
+Preflight requires `nvidia-smi`, `nvcc`, `git`, `cmake`, and `ninja`, then clones the pinned deepcompressor, ComfyUI-GGUF, llama.cpp `b3962`, and Wan2.2 trees. The deepcompressor `LICENSE` must say Apache License and Version 2.0 or the script exits 3. Two Python 3.11 venvs keep the vitoom-nunchaku wheel (cp311, torch 2.11, cu128) off the forge 3.14 stack. `fetch` then downloads QuantFunc (sha256 checked), Qwen-Image-Edit-2511, Wan2.2-T2V-A14B, and the FP8 reference. Set `FORGE_FP8_EDIT` to a local canvas part C tree to skip the public mirror.
+
+Free space under 15 percent exits 2 (`error.code` `disk_floor`) after verified sources are deleted. Uploads run at the end of each model's publish step. Sources are deleted only after a mirror sha256 matches. `~/watch.json` lists the jobs. `~/forge-out/status.json` is the heartbeat file. `ALL-DONE` is printed only after a zero exit.
+
+| Step | A100 minutes | H100 minutes |
+| --- | --- | --- |
+| Qwen-Edit-2511 calibration | 30 | 30 |
+| Qwen-Edit-2511 INT4 r256 | 900 (planning 15 h; the A100 range is 12–18 h) | 500 |
+| Nunchaku export | 20 | 20 |
+| Eval against QuantFunc r128, r256, and FP8 | 90 | 90 |
+| Edit card, sha256, upload | 25 | 25 |
+| Edit source delete | 5 | 5 |
+| Wan GGUF Q4_K_M and Q5_K_M, both experts | 100 | 100 |
+| Wan FP8 | 40 | 40 |
+| Wan smoke, 5 frames at 832×480, 4 steps | 20 | 20 |
+| Wan card, sha256, upload | 25 | 25 |
+| Wan source delete | 5 | 5 |
+
+Required total: 1260 minutes on an A100 (21 h at the 15 h quant midpoint; about 18 h if quant finishes in 12 h and about 24 h if it takes 18 h) and 860 minutes on an H100. The H100 quant step is planned at 1.8×. Optional Qwen-Image adds 1010 minutes on an A100 and 610 on an H100 (quant 900 or 500, export 20, eval 60, publish 25, reclaim 5), for 2270 and 1470 minutes. The Wan block is 190 minutes on either GPU. On sm_89 or newer the FP8 baseline uses native FP8 tensor cores. On an A100, FP8 is emulated and weight-only, and the comparison records that speed comparisons vs FP8 are not representative. The pinned nunchaku wheel lists sm_75, sm_80, sm_86, sm_89, and sm_120a, so INT4 eval on an H100 may fail to launch; quant files can still be published, and sources stay until a mirror is verified. On the live GPU, identity, hands, and text stay unset, so the winner is the fastest arm that fits 16 GB (smi peak at most 15.0 GiB), otherwise 24 GB (23.0 GiB). The dry-run scores are synthetic and are not that measurement.
