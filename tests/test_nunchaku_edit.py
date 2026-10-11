@@ -95,7 +95,7 @@ def test_default_arms_omit_r256_and_smoke_is_one_case() -> None:
     assert edit.steps_for("zimage-r256", True) == 8
 
 
-def test_wheel_pins_match_the_plan() -> None:
+def test_wheel_pins_match_the_plan(tmp_path: Path) -> None:
     windows = edit.select_wheel("win32")
     linux = edit.select_wheel("linux")
     assert windows.python == "3.12"
@@ -103,7 +103,12 @@ def test_wheel_pins_match_the_plan() -> None:
     assert "cu13.0" in windows.filename
     assert linux.python == "3.11"
     assert linux.sha256 == "bcdfe6fcc36cd37da34c1d0f1e0fa7c9b4201b2a70a89a3274d22420221afd2f"
+    assert "cu12.8" in linux.filename
     assert "linux_x86_64" in linux.filename
+    commands = edit.venv_commands(tmp_path / "venv", linux)
+    assert commands[0] == ["uv", "python", "install", "3.11"]
+    assert commands[1][:4] == ["uv", "venv", "--python", "3.11"]
+    assert "--managed-python" in commands[1]
     with pytest.raises(edit.SetupError):
         edit.select_wheel("darwin")
 
@@ -142,22 +147,32 @@ def test_zero_cond_source_is_required() -> None:
 def test_gpu_gate() -> None:
     edit.gate_gpu(_gpu())
     edit.gate_gpu(edit.parse_gpu_csv("NVIDIA GeForce RTX 4090, 24564, 610.88, 8.9"))
+    edit.gate_gpu(edit.GpuFacts("NVIDIA A100-SXM4-80GB", 81920, "535.129.03", 8, 0))
+    edit.gate_gpu(edit.GpuFacts("RTX 3090", 24576, "550.54.15", 8, 6))
     with pytest.raises(edit.GpuError):
-        edit.gate_gpu(edit.GpuFacts("RTX 3090", 24576, "550.0", 8, 6))
+        edit.gate_gpu(edit.GpuFacts("V100", 32768, "535.129.03", 7, 0))
+    with pytest.raises(edit.GpuError):
+        edit.gate_gpu(edit.GpuFacts("A100", 81920, "470.57.02", 8, 0), platform="linux")
     with pytest.raises(edit.GpuError):
         edit.gate_gpu(edit.GpuFacts("small", 12000, "550.0", 8, 9))
-    assert edit.GpuFacts("ok", 16000, "1", 8, 9).memory_mib == 16000
-    edit.gate_gpu(edit.GpuFacts("borderline", 16000, "1", 12, 0))
+    assert edit.GpuFacts("ok", 16000, "610.88", 8, 9).memory_mib == 16000
+    edit.gate_gpu(edit.GpuFacts("borderline", 16000, "610.88", 12, 0))
+    assert edit.weight_precision(edit.GpuFacts("A100", 81920, "535.129.03", 8, 0)) == "int4"
+    assert edit.linux_driver_ok("535.129.03")
+    assert not edit.linux_driver_ok("470.57.02")
 
 
 def test_fits_16gb_and_memory_fraction() -> None:
     assert edit.fits_16gb(15.0 * 1024)
     assert not edit.fits_16gb(15.0 * 1024 + 0.1)
     assert not edit.fits_16gb(None)
-    assert edit.memory_fraction("unconstrained") is None
-    assert edit.memory_fraction("cap16") == 16 / 24
+    assert edit.memory_fraction("unconstrained", 81920) is None
+    assert edit.memory_fraction("cap16", 81920) == pytest.approx(16 / 80)
+    assert edit.memory_fraction("cap16", 24564) == pytest.approx((16 * 1024) / 24564)
     with pytest.raises(edit.SetupError):
-        edit.memory_fraction("cap8")
+        edit.memory_fraction("cap16")
+    with pytest.raises(edit.SetupError):
+        edit.memory_fraction("cap8", 81920)
 
 
 def test_offload_plan_and_block_call() -> None:
@@ -278,7 +293,8 @@ def test_execute_records_both_caps_and_schema(isolated: Path) -> None:
     def spawn(job: dict[str, object]) -> dict[str, object]:
         calls.append(job)
         mode = str(job["mode"])
-        fraction = edit.memory_fraction(str(job["cap"]))
+        total = int(job["memory_mib"])
+        fraction = edit.memory_fraction(str(job["cap"]), total)
         return _fit_payload(mode, fraction=fraction)
 
     args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "unconstrained,cap16", "--smoke"])
@@ -293,22 +309,59 @@ def test_execute_records_both_caps_and_schema(isolated: Path) -> None:
     )
     assert code == 0
     assert result["schema"] == "voxprint-forge-nunchaku-edit/1"
-    assert result["tag"] == "nunchaku-test-1"
+    assert result["tag"] == "nunchaku-test-2"
+    assert result["precision"] == "int4"
+    assert "fp8_timing_note" not in result
     assert result["fits_16gb"] is True
     assert result["wheel"]["sha256"] == edit.WINDOWS_WHEEL.sha256
     arm = result["arms"][0]
     assert arm["weight_sha256"] == edit.ARMS["qwen-r128"].sha256
     assert set(arm["caps"]) == {"unconstrained", "cap16"}
-    assert arm["caps"]["cap16"]["memory_fraction"] == 16 / 24
+    assert arm["caps"]["cap16"]["memory_fraction"] == pytest.approx((16 * 1024) / 24564)
     assert arm["caps"]["cap16"]["peak_vram_smi_mib"] == 14000.0
     assert result["baselines"][0]["status"] == "not_mirrored"
     text = (isolated / "out" / "MESSAGE.md").read_text(encoding="utf-8")
-    assert "nunchaku-test-1" in text
+    assert "nunchaku-test-2" in text
     assert "fits_16gb" in text
+    assert "not representative of RTX 40/50" not in text
     stored = json.loads((isolated / "out" / "result.json").read_text(encoding="utf-8"))
     assert stored["exit_code"] == 0
     assert all(len(job["cases"]) == 1 for job in calls)
     assert {job["cap"] for job in calls} == {"unconstrained", "cap16"}
+
+
+def test_a100_uses_real_total_and_marks_fp8(isolated: Path) -> None:
+    seen: list[dict[str, object]] = []
+
+    def spawn(job: dict[str, object]) -> dict[str, object]:
+        seen.append(job)
+        fraction = edit.memory_fraction(str(job["cap"]), int(job["memory_mib"]))
+        return _fit_payload(str(job["mode"]), fraction=fraction)
+
+    transformer = isolated / "cache" / "bases" / "qwen-edit-2511" / "transformer"
+    transformer.mkdir(parents=True)
+    (transformer / "model.safetensors").write_bytes(b"bf16")
+    gpu = edit.GpuFacts("NVIDIA A100-SXM4-80GB", 81920, "535.129.03", 8, 0)
+    args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "cap16", "--smoke"])
+    code, result = edit.execute(
+        args,
+        spawn=spawn,
+        elapsed_min=lambda: 0.0,
+        gpu=gpu,
+        wheel=edit.LINUX_WHEEL,
+        mirror_lookup=lambda _name: [],
+    )
+    assert code == 0
+    assert result["precision"] == "int4"
+    assert result["fp8_timing_note"] == "not representative of RTX 40/50"
+    assert result["arms"][0]["caps"]["cap16"]["memory_fraction"] == pytest.approx(16 / 80)
+    assert result["baselines"][0]["status"] == "weight-only-dequant"
+    assert result["baselines"][0]["fp8_timing_note"] == "not representative of RTX 40/50"
+    assert all(job.get("kind") != "fp8" for job in seen)
+    text = (isolated / "out" / "MESSAGE.md").read_text(encoding="utf-8")
+    stored = json.loads((isolated / "out" / "result.json").read_text(encoding="utf-8"))
+    assert "not representative of RTX 40/50" in text
+    assert stored["fp8_timing_note"] == "not representative of RTX 40/50"
 
 
 def test_cap16_fallback_and_fail(isolated: Path) -> None:
@@ -451,7 +504,10 @@ def test_docs_mention_the_matrix() -> None:
     vm = (ROOT / "docs" / "VM.md").read_text(encoding="utf-8")
     cli = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
     for text in (vm, cli):
-        assert "nunchaku-test-1" in text
+        assert "nunchaku-test-2" in text
+        assert "8.0" in text
+        assert "not representative of RTX 40/50" in text
+        assert "525.60.13" in text
         assert "nunchaku_edit_test" in text
         assert "zero_cond_t" in text
         assert "cap16" in text

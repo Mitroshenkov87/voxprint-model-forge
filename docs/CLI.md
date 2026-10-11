@@ -122,7 +122,7 @@ Exit codes are the same table as the rest of the CLI. Hugging Face repos are pub
 
 ## Nunchaku edit matrix
 
-`scripts/nunchaku_edit_test.sh` and `scripts/nunchaku_edit_test.ps1` run `python -m voxprint_forge.diffusion.nunchaku_edit`. This is not a `forge` subcommand. The tag is `nunchaku-test-1`. `--json` prints one result object on stdout. Logs stay on stderr. The scripts do not prompt.
+`scripts/nunchaku_edit_test.sh` and `scripts/nunchaku_edit_test.ps1` run `python -m voxprint_forge.diffusion.nunchaku_edit`. This is not a `forge` subcommand. The tag is `nunchaku-test-2`. `--json` prints one result object on stdout. Logs stay on stderr. The scripts do not prompt.
 
 ```bash
 bash scripts/nunchaku_edit_test.sh --json --smoke
@@ -133,16 +133,16 @@ pwsh scripts/nunchaku_edit_test.ps1 --arms qwen-r128,qwen-r32,zimage-r128 --caps
 | --- | --- |
 | `--arms` | `qwen-r128`, `qwen-r32`, `zimage-r128`, `zimage-r256`. Default omits r256 |
 | `--cases` | `c1,c2,c3` for Qwen and `z1,z2,z3` for Z-Image |
-| `--out` | Default `results/nunchaku-edit/nunchaku-test-1/` |
+| `--out` | Default `results/nunchaku-edit/nunchaku-test-2/` |
 | `--mode` | `auto`, `model-offload`, or `block-offload` |
-| `--caps` | `unconstrained` and/or `cap16` (16/24 of a 24 GB card). Default is both |
+| `--caps` | `unconstrained` and/or `cap16` (16 GiB / `memory.total`). Default is both |
 | `--smoke` | One case per arm. Qwen uses 20 steps instead of 40 |
 | `--cleanup` | Delete the INT4 safetensors after the run. Bases stay |
 | `--budget-min` | Default 90. r256 is dropped first when the budget is exceeded |
 
-`cap16` calls `torch.cuda.set_per_process_memory_fraction(16/24)`. `auto` tries model CPU offload and then block offload (`set_offload` with one pinned block, then sequential offload). Unconstrained Z-Image tries a resident GPU load first. A warm-up image is not included in `seconds_per_image`. `fits_16gb` is true when the nvidia-smi peak, sampled every 0.5 s, is at most 15.0 GiB.
+`cap16` calls `torch.cuda.set_per_process_memory_fraction(16/total)` using the nvidia-smi total, so an 80 GB A100 is 16/80. `auto` tries model CPU offload and then block offload (`set_offload` with one pinned block, then sequential offload). Unconstrained Z-Image tries a resident GPU load first. A warm-up image is not included in `seconds_per_image`. `fits_16gb` is true when the nvidia-smi peak, sampled every 0.5 s, is at most 15.0 GiB. On compute capability below 8.9, FP8 timings are marked `not representative of RTX 40/50` because the baseline is weight-only dequant.
 
-Exit codes for this script are separate from the `forge` table above: 0 pass, 1 a case failed or cap16 did not fit, 2 setup (wheel, sha256, disk, download), 3 no CUDA GPU, under 16 GB, or compute capability below 8.9. The wheel is the pinned vitoom-nunchaku build, checked by sha256. Upstream `nunchaku` is refused because it has no `zero_cond_t`. Resume markers are `~/.done/nunchaku-edit/<step>`. `result.json` uses schema `voxprint-forge-nunchaku-edit/1` and records the GPU, driver, torch, diffusers, nunchaku, wheel hash, and weight hash. See `docs/VM.md` for the 4090 steps.
+Exit codes for this script are separate from the `forge` table above: 0 pass, 1 a case failed or cap16 did not fit, 2 setup (wheel, sha256, disk, download), 3 no CUDA GPU, under 16 GB, compute capability below 8.0, or a Linux driver below 525.60.13. The wheel is the pinned vitoom-nunchaku build, checked by sha256. INT4 covers sm_80, sm_86, and sm_89. NVFP4 stays out. Upstream `nunchaku` is refused because it has no `zero_cond_t`. Linux runs `uv python install 3.11` before the venv. Resume markers are `~/.done/nunchaku-edit/<step>`. `result.json` uses schema `voxprint-forge-nunchaku-edit/1` and records the GPU, driver, torch, diffusers, nunchaku, wheel hash, and weight hash. See `docs/VM.md`.
 
 ## Diffusion INT4
 
