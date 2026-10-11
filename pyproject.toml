@@ -31,6 +31,7 @@ dev = [
   "mkdocs-material>=9.5",
   "mkdocstrings[python]>=0.26",
   "diffusers>=0.37.1,<0.38",
+  "jsonschema>=4.23",
 ]
 gui = [
   "voxprint-common[ui]>=0.1.1,<0.2",

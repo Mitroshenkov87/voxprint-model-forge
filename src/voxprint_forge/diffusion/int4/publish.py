@@ -18,6 +18,20 @@ from voxprint_forge.diffusion.int4.pins import DRIVE_FOLDER_ID, HF_USER_DEFAULT
 from voxprint_forge.drive import upload_drive
 from voxprint_forge.errors import LicenceError, StageError
 from voxprint_forge.hashing import sha256_file, write_sha256
+from voxprint_forge.mdl import (
+    MANIFEST_NAME,
+    ManifestInput,
+    build_document,
+    card_url_for,
+    drive_mirror,
+    hub_mirrors,
+    infer_manifest,
+    manifest_artifact,
+    refresh_manifest,
+    retarget_mirrors,
+    rows_from_artifacts,
+    write_manifest,
+)
 from voxprint_forge.upload import Artifact, HubRemote, assert_public_upload, upload_verified
 
 INT4_METHOD = (
@@ -197,6 +211,50 @@ class LocalMirror:
         return records
 
 
+def _attach_manifest(
+    output: Path,
+    paths: list[Path],
+    spec: ManifestInput,
+    *,
+    slug: str,
+    repo_id: str,
+    stamp: str,
+    hub: Callable[[str, list[Artifact]], list[dict[str, object]]] | None,
+    drive: Callable[[str, list[Artifact]], list[dict[str, object]]] | None,
+) -> list[Artifact]:
+    files = _artifacts(paths)
+    mirrors: list[dict[str, str]] = []
+    if hub is not None:
+        mirrors.extend(hub_mirrors(hf_repo=repo_id))
+    if drive is not None:
+        mirrors.append(drive_mirror(slug, stamp))
+    if not mirrors:
+        raise StageError(f"{slug} has no mirror", code="mdl")
+    document = build_document(
+        model_id=spec.model_id,
+        display_name=spec.display_name,
+        app_ids=spec.app_ids,
+        task=spec.task,
+        license=spec.license,
+        files=rows_from_artifacts(files),
+        mirrors=mirrors,
+        min_vram_gb=spec.min_vram_gb,
+        recommended_vram_gb=spec.recommended_vram_gb,
+        gpu_min_cc=spec.gpu_min_cc,
+        engine=spec.engine,
+        version_req=spec.version_req,
+        base_model=spec.base_model,
+        card_url=card_url_for(mirrors),
+        flags=spec.flags,
+        on_demand=spec.on_demand,
+        tag=spec.tag,
+        date=spec.date or stamp,
+    )
+    path = write_manifest(output, document)
+    files.append(manifest_artifact(path))
+    return files
+
+
 def publish_verified(
     output: Path,
     *,
@@ -206,15 +264,21 @@ def publish_verified(
     hub: Callable[[str, list[Artifact]], list[dict[str, object]]] | None = None,
     drive: Callable[[str, list[Artifact]], list[dict[str, object]]] | None = None,
     folder_id: str = DRIVE_FOLDER_ID,
+    manifest: ManifestInput | None = None,
+    date: str = "",
 ) -> Published:
     """Upload after the licence gate. Drive runs when Hub fails for another reason.
 
     A licence or card refusal is not sent to Drive. One verified mirror is enough
-    to set ``verified``.
+    to set ``verified``. ``voxprint-model.json`` is written beside the card and
+    uploaded with the other files.
     """
-    files = _artifacts([path for path in output.iterdir() if path.is_file()])
     repo_id = _hub_repo(slug)
     assert_public_upload(licence=licence, card_text=card_text, repo=repo_id)
+    stamp = date or today_stamp()
+    spec = manifest if manifest is not None else infer_manifest(slug, licence)
+    paths = [path for path in output.iterdir() if path.is_file() and path.name != MANIFEST_NAME]
+    files = _attach_manifest(output, paths, spec, slug=slug, repo_id=repo_id, stamp=stamp, hub=hub, drive=drive)
     records: list[dict[str, object]] = []
     hf_state = "skipped"
     drive_state = "skipped"
@@ -230,6 +294,9 @@ def publish_verified(
             hf_state = "failed"
     if hf_state != "uploaded" and drive is not None:
         try:
+            manifest_path = output / MANIFEST_NAME
+            retarget_mirrors(manifest_path, [drive_mirror(slug, stamp)])
+            files = refresh_manifest(files, manifest_path)
             records.extend(drive(folder_id, files))
             drive_state = "uploaded"
         except StageError:

@@ -16,6 +16,7 @@ nav:
   - Roadmap: roadmap.md
   - Testing: TESTING.md
   - CLI: cli-reference.md
+  - Model manifest: MODEL-MANIFEST.md
   - Diffusion INT4: DIFFUSION-INT4.md
   - API: api.md
 markdown_extensions:

@@ -21,6 +21,20 @@ from voxprint_forge.diffusion.weights import link_or_copy
 from voxprint_forge.drive import upload_drive
 from voxprint_forge.errors import ForgeError, StageError
 from voxprint_forge.hashing import sha256_file, write_sha256
+from voxprint_forge.mdl import (
+    CUDA_CC,
+    DIFFUSERS_VERSION_REQ,
+    MANIFEST_NAME,
+    build_document,
+    card_url_for,
+    drive_mirror,
+    hash_tree,
+    hub_mirrors,
+    infer_app_ids,
+    infer_task,
+    retarget_mirrors,
+    write_manifest,
+)
 from voxprint_forge.upload import (
     DELAYS,
     Artifact,
@@ -119,6 +133,7 @@ def write_models_md(output: Path, files: list[LocalFile]) -> None:
 def _shared_names(output: Path) -> list[str]:
     names = [
         "README.md",
+        MANIFEST_NAME,
         "NOTICE",
         "MODELS.md",
         "checks/fp8-vs-bf16.json",
@@ -184,6 +199,57 @@ def _upload_variation(
     raise StageError(last, code="upload_mismatch")
 
 
+def _manifest_file(
+    output: Path,
+    *,
+    hf_repo: str,
+    kaggle_slug: str,
+    title: str,
+    licence: str,
+    tiers: dict[str, tuple[str, int | None, str, str]],
+    repo: str,
+    revision: str,
+    day: str,
+) -> LocalFile:
+    """Write voxprint-model.json and return it as a file to upload."""
+    rows = hash_tree(output)
+    vrams = [vram for _tier, vram, _file_repo, _file_revision in tiers.values() if isinstance(vram, int)]
+    min_gb = float(min(vrams)) if vrams else 16.0
+    rec_gb = float(max(vrams)) if vrams else min_gb
+    paths = [str(item["path"]) for item in rows]
+    task = infer_task(hf_repo, paths)
+    mirrors = hub_mirrors(hf_repo=hf_repo, kaggle_ref=f"{kaggle_user()}/{kaggle_slug}")
+    document = build_document(
+        model_id=hf_repo.rsplit("/", 1)[-1].removeprefix("voxprint-"),
+        display_name=title,
+        app_ids=infer_app_ids(task),
+        task=task,
+        license=licence,
+        files=rows,
+        mirrors=mirrors,
+        min_vram_gb=min_gb,
+        recommended_vram_gb=rec_gb,
+        gpu_min_cc=CUDA_CC,
+        engine="diffusers",
+        version_req=DIFFUSERS_VERSION_REQ,
+        base_model=repo,
+        card_url=card_url_for(mirrors),
+        on_demand=True,
+        date=day,
+    )
+    path = write_manifest(output, document)
+    return LocalFile(
+        path=path,
+        name=MANIFEST_NAME,
+        sha256=sha256_file(path),
+        size=path.stat().st_size,
+        tier="shared",
+        vram_gb=None,
+        repo=repo,
+        revision=revision,
+    )
+
+
 def _card_for_public_upload(output: Path, description: str, card_text: str | None) -> str:
     """Prefer an explicit card, then ``README.md``, then the short description."""
     if card_text is not None:
@@ -212,6 +278,7 @@ def _publish_hub(
     staging: Path | None = None,
     on_verified: Callable[[str], None] | None = None,
     card_text: str | None = None,
+    day: str = "",
 ) -> list[dict[str, object]]:
     """Upload every output file. A variation is done only when sha256 and size match."""
     client = remote if remote is not None else HubRemote(
@@ -225,6 +292,19 @@ def _publish_hub(
         licence=licence,
         card_text=_card_for_public_upload(output, description, card_text),
         repo=hf_repo,
+    )
+    files.append(
+        _manifest_file(
+            output,
+            hf_repo=hf_repo,
+            kaggle_slug=kaggle_slug,
+            title=title,
+            licence=licence,
+            tiers=tiers,
+            repo=repo,
+            revision=revision,
+            day=day or datetime.now(timezone.utc).date().isoformat(),
+        )
     )
     client.hf_private_repo(hf_repo)
     for item in files:
@@ -376,6 +456,7 @@ def publish_output(
     Drive is the fallback when both hubs fail. A licence or card refusal is
     not a hub outage and does not fall through to Drive.
     """
+    day = datetime.now(timezone.utc).date().isoformat()
     try:
         return _publish_hub(
             output=output,
@@ -394,14 +475,17 @@ def publish_output(
             staging=staging,
             on_verified=on_verified,
             card_text=card_text,
+            day=day,
         )
     except ForgeError as exc:
         if blocks_public_upload(exc):
             raise
+        manifest = output / MANIFEST_NAME
+        if manifest.is_file():
+            retarget_mirrors(manifest, [drive_mirror(kaggle_slug, day)])
         artifacts = _drive_artifacts(output)
         if not artifacts:
             raise
-        day = datetime.now(timezone.utc).date().isoformat()
         try:
             records = upload_drive(artifacts, model_id=kaggle_slug, date=day)
         except ForgeError as drive_exc:
