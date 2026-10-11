@@ -16,6 +16,8 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 from voxprint_forge.diffusion.int4.pins import (
     FP8_EDIT_MIRROR,
+    QUANTFUNC_R32,
+    QUANTFUNC_R32_SHA256,
     QUANTFUNC_R128,
     QUANTFUNC_R128_SHA256,
     QUANTFUNC_R256,
@@ -35,6 +37,7 @@ from voxprint_forge.hashing import sha256_file
 LicenceCheck = Callable[[str, str, str | None], str]
 _QUANTFUNC = (
     (QUANTFUNC_R128, QUANTFUNC_R128_SHA256),
+    (QUANTFUNC_R32, QUANTFUNC_R32_SHA256),
     (QUANTFUNC_R256, QUANTFUNC_R256_SHA256),
 )
 
@@ -55,7 +58,7 @@ def _filled(path: Path) -> bool:
 
 
 def fetch_quantfunc(dest: Path, token: str | None) -> Path:
-    """Download the two QuantFunc INT4 files and check their sha256."""
+    """Download the QuantFunc INT4 files and check their sha256."""
     folder = dest / "quantfunc"
     folder.mkdir(parents=True, exist_ok=True)
     for name, digest in _QUANTFUNC:

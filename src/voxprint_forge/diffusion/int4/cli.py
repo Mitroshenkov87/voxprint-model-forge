@@ -10,9 +10,10 @@ from pathlib import Path
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.disk import guard_disk, reclaim_verified
 from voxprint_forge.diffusion.int4.fetch import fetch_weights
+from voxprint_forge.diffusion.int4.gate import OwnEditDecision, decide_own_edit, load_phase0_baseline, parse_own_edit
 from voxprint_forge.diffusion.int4.gpu import planning_gpu, step_minutes, total_minutes
 from voxprint_forge.diffusion.int4.markers import done_dir
-from voxprint_forge.diffusion.int4.pins import DEFAULT_SVD_RANK, DISK_FLOOR, SCHEMA, planned_steps
+from voxprint_forge.diffusion.int4.pins import DEFAULT_SVD_RANK, DISK_FLOOR, PHASE0_RESULT, SCHEMA, planned_steps
 from voxprint_forge.diffusion.int4.stage import format_estimates, run
 from voxprint_forge.diffusion.int4.watch import watch_path
 from voxprint_forge.errors import EXIT_UNEXPECTED, ForgeError, UsageError
@@ -37,8 +38,10 @@ def add_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
     )
     run_parser.add_argument("--watch", type=Path, default=None, help="Watch file. Default: ~/watch.json.")
     run_parser.add_argument("--only", default=None, help="Run one step. Earlier steps must already have markers.")
+    _add_edit_flags(run_parser)
     estimates = sub.add_parser("estimates", help="Print the planning minutes for each step.")
     estimates.add_argument("--qwen-image", action="store_true", help="Include the optional Qwen-Image steps.")
+    _add_edit_flags(estimates)
     disk = sub.add_parser("disk-floor", help="Exit 2 when free space stays under 15 percent after reclaim.")
     disk.add_argument("--path", type=Path, default=None, help="Filesystem to check. Default: forge-out.")
     disk.add_argument(
@@ -49,6 +52,46 @@ def add_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
     )
     fetched = sub.add_parser("fetch", help="Download QuantFunc, the edit base, Wan experts, and the FP8 reference.")
     fetched.add_argument("--dest", type=Path, required=True, help="Directory that receives the snapshots.")
+
+
+def _add_edit_flags(parser: argparse.ArgumentParser) -> None:
+    """``--own-edit`` defaults to on. Phase 0 is an optional comparison baseline."""
+    parser.add_argument(
+        "--own-edit",
+        choices=("auto", "on", "off"),
+        default="on",
+        help="on (default) always runs the own INT4 r256 quant. auto may skip it. off mirrors QuantFunc.",
+    )
+    parser.add_argument(
+        "--phase0-result",
+        type=Path,
+        default=Path(PHASE0_RESULT),
+        help="Phase 0 result.json. Missing is ignored. Present is an eval and card baseline, not the winner.",
+    )
+
+
+def _edit_plan(args: argparse.Namespace) -> tuple[OwnEditDecision, dict[str, object] | None, bool]:
+    """Resolve the own-edit decision and the optional Phase 0 baseline."""
+    path = args.phase0_result if isinstance(args.phase0_result, Path) else None
+    decision = decide_own_edit(parse_own_edit(str(args.own_edit)), path)
+    baseline = load_phase0_baseline(path)
+    return decision, baseline, decision.action == "mirror"
+
+
+def _estimate_text(
+    decision: OwnEditDecision,
+    baseline: dict[str, object] | None,
+    *,
+    qwen_image: bool,
+    mirror: bool,
+) -> str:
+    """Decision line plus the A100 and H100 tables."""
+    if baseline is None:
+        note = " Phase 0 result is absent, so the eval has no Phase 0 baseline."
+    else:
+        note = " Phase 0 result is an eval and card baseline and does not choose the winner."
+    table = format_estimates(qwen_image=qwen_image, mirror=mirror)
+    return decision.reason + note + "\n\n" + table
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,11 +109,14 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
     command = str(getattr(args, "command", None) or getattr(args, "int4_command", ""))
     forge_out = args.forge_out or Path.home() / "forge-out"
     if command == "estimates":
-        steps = planned_steps(qwen_image=bool(args.qwen_image))
+        decision, baseline, mirror = _edit_plan(args)
+        steps = planned_steps(qwen_image=bool(args.qwen_image), mirror=mirror)
         gpu = planning_gpu()
         return {
             "schema": SCHEMA,
             "gpu": gpu,
+            "own_edit": decision.as_dict(),
+            "phase0_baseline": baseline,
             "expected_min": total_minutes(steps, gpu),
             "gpus": {
                 name: {
@@ -89,7 +135,7 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
             "steps": [
                 {"id": step.step_id, "expected_min": step_minutes(step, gpu), "note": step.note} for step in steps
             ],
-            "text": format_estimates(qwen_image=bool(args.qwen_image)),
+            "text": _estimate_text(decision, baseline, qwen_image=bool(args.qwen_image), mirror=mirror),
         }
     if command == "fetch":
         token = os.environ.get("HF_TOKEN")
@@ -107,18 +153,22 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
         raise UsageError(f"unknown diffusion-int4 command {command}", code="usage")
     if args.svd_rank < 1:
         raise UsageError("svd rank must be at least 1", code="usage")
+    decision, _baseline, _mirror = _edit_plan(args)
     ctx = StageContext(
         repo=repo,
         forge_out=forge_out,
         dry_run=bool(args.dry_run),
         svd_rank=int(args.svd_rank),
     )
+    phase0 = args.phase0_result if isinstance(args.phase0_result, Path) else None
     return run(
         ctx,
         done=done_dir(args.done_dir),
         watch=watch_path(args.watch),
         qwen_image=bool(args.qwen_image),
         only=args.only,
+        own_edit=decision,
+        phase0_result=phase0,
     )
 
 

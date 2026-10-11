@@ -31,10 +31,11 @@ def build_watch(
     done: set[str],
     running: str = "",
     gpu: str | None = None,
+    mirror: bool = False,
 ) -> dict[str, object]:
     """Watch document for the selected steps on one planning GPU."""
     chosen = gpu if gpu in {"a100", "h100"} else planning_gpu()
-    steps = planned_steps(qwen_image=qwen_image)
+    steps = planned_steps(qwen_image=qwen_image, mirror=mirror)
     jobs: list[dict[str, object]] = []
     for step in steps:
         state = "done" if step.step_id in done else "running" if step.step_id == running else "pending"

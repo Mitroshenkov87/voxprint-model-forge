@@ -50,8 +50,12 @@ QUANTFUNC_REVISION = "4ca543a1e91db4183ee16fd5aa5950e0b02803e5"
 QUANTFUNC_LICENCE = "Apache-2.0"
 QUANTFUNC_R128 = "nunchaku_qwen_image_edit_2511_balance_int4.safetensors"
 QUANTFUNC_R128_SHA256 = "ec36d349309057f245e77255c008fc97330f2bc280dc8d704de715bcbaf6841b"
+QUANTFUNC_R32 = "nunchaku_qwen_image_edit_2511_ultimate_speed_int4.safetensors"
+QUANTFUNC_R32_SHA256 = "432d5b807f4345de4ec3d0b7ac1a6143930a81a3d35b582b1f603c18d07d56ec"
 QUANTFUNC_R256 = "nunchaku_qwen_image_edit_2511_best_quality_int4.safetensors"
 QUANTFUNC_R256_SHA256 = "d47054ff853d8d9cd6812386d4611cfe36fa9d1a5447549c8f0aa37c8aa79302"
+PHASE0_RESULT = "/workspace/vm-results/model-forge/nunchaku-test-1/result.json"
+HARD_CASES = ("c1", "c2", "c3")
 
 WAN_WEIGHT_REPO = "Wan-AI/Wan2.2-T2V-A14B"
 WAN_WEIGHT_REVISION = "c8c270b13ee05bfa474194ac9fb07a5868a97cea"
@@ -181,9 +185,24 @@ QWEN_IMAGE_STEPS: tuple[StepEstimate, ...] = (
 )
 
 
-def planned_steps(*, qwen_image: bool) -> tuple[StepEstimate, ...]:
+MIRROR_STEPS: tuple[StepEstimate, ...] = (
+    StepEstimate(
+        "qwen-edit-2511-mirror",
+        25,
+        "Publish QuantFunc r128 and r32. The own 12-18 h quant is skipped.",
+    ),
+    StepEstimate(
+        "qwen-edit-2511-reclaim",
+        5,
+        "Delete the mirrored QuantFunc files after the sha256 matches.",
+    ),
+)
+
+
+def planned_steps(*, qwen_image: bool, mirror: bool = False) -> tuple[StepEstimate, ...]:
     """Steps that run for this invocation, in order."""
-    steps = QWEN_EDIT_STEPS + WAN_STEPS
+    steps = MIRROR_STEPS if mirror else QWEN_EDIT_STEPS
+    steps = steps + WAN_STEPS
     if qwen_image:
         return steps + QWEN_IMAGE_STEPS
     return steps

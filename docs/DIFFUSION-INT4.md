@@ -30,6 +30,14 @@ When every arm has identity, hands, and text: identity within 0.05 of FP8, text 
 
 On the live GPU those three scores stay unset, because this stage times the pipeline and does not run an identity or OCR model. The winner is then the fastest arm that fits 16 GB, otherwise 24 GB. No arm inside either cap exits 6 (`no_winner`) and leaves the sources in place. The published file is the local export for an `own-*` winner, the QuantFunc safetensors for `quantfunc-r128` or `quantfunc-r256`, or the FP8 tree for `fp8`. Dry-run scores are synthetic. They pick `own-r256` so the export path is what CI uploads to a local mirror.
 
+## Own quant
+
+`--own-edit` defaults to `on`. That is the diffusion-int4-v1 plan: calibrate, quantize Qwen-Image-Edit-2511 INT4 r256, export, evaluate, publish, then Wan 2.2. Wan is unconditional.
+
+`--phase0-result` points at a Phase 0 `result.json` (the rental default is `/workspace/vm-results/model-forge/nunchaku-test-1/result.json`). A missing file is ignored. A present file is copied into `comparison.json` as `phase0_baseline` and onto the card. It records QuantFunc `qwen-r128` and `qwen-r32` cap16 (`fits_16gb`, c1, c2, c3). It does not choose the winner. Invalid JSON exits 6 (`phase0`).
+
+`--own-edit auto` is opt-in. It skips the own quant only when `qwen-r128` cap16 finished c1, c2, and c3 and `fits_16gb` is true. The stage then mirrors `nunchaku_qwen_image_edit_2511_balance_int4.safetensors` and `nunchaku_qwen_image_edit_2511_ultimate_speed_int4.safetensors` to `HF_USER/voxprint-qwen-image-edit-2511-quantfunc-int4` and goes to Wan. The card says these files are mirrored QuantFunc weights. `--own-edit off` mirrors without reading the gate. `status.json` stores `own_edit` and `phase0_baseline`. A missing Phase 0 file under `auto` keeps the own quant.
+
 ## Publish
 
 Public Hugging Face repos are `HF_USER/voxprint-<target>-svdquant-int4` and `HF_USER/voxprint-wan2.2-t2v-a14b` (`HF_USER` defaults to `Mitroshenkov87`). The card is `templates/canvas_model_card.md.jinja` with autoescape on. The licence gate is the same one as the rest of the forge: Apache-2.0, MIT, or another permissive tag, and a card with `## License`, `## Credits`, and `## Modification notice`. A refusal exits 3 and is not sent to Drive. Drive is the fallback and a backup copy after a Hub success. The folder id is `13qzgTnnkqvZrf_DK9fmymJ8ICdOuwDJT` (`FORGE_DRIVE_ROOT_FOLDER_ID` for that call). One verified mirror is enough. Sources are deleted only after that match.
@@ -55,6 +63,8 @@ The H100 quant step is planned at 1.8× the A100 step (900 minutes becomes 500).
 | `wan-2.2-reclaim` | 5 | 5 |
 
 Required total: 1260 minutes on an A100, 860 minutes on an H100. Optional `qwen-image-*` adds quant 900 (A100) or 500 (H100), export 20, eval 60, publish 25, reclaim 5. Optional total: 2270 minutes on an A100, 1470 minutes on an H100.
+
+`--own-edit auto` or `off`, when the own quant is skipped, replaces the six edit steps with `qwen-edit-2511-mirror` (25) and `qwen-edit-2511-reclaim` (5). That required total is 220 minutes on either GPU. Optional Qwen-Image still adds 1010 minutes on an A100 and 610 on an H100.
 
 ## GPU
 

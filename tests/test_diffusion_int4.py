@@ -20,6 +20,7 @@ from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.disk import DiskFloorError, guard_disk
 from voxprint_forge.diffusion.int4.evalrule import Arm, decide_winner, dry_run_arms
 from voxprint_forge.diffusion.int4.fetch import fetch_quantfunc, fetch_weights
+from voxprint_forge.diffusion.int4.gate import decide_own_edit, load_phase0_baseline, quantfunc_r128_gate
 from voxprint_forge.diffusion.int4.gpu import (
     EMULATED_NOTE,
     NATIVE_NOTE,
@@ -43,6 +44,8 @@ from voxprint_forge.diffusion.int4.patch import (
 from voxprint_forge.diffusion.int4.pins import (
     DEFAULT_SVD_RANK,
     DRIVE_FOLDER_ID,
+    QUANTFUNC_R32,
+    QUANTFUNC_R32_SHA256,
     QUANTFUNC_R128,
     QUANTFUNC_R128_SHA256,
     QUANTFUNC_R256_SHA256,
@@ -237,6 +240,11 @@ def test_dry_run_is_resumable_and_writes_watch_and_status(tmp_path: Path) -> Non
     first = run(ctx, done=done, watch=watch, qwen_image=False)
     assert first["winner"] == "own-r256"
     assert first["expected_min"] == 1260
+    own_edit = first["own_edit"]
+    assert isinstance(own_edit, dict)
+    assert own_edit["mode"] == "on"
+    assert own_edit["action"] == "quantize"
+    assert first["phase0_baseline"] is None
     assert expected_minutes(qwen_image=False) == 1260
     ids = [step.step_id for step in planned_steps(qwen_image=False)]
     assert "qwen-image-quant" not in ids
@@ -263,6 +271,8 @@ def test_dry_run_is_resumable_and_writes_watch_and_status(tmp_path: Path) -> Non
     assert isinstance(items, dict)
     assert items["qwen-edit-2511-publish"]["state"] == "UPLOADED"
     assert items["qwen-edit-2511-publish"]["last_heartbeat"]
+    assert status["own_edit"]["action"] == "quantize"
+    assert status["phase0_baseline"] is None
     second = run(ctx, done=done, watch=watch, qwen_image=False)
     assert all(row["skipped"] is True for row in second["steps"])
 
@@ -335,6 +345,8 @@ def test_fetch_checks_sha_and_refuses_a_bad_licence(tmp_path: Path, monkeypatch:
     def good_hash(path: Path) -> str:
         if path.name == QUANTFUNC_R128:
             return QUANTFUNC_R128_SHA256
+        if path.name == QUANTFUNC_R32:
+            return QUANTFUNC_R32_SHA256
         return QUANTFUNC_R256_SHA256
 
     monkeypatch.setattr("voxprint_forge.diffusion.int4.fetch.sha256_file", good_hash)
@@ -365,6 +377,7 @@ def test_fetch_checks_sha_and_refuses_a_bad_licence(tmp_path: Path, monkeypatch:
     assert not (tmp_path / "refused" / "quantfunc").exists()
     paths = fetch_weights(tmp_path / "ok", None, licence=lambda *_args: "apache-2.0")
     assert Path(paths["FORGE_QUANTFUNC"], QUANTFUNC_R128).is_file()
+    assert Path(paths["FORGE_QUANTFUNC"], QUANTFUNC_R32).is_file()
     assert (Path(paths["FORGE_WAN_CKPT"]) / "high_noise_model" / "model.safetensors").is_file()
     assert json.loads((tmp_path / "ok" / "paths.json").read_text(encoding="utf-8"))["FORGE_QWEN_EDIT"]
 
@@ -434,6 +447,9 @@ def test_script_documents_the_rental_contract() -> None:
         "cu128",
         "80;90",
         "A100 or H100 80GB",
+        "--own-edit",
+        "--phase0-result",
+        "FORGE_OWN_EDIT:-on",
     ):
         assert needle in text
 
@@ -549,6 +565,185 @@ def test_script_dry_run(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert "ALL-DONE" in done.stdout
     assert (tmp_path / "watch.json").is_file()
+
+
+def _phase0(
+    path: Path,
+    *,
+    fits: bool = True,
+    cases: tuple[str, ...] = ("c1", "c2", "c3"),
+    ocr_match: bool | None = True,
+    extra_fail: bool = False,
+) -> Path:
+    def one(case_id: str) -> dict[str, object]:
+        scores: dict[str, object] = {"identity_cosine_proxy": 0.9}
+        if case_id == "c3":
+            scores["ocr_match"] = ocr_match
+        return {"id": case_id, "seconds": 1.5, "output": f"{case_id}.webp", "scores": scores}
+
+    arm = {
+        "id": "qwen-r128",
+        "rank": 128,
+        "weight_file": QUANTFUNC_R128,
+        "caps": {"cap16": {"ok": True, "error": "", "fits_16gb": fits, "cases": [one(case_id) for case_id in cases]}},
+    }
+    arms = [arm]
+    if extra_fail:
+        arms.append({"id": "z-image-r128", "caps": {"cap16": {"ok": True, "fits_16gb": False, "cases": []}}})
+    payload = {
+        "schema": "voxprint-forge-nunchaku-edit/1",
+        "fits_16gb": fits and not extra_fail,
+        "arms": arms,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_phase0_baseline_keeps_the_own_quant(tmp_path: Path) -> None:
+    phase0 = _phase0(tmp_path / "result.json", extra_fail=True)
+    ctx, done, watch = _ctx(tmp_path)
+    result = run(
+        ctx,
+        done=done,
+        watch=watch,
+        own_edit=decide_own_edit("on", phase0),
+        phase0_result=phase0,
+    )
+    assert result["winner"] == "own-r256"
+    assert result["expected_min"] == 1260
+    ids = [row["id"] for row in result["steps"]]
+    assert "qwen-edit-2511-quant" in ids
+    assert "wan-2.2-gguf" in ids
+    assert "qwen-edit-2511-mirror" not in ids
+    comparison = json.loads((ctx.job("qwen-image-edit-2511") / "comparison.json").read_text(encoding="utf-8"))
+    baseline = comparison["phase0_baseline"]
+    assert isinstance(baseline, dict)
+    assert baseline["summary_fits_16gb"] is False
+    arms = baseline["arms"]
+    assert isinstance(arms, list)
+    assert arms[0]["id"] == "qwen-r128"
+    assert arms[0]["fits_16gb"] is True
+    assert any("does not choose the winner" in line for line in _eval_lines(comparison))
+    status = read_status(ctx.forge_out)
+    assert status["own_edit"]["action"] == "quantize"
+    assert status["own_edit"]["mode"] == "on"
+    assert phase0.is_file()
+
+
+def test_own_edit_auto_mirrors_r128_and_r32_then_runs_wan(tmp_path: Path) -> None:
+    phase0 = _phase0(tmp_path / "result.json", extra_fail=True)
+    ctx, done, watch = _ctx(tmp_path)
+    result = run(
+        ctx,
+        done=done,
+        watch=watch,
+        own_edit=decide_own_edit("auto", phase0),
+        phase0_result=phase0,
+    )
+    ids = [row["id"] for row in result["steps"]]
+    assert "qwen-edit-2511-quant" not in ids
+    assert "qwen-edit-2511-mirror" in ids
+    assert "wan-2.2-publish" in ids
+    assert result["expected_min"] == 220
+    assert result["winner"] is None
+    mirror = next(row for row in result["steps"] if row["id"] == "qwen-edit-2511-mirror")
+    assert mirror["slug"] == "voxprint-qwen-image-edit-2511-quantfunc-int4"
+    assert mirror["verified"] is True
+    sources = [Path(str(item)) for item in mirror["sources"]]
+    assert {path.name for path in sources} == {QUANTFUNC_R128, QUANTFUNC_R32}
+    assert all(not path.exists() for path in sources)
+    assert phase0.is_file()
+    card = (ctx.job("qwen-image-edit-2511") / "publish" / "README.md").read_text(encoding="utf-8")
+    assert "did not re-quantize" in card
+    assert QUANTFUNC_R128 in card and QUANTFUNC_R32 in card
+    status = read_status(ctx.forge_out)
+    assert status["own_edit"]["action"] == "mirror"
+    assert status["own_edit"]["fits_16gb"] is True
+    assert status["own_edit"]["hard_cases"] == ["c1", "c2", "c3"]
+
+
+def test_own_edit_auto_keeps_quant_when_the_gate_fails(tmp_path: Path) -> None:
+    unfit = _phase0(tmp_path / "unfit.json", fits=False)
+    assert decide_own_edit("auto", unfit).action == "quantize"
+    ctx, done, watch = _ctx(tmp_path)
+    result = run(ctx, done=done, watch=watch, own_edit=decide_own_edit("auto", unfit), phase0_result=unfit)
+    assert result["winner"] == "own-r256"
+    assert result["expected_min"] == 1260
+    missing_case = _phase0(tmp_path / "smoke.json", cases=("c1",))
+    passed, reason, _fits, _cases = quantfunc_r128_gate(json.loads(missing_case.read_text(encoding="utf-8")))
+    assert passed is False
+    assert "c2" in reason
+    ocr = _phase0(tmp_path / "ocr.json", ocr_match=False)
+    passed, reason, _fits, _cases = quantfunc_r128_gate(json.loads(ocr.read_text(encoding="utf-8")))
+    assert passed is False
+    assert "c3" in reason
+    absent = tmp_path / "absent.json"
+    assert decide_own_edit("auto", absent).action == "quantize"
+    assert load_phase0_baseline(absent) is None
+    broken = tmp_path / "broken.json"
+    broken.write_text("{", encoding="utf-8")
+    with pytest.raises(StageError) as exc:
+        load_phase0_baseline(broken)
+    assert exc.value.code == "phase0"
+
+
+def test_own_edit_off_mirrors_without_a_phase0_file(tmp_path: Path) -> None:
+    missing = tmp_path / "absent.json"
+    ctx, done, watch = _ctx(tmp_path)
+    result = run(
+        ctx,
+        done=done,
+        watch=watch,
+        own_edit=decide_own_edit("off", missing),
+        phase0_result=missing,
+    )
+    assert result["own_edit"]["action"] == "mirror"
+    assert result["phase0_baseline"] is None
+    assert "qwen-edit-2511-quant" not in [row["id"] for row in result["steps"]]
+    assert "wan-2.2-gguf" in [row["id"] for row in result["steps"]]
+
+
+def test_cli_default_own_edit_quantizes_a_passing_phase0(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    phase0 = _phase0(tmp_path / "result.json")
+    code = main(
+        [
+            "--json",
+            "--root",
+            str(ROOT),
+            "--forge-out",
+            str(tmp_path / "out"),
+            "run",
+            "--dry-run",
+            "--done-dir",
+            str(tmp_path / "done"),
+            "--watch",
+            str(tmp_path / "watch.json"),
+            "--phase0-result",
+            str(phase0),
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["result"]["own_edit"]["mode"] == "on"
+    assert payload["result"]["own_edit"]["action"] == "quantize"
+    assert payload["result"]["winner"] == "own-r256"
+    assert payload["result"]["phase0_baseline"]["arms"][0]["fits_16gb"] is True
+
+
+def test_estimates_auto_prints_the_mirror_table(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    phase0 = _phase0(tmp_path / "result.json")
+    assert main(["--root", str(ROOT), "estimates", "--own-edit", "auto", "--phase0-result", str(phase0)]) == 0
+    text = capsys.readouterr().out
+    assert "own quant is skipped" in text
+    assert "does not choose the winner" in text
+    assert "qwen-edit-2511-mirror" in text
+    assert "total  220 min" in text
+    assert "qwen-edit-2511-quant" not in text
+    broken = tmp_path / "broken.json"
+    broken.write_text("[]", encoding="utf-8")
+    assert main(["--json", "--root", str(ROOT), "estimates", "--phase0-result", str(broken)]) == 6
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "phase0"
 
 
 def test_forge_help_lists_diffusion_int4() -> None:
