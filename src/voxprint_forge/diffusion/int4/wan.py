@@ -36,6 +36,7 @@ from voxprint_forge.diffusion.int4.publish import (
 from voxprint_forge.diffusion.int4.qwen import reclaim_sources
 from voxprint_forge.diffusion.int4.runtime import execute
 from voxprint_forge.errors import ToolMissingError
+from voxprint_forge.mdl import LLAMA_CC, WAN_LLAMA_TAG, ManifestInput
 
 JOB = "wan-2.2-a14b"
 
@@ -287,7 +288,27 @@ def publish_step(ctx: StageContext) -> dict[str, object]:
 
         def drive(folder_id: str, files: list) -> list[dict[str, object]]:
             return live_drive(folder_id, files, model_id=slug)
-    published = publish_verified(output, slug=slug, card_text=card, licence=WAN_LICENCE, hub=hub, drive=drive)
+    published = publish_verified(
+        output,
+        slug=slug,
+        card_text=card,
+        licence=WAN_LICENCE,
+        hub=hub,
+        drive=drive,
+        manifest=ManifestInput(
+            model_id=slug.removeprefix("voxprint-"),
+            display_name="VOXPrint Wan2.2-T2V-A14B GGUF and FP8",
+            app_ids=("canvas",),
+            task="text-to-video",
+            license=WAN_LICENCE,
+            base_model=WAN_WEIGHT_REPO,
+            engine="llama.cpp",
+            version_req=WAN_LLAMA_TAG,
+            min_vram_gb=16,
+            recommended_vram_gb=24,
+            gpu_min_cc=LLAMA_CC,
+        ),
+    )
     sources = [work / "shards", work / "merged", work / "raw", work / "source"]
     return {
         "verified": published.verified,

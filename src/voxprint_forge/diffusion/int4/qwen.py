@@ -51,6 +51,7 @@ from voxprint_forge.diffusion.int4.publish import (
 from voxprint_forge.diffusion.int4.runtime import execute
 from voxprint_forge.errors import ChecksumError, StageError, ToolMissingError
 from voxprint_forge.hashing import sha256_file
+from voxprint_forge.mdl import CUDA_CC, NUNCHAKU_VERSION_REQ, ManifestInput
 from voxprint_forge.reclaim import delete_logged
 
 _ZERO = {"qwen-image-edit-2511": True, "qwen-image": False}
@@ -294,6 +295,19 @@ def publish_step(ctx: StageContext, target: TargetName) -> dict[str, object]:
         licence=QWEN_LICENCE,
         hub=hub,
         drive=drive,
+        manifest=ManifestInput(
+            model_id=slug.removeprefix("voxprint-"),
+            display_name=title,
+            app_ids=("canvas",),
+            task=pipeline,
+            license=QWEN_LICENCE,
+            base_model=repo,
+            engine="nunchaku",
+            version_req=NUNCHAKU_VERSION_REQ,
+            min_vram_gb=16,
+            recommended_vram_gb=24,
+            gpu_min_cc=CUDA_CC,
+        ),
     )
     sources = [ctx.job(target) / "source", ctx.job(target) / "quant", ctx.job(target) / "references"]
     return {
@@ -411,6 +425,19 @@ def mirror_step(ctx: StageContext) -> dict[str, object]:
         licence=QWEN_LICENCE,
         hub=hub,
         drive=drive,
+        manifest=ManifestInput(
+            model_id=_MIRROR_SLUG.removeprefix("voxprint-"),
+            display_name="VOXPrint mirror of QuantFunc Qwen-Image-Edit-2511 INT4",
+            app_ids=("canvas",),
+            task=pipeline,
+            license=QWEN_LICENCE,
+            base_model=repo,
+            engine="nunchaku",
+            version_req=NUNCHAKU_VERSION_REQ,
+            min_vram_gb=16,
+            recommended_vram_gb=24,
+            gpu_min_cc=CUDA_CC,
+        ),
     )
     return {
         "verified": published.verified,

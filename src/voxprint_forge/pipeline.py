@@ -27,6 +27,7 @@ from voxprint_forge.fitmath import budget_bytes, quant_rank
 from voxprint_forge.hashing import sha256_file, write_sha256
 from voxprint_forge.layout import Layout, read_marker, write_marker
 from voxprint_forge.llama import (
+    TAG,
     Runner,
     convert_argv,
     convert_script,
@@ -36,6 +37,18 @@ from voxprint_forge.llama import (
     tool,
 )
 from voxprint_forge.manifest import summary_lines, write_run_manifest
+from voxprint_forge.mdl import (
+    MANIFEST_NAME,
+    build_document,
+    card_url_for,
+    drive_mirror,
+    hub_mirrors,
+    manifest_artifact,
+    refresh_manifest,
+    retarget_mirrors,
+    rows_from_artifacts,
+    write_manifest,
+)
 from voxprint_forge.measure import (
     Candidate,
     fit_contexts,
@@ -53,7 +66,17 @@ from voxprint_forge.reclaim import hub_cache, reclaim_model_work
 from voxprint_forge.schedule import Gate
 from voxprint_forge.scrub import log
 from voxprint_forge.statusfile import beating, current_stage, set_stage, update_item
-from voxprint_forge.upload import Artifact, Remote, blocks_public_upload, publish_private, selected_targets
+from voxprint_forge.upload import (
+    Artifact,
+    Remote,
+    blocks_public_upload,
+    hf_user,
+    kaggle_model_slug,
+    kaggle_user,
+    publish_private,
+    repo_slug,
+    selected_targets,
+)
 
 ORDER = ("fetch", "abliterate", "quantize", "fit", "eval", "card", "publish-prep", "upload")
 
@@ -361,7 +384,7 @@ def run_model(
             return drafted
         _open_stage(tracker, layout, model, "upload")
         with _beat(layout, model, "upload"):
-            uploaded = _upload(model, host, layout, card, imatrix)
+            uploaded = _upload(model, host, layout, card, imatrix, llama_tag=plan.llama_cpp_tag)
     tracker.advance(model.id, "upload", share)
     return uploaded
 
@@ -993,6 +1016,8 @@ def _upload(
     layout: Layout,
     card: dict[str, object],
     imatrix: dict[str, object],
+    *,
+    llama_tag: str = TAG,
 ) -> dict[str, object]:
     marker = layout.stage(model.id, "upload")
     cached = read_marker(marker)
@@ -1033,6 +1058,15 @@ def _upload(
         reclaim_model_work(model_dir, drop_staging=target != "hf" or "kaggle" not in hub)
 
     if hub:
+        artifacts = _with_manifest(
+            model,
+            model_dir,
+            artifacts,
+            tiers,
+            llama_tag=llama_tag,
+            mirrors=_hub_mirror_rows(model.id, hub),
+            date=date,
+        )
         try:
             records = publish_private(
                 host.remote,
@@ -1054,6 +1088,9 @@ def _upload(
             if "drive" not in targets:
                 raise
             try:
+                manifest_path = model_dir / MANIFEST_NAME
+                retarget_mirrors(manifest_path, [drive_mirror(model.id, date)])
+                artifacts = refresh_manifest(artifacts, manifest_path)
                 records = upload_drive(artifacts, model_id=model.id, date=date)
             except ForgeError as drive_exc:
                 raise StageError(
@@ -1062,6 +1099,15 @@ def _upload(
                 ) from drive_exc
             _on_verified("drive")
     elif "drive" in targets:
+        artifacts = _with_manifest(
+            model,
+            model_dir,
+            artifacts,
+            tiers,
+            llama_tag=llama_tag,
+            mirrors=[drive_mirror(model.id, date)],
+            date=date,
+        )
         records = upload_drive(artifacts, model_id=model.id, date=date)
         _on_verified("drive")
     flags = _target_flags(records, targets, hub_failed=hub_failed)
@@ -1091,6 +1137,47 @@ def _upload(
         deferred.unlink()
     update_item(layout.root, model.id, stage="upload", pct=100, eta_min=0, state="UPLOADED", uploads=flags)
     return payload
+
+
+def _with_manifest(
+    model: ModelPlan,
+    model_dir: Path,
+    artifacts: list[Artifact],
+    tiers: list[dict[str, object]],
+    *,
+    llama_tag: str,
+    mirrors: list[dict[str, str]],
+    date: str,
+) -> list[Artifact]:
+    budgets = [float(tier["min_vram_gb"]) for tier in tiers]
+    flags = ("least-censored",) if model.mode == "ablate" or model.already_abliterated else ()
+    document = build_document(
+        model_id=model.id,
+        display_name=hub_title(model.id),
+        app_ids=("plotweaver", "audiobook-builder"),
+        task="text-generation",
+        license=model.licence,
+        files=rows_from_artifacts(artifacts),
+        mirrors=mirrors,
+        min_vram_gb=min(budgets),
+        recommended_vram_gb=max(budgets),
+        gpu_min_cc=6.0,
+        engine="llama.cpp",
+        version_req=llama_tag,
+        base_model=model.base_model,
+        card_url=card_url_for(mirrors),
+        flags=flags,
+        on_demand=True,
+        date=date,
+    )
+    path = write_manifest(model_dir, document)
+    return [*artifacts, manifest_artifact(path)]
+
+
+def _hub_mirror_rows(model_id: str, hub: tuple[str, ...]) -> list[dict[str, str]]:
+    hf_repo = f"{hf_user()}/{repo_slug(model_id)}" if "hf" in hub else ""
+    kaggle_ref = f"{kaggle_user()}/{kaggle_model_slug(model_id)}" if "kaggle" in hub else ""
+    return hub_mirrors(hf_repo=hf_repo, kaggle_ref=kaggle_ref)
 
 
 def _artifacts(

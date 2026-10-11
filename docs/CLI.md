@@ -72,7 +72,7 @@ forge --plan plans/plan.toml --root <repo> --forge-out ~/forge-out run-all
 
 Hugging Face repos are public. Kaggle models stay private.
 
-- Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=False`. The stage does not call `update_repo_visibility`. Before that create, the licence must be Apache-2.0, MIT, or another permissive tag. A non-commercial tag is refused. The model card must contain `## License`, `## Credits`, and `## Modification notice`, and the licence section is one line plus a link, not a fenced copy of the licence. Files are the selected GGUF for each tier, the imatrix, `README.md`, and the `.sha256` sidecars. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
+- Hugging Face: `HF_USER/voxprint-<model-id>`, created with `private=False`. The stage does not call `update_repo_visibility`. Before that create, the licence must be Apache-2.0, MIT, or another permissive tag. A non-commercial tag is refused. The model card must contain `## License`, `## Credits`, and `## Modification notice`, and the licence section is one line plus a link, not a fenced copy of the licence. Files are the selected GGUF for each tier, the imatrix, `README.md`, the `.sha256` sidecars, and `voxprint-model.json` at the repo root next to the card. `HF_HUB_ENABLE_HF_TRANSFER=1` is set when `hf_transfer` imports.
 - Kaggle: owner `KAGGLE_USER` (default `mitroshenkov87`). One private model per base (`isPrivate: true`). One variation per tier, framework `gguf`. Slugs use `[a-z0-9-]` (`t-lite-it-2.1` becomes `voxprint-t-lite-it-2-1`). Hugging Face keeps the dotted name. Bootstrap installs the `kaggle` CLI into the forge venv; otherwise the CLI is `kaggle` on `PATH` or `uvx kaggle`, version 2.2 or newer. On a local machine the API token is passed only in the child environment. A temporary config directory is deleted after each call.
 
 A refused licence or an incomplete card does not fall through to Drive. After each upload the remote sha256 and size must match the local file. The client retries with backoff (2s, 4s, 8s, 16s). The `upload` marker is written only after both sides match. Local deliverables stay on disk until that match. F16 and safetensors intermediates are removed once the quants and the imatrix exist.
@@ -82,6 +82,8 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 ## Manifest
 
 `run-all` writes `manifests/<date>-a100.json` and `manifests/<date>-a100.MODELS.md` under `~/forge-out/manifests/`. `torrent` is the placeholder `placeholder`. The A100 box has no GitHub remote. The run prints the two paths so the operator can copy them back. It does not push.
+
+Each published model also gets `voxprint-model.json` (schema `voxprint-model/1`) at the root of its Hugging Face repo, next to the card, and on the Kaggle and Drive mirrors. That file is separate from the Plotweaver run export above. See `docs/MODEL-MANIFEST.md`. `voxprint-forge-cli index build` writes a local `index.json` and does not upload. `index push` uploads only when `--push` is set. `index backfill` writes manifests for already published `Mitroshenkov87/voxprint-*` repos and does not upload.
 
 ## Environment
 

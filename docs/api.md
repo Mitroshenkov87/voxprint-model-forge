@@ -19,6 +19,10 @@ quality gates have the longer notes. Other public functions have one line.
 
 ::: voxprint_forge.evaluate
 
+## Model manifest
+
+::: voxprint_forge.mdl
+
 ## Plan and pipeline
 
 ::: voxprint_forge.plan

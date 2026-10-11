@@ -30,6 +30,7 @@ from voxprint_forge.fetch import HfDownloader
 from voxprint_forge.jsonio import emit
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
+from voxprint_forge.mdl import push_index, run_backfill, run_build
 from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
 from voxprint_forge.preflight import run_preflight
@@ -112,6 +113,30 @@ def build_parser() -> argparse.ArgumentParser:
     canvas_upload.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
     int4 = sub.add_parser("diffusion-int4", help="SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.")
     add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
+    index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
+    index_sub = index.add_subparsers(dest="index_command", required=True)
+    index_build = index_sub.add_parser(
+        "build",
+        help="Write index.json from local voxprint-model.json files. Does not upload.",
+    )
+    index_build.add_argument("--from", dest="manifest_from", type=Path, required=True, help="Directory to scan.")
+    index_build.add_argument("--out", type=Path, required=True, help="Where to write index.json.")
+    index_push = index_sub.add_parser(
+        "push",
+        help="Upload index.json to the model index dataset. Does nothing unless --push is set.",
+    )
+    index_push.add_argument(
+        "--push",
+        action="store_true",
+        help="Upload to Mitroshenkov87/voxprint-model-index. Required; omitted runs do not upload.",
+    )
+    index_push.add_argument("--index", type=Path, required=True, help="index.json to upload.")
+    index_backfill = index_sub.add_parser(
+        "backfill",
+        help="Write voxprint-model.json for published voxprint-* repos. Does not upload.",
+    )
+    index_backfill.add_argument("--out", type=Path, required=True, help="Directory for the generated files.")
+    index_backfill.add_argument("--user", default="Mitroshenkov87", help="Hugging Face user to list.")
     return parser
 
 
@@ -221,6 +246,18 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
         )
 
 
+def _index(args: argparse.Namespace) -> dict[str, object]:
+    if args.index_command == "build":
+        return run_build(args.manifest_from, args.out)
+    if args.index_command == "push":
+        if not args.push:
+            raise UsageError("index push does not upload unless --push is set", code="usage")
+        return push_index(args.index)
+    if args.index_command == "backfill":
+        return run_backfill(args.out, str(args.user))
+    raise UsageError(f"unknown index command {args.index_command}", code="usage")
+
+
 def _exit_code(command: str, result: object) -> int:
     if not isinstance(result, dict):
         return 0
@@ -256,6 +293,8 @@ def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
     if args.command == "accounts":
         return execute_accounts(args)
+    if args.command == "index":
+        return _index(args)
     if args.command == "sources":
         if args.sources_command != "release":
             raise UsageError(f"unknown sources command {args.sources_command}", code="usage")

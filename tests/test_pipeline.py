@@ -123,7 +123,7 @@ class FakeRemote:
     def kaggle_upload_variation(self, owner: str, slug: str, variation: str, folder: Path) -> str:
         handle = f"{owner}/{slug}/gguf/{variation}"
         for path in folder.iterdir():
-            if path.name.endswith(".json"):
+            if path.name in {"model-instance-metadata.json", "model-metadata.json"}:
                 continue
             self.kaggle_bytes[path.name] = path.read_bytes()
         return handle
@@ -299,6 +299,17 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     assert "q5.gguf" in downloader.calls
     assert remote.hf_private == ["voxprint-tests/voxprint-tiny"]
     assert remote.kaggle_private == [True]
+    assert "voxprint-model.json" in remote.hf_bytes
+    assert "voxprint-model.json" in remote.kaggle_bytes
+    mdl_doc = json.loads(remote.hf_bytes["voxprint-model.json"])
+    assert mdl_doc["schema"] == "voxprint-model/1"
+    assert mdl_doc["license"] == "apache-2.0"
+    assert mdl_doc["id"] == "tiny"
+    assert mdl_doc["runtime"] == {"engine": "llama.cpp", "version_req": "b11476"}
+    assert "least-censored" in mdl_doc["flags"]
+    assert mdl_doc["on_demand"] is True
+    assert "voxprint-model.json" not in {item["path"] for item in mdl_doc["files"]}
+    assert {item["kind"] for item in mdl_doc["mirrors"]} == {"hf", "kaggle"}
     assert remote.sleeps
     upload = layout.stage("tiny", "upload")
     assert upload.is_file()
@@ -782,6 +793,10 @@ def test_drive_fallback_after_hub_failure(tmp_path: Path, llama_bin: None, monke
     assert payload["files"][0]["target"] == "drive"
     assert payload["uploads"] == {"hf": "failed", "kaggle": "failed", "drive": "uploaded"}
     assert str(payload["files"][0]["path"]).startswith("Voxprint/model-forge/")
+    mdl_doc = json.loads((tmp_path / "good" / "work" / "tiny" / "voxprint-model.json").read_text(encoding="utf-8"))
+    assert [item["kind"] for item in mdl_doc["mirrors"]] == ["gdrive"]
+    assert mdl_doc["mirrors"][0]["ref"] == "Voxprint/model-forge/2026-10-10/tiny"
+    assert mdl_doc["card_url"] == ""
 
 
 def test_hf_only_target_skips_kaggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
