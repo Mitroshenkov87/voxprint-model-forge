@@ -440,6 +440,7 @@ def test_script_documents_the_rental_contract() -> None:
     for needle in (
         "FORGE_HOST_KIND",
         "--dry-run",
+        "--smoke-tiny",
         "--qwen-image",
         "watch.json",
         "status.json",

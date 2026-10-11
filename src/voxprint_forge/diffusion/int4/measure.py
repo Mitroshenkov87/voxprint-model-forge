@@ -1,4 +1,9 @@
-"""Optional GPU eval. diffusers and nunchaku are not installed on CPU CI."""
+"""Optional GPU eval.
+
+diffusers and nunchaku are imported on the first eval call. A CPU dry-run
+must not import diffusers, including when the package is installed for the
+one-block Qwen proof.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from voxprint_forge.diffusion.int4.pins import (
     QWEN_EDIT_REPO,
     QWEN_EDIT_REVISION,
 )
+from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
 from voxprint_forge.errors import StageError, ToolMissingError
 
 Fp8ExecMode = Literal["native", "emulated"]
@@ -38,15 +44,8 @@ try:
 except ImportError:
     torch = None
 
-try:
-    from diffusers import QwenImageEditPlusPipeline
-except ImportError:
-    QwenImageEditPlusPipeline = None
-
-try:
-    from nunchaku import NunchakuQwenImageTransformer2DModel
-except ImportError:
-    NunchakuQwenImageTransformer2DModel = None
+QwenImageEditPlusPipeline = None
+NunchakuQwenImageTransformer2DModel = None
 
 try:
     from PIL import Image
@@ -54,8 +53,26 @@ except ImportError:
     Image = None
 
 
+def _bind_edit_stack() -> None:
+    """Import diffusers and nunchaku once, on the eval path."""
+    global QwenImageEditPlusPipeline, NunchakuQwenImageTransformer2DModel
+    if QwenImageEditPlusPipeline is None:
+        try:
+            from diffusers import QwenImageEditPlusPipeline as _pipeline
+        except ImportError:
+            _pipeline = None
+        QwenImageEditPlusPipeline = _pipeline
+    if NunchakuQwenImageTransformer2DModel is None:
+        try:
+            from nunchaku import NunchakuQwenImageTransformer2DModel as _transformer
+        except ImportError:
+            _transformer = None
+        NunchakuQwenImageTransformer2DModel = _transformer
+
+
 def require_edit_runtime() -> None:
     """Raise when the pinned edit stack cannot be imported."""
+    _bind_edit_stack()
     missing = [
         name
         for name, value in (
@@ -211,6 +228,7 @@ def load_edit_pipeline(weight: Path, *, offload: str = "model"):
     assert torch is not None
     assert NunchakuQwenImageTransformer2DModel is not None
     assert QwenImageEditPlusPipeline is not None
+    install_quantfunc_shim()
     transformer = NunchakuQwenImageTransformer2DModel.from_pretrained(str(weight))
     pipe = QwenImageEditPlusPipeline.from_pretrained(
         QWEN_EDIT_REPO,

@@ -1,8 +1,10 @@
 """Idempotent Qwen loader patch for the pinned deepcompressor tree.
 
-The anchors are the text at commit ``69f3473f5e1c1504bae35cc50c7858ef900a9b17``.
-A checkout that does not contain them is refused, so a moved pin cannot
-silently quantize the wrong code.
+Pipeline and dataset anchors are the text at
+``69f3473f5e1c1504bae35cc50c7858ef900a9b17``. The pinned ``syh`` commit
+``019cbdea`` still has those pipeline anchors, a different collect call, and
+the issue 116 scale assert. A checkout that matches neither collect line is
+refused.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ _BUILD_INSERT = (
     "            from diffusers import DiffusionPipeline as _QwenPipeline\n"
     "\n"
     "            pipeline = _QwenPipeline.from_pretrained(path, torch_dtype=dtype)\n"
+    '            if name.startswith("qwen-image-edit") and hasattr(pipeline, "transformer"):\n'
+    "                pipeline.transformer.register_to_config(zero_cond_t=True)\n"
     "        else:\n"
     "            pipeline = AutoPipelineForText2Image.from_pretrained(path, torch_dtype=dtype)\n"
 )
@@ -89,6 +93,42 @@ _COLLECT_INSERT = (
     "            pipeline_kwargs.setdefault(\"negative_prompt\", \" \")\n"
     "        result_images = pipeline(prompts, generator=generators, **pipeline_kwargs).images\n"
 )
+_COLLECT_SYH_ANCHOR = (
+    "        result_images = pipeline(prompt_embeds=prompt_embeds, "
+    "prompt_embeds_mask=prompt_embeds_mask, negative_prompt_embeds=negative_prompt_embeds, "
+    "negative_prompt_embeds_mask=negative_prompt_embeds_mask,generator=generators, "
+    "target_seq_len=target_seq_len, **pipeline_kwargs).images\n"
+)
+_COLLECT_SYH_INSERT = (
+    "        if task == \"image-edit\":\n"
+    "            from PIL import Image\n"
+    "\n"
+    "            pipeline_kwargs[\"image\"] = [Image.open(path).convert(\"RGB\") for path in batch[\"image\"]]\n"
+    "            scale = pipeline_kwargs.pop(\"guidance_scale\", None)\n"
+    "            if scale is not None:\n"
+    "                pipeline_kwargs[\"true_cfg_scale\"] = scale\n"
+    "            pipeline_kwargs.setdefault(\"negative_prompt\", \" \")\n"
+    "            result_images = pipeline(\n"
+    "                prompt_embeds=prompt_embeds,\n"
+    "                prompt_embeds_mask=prompt_embeds_mask,\n"
+    "                negative_prompt_embeds=negative_prompt_embeds,\n"
+    "                negative_prompt_embeds_mask=negative_prompt_embeds_mask,\n"
+    "                generator=generators,\n"
+    "                **pipeline_kwargs,\n"
+    "            ).images\n"
+    "        else:\n"
+    "            "
+    + _COLLECT_SYH_ANCHOR.lstrip(" ")
+)
+_W4_SCALE_ANCHOR = '    assert scale.ndim == 4, "scale tensor should be 4D."\n    assert scale.shape[0] == oc\n'
+_W4_SCALE_INSERT = (
+    '    assert scale.ndim == 4, "scale tensor should be 4D."\n'
+    "    # Voxprint: nunchaku-ai/deepcompressor issue 116. img_mod scales can be [1, 1, 1, 1].\n"
+    "    if int(scale.shape[0]) == 1 and oc != 1:\n"
+    "        scale = scale.expand(oc, int(scale.shape[1]), int(scale.shape[2]), int(scale.shape[3])).contiguous()\n"
+    "    assert scale.shape[0] == oc\n"
+)
+_W4_SCALE_PRESENT = "issue 116"
 
 
 def assert_apache(path: Path, *, what: str) -> None:
@@ -130,7 +170,27 @@ def apply_dataset(path: Path) -> str:
 
 def apply_collect(path: Path) -> str:
     """Pass the calibration image and ``true_cfg_scale`` for image-edit. Idempotent."""
-    return _replace_once(path, _COLLECT_ANCHOR, _COLLECT_INSERT, present='task == "image-edit"')
+    text = path.read_text(encoding="utf-8")
+    if 'task == "image-edit"' in text:
+        return "present"
+    if _COLLECT_ANCHOR in text:
+        path.write_text(text.replace(_COLLECT_ANCHOR, _COLLECT_INSERT, 1), encoding="utf-8")
+        return "applied"
+    if _COLLECT_SYH_ANCHOR in text:
+        path.write_text(text.replace(_COLLECT_SYH_ANCHOR, _COLLECT_SYH_INSERT, 1), encoding="utf-8")
+        return "applied"
+    raise StageError(f"{path} does not match the pinned deepcompressor text", code="patch_anchor")
+
+
+def apply_w4_scale(path: Path) -> str:
+    """Broadcast a per-tensor W4 scale before the ``oc`` assert. Idempotent.
+
+    The ``syh`` checkout has this assert. A tree without ``utils.py`` is skipped
+    so the older anchor tests still apply.
+    """
+    if not path.is_file():
+        return "skipped"
+    return _replace_once(path, _W4_SCALE_ANCHOR, _W4_SCALE_INSERT, present=_W4_SCALE_PRESENT)
 
 
 def apply_checkout(root: Path) -> dict[str, str]:
@@ -139,8 +199,10 @@ def apply_checkout(root: Path) -> dict[str, str]:
     pipeline = root / "deepcompressor" / "app" / "diffusion" / "pipeline" / "config.py"
     dataset = root / "deepcompressor" / "app" / "diffusion" / "dataset" / "data" / "__init__.py"
     collect = root / "deepcompressor" / "app" / "diffusion" / "dataset" / "collect" / "calib.py"
+    utils = root / "deepcompressor" / "backend" / "nunchaku" / "utils.py"
     return {
         "pipeline": apply_pipeline(pipeline),
         "dataset": apply_dataset(dataset),
         "collect": apply_collect(collect),
+        "convert": apply_w4_scale(utils),
     }

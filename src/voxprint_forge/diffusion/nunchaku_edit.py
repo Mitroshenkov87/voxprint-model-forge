@@ -29,71 +29,107 @@ import transformers
 from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
 
 from voxprint_forge.diffusion.fp8 import dequant_file, read_format
+from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.scrub import active_secrets, scrub
 
-try:
-    import diffusers
-except ImportError:
-    diffusers = None
+# Bound by ``_bind_optional_stack``. Importing them here would put
+# ``diffusers`` in ``sys.modules`` for every later test, which the CPU
+# dry-run suite forbids even when the package is installed.
+diffusers = None
+nunchaku = None
+Image = None
+pytesseract = None
+NunchakuQwenImageTransformer2DModel = None
+NunchakuZImageTransformer2DModel = None
+QwenImageEditPlusPipeline = None
+ZImagePipeline = None
+QwenImageTransformer2DModel = None
+ZImageTransformer2DModel = None
+_OPTIONAL_BOUND = False
 
-try:
-    import nunchaku
-except ImportError:
-    nunchaku = None
 
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
-
-try:
-    import pytesseract
-except ImportError:
-    pytesseract = None
-
-try:
-    from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel
-except ImportError:
-    NunchakuQwenImageTransformer2DModel = None
-
-try:
-    from nunchaku.models.transformers.transformer_zimage import NunchakuZImageTransformer2DModel
-except ImportError:
-    NunchakuZImageTransformer2DModel = None
-
-try:
-    from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
-except ImportError:
-    QwenImageEditPlusPipeline = None
-
-try:
-    from diffusers.pipelines.z_image.pipeline_z_image import ZImagePipeline
-except ImportError:
-    ZImagePipeline = None
-
-try:
-    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
-except ImportError:
-    QwenImageTransformer2DModel = None
-
-try:
-    from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel
-except ImportError:
-    ZImageTransformer2DModel = None
-
-if NunchakuQwenImageTransformer2DModel is None and nunchaku is not None:
-    NunchakuQwenImageTransformer2DModel = getattr(nunchaku, "NunchakuQwenImageTransformer2DModel", None)
-if NunchakuZImageTransformer2DModel is None and nunchaku is not None:
-    NunchakuZImageTransformer2DModel = getattr(nunchaku, "NunchakuZImageTransformer2DModel", None)
-if QwenImageEditPlusPipeline is None and diffusers is not None:
-    QwenImageEditPlusPipeline = getattr(diffusers, "QwenImageEditPlusPipeline", None)
-if ZImagePipeline is None and diffusers is not None:
-    ZImagePipeline = getattr(diffusers, "ZImagePipeline", None)
-if QwenImageTransformer2DModel is None and diffusers is not None:
-    QwenImageTransformer2DModel = getattr(diffusers, "QwenImageTransformer2DModel", None)
-if ZImageTransformer2DModel is None and diffusers is not None:
-    ZImageTransformer2DModel = getattr(diffusers, "ZImageTransformer2DModel", None)
+def _bind_optional_stack() -> None:
+    """Import diffusers, nunchaku, Pillow, and pytesseract on first GPU use."""
+    global diffusers, nunchaku, Image, pytesseract
+    global NunchakuQwenImageTransformer2DModel, NunchakuZImageTransformer2DModel
+    global QwenImageEditPlusPipeline, ZImagePipeline
+    global QwenImageTransformer2DModel, ZImageTransformer2DModel, _OPTIONAL_BOUND
+    if _OPTIONAL_BOUND:
+        return
+    _OPTIONAL_BOUND = True
+    try:
+        import diffusers as _diffusers
+    except ImportError:
+        _diffusers = None
+    try:
+        import nunchaku as _nunchaku
+    except ImportError:
+        _nunchaku = None
+    try:
+        from PIL import Image as _image
+    except ImportError:
+        _image = None
+    try:
+        import pytesseract as _pytesseract
+    except ImportError:
+        _pytesseract = None
+    try:
+        from nunchaku.models.transformers.transformer_qwenimage import (
+            NunchakuQwenImageTransformer2DModel as _nunchaku_qwen,
+        )
+    except ImportError:
+        _nunchaku_qwen = None
+    try:
+        from nunchaku.models.transformers.transformer_zimage import (
+            NunchakuZImageTransformer2DModel as _nunchaku_zimage,
+        )
+    except ImportError:
+        _nunchaku_zimage = None
+    try:
+        from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import (
+            QwenImageEditPlusPipeline as _qwen_pipe,
+        )
+    except ImportError:
+        _qwen_pipe = None
+    try:
+        from diffusers.pipelines.z_image.pipeline_z_image import ZImagePipeline as _zimage_pipe
+    except ImportError:
+        _zimage_pipe = None
+    try:
+        from diffusers.models.transformers.transformer_qwenimage import (
+            QwenImageTransformer2DModel as _qwen_model,
+        )
+    except ImportError:
+        _qwen_model = None
+    try:
+        from diffusers.models.transformers.transformer_z_image import (
+            ZImageTransformer2DModel as _zimage_model,
+        )
+    except ImportError:
+        _zimage_model = None
+    diffusers = _diffusers
+    nunchaku = _nunchaku
+    Image = _image
+    pytesseract = _pytesseract
+    NunchakuQwenImageTransformer2DModel = _nunchaku_qwen
+    NunchakuZImageTransformer2DModel = _nunchaku_zimage
+    QwenImageEditPlusPipeline = _qwen_pipe
+    ZImagePipeline = _zimage_pipe
+    QwenImageTransformer2DModel = _qwen_model
+    ZImageTransformer2DModel = _zimage_model
+    if NunchakuQwenImageTransformer2DModel is None and nunchaku is not None:
+        NunchakuQwenImageTransformer2DModel = getattr(nunchaku, "NunchakuQwenImageTransformer2DModel", None)
+    if NunchakuZImageTransformer2DModel is None and nunchaku is not None:
+        NunchakuZImageTransformer2DModel = getattr(nunchaku, "NunchakuZImageTransformer2DModel", None)
+    if QwenImageEditPlusPipeline is None and diffusers is not None:
+        QwenImageEditPlusPipeline = getattr(diffusers, "QwenImageEditPlusPipeline", None)
+    if ZImagePipeline is None and diffusers is not None:
+        ZImagePipeline = getattr(diffusers, "ZImagePipeline", None)
+    if QwenImageTransformer2DModel is None and diffusers is not None:
+        QwenImageTransformer2DModel = getattr(diffusers, "QwenImageTransformer2DModel", None)
+    if ZImageTransformer2DModel is None and diffusers is not None:
+        ZImageTransformer2DModel = getattr(diffusers, "ZImageTransformer2DModel", None)
 
 SCHEMA = "voxprint-forge-nunchaku-edit/1"
 TAG = "nunchaku-test-2"
@@ -1113,6 +1149,7 @@ def worker_main(path: Path) -> int:
 
 def collect_versions() -> dict[str, str]:
     """Package versions from the interpreter that imports them."""
+    _bind_optional_stack()
     return {
         "python": sys.version.split()[0],
         "torch": getattr(torch, "__version__", "missing"),
@@ -1575,6 +1612,7 @@ def _require_cls(cls: object, name: str) -> object:
 
 
 def _load_pipe(job: dict[str, object]) -> object:
+    _bind_optional_stack()
     if diffusers is None or nunchaku is None:
         raise SetupError("diffusers and the vitoom-nunchaku wheel are required in this interpreter")
     family = str(job["family"])
@@ -1582,6 +1620,7 @@ def _load_pipe(job: dict[str, object]) -> object:
         return _load_fp8(job)
     weight = str(job["weight"])
     if family == "qwen-edit-2511":
+        install_quantfunc_shim()
         transformer_cls = _require_cls(NunchakuQwenImageTransformer2DModel, "NunchakuQwenImageTransformer2DModel")
         pipeline_cls = _require_cls(QwenImageEditPlusPipeline, "QwenImageEditPlusPipeline")
     elif family == "z-image-turbo":
@@ -1634,6 +1673,7 @@ def _load_fp8(job: dict[str, object]) -> object:
 
 
 def _generate(pipe: object, family: str, case: dict[str, object], steps: int) -> object:
+    _bind_optional_stack()
     generator = torch.Generator(device="cuda").manual_seed(SEED)
     if family == "qwen-edit-2511":
         if Image is None or not case.get("image"):
@@ -1665,6 +1705,7 @@ def _save_webp(image: object, path: Path) -> None:
 
 
 def _score_case(job: dict[str, object], case: dict[str, object], image: object) -> dict[str, object]:
+    _bind_optional_stack()
     scores: dict[str, object] = {"ocr_text": _ocr(image), "ocr_match": None}
     text = scores["ocr_text"]
     if isinstance(text, str):
@@ -1684,6 +1725,7 @@ def _grid(image: object) -> list[tuple[int, int, int]]:
 
 
 def _ocr(image: object) -> str | None:
+    _bind_optional_stack()
     if pytesseract is None:
         return None
     try:

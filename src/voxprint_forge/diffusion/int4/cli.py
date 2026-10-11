@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+import torch
+
 from voxprint_forge.diffusion.int4.context import StageContext
 from voxprint_forge.diffusion.int4.disk import guard_disk, reclaim_verified
 from voxprint_forge.diffusion.int4.fetch import fetch_weights
@@ -52,6 +54,16 @@ def add_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
     )
     fetched = sub.add_parser("fetch", help="Download QuantFunc, the edit base, Wan experts, and the FP8 reference.")
     fetched.add_argument("--dest", type=Path, required=True, help="Directory that receives the snapshots.")
+    smoke = sub.add_parser(
+        "smoke-tiny",
+        help="One-block calib, INT4, convert, and one latent. Optional nunchaku load on CUDA.",
+    )
+    smoke.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default=None,
+        help="Torch device. Default: cuda when it is available, otherwise cpu.",
+    )
 
 
 def _add_edit_flags(parser: argparse.ArgumentParser) -> None:
@@ -141,6 +153,13 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
         token = os.environ.get("HF_TOKEN")
         paths = fetch_weights(args.dest, token, forge_out=forge_out)
         return {"schema": SCHEMA, "paths": paths}
+    if command == "smoke-tiny":
+        # Loaded here so diffusion-int4 dry-run does not import diffusers.
+        from voxprint_forge.diffusion.int4.qwen_tiny import smoke_tiny
+
+        requested = getattr(args, "device", None)
+        device = None if requested is None else torch.device(str(requested))
+        return smoke_tiny(repo, device=device, dest=forge_out / "smoke-tiny" / "tiny.safetensors")
     if command == "disk-floor":
         markers = done_dir(getattr(args, "done_dir", None))
         ratio = guard_disk(

@@ -10,6 +10,8 @@
 # --own-edit auto is opt-in and can skip that quant when Phase 0 QuantFunc r128 passes.
 # --phase0-result is an eval and card baseline. A missing file does not change the plan.
 # --dry-run is the CPU smoke: tiny files, no CUDA, no clones, no token prompt.
+# --smoke-tiny is the one-block Qwen calib, INT4, convert, and one latent.
+# It exits before the token prompt, nvidia-smi, and the deepcompressor clone.
 # FORGE_SKIP_WAN=1 omits the Wan 2.2 clones, venv, and steps. The default still runs Wan.
 # FORGE_WAIT_FOR holds the live GPU stages until that file exists. --dry-run does not wait.
 # FORGE_PRIVATE_CALIB is an optional directory or private dataset id. Unset skips that set.
@@ -28,6 +30,7 @@ FORGE_OUT="${FORGE_OUT:-$HOME/forge-out}"
 DONE_DIR="${FORGE_DONE_DIR:-$HOME/.done/diffusion-int4}"
 WATCH="${FORGE_WATCH:-$HOME/watch.json}"
 DRY=0
+SMOKE_TINY=0
 QWEN_IMAGE=0
 SVD_RANK=256
 OWN_EDIT="${FORGE_OWN_EDIT:-on}"
@@ -37,6 +40,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
       DRY=1
+      ;;
+    --smoke-tiny)
+      SMOKE_TINY=1
       ;;
     --qwen-image)
       QWEN_IMAGE=1
@@ -129,6 +135,18 @@ prompt_secret() {
   printf -v "$name" '%s' "$value"
   export "$name"
 }
+
+if [[ "$SMOKE_TINY" -eq 1 ]]; then
+  PY="${FORGE_PYTHON:-python3}"
+  if ! command -v "$PY" >/dev/null 2>&1; then
+    PY=python
+  fi
+  export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+  printf 'smoke-tiny: one-block calib, ptq, convert, and one latent. No clone and no token.\n'
+  "$PY" -m voxprint_forge.diffusion.int4 --json --root "$ROOT" --forge-out "$FORGE_OUT" smoke-tiny
+  printf 'ALL-DONE\n'
+  exit 0
+fi
 
 if [[ "$DRY" -eq 0 ]]; then
   export HF_USER="${HF_USER:-Mitroshenkov87}"
@@ -235,7 +253,7 @@ clone_pin() {
   printf '%s\n' "$rev" > "$dest/PIN"
 }
 
-clone_pin "https://github.com/mit-han-lab/deepcompressor" "$SRC/deepcompressor" "69f3473f5e1c1504bae35cc50c7858ef900a9b17"
+clone_pin "https://github.com/lantudou/deepcompressor2" "$SRC/deepcompressor" "019cbdeae7e2add52eaf4c27a361cfc1e57993b8"
 if [[ "${FORGE_SKIP_WAN:-0}" != "1" ]]; then
   clone_pin "https://github.com/city96/ComfyUI-GGUF" "$SRC/ComfyUI-GGUF" "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
   clone_pin "https://github.com/ggml-org/llama.cpp" "$SRC/llama.cpp" "c8c07d658a6cefc5a50cfdf6be7d726503612303"

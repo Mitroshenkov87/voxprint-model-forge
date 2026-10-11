@@ -297,16 +297,19 @@ options:
 ## `forge diffusion-int4`
 
 ```text
-usage: forge diffusion-int4 [-h] {run,estimates,disk-floor,fetch} ...
+usage: forge diffusion-int4 [-h]
+                            {run,estimates,disk-floor,fetch,smoke-tiny} ...
 
 positional arguments:
-  {run,estimates,disk-floor,fetch}
+  {run,estimates,disk-floor,fetch,smoke-tiny}
     run                 Calibrate, quantize, evaluate, card, and upload.
     estimates           Print the planning minutes for each step.
     disk-floor          Exit 2 when free space stays under 15 percent after
                         reclaim.
     fetch               Download QuantFunc, the edit base, Wan experts, and
                         the FP8 reference.
+    smoke-tiny          One-block calib, INT4, convert, and one latent.
+                        Optional nunchaku load on CUDA.
 
 options:
   -h, --help            show this help message and exit
@@ -375,4 +378,15 @@ usage: forge diffusion-int4 fetch [-h] --dest DEST
 options:
   -h, --help   show this help message and exit
   --dest DEST  Directory that receives the snapshots.
+```
+
+## `forge diffusion-int4 smoke-tiny`
+
+```text
+usage: forge diffusion-int4 smoke-tiny [-h] [--device {cpu,cuda}]
+
+options:
+  -h, --help           show this help message and exit
+  --device {cpu,cuda}  Torch device. Default: cuda when it is available,
+                       otherwise cpu.
 ```

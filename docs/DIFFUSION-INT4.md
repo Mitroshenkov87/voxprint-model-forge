@@ -8,7 +8,7 @@ Checked 2026-10-11.
 
 | Tool | Commit | Licence |
 | --- | --- | --- |
-| [mit-han-lab/deepcompressor](https://github.com/mit-han-lab/deepcompressor) (the org also answers as nunchux-ai/deepcompressor) | `69f3473f5e1c1504bae35cc50c7858ef900a9b17` | Apache-2.0. Copyright 2024 Yujun Lin, Muyang Li, Zhekai Zhang, Haotian Tang, Shang Yang, Song Han. |
+| [lantudou/deepcompressor2](https://github.com/lantudou/deepcompressor2) branch `syh` | `019cbdeae7e2add52eaf4c27a361cfc1e57993b8` | Apache-2.0. Fork of nunchux-ai/deepcompressor (the nunchaku-ai/deepcompressor redirect). Copyright 2024 Yujun Lin, Muyang Li, Zhekai Zhang, Haotian Tang, Shang Yang, Song Han. |
 | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | `6ea2651e7df66d7585f6ffee804b20e92fb38b8a` | Apache-2.0 |
 | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) tag `b3962` | `c8c07d658a6cefc5a50cfdf6be7d726503612303` | MIT |
 | [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) | `1ea34ff48f87168174e12956e200b1d908b1c5ff` | Apache-2.0 |
@@ -18,7 +18,11 @@ Checked 2026-10-11.
 | QuantFunc/Nunchaku-Qwen-Image-EDIT-2511 | `4ca543a1e91db4183ee16fd5aa5950e0b02803e5` | Apache-2.0 |
 | tonera/vitoom-nunchaku | `85bad5510d409570527b018387491fd0c81e4727` | Apache-2.0 wheel `nunchaku-1.3.0.dev20260622+cu12.8torch2.11-cp311-cp311-linux_x86_64.whl` |
 
-The March 2025 deepcompressor tree has no Qwen pipeline. The stage applies an idempotent patch: image-edit prompts, `DiffusionPipeline.from_pretrained` for names that start with `qwen-image`, and `true_cfg_scale` plus the calibration image. A checkout whose text does not match the anchors exits 6 (`patch_anchor`). `zero_cond_t` is true for Qwen-Image-Edit-2511 and false for Qwen-Image. Edit inference uses the vitoom wheel, in a Python 3.11 venv, because upstream Nunchaku does not apply that flag.
+nunchaku-ai/deepcompressor issue 104 is still open. The nunchaku team has not published a Qwen-Image quant tree. `69f3473f5e1c1504bae35cc50c7858ef900a9b17` has no `DiffusionModelStruct` factory for `QwenImageTransformer2DModel` and raises `KeyError`. `syh` is six commits ahead of that base and registers the Qwen block. The stage applies an idempotent patch: image-edit prompts, `DiffusionPipeline.from_pretrained` for names that start with `qwen-image`, `register_to_config(zero_cond_t=True)` for names that start with `qwen-image-edit`, the calibration image, and a broadcast of a `[1, 1, 1, 1]` W4 scale before the `scale.shape[0] == oc` assert (nunchaku-ai/deepcompressor issue 116). A checkout whose text does not match the anchors exits 6 (`patch_anchor`). `zero_cond_t` is true for Qwen-Image-Edit-2511 and false for Qwen-Image. Edit inference uses the vitoom wheel, in a Python 3.11 venv, because upstream Nunchaku does not apply that flag.
+
+QuantFunc INT4 r128 and r32 store `img_mod` / `txt_mod` as TinyChat W4A16 (int32 `qweight`, `wscales`, `wzeros`) and do not store `smooth_factor`. The pinned Linux wheel `dev20260622` and the Windows wheel `dev20260629` are the same Qwen source and both use `SVDQW8A16Linear` for those mods, so `patch_scale_key` raises on the missing smooth keys. There is no Linux cp312 cu128 wheel and no Linux wheel dated 20260629. Rebuilding the same vitoom source would hit the same check. Z-Image INT4 r128 loads on this wheel because it does not use that module. The forge wraps `patch_scale_key` for the Qwen family: it inserts identity `smooth_factor` and unpacks the W4 matrix to a float `.weight` so the wheel's existing CUDA requant path can run. That requant has not been executed on an A100 in this change.
+
+`forge diffusion-int4 smoke-tiny` and `scripts/vm_run_diffusion_int4.sh --smoke-tiny` run the one-block chain (calibration from `data/diffusion_calib`, fast INT4 rank 8, convert, one transformer latent) and exit before the token prompt and the clone. On CUDA, with the vitoom wheel importable, that command also loads the tiny checkpoint through the shim and runs one forward. The latent is the image. VAE decode is not part of this command. The packed low-rank tile is 16, so rank 8 is stored as 16 with the extra singular values zero. The A100 quant of the full 60-block model stays 900 minutes (12–18 h). The H100 quant stays 500 minutes.
 
 ## Calibration
 
@@ -73,6 +77,21 @@ Required total: 1260 minutes on an A100, 860 minutes on an H100. Optional `qwen-
 FP8 tensor cores start at sm_89. On sm_89 or newer the FP8 baseline keeps float8 weights and runs them with native FP8 tensor cores. On an A100 the same baseline is emulated and weight-only, and `comparison.json` records that speed comparisons vs FP8 are not representative. A run that cannot read a compute capability records that same caveat and times the baseline as weight-only BF16.
 
 Torch 2.11 and torchvision 0.26 come from the cu128 wheel index, which includes sm_80 and sm_90. `llama-quantize` is built with `CMAKE_CUDA_ARCHITECTURES=80;90`. The pinned vitoom-nunchaku wheel lists sm_75, sm_80, sm_86, sm_89, and sm_120a. On an H100 the INT4 eval may fail to launch. Quantization uses deepcompressor. If eval fails, sources stay until a mirror is verified.
+
+## Proven on this change
+
+- CPU, one random-init block, `zero_cond_t` true: two calibration swatches, fast INT4 group 64 rank 8, convert, and the Nunchaku key/shape contract. Modulation is W4A16 (`qweight`, `wscales`, `wzeros`, `bias`) with no `smooth_factor`. The other linears are W4A4 with `smooth_factor`, `proj_down`, and `proj_up`. Packed rank is 16.
+- Issue 116: a scale of shape `[1, 1, 1, 1]` converts for an output width divisible by 6 and does not trip the `oc` assert.
+- QuantFunc r128 header, HTTP range only: `transformer_blocks.0.img_mod.1` has no `smooth_factor`, attention `smooth_factor` is `[3072]`, `qweight` is int32 `[4608, 1536]`, and `wscales` is `[48, 18432]`. The shim plans `smooth_factor` `[3072]`.
+- A synthetic TinyChat W4 roundtrip unpacks to the post-adanorm float. The preflight replica does not raise after the shim adds `.weight` and identity smooth.
+
+## Not proven on this change
+
+- `from_pretrained` of QuantFunc r128 or r32 on the Linux wheel after the shim, including the CUDA requant inside `SVDQW8A16Linear`.
+- Nunchaku CUDA kernel output matching the float block.
+- Wall clock of `--smoke-tiny` on an RTX 4090, RTX 5090, or A10. The CPU run is one block and is the proof that exists here.
+- The 12–18 h A100 quant (900 minutes planned; 500 minutes on an H100) and the quality of that export.
+- VAE decode of the smoke-tiny latent.
 
 ## Script
 
