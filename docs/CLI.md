@@ -27,15 +27,18 @@ On failure the object also has `error.code` and `error.message`.
 
 ## Install
 
-Python 3.12 or newer. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+
+`voxprint-common` 0.1.* is not on PyPI yet. The v0.1.1 wheel is vendored at `vendor/voxprint_common-0.1.1-py3-none-any.whl` (release https://github.com/Mitroshenkov87/voxprint-common/releases/tag/v0.1.1). Install that wheel, then the project. The project pin is `voxprint-common>=0.1.1,<0.2`.
 
 ```bash
+pip install vendor/voxprint_common-0.1.1-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 
 ## Commands
 
-`forge --version` prints `X.Y.Z · build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. The first codename is Charash.
+`forge --version` prints `X.Y.Z build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. `VOXPRINT_BUILD` replaces that sum. With neither value, and no recorded build, the line says `dev` instead of a number. The raw run number is not the build when `offset` is not zero. The first codename is Charash.
 
 `forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
 
@@ -100,7 +103,10 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 | `FORGE_DRIVE_TOKEN` | OAuth token for the Drive fallback. Passed only in the rclone environment |
 | `FORGE_DRIVE_SERVICE_ACCOUNT` | Service-account JSON for the Drive fallback, as a string |
 | `FORGE_DRIVE_REMOTE` | rclone remote name. Default `forge` |
-| `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version` |
+| `VOXPRINT_BUILD` | Build number. Wins over `GITHUB_RUN_NUMBER` |
+| `VOXPRINT_MODELS_DIR` | Absolute path of the shared model-component directory. Default is the suite models folder |
+| `VOXPRINT_MODEL_CACHE` | Alternate absolute directory for model components |
+| `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version`. Not used on its own |
 
 ## Model card
 
@@ -113,6 +119,30 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 min. Part C converts the shared Qwen2.5-VL-7B encoder. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running, and the only way to run retired parts D and E. `FORGE_DEFER_UPLOAD=1` or `--defer-upload` prepares tier files and writes `<part>-upload-deferred` without tokens. `forge canvas upload PLAN --parts A,B,C` (and `bash scripts/canvas_upload.sh --parts A,B,C`) uploads those parts later and is idempotent.
 
 Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
+
+## Nunchaku edit matrix
+
+`scripts/nunchaku_edit_test.sh` and `scripts/nunchaku_edit_test.ps1` run `python -m voxprint_forge.diffusion.nunchaku_edit`. This is not a `forge` subcommand. The tag is `nunchaku-test-1`. `--json` prints one result object on stdout. Logs stay on stderr. The scripts do not prompt.
+
+```bash
+bash scripts/nunchaku_edit_test.sh --json --smoke
+pwsh scripts/nunchaku_edit_test.ps1 --arms qwen-r128,qwen-r32,zimage-r128 --caps unconstrained,cap16
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--arms` | `qwen-r128`, `qwen-r32`, `zimage-r128`, `zimage-r256`. Default omits r256 |
+| `--cases` | `c1,c2,c3` for Qwen and `z1,z2,z3` for Z-Image |
+| `--out` | Default `results/nunchaku-edit/nunchaku-test-1/` |
+| `--mode` | `auto`, `model-offload`, or `block-offload` |
+| `--caps` | `unconstrained` and/or `cap16` (16/24 of a 24 GB card). Default is both |
+| `--smoke` | One case per arm. Qwen uses 20 steps instead of 40 |
+| `--cleanup` | Delete the INT4 safetensors after the run. Bases stay |
+| `--budget-min` | Default 90. r256 is dropped first when the budget is exceeded |
+
+`cap16` calls `torch.cuda.set_per_process_memory_fraction(16/24)`. `auto` tries model CPU offload and then block offload (`set_offload` with one pinned block, then sequential offload). Unconstrained Z-Image tries a resident GPU load first. A warm-up image is not included in `seconds_per_image`. `fits_16gb` is true when the nvidia-smi peak, sampled every 0.5 s, is at most 15.0 GiB.
+
+Exit codes for this script are separate from the `forge` table above: 0 pass, 1 a case failed or cap16 did not fit, 2 setup (wheel, sha256, disk, download), 3 no CUDA GPU, under 16 GB, or compute capability below 8.9. The wheel is the pinned vitoom-nunchaku build, checked by sha256. Upstream `nunchaku` is refused because it has no `zero_cond_t`. Resume markers are `~/.done/nunchaku-edit/<step>`. `result.json` uses schema `voxprint-forge-nunchaku-edit/1` and records the GPU, driver, torch, diffusers, nunchaku, wheel hash, and weight hash. See `docs/VM.md` for the 4090 steps.
 
 ## Diffusion INT4
 

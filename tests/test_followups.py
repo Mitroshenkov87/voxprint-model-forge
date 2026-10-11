@@ -109,11 +109,16 @@ def test_version_line(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.Mo
     from voxprint_forge.cli import main
 
     monkeypatch.delenv("GITHUB_RUN_NUMBER", raising=False)
+    monkeypatch.delenv("VOXPRINT_BUILD", raising=False)
     monkeypatch.delenv("FORGE_ROOT", raising=False)
-    assert version_line() == '0.1.0 · build 0 "Charash"'
+    assert version_line() == '0.1.0 dev "Charash"'
     code = main(["--version"])
     assert code == 0
-    assert capsys.readouterr().out.strip() == '0.1.0 · build 0 "Charash"'
+    assert capsys.readouterr().out.strip() == '0.1.0 dev "Charash"'
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "4")
+    assert version_line() == '0.1.0 build 4 "Charash"'
+    monkeypatch.setenv("VOXPRINT_BUILD", "9")
+    assert version_line() == '0.1.0 build 9 "Charash"'
 
 
 def test_cpu_slot_runs_beside_a_gpu_holder() -> None:

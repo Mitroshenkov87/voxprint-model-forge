@@ -1,51 +1,33 @@
-"""Release identity. build = CI run number + BUILD.json offset. Codename stays with the suite."""
+"""Release identity. The build number is read by ``voxprint_common.buildinfo``.
+
+``VOXPRINT_BUILD`` wins. Otherwise the number is ``GITHUB_RUN_NUMBER`` plus the
+``offset`` in ``BUILD.json``. That sum lives in the shared loader. This module
+does not read ``GITHUB_RUN_NUMBER``. A missing recorded build stays null and
+:func:`version_line` renders it as ``dev``.
+"""
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
+
+from voxprint_common.buildinfo import BuildInfo, load
 
 from voxprint_forge import __version__
 
-CODENAME_FALLBACK = "Charash"
-
-
-def _build_file() -> Path | None:
-    env = os.environ.get("FORGE_ROOT")
-    roots = []
-    if env:
-        roots.append(Path(env))
-    roots.append(Path.cwd())
-    roots.append(Path(__file__).resolve().parents[2])
-    for root in roots:
-        path = root / "BUILD.json"
-        if path.is_file():
-            return path
-    return None
-
-
-def load_identity() -> tuple[int, str]:
-    """Read the build number and codename from ``BUILD.json``."""
-    path = _build_file()
-    offset = 0
-    codename = CODENAME_FALLBACK
-    if path is not None:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            offset = int(raw.get("offset", 0))
-            name = raw.get("codename")
-            if isinstance(name, str) and name.strip():
-                codename = name.strip()
-    run = os.environ.get("GITHUB_RUN_NUMBER", "0").strip() or "0"
-    try:
-        number = int(run)
-    except ValueError:
-        number = 0
-    return offset + number, codename
+__all__ = ["version_line"]
 
 
 def version_line() -> str:
-    """`X.Y.Z · build N "Charash"`."""
-    build, codename = load_identity()
-    return f'{__version__} · build {build} "{codename}"'
+    """``X.Y.Z build N "Codename"``, or ``dev`` when no build number is recorded."""
+    info = load(package_dir=Path(__file__).resolve().parent, app="model-forge")
+    if info.version:
+        return info.label()
+    filled = BuildInfo(
+        app=info.app or "model-forge",
+        version=__version__,
+        rc=info.rc,
+        build=info.build,
+        codename=info.codename or "Charash",
+        show_rc=info.show_rc,
+    )
+    return filled.label()

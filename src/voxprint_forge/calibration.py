@@ -8,15 +8,15 @@ pinned gist URL is downloaded into $FORGE_OUT/calibration/imatrix.txt.
 
 from __future__ import annotations
 
-import hashlib
 import os
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+from voxprint_common.download import DiskSpaceError, download
+from voxprint_common.download import DownloadError as CommonDownloadError
+from voxprint_common.hashing import sha256_file
 
 from voxprint_forge.errors import ChecksumError, DownloadError, PlanError
 from voxprint_forge.evaluate import data_dir
-from voxprint_forge.hashing import sha256_file
 from voxprint_forge.plan import Plan
 
 # bartowski calibration_datav3. The gist states no licence.
@@ -54,32 +54,26 @@ def _pinned(path: Path) -> bool:
     return path.is_file() and sha256_file(path) == CALIBRATION_SHA256
 
 
-def _fetch(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "voxprint-forge"})
+def _download_corpus(dest: Path) -> None:
+    """Fetch the pinned gist with the shared downloader and refuse a bad digest."""
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = response.read(_MAX_BYTES + 1)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise DownloadError(
-            f"calibration download failed: {exc.__class__.__name__}",
-            code="download",
-        ) from None
-    if len(payload) > _MAX_BYTES:
+        download(dest, [CALIBRATION_RAW_URL], sha256=CALIBRATION_SHA256)
+    except DiskSpaceError as exc:
+        raise DownloadError(str(exc), code="download") from exc
+    except CommonDownloadError as exc:
+        text = str(exc)
+        partial = dest.with_name(dest.name + ".partial")
+        partial.unlink(missing_ok=True)
+        if "does not match" in text:
+            dest.unlink(missing_ok=True)
+            raise ChecksumError(
+                f"calibration download sha256 is not the pinned calibration_datav3 {CALIBRATION_SHA256}",
+                code="checksum",
+            ) from exc
+        raise DownloadError(f"calibration download failed: {text}", code="download") from exc
+    if dest.stat().st_size > _MAX_BYTES:
+        dest.unlink()
         raise DownloadError("calibration download is larger than 2 MB", code="download")
-    return payload
-
-
-def _write_verified(dest: Path, payload: bytes) -> None:
-    digest = hashlib.sha256(payload).hexdigest()
-    if digest != CALIBRATION_SHA256:
-        raise ChecksumError(
-            f"calibration download sha256 {digest} is not the pinned calibration_datav3 {CALIBRATION_SHA256}",
-            code="checksum",
-        )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    temporary = dest.with_name(dest.name + ".partial")
-    temporary.write_bytes(payload)
-    os.replace(temporary, dest)
 
 
 def ensure_calibration() -> Path:
@@ -90,7 +84,7 @@ def ensure_calibration() -> Path:
     dest = _cache_path()
     if _pinned(dest):
         return dest
-    _write_verified(dest, _fetch(CALIBRATION_RAW_URL))
+    _download_corpus(dest)
     return dest
 
 

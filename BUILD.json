@@ -1,4 +1,8 @@
 {
-  "offset": 0,
-  "codename": "Charash"
+  "app": "model-forge",
+  "version": "0.1.0",
+  "rc": null,
+  "build": null,
+  "codename": "Charash",
+  "offset": 0
 }

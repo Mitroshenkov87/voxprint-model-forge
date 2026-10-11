@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 from transformers import AutoTokenizer
+from voxprint_common.download import DownloadError as CommonDownloadError
+from voxprint_common.download import download as shared_download
 
 from voxprint_forge.calibration import (
     CALIBRATION_RAW_URL,
@@ -15,7 +17,6 @@ from voxprint_forge.calibration import (
     CALIBRATION_TOKENS,
     CALIBRATION_URL,
     LICENCE_STATUS,
-    _fetch,
     assert_calibration,
     ensure_calibration,
     tokens_required,
@@ -52,12 +53,13 @@ def test_pinned_calibration_meets_the_llama_requirement(tmp_path: Path, monkeypa
     monkeypatch.setenv("FORGE_OUT", str(tmp_path))
     calls = {"n": 0}
 
-    def _counting(url: str) -> bytes:
+    def _counting(destination: Path, sources: list[str] | tuple[str, ...], **kwargs: object) -> Path:
         calls["n"] += 1
-        assert url == CALIBRATION_RAW_URL
-        return _fetch(url)
+        assert list(sources) == [CALIBRATION_RAW_URL]
+        assert kwargs["sha256"] == CALIBRATION_SHA256
+        return shared_download(destination, sources, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("voxprint_forge.calibration._fetch", _counting)
+    monkeypatch.setattr("voxprint_forge.calibration.download", _counting)
     path = ensure_calibration()
     assert calls["n"] == 1
     assert path == tmp_path / "calibration" / "imatrix.txt"
@@ -102,7 +104,13 @@ def test_calibration_download_rejects_a_mismatched_body(tmp_path: Path, monkeypa
     empty.mkdir()
     monkeypatch.setattr("voxprint_forge.calibration.data_dir", lambda: empty)
     monkeypatch.setenv("FORGE_OUT", str(tmp_path))
-    monkeypatch.setattr("voxprint_forge.calibration._fetch", lambda url: b"not-the-corpus")
+    def _bad(destination: Path, sources: list[str] | tuple[str, ...], **kwargs: object) -> Path:
+        del kwargs
+        raise CommonDownloadError(
+            f"all sources failed for {destination.name}: {sources[0]}: abc does not match {CALIBRATION_SHA256}"
+        )
+
+    monkeypatch.setattr("voxprint_forge.calibration.download", _bad)
     with pytest.raises(ChecksumError):
         ensure_calibration()
     assert not (tmp_path / "calibration" / "imatrix.txt").exists()
