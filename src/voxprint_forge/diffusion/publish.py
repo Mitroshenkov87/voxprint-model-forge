@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from voxprint_forge.components import place_weight
 from voxprint_forge.diffusion.registry import Row, render_models_md
 from voxprint_forge.diffusion.weights import link_or_copy
 from voxprint_forge.drive import upload_drive
@@ -78,12 +79,14 @@ def collect_files(
     found: list[LocalFile] = []
     for path in _iter_files(output):
         name = path.relative_to(output).as_posix()
+        digest = sha256_file(path)
+        place_weight(path, digest=digest)
         tier, vram, file_repo, file_revision = _tier_of(name, tiers, repo, revision)
         found.append(
             LocalFile(
                 path=path,
                 name=name,
-                sha256=sha256_file(path),
+                sha256=digest,
                 size=path.stat().st_size,
                 tier=tier,
                 vram_gb=vram,
