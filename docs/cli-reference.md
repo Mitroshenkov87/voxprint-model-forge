@@ -318,25 +318,41 @@ options:
 usage: forge diffusion-int4 run [-h] [--dry-run] [--svd-rank SVD_RANK]
                                 [--qwen-image] [--done-dir DONE_DIR]
                                 [--watch WATCH] [--only ONLY]
+                                [--own-edit {auto,on,off}]
+                                [--phase0-result PHASE0_RESULT]
 
 options:
-  -h, --help           show this help message and exit
-  --dry-run            CPU smoke with tiny files. No GPU and no downloads.
-  --svd-rank SVD_RANK  SVD rank. Default 256.
-  --qwen-image         Also quantize Qwen-Image INT4 r256.
-  --done-dir DONE_DIR  Marker directory. Default: ~/.done/diffusion-int4.
-  --watch WATCH        Watch file. Default: ~/watch.json.
-  --only ONLY          Run one step. Earlier steps must already have markers.
+  -h, --help            show this help message and exit
+  --dry-run             CPU smoke with tiny files. No GPU and no downloads.
+  --svd-rank SVD_RANK   SVD rank. Default 256.
+  --qwen-image          Also quantize Qwen-Image INT4 r256.
+  --done-dir DONE_DIR   Marker directory. Default: ~/.done/diffusion-int4.
+  --watch WATCH         Watch file. Default: ~/watch.json.
+  --only ONLY           Run one step. Earlier steps must already have markers.
+  --own-edit {auto,on,off}
+                        on (default) always runs the own INT4 r256 quant. auto
+                        may skip it. off mirrors QuantFunc.
+  --phase0-result PHASE0_RESULT
+                        Phase 0 result.json. Missing is ignored. Present is an
+                        eval and card baseline, not the winner.
 ```
 
 ## `forge diffusion-int4 estimates`
 
 ```text
 usage: forge diffusion-int4 estimates [-h] [--qwen-image]
+                                      [--own-edit {auto,on,off}]
+                                      [--phase0-result PHASE0_RESULT]
 
 options:
-  -h, --help    show this help message and exit
-  --qwen-image  Include the optional Qwen-Image steps.
+  -h, --help            show this help message and exit
+  --qwen-image          Include the optional Qwen-Image steps.
+  --own-edit {auto,on,off}
+                        on (default) always runs the own INT4 r256 quant. auto
+                        may skip it. off mirrors QuantFunc.
+  --phase0-result PHASE0_RESULT
+                        Phase 0 result.json. Missing is ignored. Present is an
+                        eval and card baseline, not the winner.
 ```
 
 ## `forge diffusion-int4 disk-floor`

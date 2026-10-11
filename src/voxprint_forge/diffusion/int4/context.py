@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from voxprint_forge.diffusion.int4.evalrule import Arm
+from voxprint_forge.diffusion.int4.gate import OwnEditDecision
 
 
 @dataclass
@@ -22,6 +23,8 @@ class StageContext:
     measurer: Callable[[], list[Arm]] | None = None
     hub: Callable[..., list[dict[str, object]]] | None = None
     drive: Callable[..., list[dict[str, object]]] | None = None
+    own_edit: OwnEditDecision | None = None
+    phase0_baseline: dict[str, object] | None = None
 
     def job(self, name: str) -> Path:
         """Work directory for one model."""

@@ -146,7 +146,7 @@ export FORGE_DRIVE_TOKEN=...
 tmux new -s int4 'bash scripts/vm_run_diffusion_int4.sh'
 ```
 
-`--dry-run` skips CUDA, clones, venvs, and the token prompt. `--qwen-image` adds the optional Qwen-Image INT4 steps. `--svd-rank` defaults to 256.
+`--dry-run` skips CUDA, clones, venvs, and the token prompt. `--qwen-image` adds the optional Qwen-Image INT4 steps. `--svd-rank` defaults to 256. `--own-edit` defaults to `on` (the own Qwen-Edit-2511 INT4 r256 quant). `--phase0-result` defaults to `/workspace/vm-results/model-forge/nunchaku-test-1/result.json`. When that file is present it is an eval and card baseline. It does not skip the quant unless `--own-edit auto` and QuantFunc r128 passed every hard case with `fits_16gb`.
 
 Preflight requires `nvidia-smi`, `nvcc`, `git`, `cmake`, and `ninja`, then clones the pinned deepcompressor, ComfyUI-GGUF, llama.cpp `b3962`, and Wan2.2 trees. The deepcompressor `LICENSE` must say Apache License and Version 2.0 or the script exits 3. Two Python 3.11 venvs keep the vitoom-nunchaku wheel (cp311, torch 2.11, cu128) off the forge 3.14 stack. `fetch` then downloads QuantFunc (sha256 checked), Qwen-Image-Edit-2511, Wan2.2-T2V-A14B, and the FP8 reference. Set `FORGE_FP8_EDIT` to a local canvas part C tree to skip the public mirror.
 

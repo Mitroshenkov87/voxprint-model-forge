@@ -99,6 +99,16 @@ def update_item(
         _write(path, payload)
 
 
+def record_field(forge_out: Path, key: str, value: object) -> None:
+    """Store one top-level field in ``status.json``. Item rows stay in place."""
+    path = status_path(forge_out)
+    with _LOCK:
+        payload = _read(path)
+        payload[key] = value
+        payload["updated"] = _now()
+        _write(path, payload)
+
+
 def read_status(forge_out: Path) -> dict[str, object]:
     """Load ``status.json``, or an empty document when it is missing."""
     return _read(status_path(forge_out))

@@ -79,12 +79,21 @@ def render_int4_card(
     eval_lines: tuple[str, ...],
     credits: tuple[str, ...],
     kind: str,
+    method_text: str | None = None,
+    calibration_text: str | None = None,
+    notice: str | None = None,
 ) -> str:
     """Render the canvas card template. Method text is Forge-authored."""
     if kind == "wan":
-        method, calibration, limits, notice = WAN_METHOD, WAN_CALIBRATION, WAN_LIMITS, WAN_NOTICE
+        method, calibration, limits, notice_text = WAN_METHOD, WAN_CALIBRATION, WAN_LIMITS, WAN_NOTICE
     else:
-        method, calibration, limits, notice = INT4_METHOD, INT4_CALIBRATION, INT4_LIMITS, INT4_NOTICE
+        method, calibration, limits, notice_text = INT4_METHOD, INT4_CALIBRATION, INT4_LIMITS, INT4_NOTICE
+    if method_text is not None:
+        method = method_text
+    if calibration_text is not None:
+        calibration = calibration_text
+    if notice is not None:
+        notice_text = notice
     card = CardContext(
         title=title,
         base_models=base_models,
@@ -103,7 +112,7 @@ def render_int4_card(
         method=method,
         calibration=calibration,
         limits=limits,
-        modification_notice=notice,
+        modification_notice=notice_text,
     )
 
 

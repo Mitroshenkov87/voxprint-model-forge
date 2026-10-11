@@ -19,8 +19,13 @@ from voxprint_forge.diffusion.int4.patch import apply_checkout
 from voxprint_forge.diffusion.int4.pins import (
     DEEPCOMPRESSOR_COMMIT,
     DEFAULT_SVD_RANK,
+    QUANTFUNC_R32,
+    QUANTFUNC_R32_SHA256,
     QUANTFUNC_R128,
+    QUANTFUNC_R128_SHA256,
     QUANTFUNC_R256,
+    QUANTFUNC_REPO,
+    QUANTFUNC_REVISION,
     QWEN_EDIT_REPO,
     QWEN_EDIT_REVISION,
     QWEN_IMAGE_REPO,
@@ -38,10 +43,19 @@ from voxprint_forge.diffusion.int4.publish import (
     write_publish_tree,
 )
 from voxprint_forge.diffusion.int4.runtime import execute
-from voxprint_forge.errors import StageError, ToolMissingError
+from voxprint_forge.errors import ChecksumError, StageError, ToolMissingError
+from voxprint_forge.hashing import sha256_file
 from voxprint_forge.reclaim import delete_logged
 
 _ZERO = {"qwen-image-edit-2511": True, "qwen-image": False}
+_MIRROR_SLUG = "voxprint-qwen-image-edit-2511-quantfunc-int4"
+_MIRROR_METHOD = (
+    "These files are the QuantFunc Nunchaku INT4 checkpoints for Qwen-Image-Edit-2511. "
+    "r128 is the balance file and r32 is the ultimate-speed file. Voxprint did not re-quantize them."
+)
+_MIRROR_CALIBRATION = "No Voxprint calibration. These are the upstream QuantFunc files at the pinned revision."
+_MIRROR_NOTICE = "Mirrored by Voxprint from QuantFunc. Voxprint did not re-quantize these weights."
+_QUANTFUNC_SHA = {QUANTFUNC_R128: QUANTFUNC_R128_SHA256, QUANTFUNC_R32: QUANTFUNC_R32_SHA256}
 
 
 def _target_facts(target: TargetName) -> tuple[str, str, str, bool]:
@@ -174,6 +188,8 @@ def eval_step(ctx: StageContext, target: TargetName) -> dict[str, object]:
         "dry_run": ctx.dry_run,
         "fp8_baseline": device_fp8_report(probe=not ctx.dry_run),
     }
+    if target == "qwen-image-edit-2511" and ctx.phase0_baseline is not None:
+        payload["phase0_baseline"] = ctx.phase0_baseline
     path = ctx.job(target) / "comparison.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -298,7 +314,39 @@ def _eval_lines(comparison: dict[str, object]) -> tuple[str, ...]:
         note = baseline.get("note")
         if isinstance(note, str) and note:
             lines.append(note)
+    lines.extend(_baseline_eval_lines(comparison.get("phase0_baseline")))
     return tuple(lines)
+
+
+def _baseline_eval_lines(baseline: object) -> tuple[str, ...]:
+    """Card lines for the Phase 0 comparison. They do not name a winner."""
+    if not isinstance(baseline, dict):
+        return ()
+    lines = ["Phase 0 result is a comparison baseline and does not choose the winner."]
+    arms = baseline.get("arms")
+    if not isinstance(arms, list):
+        return tuple(lines)
+    for arm in arms:
+        if not isinstance(arm, dict):
+            continue
+        arm_id = str(arm.get("id") or "")
+        lines.append(f"{arm_id} cap16 fits_16gb={arm.get('fits_16gb')}.")
+        cases = arm.get("cases")
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            if isinstance(case, dict):
+                lines.append(f"{arm_id} {case.get('id')}: {_case_brief(case)}.")
+    return tuple(lines)
+
+
+def _case_brief(case: dict[str, object]) -> str:
+    parts = [f"seconds={case.get('seconds')}"]
+    scores = case.get("scores")
+    if isinstance(scores, dict) and scores:
+        rendered = ", ".join(f"{key}={scores[key]}" for key in sorted(scores))
+        parts.append(rendered)
+    return " ".join(parts)
 
 
 def _credits(target: TargetName) -> tuple[str, ...]:
@@ -312,6 +360,91 @@ def _credits(target: TargetName) -> tuple[str, ...]:
         credits.insert(3, "tonera vitoom-nunchaku, for the zero_cond_t inference fork.")
         credits.insert(4, "QuantFunc, for the r128 and r256 comparison weights.")
     return tuple(credits)
+
+
+def mirror_step(ctx: StageContext) -> dict[str, object]:
+    """Publish QuantFunc r128 and r32. The own r256 quant does not run."""
+    weights = _mirror_weights(ctx)
+    repo, revision, pipeline, _zero = _target_facts("qwen-image-edit-2511")
+    reason = ctx.own_edit.reason if ctx.own_edit is not None else "The own quant is skipped."
+    eval_lines = (reason, "Wan 2.2 still runs.", *_baseline_eval_lines(ctx.phase0_baseline))
+    card = render_int4_card(
+        ctx.repo,
+        title="Voxprint mirror of QuantFunc Qwen-Image-Edit-2511 INT4",
+        base_models=(f"{repo}@{revision}", f"{QUANTFUNC_REPO}@{QUANTFUNC_REVISION}"),
+        pipeline_tag=pipeline,
+        quant_lines=(
+            f"{QUANTFUNC_R128} (balance, r128).",
+            f"{QUANTFUNC_R32} (ultimate speed, r32).",
+            "Voxprint did not re-quantize these files.",
+        ),
+        eval_lines=eval_lines,
+        credits=_credits("qwen-image-edit-2511"),
+        kind="int4",
+        method_text=_MIRROR_METHOD,
+        calibration_text=_MIRROR_CALIBRATION,
+        notice=_MIRROR_NOTICE,
+    )
+    output = ctx.job("qwen-image-edit-2511") / "publish"
+    write_publish_tree(output, weights, card)
+    hub = ctx.hub
+    drive = ctx.drive
+    if ctx.dry_run and hub is None:
+        mirror = LocalMirror(ctx.forge_out / "mirrors")
+        hub = mirror.upload_hf
+        drive = mirror.upload_drive
+    elif hub is None:
+        hub = live_hub
+
+        def drive(folder_id: str, files: list) -> list[dict[str, object]]:
+            return live_drive(folder_id, files, model_id=_MIRROR_SLUG)
+    published = publish_verified(
+        output,
+        slug=_MIRROR_SLUG,
+        card_text=card,
+        licence=QWEN_LICENCE,
+        hub=hub,
+        drive=drive,
+    )
+    return {
+        "verified": published.verified,
+        "hf": published.hf,
+        "drive": published.drive,
+        "sources": [str(path) for path in weights],
+        "files": list(published.records),
+        "slug": _MIRROR_SLUG,
+    }
+
+
+def _mirror_weights(ctx: StageContext) -> list[Path]:
+    """QuantFunc r128 and r32. Dry-run writes placeholders when the files are absent."""
+    names = (QUANTFUNC_R128, QUANTFUNC_R32)
+    root = os.environ.get("FORGE_QUANTFUNC", "").strip()
+    if root:
+        paths = [Path(root) / name for name in names]
+        if all(path.is_file() for path in paths):
+            if not ctx.dry_run:
+                _require_quantfunc_sha(paths)
+            return paths
+    if not ctx.dry_run:
+        raise StageError("FORGE_QUANTFUNC is missing QuantFunc r128 or r32", code="quantfunc")
+    folder = ctx.job("qwen-image-edit-2511") / "quantfunc"
+    folder.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for name in names:
+        path = folder / name
+        if not path.is_file():
+            path.write_bytes(b"quantfunc-mirror")
+        written.append(path)
+    return written
+
+
+def _require_quantfunc_sha(paths: list[Path]) -> None:
+    for path in paths:
+        expected = _QUANTFUNC_SHA[path.name]
+        digest = sha256_file(path)
+        if digest != expected:
+            raise ChecksumError(f"{path.name} sha256 {digest} != {expected}", code="checksum")
 
 
 def reclaim_sources(sources: list[str], *, verified: bool) -> list[str]:

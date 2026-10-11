@@ -6,6 +6,9 @@
 # FORGE_HOST_KIND=local (default) keeps tokens in the process only.
 # FORGE_HOST_KIND=rented-vm logs in once and leaves the logins for the rental.
 # This script does not enable command tracing and does not unset tokens.
+# --own-edit defaults to on: the own Qwen-Edit-2511 INT4 r256 quant always runs.
+# --own-edit auto is opt-in and can skip that quant when Phase 0 QuantFunc r128 passes.
+# --phase0-result is an eval and card baseline. A missing file does not change the plan.
 # --dry-run is the CPU smoke: tiny files, no CUDA, no clones, no token prompt.
 # Heartbeats land in $FORGE_OUT/status.json. The job list is ~/watch.json
 # unless --watch or FORGE_WATCH is set. Markers are ~/.done/diffusion-int4/<step>.
@@ -23,6 +26,8 @@ WATCH="${FORGE_WATCH:-$HOME/watch.json}"
 DRY=0
 QWEN_IMAGE=0
 SVD_RANK=256
+OWN_EDIT="${FORGE_OWN_EDIT:-on}"
+PHASE0_RESULT="${FORGE_PHASE0_RESULT:-/workspace/vm-results/model-forge/nunchaku-test-1/result.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +65,20 @@ while [[ $# -gt 0 ]]; do
     --watch=*)
       WATCH="${1#--watch=}"
       ;;
+    --own-edit)
+      shift
+      OWN_EDIT="${1:-}"
+      ;;
+    --own-edit=*)
+      OWN_EDIT="${1#--own-edit=}"
+      ;;
+    --phase0-result)
+      shift
+      PHASE0_RESULT="${1:-}"
+      ;;
+    --phase0-result=*)
+      PHASE0_RESULT="${1#--phase0-result=}"
+      ;;
     *)
       printf 'unknown argument %s\n' "$1" >&2
       exit 2
@@ -68,7 +87,16 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+case "$OWN_EDIT" in
+  auto|on|off) ;;
+  *)
+    printf 'own-edit must be auto, on, or off\n' >&2
+    exit 2
+    ;;
+esac
+
 export FORGE_OUT FORGE_DONE_DIR="$DONE_DIR" FORGE_WATCH="$WATCH"
+EDIT_FLAGS=(--own-edit "$OWN_EDIT" --phase0-result "$PHASE0_RESULT")
 export FORGE_ROOT="$ROOT"
 export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$FORGE_OUT/logs" "$DONE_DIR"
@@ -115,9 +143,10 @@ source "$ROOT/scripts/vm_logins.sh"
 if [[ "$DRY" -eq 1 ]]; then
   printf 'dry-run: skip CUDA, clones, and venvs\n'
   export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
-  "$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates
+  "$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates "${EDIT_FLAGS[@]}"
   disk_floor
   args=(--json --root "$ROOT" --forge-out "$FORGE_OUT" run --dry-run --svd-rank "$SVD_RANK" --done-dir "$DONE_DIR" --watch "$WATCH")
+  args+=("${EDIT_FLAGS[@]}")
   if [[ "$QWEN_IMAGE" -eq 1 ]]; then
     args+=(--qwen-image)
   fi
@@ -264,8 +293,9 @@ WEIGHTS="$SRC/weights"
 source "$WEIGHTS/exports.sh"
 
 disk_floor
-"$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates
+"$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates "${EDIT_FLAGS[@]}"
 args=(--json --root "$ROOT" --forge-out "$FORGE_OUT" run --svd-rank "$SVD_RANK" --done-dir "$DONE_DIR" --watch "$WATCH")
+args+=("${EDIT_FLAGS[@]}")
 if [[ "$QWEN_IMAGE" -eq 1 ]]; then
   args+=(--qwen-image)
 fi
