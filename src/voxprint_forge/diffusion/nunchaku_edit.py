@@ -2,8 +2,9 @@
 
 One uv venv installs the pinned ``tonera/vitoom-nunchaku`` wheel (it implements
 ``zero_cond_t`` and ships both transformer modules). Upstream ``nunchaku`` is
-never installed. The 4090 entry points are ``scripts/nunchaku_edit_test.sh`` and
-``scripts/nunchaku_edit_test.ps1``.
+never installed. INT4 covers sm_80, sm_86, and sm_89. NVFP4 is not selected.
+``scripts/nunchaku_edit_test.sh`` is the Linux entry. ``scripts/nunchaku_edit_test.ps1``
+is the Windows entry.
 """
 
 from __future__ import annotations
@@ -95,7 +96,7 @@ if ZImageTransformer2DModel is None and diffusers is not None:
     ZImageTransformer2DModel = getattr(diffusers, "ZImageTransformer2DModel", None)
 
 SCHEMA = "voxprint-forge-nunchaku-edit/1"
-TAG = "nunchaku-test-1"
+TAG = "nunchaku-test-2"
 WHEEL_REPO = "tonera/vitoom-nunchaku"
 WHEEL_REVISION = "85bad5510d409570527b018387491fd0c81e4727"
 QWEN_WEIGHT_REPO = "QuantFunc/Nunchaku-Qwen-Image-EDIT-2511"
@@ -109,6 +110,12 @@ ZIMAGE_BASE_REVISION = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 QWEN_FP8_REPO = "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
 ZIMAGE_FP8_REPO = "Mitroshenkov87/voxprint-mirror-z-image-turbo"
 FITS_16GB_MIB = 15.0 * 1024
+CAP16_MIB = 16 * 1024
+MIN_CC = (8, 0)
+FP8_TENSOR_CC = (8, 9)
+FP8_TIMING_NOTE = "not representative of RTX 40/50"
+# CUDA 12.x minor-version compatibility floor for the Linux cu128 wheel.
+MIN_LINUX_DRIVER = (525, 60, 13)
 MIN_VRAM_BYTES = int(16 * (1024**3) * 0.97)
 DISK_MARGIN = 5 * 1024**3
 DEFAULT_BUDGET_MIN = 90.0
@@ -441,16 +448,31 @@ def fits_16gb(peak_mib: float | None) -> bool:
     return float(peak_mib) <= FITS_16GB_MIB
 
 
-def memory_fraction(cap: str) -> float | None:
+def memory_fraction(cap: str, memory_mib: int | None = None) -> float | None:
     """Fraction for ``torch.cuda.set_per_process_memory_fraction``.
 
-    ``cap16`` is 16/24 of the 24 GB card. Unconstrained does not set a fraction.
+    ``cap16`` is 16 GiB divided by the real ``memory.total`` in MiB. An 80 GB
+    card uses 16/80. Unconstrained does not set a fraction.
     """
     if cap == "unconstrained":
         return None
-    if cap == "cap16":
-        return 16 / 24
-    raise SetupError(f"unknown cap {cap}")
+    if cap != "cap16":
+        raise SetupError(f"unknown cap {cap}")
+    if memory_mib is None or memory_mib <= 0:
+        raise SetupError("cap16 needs the GPU memory total")
+    return CAP16_MIB / memory_mib
+
+
+def venv_commands(venv: Path, spec: WheelSpec) -> list[list[str]]:
+    """Install CPython with uv, then create a venv that must use that build.
+
+    ``uv python install`` downloads the interpreter. ``--managed-python`` keeps
+    the venv off a distro Python of the same minor version.
+    """
+    return [
+        ["uv", "python", "install", spec.python],
+        ["uv", "venv", "--python", spec.python, "--managed-python", str(venv)],
+    ]
 
 
 def plan_modes(arm: str, cap: str, mode: str) -> tuple[str, ...]:
@@ -541,14 +563,51 @@ def parse_gpu_csv(line: str) -> GpuFacts:
     return GpuFacts(parts[0], _mib(parts[1]), parts[2], major, minor)
 
 
-def gate_gpu(gpu: GpuFacts) -> None:
-    """Exit 3 when VRAM is under 16 GB or compute capability is below 8.9."""
-    if (gpu.compute_major, gpu.compute_minor) < (8, 9):
-        raise GpuError(
-            f"compute capability {gpu.compute_capability} is below 8.9 ({gpu.name})"
-        )
+def _version_tuple(text: str) -> tuple[int, ...]:
+    numbers: list[int] = []
+    for part in text.split("."):
+        digits = "".join(character for character in part if character.isdigit())
+        if digits:
+            numbers.append(int(digits))
+    return tuple(numbers)
+
+
+def linux_driver_ok(driver: str) -> bool:
+    """True when ``driver`` can run a CUDA 12.8 wheel via minor-version compatibility."""
+    found = _version_tuple(driver)
+    if not found:
+        return False
+    width = max(len(found), len(MIN_LINUX_DRIVER))
+    left = found + (0,) * (width - len(found))
+    right = MIN_LINUX_DRIVER + (0,) * (width - len(MIN_LINUX_DRIVER))
+    return left >= right
+
+
+def weight_precision(gpu: GpuFacts) -> str:
+    """INT4 on sm_80, sm_86, and sm_89. NVFP4 is not selected."""
+    if (gpu.compute_major, gpu.compute_minor) < MIN_CC:
+        raise GpuError(f"compute capability {gpu.compute_capability} is below 8.0 ({gpu.name})")
+    return "int4"
+
+
+def fp8_timing_note(gpu: GpuFacts) -> str | None:
+    """Mark Ampere FP8 timings. sm_89 and newer have FP8 tensor cores."""
+    if (gpu.compute_major, gpu.compute_minor) >= FP8_TENSOR_CC:
+        return None
+    return FP8_TIMING_NOTE
+
+
+def gate_gpu(gpu: GpuFacts, *, platform: str | None = None) -> None:
+    """Exit 3 when VRAM, compute capability, or the Linux driver cannot run INT4."""
+    if (gpu.compute_major, gpu.compute_minor) < MIN_CC:
+        raise GpuError(f"compute capability {gpu.compute_capability} is below 8.0 ({gpu.name})")
     if gpu.memory_mib * 1024 * 1024 < MIN_VRAM_BYTES:
         raise GpuError(f"GPU VRAM {gpu.memory_mib} MiB is under 16 GB ({gpu.name})")
+    system = sys.platform if platform is None else platform
+    if system.startswith("linux") and not linux_driver_ok(gpu.driver):
+        raise GpuError(
+            f"driver {gpu.driver} is below 525.60.13; the Linux cu128 wheel needs a CUDA 12.x driver ({gpu.name})"
+        )
 
 
 def require_free(path: Path, need: int, *, free: int | None = None) -> None:
@@ -684,9 +743,22 @@ def render_message(result: dict[str, object]) -> str:
         "",
         "Warm-up is excluded from s/img. fits_16gb is the nvidia-smi peak at or below 15.0 GiB.",
         "",
-        "| Arm | Cap | Offload | s/img | load s | torch MiB | smi MiB | fits_16gb |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
+    note = result.get("fp8_timing_note")
+    if not isinstance(note, str) or not note:
+        for row in result.get("baselines") or []:
+            if isinstance(row, dict) and isinstance(row.get("fp8_timing_note"), str):
+                note = row["fp8_timing_note"]
+                break
+    if isinstance(note, str) and note:
+        lines.append(f"FP8 timings are {note}.")
+        lines.append("")
+    lines.extend(
+        [
+            "| Arm | Cap | Offload | s/img | load s | torch MiB | smi MiB | fits_16gb |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     rows = list(result.get("arms") or []) + list(result.get("baselines") or [])
     for row in rows:
         if not isinstance(row, dict):
@@ -767,8 +839,10 @@ def execute(
                 spawn=spawn,
                 out=out,
                 attempts=attempts,
+                memory_mib=gpu.memory_mib,
             )
             cap_results[(arm, cap)] = payload
+    note = fp8_timing_note(gpu)
     baseline_rows: list[dict[str, object]] = []
     for baseline in baselines:
         reason = skip_for_elapsed(
@@ -776,7 +850,7 @@ def execute(
         )
         if reason is not None:
             skipped.append({"id": baseline, "reason": reason})
-            baseline_rows.append({"id": baseline, "status": reason, "caps": {}})
+            baseline_rows.append(_with_fp8_note({"id": baseline, "status": reason, "caps": {}}, note))
             continue
         lookup = mirror_lookup if mirror_lookup is not None else _mirror_files
         payload = _run_baseline(baseline, options, spawn, out, gpu, lookup)
@@ -808,11 +882,14 @@ def execute(
             "index_url": wheel.index_url,
         },
         "fits_16gb": summary_fits,
+        "precision": weight_precision(gpu),
         "arms": [_arm_row(arm, tuple(options.caps), cap_results) for arm in arms],
         "baselines": baseline_rows,
         "skipped": skipped,
         "attempts": attempts,
     }
+    if note is not None:
+        result["fp8_timing_note"] = note
     for arm in arms:
         if "cap16" in options.caps:
             export_aliases(out, arm, "cap16", [case.case_id for case in cases_for(arm, requested, smoke=options.smoke)])
@@ -830,7 +907,7 @@ def execute(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse the script contract flags. ``--smoke`` is one case per arm."""
-    parser = argparse.ArgumentParser(description="Nunchaku INT4 matrix for the RTX 4090 (tag nunchaku-test-1).")
+    parser = argparse.ArgumentParser(description="Nunchaku INT4 matrix (tag nunchaku-test-2).")
     parser.add_argument("--json", action="store_true", help="print result.json on stdout")
     parser.add_argument(
         "--arms",
@@ -850,7 +927,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.cases = tuple(part.strip() for part in args.cases.split(",") if part.strip())
     caps = tuple(part.strip() for part in args.caps.split(",") if part.strip())
     for cap in caps:
-        memory_fraction(cap)
+        if cap not in {"unconstrained", "cap16"}:
+            raise SetupError(f"unknown cap {cap}")
     if not caps:
         raise SetupError("--caps is empty")
     args.caps = caps
@@ -920,7 +998,12 @@ def worker_main(path: Path) -> int:
     try:
         if not torch.cuda.is_available():
             raise GpuError("CUDA is not available in the worker")
-        fraction = memory_fraction(cap)
+        raw_total = job.get("memory_mib")
+        if isinstance(raw_total, (int, float)) and int(raw_total) > 0:
+            total_mib = int(raw_total)
+        else:
+            total_mib = torch.cuda.get_device_properties(0).total_memory // (1024 * 1024)
+        fraction = memory_fraction(cap, total_mib)
         if fraction is not None:
             torch.cuda.set_per_process_memory_fraction(fraction)
         sampler = _SmiSampler()
@@ -1051,7 +1134,8 @@ def prepare_runtime(argv: list[str], *, need_zimage: bool) -> None:
             raise SetupError("uv is not on PATH")
         venv.parent.mkdir(parents=True, exist_ok=True)
         if not python.is_file():
-            _run(["uv", "venv", "--python", spec.python, str(venv)])
+            for command in venv_commands(venv, spec):
+                _run(command)
             _mark(done, "venv", spec.python)
         wheel_path = _download_wheel(spec)
         require_hash(wheel_path, spec.sha256)
@@ -1109,6 +1193,7 @@ def _run_cap(
     spawn: Callable[[dict[str, object]], dict[str, object]],
     out: Path,
     attempts: list[dict[str, object]],
+    memory_mib: int,
 ) -> dict[str, object]:
     token = _cap_token(arm, cap, smoke, requested, mode)
     final = out / "runs" / f"{arm}-{cap}.json"
@@ -1121,7 +1206,7 @@ def _run_cap(
     for attempt in modes:
         cached = _cached_attempt(out, arm, cap, attempt, smoke, requested)
         payload = cached if cached is not None else spawn(
-            _job(arm, cap, attempt, smoke, requested, out, kind="int4")
+            _job(arm, cap, attempt, smoke, requested, out, memory_mib=memory_mib, kind="int4")
         )
         payload = _normalize(payload, attempt)
         code = payload.get("returncode")
@@ -1161,7 +1246,7 @@ def _run_cap(
             "load_seconds": None,
             "seconds_per_image": {},
             "cases": [],
-            "memory_fraction": memory_fraction(cap),
+            "memory_fraction": memory_fraction(cap, memory_mib),
         }
     _write_json(final, accepted)
     _mark(done_dir(), f"cap-{arm}-{cap}", token)
@@ -1180,8 +1265,23 @@ def _run_baseline(
     base = cache_dir() / "bases" / family
     mirror = mirror_lookup(baseline)
     strategy = fp8_strategy(mirror, base, gpu.memory_mib)
+    note = fp8_timing_note(gpu)
+    if note is not None and strategy == "diffusers-layerwise":
+        return _with_fp8_note(
+            {
+                "id": baseline,
+                "status": "weight-only-dequant",
+                "strategy": "weight-only-dequant",
+                "repo": _fp8_repo(baseline),
+                "caps": {},
+            },
+            note,
+        )
     if strategy in {"skipped_vram", "not_mirrored"}:
-        return {"id": baseline, "status": strategy, "repo": _fp8_repo(baseline), "caps": {}}
+        return _with_fp8_note(
+            {"id": baseline, "status": strategy, "repo": _fp8_repo(baseline), "caps": {}},
+            note,
+        )
     payload = spawn(
         _job(
             baseline,
@@ -1190,19 +1290,23 @@ def _run_baseline(
             options.smoke,
             tuple(options.cases) or None,
             out,
+            memory_mib=gpu.memory_mib,
             kind="fp8",
             strategy=strategy,
             mirror=mirror,
         )
     )
     payload = _normalize(payload, "model-offload")
-    return {
-        "id": baseline,
-        "status": "ran" if not payload.get("error") else "error",
-        "strategy": strategy,
-        "repo": _fp8_repo(baseline),
-        "caps": {"unconstrained": payload},
-    }
+    return _with_fp8_note(
+        {
+            "id": baseline,
+            "status": "ran" if not payload.get("error") else "error",
+            "strategy": strategy,
+            "repo": _fp8_repo(baseline),
+            "caps": {"unconstrained": payload},
+        },
+        note,
+    )
 
 
 def _job(
@@ -1213,6 +1317,7 @@ def _job(
     requested: tuple[str, ...] | None,
     out: Path,
     *,
+    memory_mib: int,
     kind: str,
     strategy: str = "",
     mirror: list[Path] | None = None,
@@ -1248,10 +1353,23 @@ def _job(
         "base": str(cache_dir() / "bases" / family),
         "out": str(out),
         "warmup": True,
+        "memory_mib": memory_mib,
         "result_path": str(out / "runs" / f"{arm}-{cap}-{mode}.json"),
         "strategy": strategy,
         "fp8_files": [str(path) for path in mirror or []],
     }
+
+
+def _with_fp8_note(row: dict[str, object], note: str | None) -> dict[str, object]:
+    if not note:
+        return row
+    row["fp8_timing_note"] = note
+    caps = row.get("caps")
+    if isinstance(caps, dict):
+        for payload in caps.values():
+            if isinstance(payload, dict):
+                payload["fp8_timing_note"] = note
+    return row
 
 
 def _normalize(payload: dict[str, object], mode: str) -> dict[str, object]:
@@ -1450,6 +1568,8 @@ def _load_fp8(job: dict[str, object]) -> object:
         pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
         model_cls = _require_cls(ZImageTransformer2DModel, "ZImageTransformer2DModel")
     if str(job.get("strategy")) == "diffusers-layerwise":
+        if job.get("fp8_timing_note"):
+            raise SetupError("FP8 tensor-core casting is not used below compute capability 8.9")
         pipe = pipeline_cls.from_pretrained(str(job["base"]), torch_dtype=torch.bfloat16)
         pipe.transformer.enable_layerwise_casting(
             storage_dtype=torch.float8_e4m3fn,
