@@ -152,7 +152,7 @@ def test_gpu_gate() -> None:
     with pytest.raises(edit.GpuError):
         edit.gate_gpu(edit.GpuFacts("V100", 32768, "535.129.03", 7, 0))
     with pytest.raises(edit.GpuError):
-        edit.gate_gpu(edit.GpuFacts("A100", 81920, "470.57.02", 8, 0))
+        edit.gate_gpu(edit.GpuFacts("A100", 81920, "470.57.02", 8, 0), platform="linux")
     with pytest.raises(edit.GpuError):
         edit.gate_gpu(edit.GpuFacts("small", 12000, "550.0", 8, 9))
     assert edit.GpuFacts("ok", 16000, "610.88", 8, 9).memory_mib == 16000
