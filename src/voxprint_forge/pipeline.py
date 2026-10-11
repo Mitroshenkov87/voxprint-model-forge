@@ -16,6 +16,7 @@ from pathlib import Path
 from voxprint_forge.abliterate import abliterate_directory
 from voxprint_forge.calibration import ensure_calibration
 from voxprint_forge.cards import render_card
+from voxprint_forge.components import place_weight
 from voxprint_forge.diffusion.defer import defer_requested
 from voxprint_forge.disk import ensure_free
 from voxprint_forge.drive import upload_drive
@@ -858,6 +859,7 @@ def _tier_payload(
 ) -> dict[str, object]:
     digest = sha256_file(candidate.path)
     write_sha256(candidate.path, digest)
+    component = place_weight(candidate.path, digest=digest)
     gated = [row for row in measured if int(row["ctx"]) in contexts]
     peak = max(int(row["weights_bytes"]) + int(row["kv_bytes"]) for row in gated)
     return {
@@ -866,6 +868,7 @@ def _tier_payload(
         "quant": candidate.quant,
         "origin": candidate.origin,
         "path": str(candidate.path),
+        "component": str(component) if component is not None else "",
         "sha256": digest,
         "size": candidate.path.stat().st_size,
         "cache": cache,

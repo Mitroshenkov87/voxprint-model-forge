@@ -58,6 +58,7 @@ from voxprint_forge.diffusion.weights import (
     write_fp8_shards,
 )
 from voxprint_forge.errors import ForgeError, StageError, UsageError
+from voxprint_forge.hashing import sha256_file, write_sha256
 from voxprint_forge.layout import Layout, read_marker, write_marker
 from voxprint_forge.outcome import state_line, summarise
 from voxprint_forge.scrub import log
@@ -485,8 +486,6 @@ def _hold_encoder(ctx: QwenCtx, encoder: dict[str, object]) -> dict[str, object]
     fp8 = ctx.output / QWEN_ENCODER_FP8
     files: list[dict[str, object]] = []
     if status == "convert" and fp8.is_file() and not fp8.is_symlink():
-        from voxprint_forge.hashing import sha256_file, write_sha256
-
         digest = sha256_file(fp8)
         write_sha256(fp8, digest)
         files.append({"name": fp8.name, "sha256": digest, "size": fp8.stat().st_size, "tier": "24gb"})

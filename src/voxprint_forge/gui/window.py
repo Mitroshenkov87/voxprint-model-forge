@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from voxprint_common.ui.theme import RED, build_style
 
 from voxprint_forge.accounts import LiveAccounts
 from voxprint_forge.gui.backdrop import apply_backdrop
@@ -41,11 +42,14 @@ from voxprint_forge.gui.client import (
 from voxprint_forge.gui.gauges import GaugeProbes, disk_total_free, gauge_percent, gauge_text, vram_status
 from voxprint_forge.gui.icons import load_icon
 from voxprint_forge.gui.secrets import SecretStore, open_store, token_env
-from voxprint_forge.gui.theme import FAILED_BG, FAILED_TEXT, build_style
 from voxprint_forge.layout import Layout
 from voxprint_forge.pipeline import clear_from_stage, retry_stage
 from voxprint_forge.preflight import memory_status
 from voxprint_forge.version import version_line
+
+# Dark text on the suite error red. The failed chip is not a theme token.
+FAILED_TEXT = "#2a0a0a"
+FAILED_BG = RED
 
 SshPoll = Callable[[str, str, str, str], dict[str, object]]
 VmUpload = Callable[[str, str, str, str, dict[str, str]], str]

@@ -7,12 +7,13 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QLabel
+from voxprint_common.ui.theme import CONTRAST_PAIRS, RED, build_style, contrast_ratio
 
+from voxprint_forge.gui.__main__ import IDENTITY_COLOUR, open_splash, splash_art
 from voxprint_forge.gui.backdrop import apply_backdrop
 from voxprint_forge.gui.client import ssh_status, state_badge
 from voxprint_forge.gui.gauges import GaugeProbes
 from voxprint_forge.gui.secrets import MemoryStore
-from voxprint_forge.gui.theme import CONTRAST_PAIRS, build_style, contrast_ratio
 from voxprint_forge.gui.window import MainWindow
 from voxprint_forge.layout import Layout, write_marker
 from voxprint_forge.preflight import memory_status
@@ -93,6 +94,21 @@ def test_theme_contrast_meets_wcag_aa() -> None:
     assert "#f5d76e" in style
     assert "#60a5fa" in style
     assert "#f2f2f5" in style
+    assert "QPushButton#gear" in style
+    assert "QPushButton#disclosure" in style
+    assert contrast_ratio("#2a0a0a", RED) >= 4.5
+
+
+def test_splash_uses_the_approved_art(qtbot: pytest.fixture) -> None:
+    art = splash_art()
+    assert art.name == "splash.jpg"
+    assert art.is_file()
+    assert IDENTITY_COLOUR == "#a06020"
+    splash = open_splash()
+    splash.set_stage("Opening Model Forge")
+    splash.set_progress(1)
+    splash.finish()
+    del qtbot
 
 
 def test_icons_have_no_floppy_disk() -> None:
@@ -333,13 +349,13 @@ def test_vm_upload_sends_tokens_on_stdin_only(qtbot: pytest.fixture) -> None:
 
 def test_about_shows_the_release_line(qtbot: pytest.fixture, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_RUN_NUMBER", raising=False)
+    monkeypatch.delenv("VOXPRINT_BUILD", raising=False)
     window = _window(qtbot, FakeForge({}))
     dialog = window.show_about()
     label = dialog.findChild(QLabel, "aboutVersion")
     assert label is not None
     assert label.text() == version_line()
-    assert '· build' in label.text()
-    assert "Charash" in label.text()
+    assert label.text() == '0.1.0 dev "Charash"'
 
 
 def test_main_window_screenshot_is_attached() -> None:

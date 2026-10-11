@@ -182,6 +182,7 @@ if ! install_torch 3.14; then
     install_torch 3.12
   fi
 fi
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.1.1-py3-none-any.whl"
 uv pip install --python "$VENV" -e "$ROOT" hf_transfer "kaggle>=1.6" \
   --extra-index-url https://download.pytorch.org/whl/cu130
 

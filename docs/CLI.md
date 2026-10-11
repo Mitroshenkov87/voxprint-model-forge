@@ -27,15 +27,18 @@ On failure the object also has `error.code` and `error.message`.
 
 ## Install
 
-Python 3.12 or newer. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+
+`voxprint-common` 0.1.* is not on PyPI yet. The v0.1.1 wheel is vendored at `vendor/voxprint_common-0.1.1-py3-none-any.whl` (release https://github.com/Mitroshenkov87/voxprint-common/releases/tag/v0.1.1). Install that wheel, then the project. The project pin is `voxprint-common>=0.1.1,<0.2`.
 
 ```bash
+pip install vendor/voxprint_common-0.1.1-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 
 ## Commands
 
-`forge --version` prints `X.Y.Z · build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. The first codename is Charash.
+`forge --version` prints `X.Y.Z build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. `VOXPRINT_BUILD` replaces that sum. With neither value, and no recorded build, the line says `dev` instead of a number. The raw run number is not the build when `offset` is not zero. The first codename is Charash.
 
 `forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
 
@@ -100,7 +103,10 @@ The run summary lists every uploaded file with its sha256, Hugging Face URL, and
 | `FORGE_DRIVE_TOKEN` | OAuth token for the Drive fallback. Passed only in the rclone environment |
 | `FORGE_DRIVE_SERVICE_ACCOUNT` | Service-account JSON for the Drive fallback, as a string |
 | `FORGE_DRIVE_REMOTE` | rclone remote name. Default `forge` |
-| `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version` |
+| `VOXPRINT_BUILD` | Build number. Wins over `GITHUB_RUN_NUMBER` |
+| `VOXPRINT_MODELS_DIR` | Absolute path of the shared model-component directory. Default is the suite models folder |
+| `VOXPRINT_MODEL_CACHE` | Alternate absolute directory for model components |
+| `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version`. Not used on its own |
 
 ## Model card
 
