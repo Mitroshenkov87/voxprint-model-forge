@@ -80,10 +80,18 @@ uv pip install --python "$VENV" -e "$ROOT[compare]" --extra-index-url "$INDEX"
 
 LLAMA_COMMIT="$(tr -d '[:space:]' < "$ROOT/scripts/llama.rev")"
 LLAMA_SRC="$ROOT/third_party/llama.cpp"
-if [[ ! -f "$LLAMA_SRC/CMakeLists.txt" ]]; then
+if [[ ! -f "$LLAMA_SRC/CMakeLists.txt" || ! -f "$ROOT/third_party/LLAMA_COMMIT" ]]; then
   printf 'llama.cpp sources are missing from third_party. Use scripts/make_vm_bundle.sh\n' >&2
   exit 9
 fi
+BUNDLED_LLAMA="$(tr -d '[:space:]' < "$ROOT/third_party/LLAMA_COMMIT")"
+if [[ "$BUNDLED_LLAMA" != "$LLAMA_COMMIT" ]]; then
+  printf 'bundled llama.cpp commit does not match scripts/llama.rev\n' >&2
+  exit 9
+fi
+export FORGE_PYTHON="${FORGE_PYTHON:-$VENV/bin/python}"
+# T-lite-it-2.1 Qwen2 pre-tokenizer. Idempotent. See docs/VM.md.
+"$FORGE_PYTHON" -m voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"
 ARCHS="$(cuda_archs)"
 WANT="${LLAMA_COMMIT} ${ARCHS}"
 mkdir -p "$FORGE_OUT/stages"

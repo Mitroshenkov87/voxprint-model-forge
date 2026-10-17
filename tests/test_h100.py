@@ -336,6 +336,18 @@ def test_cuda_arch_scripts_include_sm90() -> None:
     assert 'CMAKE_CUDA_ARCHITECTURES="80;89;120"' not in bootstrap
     assert 'FORGE_CUDA_ARCHS:-80;89;90;120' in int4
     assert 'CMAKE_CUDA_ARCHITECTURES="80;90"' not in int4
+    assert "venv-forge" in int4
+
+
+def test_vm_setup_patches_the_converter_before_cmake() -> None:
+    text = (ROOT / "scripts" / "vm_setup_synth4.sh").read_text(encoding="utf-8")
+    live = text.split("exit 0", 1)[1]
+    patch_at = live.index('voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"')
+    cmake_at = live.index("cmake -S")
+    assert patch_at < cmake_at
+    assert patch_at > live.index("BUNDLED_LLAMA")
+    assert patch_at > live.index('-e "$ROOT[compare]"')
+    assert "bundled llama.cpp commit does not match scripts/llama.rev" in live
 
 
 def test_vm_setup_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
