@@ -170,6 +170,15 @@ pinned). Cases, seeds, steps and control scale are D3's: 32 control prompts x
 canny/depth/pose x seeds 0 and 1. Pass: set-mean CLIP-T drop <= 1%. LPIPS is
 informational, plus a short visual check of a few canny, depth and pose pairs.
 
+Result (synth4, H100 NVL, rc=0): **pass**. 95 scored pairs (96 cases). Set-mean
+CLIP-T drop 0.0011 (canny -0.0041, depth +0.0096, pose -0.0023), LPIPS 0.096,
+SSIM 0.907, PSNR 24.78, DINOv2 0.963, CLIP-I 0.979, 2.36 s/img (reference
+2.34), resident VRAM 26.9 GB. Visual check: `93dbf4ffd3bc-0` canny,
+`f9b6b78b94ba-1` depth and `42a7eda84795-0` pose follow the same control as the
+reference; the worst pair, `82e4c800378b-1` pose (LPIPS 0.33), keeps the scene
+layout and differs in background detail. The lite file is back in the
+ControlNet descriptor (HF `dea36330`) and in the signed index (serial 5; serial 6 adds `dinov2-base`).
+
 ## FP8 modes
 
 `compute = "fp8-native"` keeps the `float8_e4m3fn` file bytes and runs them

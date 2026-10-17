@@ -19,6 +19,11 @@ def make_scorer():
     return score
 
 
+# Pinned to the MDL row dinov2-base (index serial 6).
+DINO_REPO = "facebook/dinov2-base"
+DINO_REVISION = "f9e44c814b77203eaa57a6bdbbd535f21ede1415"
+
+
 class LiveMetrics:
     """Alex LPIPS, CLIP ViT-B/32, and DINOv2-base on one device."""
 
@@ -35,8 +40,8 @@ class LiveMetrics:
         self.clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.clip.eval()
-        self.dino = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
-        self.dino_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+        self.dino = AutoModel.from_pretrained(DINO_REPO, revision=DINO_REVISION).to(self.device)
+        self.dino_processor = AutoImageProcessor.from_pretrained(DINO_REPO, revision=DINO_REVISION)
         self.dino.eval()
 
     def score(self, reference: Image.Image, candidate: Image.Image, prompt: str) -> PairScore:
