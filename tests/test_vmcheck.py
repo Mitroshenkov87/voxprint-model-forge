@@ -189,4 +189,14 @@ def test_real_import_probe() -> None:
 def test_base_dependencies_carry_the_converter_modules() -> None:
     names = " ".join(vmcheck.requirements(Path(__file__).resolve().parents[1]))
     assert "sentencepiece==0.2.2" in names
-    assert "protobuf>=4.21" in names
+    assert "protobuf==5.29.6" in names
+
+
+def test_protobuf_pin_rejects_4_25_9() -> None:
+    """synth4: protobuf 4.25.9 (llama.cpp's <5) crashes on Python 3.14; preflight --vm fails it."""
+    root = Path(__file__).resolve().parents[1]
+    bad = probe(version=lambda name: "4.25.9" if name == "protobuf" else "999")
+    line = vmcheck.check_requirements(root, bad)
+    assert not line["ok"] and "protobuf 4.25.9 (needs ==5.29.6)" in line["detail"]
+    good = probe(version=lambda name: "5.29.6" if name == "protobuf" else "999")
+    assert "protobuf" not in vmcheck.check_requirements(root, good)["detail"]
