@@ -34,6 +34,8 @@ from voxprint_forge.kl.cli import add_command as add_kl_command
 from voxprint_forge.kl.cli import execute as execute_kl
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
+from voxprint_forge.lora.cli import add_command as add_lora_command
+from voxprint_forge.lora.cli import execute as execute_lora
 from voxprint_forge.mdl import push_index, revision_map, run_backfill, run_build
 from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
@@ -119,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
     add_compare_command(sub)
     add_kl_command(sub)
+    add_lora_command(sub)
     index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
     index_sub = index.add_subparsers(dest="index_command", required=True)
     index_build = index_sub.add_parser(
@@ -327,6 +330,8 @@ def _dispatch(args: argparse.Namespace) -> object:
         return inspect_status(forge_out)
     if args.command == "diffusion-int4":
         return perform_int4(args, root)
+    if args.command == "lora":
+        return execute_lora(args)
     if args.command == "compare":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
         return execute_compare(

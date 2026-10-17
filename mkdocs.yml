@@ -18,6 +18,7 @@ nav:
   - CLI: cli-reference.md
   - Compare: COMPARE.md
   - KL: KL.md
+  - LoRA trainer: LORA.md
   - Model manifest: MODEL-MANIFEST.md
   - Index key rotation: KEY-ROTATION.md
   - API: api.md
