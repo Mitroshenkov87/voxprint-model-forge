@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One synth4 compare job.
 # Usage: scripts/vm_run_compare.sh --job D1 [--json]
-# Private prompts: set FORGE_PRIVATE_PROMPTS to a directory. Unset skips that set.
+# Private prompts: export FORGE_PRIVATE_PROMPTS=<dir> (e.g. ~/compare-synth4, holding vxp_yuna/manifest.json).
+# Unset (or set without export) skips the private sets; the log says so.
 # This script does not print tokens, hosts, or prompt text.
 set -euo pipefail
 
