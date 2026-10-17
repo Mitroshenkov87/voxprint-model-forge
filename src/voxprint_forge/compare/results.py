@@ -133,6 +133,7 @@ def summarise(
     case_count: int,
     secrets: Sequence[str],
     timings: Sequence[Mapping[str, object]] = (),
+    int4_loads: Sequence[Mapping[str, str]] | None = None,
 ) -> dict[str, object]:
     """Aggregate non-warmup pairs. New metrics are reported and do not gate."""
     arms: list[dict[str, object]] = []
@@ -194,6 +195,7 @@ def summarise(
         "skipped_arms": skipped,
         "arms": arms,
         "a100_fp8": _fp8_note(job),
+        "int4": [dict(item) for item in int4_loads] if int4_loads else [],
         "prompt_ids_only": True,
         "note": job.note,
     }
@@ -261,6 +263,13 @@ def render_markdown(payload: Mapping[str, object]) -> str:
         for item in skipped:
             if isinstance(item, dict):
                 lines.append(f"- {item.get('id')}: {item.get('reason')}")
+        lines.append("")
+    loaded = payload.get("int4")
+    if isinstance(loaded, list) and loaded:
+        lines.append("INT4 loads:")
+        for item in loaded:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('arm')}: nunchaku {item.get('nunchaku')}")
         lines.append("")
     missing = payload.get("missing_private_sets")
     if isinstance(missing, list) and missing:

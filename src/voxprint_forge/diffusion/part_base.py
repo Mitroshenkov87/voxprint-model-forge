@@ -81,7 +81,7 @@ def _convert(ctx: Ctx) -> dict[str, object]:
     mode = _export_dir(base / "transformer", output / ZIMAGE_BF16_DIR)
     write_fp8_file(base / "transformer", output / ZIMAGE_FP8_NAME, "diffusion")
     encoder_mode = _export_dir(turbo / "text_encoder", output / "text_encoder")
-    write_fp8_file(turbo / "text_encoder", output / QWEN3_FP8_NAME, "diffusion")
+    write_fp8_file(turbo / "text_encoder", output / QWEN3_FP8_NAME, "qwen3_encoder")
     link_tree(turbo / "vae", output / "vae")
     link_tree(turbo / "tokenizer", output / "tokenizer")
     if not shared_encoder:

@@ -13,7 +13,7 @@ from voxprint_forge.errors import StageError
 
 FP8_MAX = 448.0
 FORMAT = "voxprint-fp8-v1"
-Profile = Literal["diffusion", "controlnet", "edit_transformer", "edit_encoder"]
+Profile = Literal["diffusion", "controlnet", "edit_transformer", "edit_encoder", "qwen3_encoder"]
 
 _FLOATS = frozenset({"F32", "F16", "BF16"})
 _DIFFUSION_NEEDLES = (
@@ -35,6 +35,7 @@ _DIFFUSION_NEEDLES = (
     "pad_token",
 )
 _EDIT_TRANSFORMER_NEEDLES = ("img_in", "txt_in", "norm", "adaln", "proj_out")
+_QWEN3_ENCODER_NEEDLES = ("embed", "norm", "lm_head")
 _ZERO_CONV = ("zero_conv", "zeroconv", "zero-conv")
 
 
@@ -59,6 +60,8 @@ def keep_bf16(name: str, profile: Profile) -> bool:
         if "visual" in lower or "vision" in lower:
             return True
         return "embed" in lower or "norm" in lower
+    if profile == "qwen3_encoder":
+        return any(needle in lower for needle in _QWEN3_ENCODER_NEEDLES)
     return _unexpected_profile(profile)
 
 
@@ -143,3 +146,11 @@ def read_format(path: Path) -> str | None:
 def dequant_file(path: Path) -> dict[str, torch.Tensor]:
     """Load an FP8 safetensors file back to BF16 tensors."""
     return dequant_state(load_file(str(path)))
+
+
+def load_dequant_bf16(path: Path) -> dict[str, torch.Tensor]:
+    """A100 loader. sm_80 has no FP8 tensor cores, so the file is expanded to BF16.
+
+    Publishing the FP8 file is a separate decision. This function only reads it.
+    """
+    return dequant_file(path)

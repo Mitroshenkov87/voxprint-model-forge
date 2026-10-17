@@ -22,7 +22,7 @@ from voxprint_forge.compare.manifests import find_manifest, load_manifest
 from voxprint_forge.compare.metrics import finish_score, passes, ssim_psnr
 from voxprint_forge.compare.plan import Arm, Job, load_compare_plan
 from voxprint_forge.compare.results import summarise
-from voxprint_forge.compare.run import run_compare
+from voxprint_forge.compare.run import gate_local_arms, run_compare
 from voxprint_forge.diffusion.prompts import BASE_PROMPTS, CONTROL_PROMPTS, CONTROL_TYPES
 from voxprint_forge.diffusion.spec import CONTROL_SCALE, CREATIVE_GUIDANCE, CREATIVE_STEPS, TURBO_GUIDANCE, TURBO_STEPS
 
@@ -113,14 +113,23 @@ def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     turbo = plan.job("D1")
     assert turbo.steps == TURBO_STEPS
     assert turbo.guidance == TURBO_GUIDANCE
-    assert [item.id for item in turbo.enabled_arms()] == ["a", "b"]
+    assert [item.id for item in turbo.enabled_arms()] == ["a", "b", "c", "d"]
     assert turbo.arm("a").quant == "fp32"
     assert turbo.arm("a").compute == "bf16"
-    assert turbo.arm("c").enabled is False
+    assert turbo.arm("c").local is True
+    assert turbo.arm("d").files == (
+        "zimage-turbo-transformer-fp8.safetensors",
+        "qwen3-4b-text-encoder-fp8.safetensors",
+    )
     creative = plan.job("D4")
     assert creative.steps == CREATIVE_STEPS
     assert creative.guidance == CREATIVE_GUIDANCE
     assert creative.private_sets == ()
+    assert creative.arm("fp8").local is True
+    assert creative.arm("fp8").enabled is True
+    ranked = plan.job("D2")
+    assert [item.id for item in ranked.candidates()] == ["r128", "r256"]
+    assert ranked.arm("r128").files == ("svdq-int4_r128-z-image-turbo.safetensors",)
     control = plan.job("D3")
     assert control.prompts == "control"
     assert control.private_sets == ()
@@ -184,8 +193,22 @@ def test_find_manifest_accepts_either_path(tmp_path: Path) -> None:
     assert load_manifest(find_manifest(tmp_path / "vxp_lena")).__len__() == 1
 
 
+def test_local_fp8_arms_wait_for_the_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FORGE_FP8_DIR", raising=False)
+    job = load_compare_plan(PLAN).job("D1")
+    gated = gate_local_arms(job)
+    assert [item.id for item in gated.enabled_arms()] == ["a", "b"]
+    folder = tmp_path / "fp8"
+    folder.mkdir()
+    (folder / "zimage-turbo-transformer-fp8.safetensors").write_bytes(b"t")
+    (folder / "qwen3-4b-text-encoder-fp8.safetensors").write_bytes(b"e")
+    monkeypatch.setenv("FORGE_FP8_DIR", str(folder))
+    opened = gate_local_arms(job)
+    assert [item.id for item in opened.enabled_arms()] == ["a", "b", "c", "d"]
+
+
 def test_disabled_candidate_is_a_setup_error(tmp_path: Path) -> None:
-    job = load_compare_plan(PLAN).job("D2")
+    job = _job((_arm("a", "reference"), _arm("b", "candidate", enabled=False)))
     with pytest.raises(CompareSetup) as caught:
         run_compare(job, tmp_path / "results", private_root=None, generate=_picture, score=_score, smi=lambda: None)
     assert caught.value.exit_code == 2
@@ -379,6 +402,24 @@ def test_layout_omits_size_and_drops_keep_false(tmp_path: Path) -> None:
         load_manifest(bad)
     assert "prompt" in str(caught.value)
     assert caught.value.exit_code == 2
+
+
+def test_fp8_overlay_uses_the_a100_loader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "encoder.safetensors"
+    save_file({"layers.0.weight": torch.zeros(2, 2)}, path)
+    monkeypatch.setattr("voxprint_forge.diffusion.fp8.read_format", lambda _path: "voxprint-fp8-v1")
+    seen: list[Path] = []
+
+    def _load(source: Path) -> dict[str, torch.Tensor]:
+        seen.append(source)
+        return {"layers.0.weight": torch.ones(2, 2)}
+
+    monkeypatch.setattr("voxprint_forge.diffusion.fp8.load_dequant_bf16", _load)
+    state = _load_state(path)
+    assert seen == [path]
+    weight = state["layers.0.weight"]
+    assert isinstance(weight, torch.Tensor)
+    assert torch.equal(weight, torch.ones(2, 2))
 
 
 def test_overlay_merges_shards_before_the_coverage_check(tmp_path: Path) -> None:

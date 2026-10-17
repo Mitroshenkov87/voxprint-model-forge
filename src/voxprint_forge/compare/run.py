@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from PIL import Image
@@ -64,6 +66,7 @@ def run_compare(
     previous pipeline is released. Scorers load after that release. Weights
     under ``results/weights`` are deleted at the end. Review images stay.
     """
+    job = gate_local_arms(job)
     reference = job.reference_arm()
     candidates = job.candidates()
     if not candidates:
@@ -120,6 +123,7 @@ def run_compare(
             case_count=len(schedule.cases),
             timings=list(timings.values()),
             secrets=secrets,
+            int4_loads=list(getattr(generate, "int4_notes", ())),
         )
         write_summary(results, payload, secrets)
     finally:
@@ -137,6 +141,18 @@ def run_compare(
         "failed_arms": payload["failed_arms"],
         "missing_private_sets": payload["missing_private_sets"],
     }
+
+
+def gate_local_arms(job: Job) -> Job:
+    """Drop local FP8 arms when ``FORGE_FP8_DIR`` is unset. Other arms still run."""
+    raw = os.environ.get("FORGE_FP8_DIR", "").strip()
+    if raw and Path(raw).is_dir():
+        return job
+    arms = tuple(
+        replace(item, enabled=False, skip_reason="FORGE_FP8_DIR is unset") if item.local and item.enabled else item
+        for item in job.arms
+    )
+    return replace(job, arms=arms)
 
 
 def _live_hooks(job: Job, weights: Path) -> tuple[GenerateFn, None]:

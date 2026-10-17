@@ -45,6 +45,7 @@ class Arm:
     base_revision: str
     reuse_job: str
     reuse_arm: str
+    local: bool = False
 
 
 @dataclass(frozen=True)
@@ -196,7 +197,14 @@ def _arm(raw: object, job_id: str) -> Arm:
         base_revision=str(raw.get("base_revision", "")),
         reuse_job=str(raw.get("reuse_job", "")),
         reuse_arm=str(raw.get("reuse_arm", "")),
+        local=_bool(raw.get("local", False), f"{job_id} arm {arm_id} local"),
     )
+
+
+def _bool(value: object, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise CompareSetup(f"{label} is not a boolean", code="compare_plan")
 
 
 def _choice(value: str, allowed: tuple[str, ...], label: str) -> str:

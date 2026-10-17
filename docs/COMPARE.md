@@ -106,6 +106,15 @@ not required to hold half of that module on its own.
 sm_80 has no FP8 tensor cores. An FP8 arm is dequantised to BF16 before the
 forward pass (`voxprint-fp8-v1` scales). Seconds per image and VRAM measured
 on the A100 are not RTX 40/50 numbers. Quality metrics and file sizes still
-apply. INT4 W4A4 is native on sm_80. The upstream nunchaku INT4 arm is a
-measurement-only baseline and stays disabled until the loader proves the INT4
-kernels actually loaded.
+apply. INT4 W4A4 is native on sm_80.
+
+Arms (c) and (d) on D1, and the D4 FP8 arm, read files from `FORGE_FP8_DIR`.
+Those files are produced on the VM by `diffusion/fp8.py` (the Qwen3-4B encoder
+uses the `qwen3_encoder` profile) and are not published. When the variable is
+unset those arms are skipped and the other arms still run. On the A100 the
+loader is `load_dequant_bf16`: the FP8 tensors are expanded to BF16 before the
+forward.
+
+D2 loads `NunchakuZImageTransformer2DModel` and records `nunchaku.__version__`.
+If the package, the class, or the load fails, the job exits 2. The upstream
+INT4 weights are a measurement-only baseline.
