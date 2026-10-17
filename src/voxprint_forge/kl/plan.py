@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from voxprint_forge.errors import PlanError
+from voxprint_forge.hashing import is_sha256
 
 SourceFormat = Literal["safetensors", "gguf"]
 _FORMATS = ("safetensors", "gguf")
@@ -15,18 +16,25 @@ _FORMATS = ("safetensors", "gguf")
 
 @dataclass(frozen=True)
 class QuantRef:
-    """One GGUF to score against the F16 base."""
+    """One GGUF to score against the F16 base.
+
+    ``sha256`` is optional. When set, the file is checked after download.
+    """
 
     quant: str
     repo: str
     revision: str
     pattern: str
     ours: bool
+    sha256: str = ""
 
 
 @dataclass(frozen=True)
 class KlJob:
-    """One L-job: a BF16 (or already-F16) source and the quants to compare."""
+    """One L-job: a BF16 (or already-F16) source and the quants to compare.
+
+    ``sha256`` is optional. When set, the downloaded F16 GGUF must match.
+    """
 
     id: str
     bf16_repo: str
@@ -43,6 +51,7 @@ class KlJob:
     headroom_gb: float
     budgets_gb: tuple[float, ...]
     kv_cache: str
+    sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +105,9 @@ def _job(raw: object, defaults: dict[str, object]) -> KlJob:
     source_format = _format(fmt, job_id)
     if source_format == "gguf" and not f16_file:
         raise PlanError(f"{job_id} gguf source needs f16_file", code="kl_plan")
+    digest = _optional_sha(raw, job_id)
+    if source_format == "safetensors" and digest:
+        raise PlanError(f"{job_id} sha256 needs one GGUF source file", code="kl_plan")
     budgets = _floats(raw.get("budgets_gb", defaults.get("budgets_gb", [16, 24])), f"{job_id} budgets_gb")
     return KlJob(
         id=job_id,
@@ -113,6 +125,7 @@ def _job(raw: object, defaults: dict[str, object]) -> KlJob:
         headroom_gb=_float(raw.get("headroom_gb", defaults.get("headroom_gb", 3.0)), f"{job_id} headroom_gb"),
         budgets_gb=tuple(budgets),
         kv_cache=str(raw.get("kv_cache", defaults.get("kv_cache", "q8_0"))),
+        sha256=digest,
     )
 
 
@@ -129,7 +142,17 @@ def _quant(raw: object, job_id: str) -> QuantRef:
         revision=_str(raw, "revision"),
         pattern=_str(raw, "pattern"),
         ours=ours,
+        sha256=_optional_sha(raw, f"{job_id} {label}"),
     )
+
+
+def _optional_sha(raw: dict[str, object], label: str) -> str:
+    if "sha256" not in raw:
+        return ""
+    value = raw["sha256"]
+    if not isinstance(value, str) or not is_sha256(value):
+        raise PlanError(f"{label} sha256 must be 64 lowercase hex digits", code="kl_plan")
+    return value
 
 
 def _format(value: str, job_id: str) -> SourceFormat:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
@@ -13,7 +14,7 @@ from tests.complete_card import complete_card
 from voxprint_forge.cli import main
 from voxprint_forge.diffusion.int4.publish import publish_verified
 from voxprint_forge.diffusion.publish import _publish_hub
-from voxprint_forge.errors import EXIT_USAGE, StageError
+from voxprint_forge.errors import EXIT_STAGE, EXIT_USAGE, StageError
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.layout import Layout
 from voxprint_forge.manifest import write_run_manifest
@@ -27,6 +28,7 @@ from voxprint_forge.mdl import (
     backfill,
     build_document,
     check_document,
+    descriptor_commit,
     gb_to_gib,
     retarget_mirrors,
     schema_path,
@@ -110,6 +112,13 @@ def test_plotweaver_export_still_writes_the_run_manifest(tmp_path: Path) -> None
 def test_index_build_writes_local_index_and_does_not_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[str] = []
     monkeypatch.setattr("voxprint_forge.mdl._upload_index", lambda repo, path: called.append(repo))
+    asked: list[str] = []
+
+    def lookup(repo: str) -> str:
+        asked.append(repo)
+        return "ab" * 20
+
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", lookup)
     folder = tmp_path / "models" / "tiny"
     folder.mkdir(parents=True)
     document = _sample()
@@ -122,11 +131,69 @@ def test_index_build_writes_local_index_and_does_not_upload(tmp_path: Path, monk
         {
             "id": "t-lite-it-2.1",
             "repo": "Mitroshenkov87/voxprint-t-lite-it-2.1",
-            "revision": "main",
+            "revision": "ab" * 20,
             "sha256": sha256_file(path),
         }
     ]
+    assert asked == ["Mitroshenkov87/voxprint-t-lite-it-2.1"]
     assert called == []
+
+
+def test_index_build_accepts_an_explicit_descriptor_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbid(repo: str) -> str:
+        raise AssertionError(repo)
+
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", forbid)
+    folder = tmp_path / "models" / "tiny"
+    folder.mkdir(parents=True)
+    path = folder / MANIFEST_NAME
+    path.write_text(json.dumps(_sample()) + "\n", encoding="utf-8")
+    dest = tmp_path / "index.json"
+    pin = "Mitroshenkov87/voxprint-t-lite-it-2.1=" + ("cd" * 20)
+    assert main(["index", "build", "--from", str(folder.parent), "--out", str(dest), "--revision", pin]) == 0
+    rows = json.loads(dest.read_text(encoding="utf-8"))
+    assert rows[0]["revision"] == "cd" * 20
+
+
+def test_index_revision_must_be_a_full_commit(tmp_path: Path) -> None:
+    dest = tmp_path / "index.json"
+    code = main(
+        [
+            "index",
+            "build",
+            "--from",
+            str(tmp_path),
+            "--out",
+            str(dest),
+            "--revision",
+            "Mitroshenkov87/voxprint-t-lite-it-2.1=main",
+        ]
+    )
+    assert code == EXIT_USAGE
+    assert not dest.exists()
+
+
+def test_a_branch_name_is_not_a_descriptor_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", lambda repo: "main")
+    folder = tmp_path / "models"
+    folder.mkdir()
+    (folder / MANIFEST_NAME).write_text(json.dumps(_sample()) + "\n", encoding="utf-8")
+    dest = tmp_path / "index.json"
+    assert main(["index", "build", "--from", str(folder), "--out", str(dest)]) == EXIT_STAGE
+    assert not dest.exists()
+
+
+def test_unresolved_descriptor_commit_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(repo: str) -> str:
+        raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
+
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", missing)
+    folder = tmp_path / "models"
+    folder.mkdir()
+    (folder / MANIFEST_NAME).write_text(json.dumps(_sample()) + "\n", encoding="utf-8")
+    dest = tmp_path / "index.json"
+    assert main(["index", "build", "--from", str(folder), "--out", str(dest)]) == EXIT_STAGE
+    assert not dest.exists()
 
 
 def test_index_push_requires_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -289,27 +356,40 @@ def test_int4_drive_fallback_drops_the_hub_mirror(tmp_path: Path, monkeypatch: p
     assert (ROOT / "schemas" / "voxprint-model.schema.json").is_file()
 
 
-# id, repo, and sha256 are the model-index rows at dataset commit d2325ed.
-# That index records the descriptor commit as revision. These files store an
-# earlier weights commit on our mirror, and index build records that revision.
+# Full rows from dataset commit d2325ed. The vendored descriptors store a later
+# weights commit on our mirror. The index revision is the descriptor commit.
 DERIVATIVE_ROWS = [
     {
         "id": "gemma4-31b",
         "repo": "Mitroshenkov87/voxprint-gemma4-31b",
-        "revision": "26495e1a45d8bde085a0681c3c43044eff5c8ac5",
+        "revision": "674f6bf503aaf4684a52ec6c53ce00158f25c544",
         "sha256": "4c53e3fe900639860827cd93ce0e8e31cf163dfbf9d1877e504f5b436ebf0b3c",
     },
     {
         "id": "huihui-qwen36-27b",
         "repo": "Mitroshenkov87/voxprint-huihui-qwen36-27b",
-        "revision": "cc596c1a74791b7fca57d037ef168dd57c76ed34",
+        "revision": "e18da4c2633c2b9206779bff7d223a14921aa60a",
         "sha256": "2050fd29586f19a9e61b0cef12c7c4f051c5013f2276c752f3571f2a7743c33d",
     },
 ]
+_WEIGHTS_COMMITS = (
+    "26495e1a45d8bde085a0681c3c43044eff5c8ac5",
+    "cc596c1a74791b7fca57d037ef168dd57c76ed34",
+)
 
 
-def test_index_build_reproduces_the_derivative_rows(tmp_path: Path) -> None:
+def test_index_build_reproduces_the_derivative_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = ROOT / "tests" / "fixtures" / "descriptors"
+    asked: list[str] = []
+
+    def lookup(repo: str) -> str:
+        asked.append(repo)
+        pinned = {row["repo"]: row["revision"] for row in DERIVATIVE_ROWS}
+        if repo not in pinned:
+            raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
+        return pinned[repo]
+
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", lookup)
     for row in DERIVATIVE_ROWS:
         path = source / f"voxprint-{row['id']}" / MANIFEST_NAME
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -317,9 +397,73 @@ def test_index_build_reproduces_the_derivative_rows(tmp_path: Path) -> None:
         assert sha256_file(path) == row["sha256"]
         assert document["mirrors"][0]["ref"] != row["repo"]
         assert document["mirrors"][1]["ref"] == row["repo"]
+        assert document["mirrors"][1]["revision"] in _WEIGHTS_COMMITS
     dest = tmp_path / "index.json"
     assert main(["index", "build", "--from", str(source), "--out", str(dest)]) == 0
+    text = dest.read_text(encoding="utf-8")
+    assert json.loads(text) == DERIVATIVE_ROWS
+    assert asked == [row["repo"] for row in DERIVATIVE_ROWS]
+    for weights in _WEIGHTS_COMMITS:
+        assert weights not in text
+
+
+def test_explicit_revisions_skip_the_descriptor_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbid(repo: str) -> str:
+        raise AssertionError(repo)
+
+    monkeypatch.setattr("voxprint_forge.mdl.descriptor_commit", forbid)
+    source = ROOT / "tests" / "fixtures" / "descriptors"
+    dest = tmp_path / "index.json"
+    argv = ["index", "build", "--from", str(source), "--out", str(dest)]
+    for row in DERIVATIVE_ROWS:
+        argv.extend(["--revision", f"{row['repo']}={row['revision']}"])
+    assert main(argv) == 0
     assert json.loads(dest.read_text(encoding="utf-8")) == DERIVATIVE_ROWS
+
+
+def test_descriptor_commit_reads_the_published_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeApi:
+        def get_paths_info(self, repo_id: str, paths: list[str], **kwargs: object) -> list[SimpleNamespace]:
+            seen["repo"] = repo_id
+            seen["paths"] = paths
+            seen["kwargs"] = kwargs
+            return [SimpleNamespace(last_commit=SimpleNamespace(oid=DERIVATIVE_ROWS[0]["revision"]))]
+
+    monkeypatch.setattr("voxprint_forge.mdl.HfApi", FakeApi)
+    assert descriptor_commit("Mitroshenkov87/voxprint-gemma4-31b") == DERIVATIVE_ROWS[0]["revision"]
+    assert seen["paths"] == [MANIFEST_NAME]
+    assert seen["kwargs"] == {"expand": True, "token": False}
+
+
+def test_descriptor_commit_fails_without_a_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeApi:
+        def get_paths_info(self, repo_id: str, paths: list[str], **kwargs: object) -> list[SimpleNamespace]:
+            del repo_id, paths, kwargs
+            return [SimpleNamespace(last_commit=None)]
+
+    monkeypatch.setattr("voxprint_forge.mdl.HfApi", FakeApi)
+    with pytest.raises(StageError) as caught:
+        descriptor_commit("Mitroshenkov87/voxprint-gemma4-31b")
+    assert caught.value.code == "mdl"
+    assert "could not be resolved" in str(caught.value)
+
+
+def test_descriptor_commit_scrubs_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = "hf_" + "ab" * 8
+    monkeypatch.setenv("HF_TOKEN", token)
+
+    class FakeApi:
+        def get_paths_info(self, repo_id: str, paths: list[str], **kwargs: object) -> list[SimpleNamespace]:
+            del repo_id, paths, kwargs
+            raise RuntimeError(f"denied for {token}")
+
+    monkeypatch.setattr("voxprint_forge.mdl.HfApi", FakeApi)
+    with pytest.raises(StageError) as caught:
+        descriptor_commit("Mitroshenkov87/voxprint-gemma4-31b")
+    assert caught.value.code == "mdl"
+    assert token not in str(caught.value)
 
 
 def test_index_build_rejects_an_author_only_mirror(tmp_path: Path) -> None:
@@ -350,9 +494,18 @@ def test_explicit_ours_is_the_index_repo(tmp_path: Path) -> None:
     _schema(document)
     path = tmp_path / MANIFEST_NAME
     path.write_text(json.dumps(document) + "\n", encoding="utf-8")
-    rows = write_index([path], tmp_path / "index.json")
-    assert rows[0]["repo"] == "example/held-copy"
-    assert rows[0]["revision"] == "abc123"
+    pin = "e" * 40
+
+    def forbid(repo: str) -> str:
+        raise AssertionError(repo)
+
+    rows = write_index([path], tmp_path / "index.json", revisions={"example/held-copy": pin}, commits=forbid)
+    assert rows[0] == {
+        "id": "t-lite-it-2.1",
+        "repo": "example/held-copy",
+        "revision": pin,
+        "sha256": sha256_file(path),
+    }
 
 
 def test_two_owned_mirrors_fail(tmp_path: Path) -> None:

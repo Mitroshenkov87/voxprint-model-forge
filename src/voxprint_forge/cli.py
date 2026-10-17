@@ -34,7 +34,7 @@ from voxprint_forge.kl.cli import add_command as add_kl_command
 from voxprint_forge.kl.cli import execute as execute_kl
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
-from voxprint_forge.mdl import push_index, run_backfill, run_build
+from voxprint_forge.mdl import push_index, revision_map, run_backfill, run_build
 from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
 from voxprint_forge.preflight import run_preflight
@@ -127,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     index_build.add_argument("--from", dest="manifest_from", type=Path, required=True, help="Directory to scan.")
     index_build.add_argument("--out", type=Path, required=True, help="Where to write index.json.")
+    index_build.add_argument(
+        "--revision",
+        action="append",
+        default=[],
+        metavar="REPO=SHA",
+        help="Commit of voxprint-model.json in REPO, 40 hex digits. Repeat for each repo.",
+    )
     index_push = index_sub.add_parser(
         "push",
         help="Upload index.json to the model index dataset. Does nothing unless --push is set.",
@@ -240,7 +247,7 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
 
 def _index(args: argparse.Namespace) -> dict[str, object]:
     if args.index_command == "build":
-        return run_build(args.manifest_from, args.out)
+        return run_build(args.manifest_from, args.out, revisions=revision_map(args.revision))
     if args.index_command == "push":
         if not args.push:
             raise UsageError("index push does not upload unless --push is set", code="usage")

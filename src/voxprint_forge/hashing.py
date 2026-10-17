@@ -7,9 +7,17 @@ that library. The digest import stays inside the functions that compute it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-__all__ = ["sha256_file", "write_sha256"]
+__all__ = ["is_sha256", "sha256_file", "write_sha256"]
+
+_SHA256_TEXT = re.compile(r"^[0-9a-f]{64}$")
+
+
+def is_sha256(value: str) -> bool:
+    """True when ``value`` is 64 lowercase hex digits."""
+    return _SHA256_TEXT.fullmatch(value) is not None
 
 
 def sha256_file(path: Path) -> str:

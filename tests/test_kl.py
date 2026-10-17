@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 
 from voxprint_forge.cli import main
-from voxprint_forge.errors import StageError
+from voxprint_forge.errors import PlanError, StageError
 from voxprint_forge.fitmath import fits_budget
+from voxprint_forge.hashing import sha256_file
 from voxprint_forge.kl.arch import gguf_reference_mtp, mtp_status, read_model_arch, require_mtp
 from voxprint_forge.kl.parse import parse_kl
 from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan
@@ -161,6 +162,8 @@ def test_plan_names_l1_through_l4() -> None:
     assert q4.repo == "paperscarecrow/Gemma-4-31B-it-abliterated"
     assert q4.revision == "2491ee58472b82a2372d288f982943b9d5e6a82c"
     assert q4.pattern == "gemma-4-31b-abliterated-Q4_K_M.gguf"
+    assert q4.sha256 == "380f2f50f441225e669ab1541220985387bf3933573cd2f4f7e667f3790e73a3"
+    assert l2.sha256 == ""
     l3 = plan.job("L3")
     assert l3.expect_mtp is True
     assert l3.source_format == "gguf"
@@ -175,6 +178,10 @@ def test_plan_names_l1_through_l4() -> None:
     assert q5.repo == l3.bf16_repo
     assert q5.revision == l3.bf16_revision
     assert q5.pattern == "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf"
+    assert q5.sha256 == "a4fd0da6216fb8b9a74e25a688a118b001888b704e17f5c851c2bd80f4f5e284"
+    assert l3.sha256 == "5edad8e7c1f81d9cfd5f5226ac3a59f24c73a1ad66733221643c611067aa9027"
+    assert plan.job("L1").sha256 == ""
+    assert iq3.sha256 == ""
     l4 = plan.job("L4")
     assert l4.quants[0].ours is False
     assert "voxprint-model-index" in l4.index_gap
@@ -460,3 +467,116 @@ def test_two_quant_files_are_a_setup_error(tmp_path: Path) -> None:
 
 def test_cli_requires_a_job_or_a_pair() -> None:
     assert main(["kl"]) == 2
+
+
+def test_sha256_is_checked_after_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bins(tmp_path / "bin", monkeypatch)
+    reference = tmp_path / "reference.gguf"
+    write_tiny(reference, blocks=2)
+    quant = tmp_path / "model-Q4_K_M.gguf"
+    write_tiny(quant)
+    reference_sha = sha256_file(reference)
+    quant_sha = sha256_file(quant)
+
+    def fetch(repo: str, revision: str, dest: Path, patterns: list[str] | None) -> None:
+        del repo, revision
+        dest.mkdir(parents=True, exist_ok=True)
+        assert patterns == ["base-f16.gguf"]
+        write_tiny(dest / "base-f16.gguf", blocks=2)
+
+    def convert(runner: Runner, source: Path, outfile: Path) -> None:
+        del runner, source, outfile
+        raise AssertionError("an F16 source must not be reconverted")
+
+    def job(reference_digest: str, quant_digest: str) -> KlJob:
+        return KlJob(
+            id="L2",
+            bf16_repo="example/f16",
+            bf16_revision="abc",
+            source_format="gguf",
+            f16_file="base-f16.gguf",
+            expect_mtp=False,
+            index_gap="",
+            note="",
+            quants=(
+                QuantRef(
+                    quant="Q4_K_M",
+                    repo="",
+                    revision="",
+                    pattern=str(quant),
+                    ours=False,
+                    sha256=quant_digest,
+                ),
+            ),
+            chunks=1,
+            ctx=512,
+            fit_ctx=8192,
+            headroom_gb=3.0,
+            budgets_gb=(16.0, 24.0),
+            kv_cache="q8_0",
+            sha256=reference_digest,
+        )
+
+    corpus = tmp_path / "ppl.txt"
+    corpus.write_text("public\n", encoding="utf-8")
+
+    class Idle(Scripted):
+        def run(self, argv: list[str], *, cwd: Path | None = None) -> Completed:
+            del argv, cwd
+            raise AssertionError("llama ran after a digest mismatch")
+
+    with pytest.raises(StageError) as missed:
+        run_kl(job("0" * 64, quant_sha), tmp_path / "bad", corpus=corpus, runner=Idle(), fetch=fetch, convert=convert)
+    assert missed.value.code == "kl_download"
+    assert "reference" in str(missed.value)
+    assert not (tmp_path / "bad" / "source").exists()
+
+    with pytest.raises(StageError) as quant_missed:
+        run_kl(
+            job(reference_sha, "1" * 64),
+            tmp_path / "quant-bad",
+            corpus=corpus,
+            runner=Scripted(),
+            fetch=fetch,
+            convert=convert,
+        )
+    assert quant_missed.value.code == "kl_download"
+    assert "Q4_K_M" in str(quant_missed.value)
+
+    report = run_kl(
+        job(reference_sha, quant_sha),
+        tmp_path / "ok",
+        corpus=corpus,
+        runner=Scripted(),
+        fetch=fetch,
+        convert=convert,
+    )
+    rows = report["quants"]
+    assert isinstance(rows, list)
+    assert rows[0]["file"] == quant.name
+
+    broken = tmp_path / "broken.toml"
+    broken.write_text(
+        "\n".join(
+            [
+                "[[jobs]]",
+                'id = "L2"',
+                'bf16_repo = "example/f16"',
+                'bf16_revision = "abc"',
+                'source_format = "gguf"',
+                'f16_file = "base.gguf"',
+                'sha256 = "abcd"',
+                "[[jobs.quants]]",
+                'quant = "Q4_K_M"',
+                'repo = "example/q"',
+                'revision = "abc"',
+                'pattern = "q.gguf"',
+                "ours = false",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(PlanError) as plan_error:
+        load_kl_plan(broken)
+    assert plan_error.value.code == "kl_plan"

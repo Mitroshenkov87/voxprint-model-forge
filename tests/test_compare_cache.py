@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import pytest
 
 from voxprint_forge.compare.cache import cache_name, reclaim_all
 from voxprint_forge.compare.cli import execute
+from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.compare.engine import fetch_arm
 from voxprint_forge.compare.plan import load_compare_plan
 from voxprint_forge.compare.reclaim import component_bytes
@@ -142,6 +144,57 @@ def test_tokens_per_second_is_a100_only_on_sm80() -> None:
     cpu = speed_facts("", None)
     assert cpu["tokens_per_second_is_a100"] is False
     assert "this GPU" in str(cpu["gpu_note"])
+
+
+def test_arm_sha256_is_checked_after_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = b"weight-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def download(**kwargs: object) -> None:
+        folder = Path(str(kwargs["local_dir"]))
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "model.safetensors").write_bytes(payload)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    plan = tmp_path / "plan.toml"
+    plan.write_text(
+        "\n".join(
+            [
+                "[[jobs]]",
+                'id = "D1"',
+                'kind = "turbo"',
+                "steps = 1",
+                "guidance = 0.0",
+                'reference = "a"',
+                "[[jobs.arms]]",
+                'id = "a"',
+                'role = "reference"',
+                'repo = "example/ref"',
+                'revision = "abc"',
+                'files = ["model.safetensors"]',
+                f'sha256 = "{digest}"',
+                "[[jobs.arms]]",
+                'id = "b"',
+                'role = "candidate"',
+                'repo = "example/src"',
+                'revision = "def"',
+                'files = ["model.safetensors"]',
+                f'sha256 = "{"0" * 64}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    job = load_compare_plan(plan).job("D1")
+    fetch_arm(job.arm("a"), tmp_path / "reference")
+    assert (tmp_path / "reference" / "weights" / "model.safetensors").read_bytes() == payload
+    with pytest.raises(CompareSetup) as caught:
+        fetch_arm(job.arm("b"), tmp_path / "source")
+    assert caught.value.code == "compare_weights"
+    assert "mismatch" in str(caught.value)
+    untouched = replace(job.arm("a"), sha256="")
+    fetch_arm(untouched, tmp_path / "plain")
+    assert (tmp_path / "plain" / "weights" / "model.safetensors").is_file()
 
 
 def test_script_headers_say_synth4() -> None:

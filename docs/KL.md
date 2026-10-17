@@ -35,6 +35,8 @@ L3 uses the published F16 GGUF `Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gg
 
 L2's pinned paperscarecrow revision is already an F16 GGUF (`gemma-4-31b-abliterated-f16.gguf`), so that job uses the file as the base and does not reconvert it. Recheck the `google/gemma-4-31b-it` Apache-2.0 listing before publishing.
 
+A job or a quant may set `sha256`. After the download, that digest is checked against the F16 GGUF (the job) or the quant GGUF. A mismatch fails the job before llama.cpp runs. L2's Q4_K_M, L3's Q5_K, and the L3 F16 reference carry the published digests. Leave the field unset to skip the check. A safetensors job has no single source file, so a digest on that job is a plan error.
+
 L4 scores the upstream t-tech Q4_K_M mirror. We did not quantise it. `voxprint-mirror-t-pro-it-2.1-gguf` is missing from `Mitroshenkov87/voxprint-model-index`. The summary records that gap. This command does not upload.
 
 ## Disk

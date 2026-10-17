@@ -9,6 +9,7 @@ from typing import Literal, Never, cast
 
 from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.diffusion.policy import CLIP_DROP_MAX, LPIPS_MAX
+from voxprint_forge.hashing import is_sha256
 
 Kind = Literal["turbo", "creative", "control"]
 Quant = Literal["fp32", "bf16", "fp8", "int4"]
@@ -30,7 +31,11 @@ def _unexpected_kind(kind: Never) -> Never:
 
 @dataclass(frozen=True)
 class Arm:
-    """One weight variant: repo, revision, quant, and whether it runs."""
+    """One weight variant: repo, revision, quant, and whether it runs.
+
+    ``sha256`` is optional. When set, the one named file in ``files`` is
+    checked after download.
+    """
 
     id: str
     role: Role
@@ -49,6 +54,7 @@ class Arm:
     local: bool = False
     fp8_act_scale: str = "dynamic"
     requires_cc: tuple[str, ...] = ()
+    sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -212,7 +218,16 @@ def _arm(raw: object, job_id: str) -> Arm:
         local=_bool(raw.get("local", False), f"{job_id} arm {arm_id} local"),
         fp8_act_scale=act_scale,
         requires_cc=_cc_list(raw.get("requires_cc"), f"{job_id} arm {arm_id} requires_cc"),
+        sha256=_optional_sha(raw.get("sha256"), f"{job_id} arm {arm_id} sha256"),
     )
+
+
+def _optional_sha(value: object, label: str) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or not is_sha256(value):
+        raise CompareSetup(f"{label} must be 64 lowercase hex digits", code="compare_plan")
+    return value
 
 
 def _queue(value: object, job_ids: list[str]) -> tuple[str, ...]:

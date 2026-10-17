@@ -22,6 +22,7 @@ from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.licence import normalize
 from voxprint_forge.llama import TAG as LLAMA_CPP_TAG
+from voxprint_forge.scrub import active_secrets, scrub
 from voxprint_forge.upload import Artifact
 
 SCHEMA_ID = "voxprint-model/1"
@@ -62,6 +63,7 @@ _BUILD_KEYS = ("forge_version", "tag", "date")
 _KINDS = frozenset({"hf", "kaggle", "gdrive", "modelscope", "url"})
 _SPDX = re.compile(r"^[a-z0-9][a-z0-9.+-]*$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _CARD = re.compile(r"^(?:|https://\S+)$")
@@ -451,9 +453,22 @@ def find_manifests(root: Path) -> list[Path]:
     return sorted(path for path in root.rglob(MANIFEST_NAME) if path.is_file())
 
 
-def write_index(paths: Sequence[Path], dest: Path) -> list[dict[str, str]]:
-    """Write ``index.json`` rows. This does not upload."""
-    rows = [_index_row(path) for path in paths]
+def write_index(
+    paths: Sequence[Path],
+    dest: Path,
+    *,
+    revisions: Mapping[str, str] | None = None,
+    commits: Callable[[str], str] | None = None,
+) -> list[dict[str, str]]:
+    """Write ``index.json`` rows. This does not upload.
+
+    ``revisions`` pins the descriptor commit for a repo. Every other repo is
+    resolved with ``commits`` (the Hugging Face commit of ``voxprint-model.json``
+    by default). The mirror's ``revision`` is not a fallback.
+    """
+    pinned = _pins(revisions)
+    lookup = descriptor_commit if commits is None else commits
+    rows = [_index_row(path, revisions=pinned, commits=lookup) for path in paths]
     rows.sort(key=lambda item: item["id"])
     ids = [item["id"] for item in rows]
     if len(ids) != len(set(ids)):
@@ -463,10 +478,44 @@ def write_index(paths: Sequence[Path], dest: Path) -> list[dict[str, str]]:
     return rows
 
 
-def run_build(source: Path, dest: Path) -> dict[str, object]:
+def run_build(
+    source: Path,
+    dest: Path,
+    *,
+    revisions: Mapping[str, str] | None = None,
+    commits: Callable[[str], str] | None = None,
+) -> dict[str, object]:
     """Build ``index.json`` from local manifests. Does not upload."""
-    rows = write_index(find_manifests(source), dest)
+    rows = write_index(find_manifests(source), dest, revisions=revisions, commits=commits)
     return {"index": str(dest), "count": len(rows), "pushed": False}
+
+
+def revision_map(items: Sequence[str]) -> dict[str, str]:
+    """Parse repeatable ``REPO=SHA`` pins. SHA is 40 lowercase hex digits."""
+    found: dict[str, str] = {}
+    for item in items:
+        repo, sep, sha = item.partition("=")
+        if sep != "=" or not repo or _COMMIT.fullmatch(sha) is None:
+            raise UsageError("index revision must be REPO=40-hex commit", code="usage")
+        if repo in found:
+            raise UsageError(f"index revision repeated for {repo}", code="usage")
+        found[repo] = sha
+    return found
+
+
+def descriptor_commit(repo: str) -> str:
+    """Last commit that touches ``voxprint-model.json`` on the published ref.
+
+    No token is passed. A missing file or a value that is not a full commit
+    id is an error. This does not read a mirror revision.
+    """
+    api = HfApi()
+    try:
+        infos = api.get_paths_info(repo, [MANIFEST_NAME], expand=True, token=False)
+    except Exception as exc:
+        message = scrub(str(exc), active_secrets())
+        raise StageError(f"{repo} descriptor commit could not be resolved: {message}", code="mdl") from exc
+    return _commit_oid(repo, infos)
 
 
 def push_index(path: Path, *, upload: Callable[[str, Path], None] | None = None) -> dict[str, object]:
@@ -504,7 +553,12 @@ def _upload_index(repo_id: str, path: Path) -> None:
     )
 
 
-def _index_row(path: Path) -> dict[str, str]:
+def _index_row(
+    path: Path,
+    *,
+    revisions: Mapping[str, str],
+    commits: Callable[[str], str],
+) -> dict[str, str]:
     document = json.loads(path.read_text(encoding="utf-8"))
     check_document(document)
     if not isinstance(document, dict):
@@ -513,12 +567,37 @@ def _index_row(path: Path) -> dict[str, str]:
     if not isinstance(mirrors, list):
         raise StageError(f"{path} has no mirrors", code="mdl")
     chosen = _descriptor_mirror(mirrors, label=str(path))
+    repo = str(chosen["ref"])
+    # chosen["revision"] is the weights commit. The row needs the commit that
+    # contains voxprint-model.json, and there is no fallback to the mirror.
+    revision = revisions[repo] if repo in revisions else commits(repo)
+    if _COMMIT.fullmatch(revision) is None:
+        raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
     return {
         "id": str(document["id"]),
-        "repo": str(chosen["ref"]),
-        "revision": str(chosen["revision"]),
+        "repo": repo,
+        "revision": revision,
         "sha256": sha256_file(path),
     }
+
+
+def _pins(revisions: Mapping[str, str] | None) -> dict[str, str]:
+    pinned: dict[str, str] = {}
+    for repo, sha in (revisions or {}).items():
+        if _COMMIT.fullmatch(sha) is None:
+            raise StageError(f"{repo} revision must be a 40-hex commit", code="mdl")
+        pinned[str(repo)] = sha
+    return pinned
+
+
+def _commit_oid(repo: str, infos: object) -> str:
+    if not isinstance(infos, list) or len(infos) != 1:
+        raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
+    last = getattr(infos[0], "last_commit", None)
+    oid = getattr(last, "oid", None) if last is not None else None
+    if not isinstance(oid, str) or _COMMIT.fullmatch(oid) is None:
+        raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
+    return oid
 
 
 def _descriptor_mirror(
