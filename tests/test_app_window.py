@@ -113,11 +113,11 @@ def test_full_flow_runs_the_cli_commands(make_app, tmp_path) -> None:
     runner = _runner(photos)
     app = make_app(runner)
     _walk_to(app, "result", photos)
-    commands = [call[1] for call in runner.calls]
+    commands = [call[2] for call in runner.calls]
     assert commands == ["prepare", "train"]
     assert "--consent-obtained" in runner.calls[0] and "--subject-adult" in runner.calls[0]
     app.install()
-    assert runner.calls[-1][1] == "export" and "--install-to-mdl" in runner.calls[-1]
+    assert runner.calls[-1][2] == "export" and "--install-to-mdl" in runner.calls[-1]
     assert _status(app) == tr("forge.app.result.installed")
 
 

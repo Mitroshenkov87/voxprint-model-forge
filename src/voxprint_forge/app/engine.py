@@ -107,7 +107,7 @@ def commands() -> frozenset[str]:
 
 def prepare_args(draft: Draft, project: Path) -> list[str]:
     """``lora prepare`` for the photos, the kind and the subject (steps 1-3)."""
-    args = ["lora", "prepare", "--project", str(project), "--json", "--mode", "expert" if draft.expert else "simple"]
+    args = ["--json", "lora", "prepare", "--project", str(project), "--mode", "expert" if draft.expert else "simple"]
     if draft.expert and not 10 <= len(draft.photos) <= 30:
         args.append("--allow-count-outside-range")
     for photo in draft.photos:
@@ -128,7 +128,7 @@ def train_args(
 ) -> list[str]:
     """``lora train`` (or ``extend``) from the live settings; Expert values only in Expert mode."""
     command = "extend" if extend_from is not None else "train"
-    args = ["lora", command, "--project", str(project), "--json"]
+    args = ["--json", "lora", command, "--project", str(project)]
     args += ["--preset", str(values.get("lora.preset", "balanced"))]
     args += ["--likeness", str(values.get("lora.likeness", "balanced"))]
     args += ["--vram", str(values.get("lora.vram", "auto"))]
@@ -157,15 +157,14 @@ def export_args(
     draft: Draft, project: Path, out: Path | None, *, checkpoint: int | None = None, install: bool = False
 ) -> list[str]:
     """``lora export``: Save (``--out``) or Open in Canvas (``--install-to-mdl``)."""
-    args = ["lora", "export", "--project", str(project), "--json"]
+    args = ["--json", "lora", "export", "--project", str(project)]
     if checkpoint is not None:
         args += ["--checkpoint", str(checkpoint)]
     if out is not None:
         args += ["--out", str(out)]
     if install:
         args.append("--install-to-mdl")
-    args += _subject_args(draft)
-    return args
+    return args  # export reads the subject from the project; it takes no subject flags
 
 
 def _subject_args(draft: Draft) -> list[str]:

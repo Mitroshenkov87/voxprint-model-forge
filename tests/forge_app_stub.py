@@ -57,8 +57,8 @@ class StubRunner:
 
     def start(self, args, on_event, on_done) -> None:
         self.calls.append(list(args))
-        events, outcome = self.script.get(args[1], ([], Outcome(True, {})))
-        effect = self.effects.get(args[1])
+        events, outcome = self.script.get(args[2], ([], Outcome(True, {})))
+        effect = self.effects.get(args[2])
         if effect is not None:
             effect(Path(args[args.index("--project") + 1]))
         self.busy = True

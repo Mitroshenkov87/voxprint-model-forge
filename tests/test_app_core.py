@@ -126,7 +126,7 @@ def _ready_draft(tmp_path: Path) -> Draft:
 
 def test_prepare_args_follow_the_flag_table(tmp_path: Path) -> None:
     args = engine.prepare_args(_ready_draft(tmp_path), tmp_path / "proj")
-    assert args[:4] == ["lora", "prepare", "--project", str(tmp_path / "proj")]
+    assert args[:5] == ["--json", "lora", "prepare", "--project", str(tmp_path / "proj")]
     assert args.count("--photo") == 10
     for flag in ("--json", "--consent-obtained", "--subject-adult", "--release", "--provenance-note"):
         assert flag in args
@@ -143,7 +143,20 @@ def test_expert_values_are_sent_only_in_expert_mode(tmp_path: Path) -> None:
     assert expert[expert.index("--rank") + 1] == "8" and "--grad-checkpointing" in expert and "--resume" in expert
     assert "--replay" not in expert
     extend = engine.train_args(tmp_path, values, expert=True, extend_from=tmp_path / "old.safetensors")
-    assert extend[1] == "extend" and "--rank" not in extend and extend[extend.index("--replay") + 1] == "0.5"
+    assert extend[2] == "extend" and "--rank" not in extend and extend[extend.index("--replay") + 1] == "0.5"
+
+
+def test_every_builder_parses_with_the_real_cli(tmp_path: Path) -> None:
+    from voxprint_forge.cli import build_parser
+
+    draft = _ready_draft(tmp_path)
+    built = [
+        engine.prepare_args(draft, tmp_path),
+        engine.train_args(tmp_path, {}, extend_from=None, resume=False, dry_run=True, expert=False),
+        engine.export_args(draft, tmp_path, tmp_path / "out.safetensors", checkpoint=500, install=True),
+    ]
+    for args in built:
+        assert build_parser().parse_args(args).json is True, args
 
 
 def test_export_args(tmp_path: Path) -> None:

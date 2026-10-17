@@ -33,8 +33,8 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Train / Pause / Continue / Stop | `lora train`, SIGINT, `--resume` | Train: buttons, plain-words progress and time left | mapped |
 | Extend | `lora extend --from` | Result: Add more photos; overflow: Add more photos to a model | mapped |
 | Checkpoint pick | `--checkpoint N` | Result: Version | mapped |
-| Save | `lora export --out` | Result: Save; overflow: Export | waits-engine |
-| Open in Canvas | `lora export --install-to-mdl` | Result: Open in Canvas | waits-engine |
+| Save | `lora export --out` | Result: Save; overflow: Export | mapped |
+| Open in Canvas | `lora export --install-to-mdl` | Result: Open in Canvas | mapped |
 | Preview strength slider | — (no engine call for previews at a strength yet) | — | waits-engine |
 | Open project | project folder | overflow: Open project | mapped |
 | User guide | — | overflow: Open guide (says so when the guide is not bundled) | mapped |
