@@ -134,6 +134,7 @@ def summarise(
     secrets: Sequence[str],
     timings: Sequence[Mapping[str, object]] = (),
     int4_loads: Sequence[Mapping[str, str]] | None = None,
+    gpu: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Aggregate non-warmup pairs. New metrics are reported and do not gate."""
     arms: list[dict[str, object]] = []
@@ -199,6 +200,8 @@ def summarise(
         "prompt_ids_only": True,
         "note": job.note,
     }
+    if gpu is not None:
+        payload["gpu"] = dict(gpu)
     assert_mapping_clean(payload, secrets, where=SUMMARY_JSON)
     return payload
 

@@ -322,7 +322,7 @@ if [[ "${FORGE_SKIP_WAN:-0}" != "1" && ! -x "$SRC/llama.cpp/build/bin/llama-quan
     printf 'lcpp.patch does not apply to llama.cpp %s\n' "c8c07d658a6cefc5a50cfdf6be7d726503612303" >&2
     exit 6
   fi
-  cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="80;90"
+  cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="${FORGE_CUDA_ARCHS:-80;89;90;120}"
   cmake --build "$SRC/llama.cpp/build" --target llama-quantize -j "$(nproc)"
 fi
 

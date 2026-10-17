@@ -17,10 +17,12 @@ from typing import Never, Protocol
 
 from PIL import Image
 
+from voxprint_forge.compare.attention import set_diffusers_backend
 from voxprint_forge.compare.cases import Case
 from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.compare.int4 import load_zimage_int4
 from voxprint_forge.compare.plan import Arm, Job, Kind
+from voxprint_forge.diffusion.fp8_native import Fp8Linear, apply_fp8_native, self_check
 from voxprint_forge.diffusion.scenes import canny_map, depth_map, pose_map, render_scene
 from voxprint_forge.scrub import active_secrets, scrub
 
@@ -81,6 +83,7 @@ class _Resident:
         self.pipe: object | None = None
         self.arm_id: str | None = None
         self.int4_notes: list[dict[str, str]] = []
+        self.fp8_notes: list[dict[str, object]] = []
 
     def load_arm(self, arm: Arm, job: Job) -> None:
         """Load ``arm`` after freeing the pipeline that was resident."""
@@ -91,6 +94,10 @@ class _Resident:
         info = getattr(pipe, "forge_int4", None)
         if isinstance(info, dict):
             self.int4_notes.append({str(key): str(value) for key, value in info.items()})
+        fp8 = getattr(pipe, "forge_fp8", None)
+        if isinstance(fp8, dict):
+            self.fp8_notes.append(dict(fp8))
+        set_diffusers_backend(pipe, job.attention)
         self.pipe = pipe
         self.arm_id = arm.id
 
@@ -111,17 +118,21 @@ class _Resident:
 
 
 def load_pipe(job: Job, arm: Arm, folder: Path) -> object:
-    """Load one arm in BF16 compute. FP8 weights are dequantised first."""
+    """Load one arm. ``fp8-native`` keeps the file bytes; ``bf16-dequant`` expands them."""
     import torch
     from diffusers import ZImageControlNetPipeline, ZImagePipeline
 
     dtype = torch.bfloat16
     kind: Kind = job.kind
     if kind == "control":
-        base = _require_dir(folder / "base", arm.id)
-        control_file = _control_file(arm, folder)
-        net = load_controlnet(control_file)
-        pipe = ZImageControlNetPipeline.from_pretrained(str(base), controlnet=net, torch_dtype=dtype)
+        if arm.compute == "fp8-native":
+            pipe = _control_native(ZImageControlNetPipeline, arm, folder, dtype)
+        else:
+            base = _require_dir(folder / "base", arm.id)
+            control_file = _control_file(arm, folder)
+            net = load_controlnet(control_file)
+            pipe = ZImageControlNetPipeline.from_pretrained(str(base), controlnet=net, torch_dtype=dtype)
+            _stamp_dequant(pipe, arm)
     elif kind == "turbo" or kind == "creative":
         if arm.quant == "int4" or arm.compute == "int4":
             pipe = _base_pipe(ZImagePipeline, arm, folder, dtype)
@@ -234,16 +245,82 @@ def _copy_local(arm: Arm, dest: Path) -> None:
 
 
 def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
+    if arm.compute == "fp8-native":
+        return _native_text(pipeline_cls, arm, folder, dtype)
     weights = folder / "weights"
     if (weights / "model_index.json").is_file():
-        return pipeline_cls.from_pretrained(str(weights), torch_dtype=dtype)
+        pipe = pipeline_cls.from_pretrained(str(weights), torch_dtype=dtype)
+        _stamp_dequant(pipe, arm)
+        return pipe
     if (folder / "model_index.json").is_file():
-        return pipeline_cls.from_pretrained(str(folder), torch_dtype=dtype)
+        pipe = pipeline_cls.from_pretrained(str(folder), torch_dtype=dtype)
+        _stamp_dequant(pipe, arm)
+        return pipe
     base = _require_dir(folder / "base", arm.id)
     pipe = pipeline_cls.from_pretrained(str(base), torch_dtype=dtype)
     overlay_root = weights if weights.is_dir() else folder
     _overlay(pipe, overlay_root)
+    _stamp_dequant(pipe, arm)
     return pipe
+
+
+def _native_text(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
+    """Load the base on CPU in BF16, swap FP8 linears, then drop the replaced weights."""
+    base = _require_dir(folder / "base", arm.id)
+    pipe = pipeline_cls.from_pretrained(str(base), torch_dtype=dtype)
+    weights = folder / "weights"
+    overlay_root = weights if weights.is_dir() else folder
+    stats = _overlay(pipe, overlay_root, native=True, act_scale=arm.fp8_act_scale)
+    _remember_native(pipe, arm, stats or {})
+    gc.collect()
+    return pipe
+
+
+def _control_native(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
+    """Build a BF16 ControlNet shell, let the pipeline cast it, then swap FP8 linears."""
+    base = _require_dir(folder / "base", arm.id)
+    chosen = _control_file(arm, folder)
+    shell = _controlnet_shell(chosen)
+    pipe = pipeline_cls.from_pretrained(str(base), controlnet=shell, torch_dtype=dtype)
+    module = getattr(pipe, "controlnet", None)
+    if module is None:
+        raise CompareSetup(f"arm {arm.id} pipeline has no controlnet", code="compare_control")
+    stats = apply_fp8_native(module, _load_state(chosen, native=True), act_scale=arm.fp8_act_scale)
+    _remember_native(pipe, arm, stats)
+    gc.collect()
+    return pipe
+
+
+def _controlnet_shell(path: Path) -> object:
+    """Empty Union 2.1 module whose linears ``apply_fp8_native`` can replace."""
+    import torch
+    from diffusers import ZImageControlNetModel
+    from safetensors import safe_open
+
+    from voxprint_forge.diffusion.controlnet_union import places_for_count, union_config
+
+    with safe_open(str(path), framework="pt") as handle:
+        layers = sorted({int(key.split(".")[1]) for key in handle.keys() if key.startswith("control_layers.")})
+    if not layers:
+        raise CompareSetup(f"{path.name} has no control layers", code="compare_control")
+    model = ZImageControlNetModel.from_config(union_config(places_for_count(len(layers))))
+    return model.to(dtype=torch.bfloat16)
+
+
+def _remember_native(pipe: object, arm: Arm, stats: dict[str, object]) -> None:
+    pipe.forge_fp8 = {
+        "arm": arm.id,
+        "mode": "fp8-native",
+        "layers_swapped": int(stats.get("layers_swapped", 0)),
+        "layers_fallback": int(stats.get("layers_fallback", 0)),
+        "act_scale": arm.fp8_act_scale,
+    }
+    pipe.forge_fp8_layer = stats.get("first_layer")
+
+
+def _stamp_dequant(pipe: object, arm: Arm) -> None:
+    if arm.compute == "bf16-dequant":
+        pipe.forge_fp8 = {"arm": arm.id, "mode": "bf16-dequant"}
 
 
 def _control_file(arm: Arm, folder: Path) -> Path:
@@ -254,6 +331,8 @@ def _control_file(arm: Arm, folder: Path) -> Path:
     if not files:
         raise CompareSetup(f"arm {arm.id} has no controlnet file", code="compare_weights")
     chosen = files[0]
+    if arm.compute == "fp8-native":
+        return chosen
     if arm.quant != "fp8" and arm.compute != "bf16-dequant":
         return chosen
     from voxprint_forge.diffusion.weights import materialise_bf16
@@ -262,16 +341,27 @@ def _control_file(arm: Arm, folder: Path) -> Path:
     return materialise_bf16([chosen], dest)
 
 
-def _overlay(pipe: object, folder: Path) -> None:
+def _overlay(
+    pipe: object,
+    folder: Path,
+    *,
+    native: bool = False,
+    act_scale: str = "dynamic",
+) -> dict[str, object] | None:
     """Merge every shard of a module, then apply that module once.
 
     A Hugging Face ``*.safetensors.index.json`` names the files when it is
     present. Coverage is checked on the merged module, not on each shard.
+    ``native`` keeps float8 bytes and returns swap counts. The default path
+    still dequantises ``voxprint-fp8-v1`` to BF16.
     """
     files = [path for path in sorted(folder.rglob("*.safetensors")) if "base" not in path.parts]
     if not files:
         raise CompareSetup("mirror folder has no safetensors to overlay", code="compare_weights")
-    loaded = {path: _load_state(path) for path in files}
+    loaded = {path: _load_state(path, native=native) for path in files}
+    swapped = 0
+    fallback = 0
+    first: Fp8Linear | None = None
     for label, states in _shard_groups(pipe, folder, loaded):
         merged: dict[str, object] = {}
         for state in states:
@@ -279,7 +369,21 @@ def _overlay(pipe: object, folder: Path) -> None:
         module = _best_module(pipe, merged)
         if module is None:
             raise CompareSetup(f"{label} matched no pipeline module", code="compare_weights")
-        _apply(module, merged, label)
+        if native:
+            stats = apply_fp8_native(module, merged, act_scale=act_scale)
+            swapped += int(stats["layers_swapped"])
+            fallback += int(stats["layers_fallback"])
+            layer = stats.get("first_layer")
+            if first is None and isinstance(layer, Fp8Linear):
+                first = layer
+            del merged
+        else:
+            _apply(module, merged, label)
+    if not native:
+        return None
+    del loaded
+    gc.collect()
+    return {"layers_swapped": swapped, "layers_fallback": fallback, "first_layer": first}
 
 
 def _shard_groups(
@@ -389,10 +493,12 @@ def _free_pipe(pipe: object | None) -> None:
         torch.cuda.empty_cache()
 
 
-def _load_state(path: Path) -> dict[str, object]:
+def _load_state(path: Path, *, native: bool = False) -> dict[str, object]:
     import torch
     from safetensors.torch import load_file
 
+    if native:
+        return load_file(str(path))
     from voxprint_forge.diffusion.fp8 import load_dequant_bf16, read_format
 
     if read_format(path) == "voxprint-fp8-v1":
@@ -457,7 +563,12 @@ def _alias(key: str, current: dict[str, object]) -> str | None:
 
 
 def _place(pipe: object, arm: Arm) -> None:
-    if arm.offload:
+    if arm.compute == "fp8-native":
+        pipe.to("cuda")
+        layer = getattr(pipe, "forge_fp8_layer", None)
+        if isinstance(layer, Fp8Linear):
+            self_check(layer)
+    elif arm.offload:
         pipe.enable_model_cpu_offload()
     else:
         pipe.to("cuda")

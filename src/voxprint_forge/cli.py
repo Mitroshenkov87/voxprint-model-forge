@@ -324,7 +324,14 @@ def _dispatch(args: argparse.Namespace) -> object:
         return perform_int4(args, root)
     if args.command == "compare":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
-        return execute_compare(root, forge_out, str(args.job), args.plan)
+        return execute_compare(
+            root,
+            forge_out,
+            str(args.job),
+            args.plan,
+            make_fp8=bool(args.make_fp8),
+            out=args.out,
+        )
     if args.command == "kl":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
         return execute_kl(

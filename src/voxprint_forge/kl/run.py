@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Never
 
+import torch
 from huggingface_hub import snapshot_download
 
 from voxprint_forge.errors import DownloadError, StageError
@@ -16,6 +18,7 @@ from voxprint_forge.fitmath import Arch, fits_budget
 from voxprint_forge.kl.arch import mtp_status, read_model_arch, require_mtp, source_mtp_layers
 from voxprint_forge.kl.parse import parse_kl, tokens_per_second
 from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat
+from voxprint_forge.kl.preflight import require_llama_arch
 from voxprint_forge.llama import Runner, convert_argv, convert_script, kl_argv, server_argv, tool
 from voxprint_forge.measure import parse_buffers
 from voxprint_forge.scrub import active_secrets, scrub
@@ -46,6 +49,8 @@ def run_kl(
     text = corpus or (data_dir() / "ppl.txt")
     if not text.is_file():
         raise StageError(f"missing perplexity corpus {text.name}", code="kl_corpus")
+    if runner is None:
+        _preflight_llama()
     active = runner or Runner()
     fetch_fn = fetch or fetch_snapshot
     work.mkdir(parents=True, exist_ok=True)
@@ -94,6 +99,20 @@ def run_kl(
         return payload
     finally:
         reclaim_base(source, f16, logits)
+
+
+def _preflight_llama() -> None:
+    """Fail with exit 9 when llama-perplexity has no SASS for this GPU."""
+    warning = require_llama_arch(Path(tool("llama-perplexity")), capability=_cuda_capability())
+    if warning:
+        print(warning, file=sys.stderr)
+
+
+def _cuda_capability() -> tuple[int, int] | None:
+    if not torch.cuda.is_available():
+        return None
+    major, minor = torch.cuda.get_device_capability()
+    return (int(major), int(minor))
 
 
 def fetch_snapshot(repo: str, revision: str, dest: Path, patterns: list[str] | None) -> None:

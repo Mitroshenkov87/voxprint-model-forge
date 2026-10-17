@@ -25,7 +25,7 @@ On failure the object also has `error.code` and `error.message`.
 
 `forge status` uses a shorter set, because Hardware Watchdog polls it: 0 when every item is running or finished, 3 when a running item's heartbeat is older than 180 seconds or its pid is gone, 4 when any item is `STAGEFAIL` or `FAILED` or `status.json` is missing. Those two numbers are not the licence and checksum codes above. The other commands keep the table.
 
-`forge compare --job ID` uses another short set: 0 when every candidate passes, 1 when the quality bar fails, 2 for setup, 3 when there is no CUDA GPU. See `docs/COMPARE.md`.
+`forge compare --job ID` uses another short set: 0 when every candidate passes, 1 when the quality bar fails, 2 for setup, 3 when there is no CUDA GPU. `forge compare --make-fp8 --job D1|D4 --out DIR` writes local FP8 files and does not need a GPU. See `docs/COMPARE.md`.
 
 `forge kl` uses the table above. It writes a perplexity and KL report for one L-job and exits 6 when conversion, the log parse, or the Qwen3.6 MTP check fails. See `docs/KL.md`.
 

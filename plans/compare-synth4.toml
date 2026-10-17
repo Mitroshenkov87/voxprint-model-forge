@@ -1,7 +1,8 @@
 # Synth4 original-versus-compressed arms. Prompt text is not stored here.
 # Private prompts load at runtime from FORGE_PRIVATE_PROMPTS (a directory).
-# FP8 transformer arms and the upstream INT4 arms stay disabled until their loaders land.
-# Steps and CFG are the model under test. Manifest steps and CFG are ignored.
+# fp8-native runs on sm_89 and newer. bf16-dequant stays for weight-only numerics.
+# D2 INT4 is skipped on sm_90. Steps and CFG are the model under test.
+# Manifest steps and CFG are ignored.
 
 [defaults]
 lpips_max = 0.10
@@ -11,6 +12,7 @@ height = 1024
 public_seeds = [0, 1]
 private_limit = 50
 control_scale = 0.75
+attention = "sdpa"
 
 [[jobs]]
 id = "D1"
@@ -20,7 +22,7 @@ guidance = 0.0
 prompts = "base"
 private_sets = ["vxp_yuna", "vxp_mei"]
 reference = "a"
-note = "Z-Image-Turbo tiers. Arms c and d read FP8 files from FORGE_FP8_DIR and are skipped when that directory is unset."
+note = "Z-Image-Turbo tiers. Arms c and d are fp8-native. Arm c-dq dequantises the same transformer file. Local arms are skipped when FORGE_FP8_DIR is unset."
 
 [[jobs.arms]]
 id = "a"
@@ -57,6 +59,17 @@ local = true
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
 base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
+compute = "fp8-native"
+offload = false
+files = ["zimage-turbo-transformer-fp8.safetensors"]
+
+[[jobs.arms]]
+id = "c-dq"
+role = "candidate"
+local = true
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "fp8"
 compute = "bf16-dequant"
 offload = false
 files = ["zimage-turbo-transformer-fp8.safetensors"]
@@ -68,7 +81,7 @@ local = true
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
 base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
-compute = "bf16-dequant"
+compute = "fp8-native"
 offload = false
 files = ["zimage-turbo-transformer-fp8.safetensors", "qwen3-4b-text-encoder-fp8.safetensors"]
 
@@ -80,7 +93,8 @@ guidance = 0.0
 prompts = "base"
 private_sets = ["vxp_yuna", "vxp_mei"]
 reference = "a"
-note = "Upstream nunchaku-ai INT4 is a measurement-only baseline, not a Voxprint quant."
+requires_cc = ["7.5", "8.0", "8.6", "8.9", "12.0"]
+note = "Upstream nunchaku-ai INT4 is a measurement-only baseline, not a Voxprint quant. Hopper has no 4-bit tensor cores, so these arms are skipped on sm_90."
 
 [[jobs.arms]]
 id = "a"
@@ -160,7 +174,7 @@ revision = "cc9fddea"
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
 base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
-compute = "bf16-dequant"
+compute = "fp8-native"
 offload = false
 files = ["zimage-turbo-controlnet-union-2.1-lite-fp8.safetensors"]
 
@@ -190,6 +204,6 @@ local = true
 base_repo = "Tongyi-MAI/Z-Image"
 base_revision = "04cc4abb7c5069926f75c9bfde9ef43d49423021"
 quant = "fp8"
-compute = "bf16-dequant"
+compute = "fp8-native"
 offload = false
 files = ["zimage-transformer-fp8.safetensors"]
