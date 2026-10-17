@@ -487,3 +487,83 @@ def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_pa
         intro = app.window.findChild(Details, f"forge.details.step.{step}")
         assert intro is not None and not intro.opened, step
         assert len(tr(f"forge.app.step.{step}.short")) <= 60, step
+
+
+def _scroll_problems(app, step):
+    """Open every Details on the step at 1024x768 and scroll to each control: it must show fully inside
+    the scroll viewport, which ends above the pinned footer (status line, Back/Next)."""
+    from voxprint_forge.app.details import Details
+
+    for box in app.window.findChildren(Details):
+        if not box.opened:
+            box.button.click()
+    for _ in range(3):
+        QtWidgets.QApplication.processEvents()
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    scroll = page.parentWidget().parentWidget()
+    assert isinstance(scroll, QtWidgets.QScrollArea)
+    viewport = scroll.viewport()
+    view_top = viewport.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    view_bottom = view_top + viewport.height()
+    footer_top = app._status_label.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    next_top = _next(app).mapToGlobal(QtCore.QPoint(0, 0)).y()
+    bad = []
+    if not view_bottom <= footer_top <= next_top:
+        bad.append(("footer overlaps the body", view_bottom, footer_top, next_top))
+    layout = page.layout()
+    need = layout.totalHeightForWidth(page.width()) if layout.hasHeightForWidth() else layout.totalSizeHint().height()
+    if page.height() + 1 < need:
+        bad.append(("page squeezed", page.height(), need))
+    controls = [w for kind in CONTROLS for w in page.findChildren(kind) if w.isVisibleTo(page)]
+    assert any(c.objectName() == "disclosure" for c in controls)
+    bar = scroll.verticalScrollBar()
+    if bar.maximum() < page.height() - viewport.height():
+        bad.append(("scroll range too short", bar.maximum(), page.height() - viewport.height()))
+    for control in controls:
+        # Scroll the bar itself: ensureWidgetVisible only reveals a line edit's cursor, not the whole field.
+        y = control.mapTo(page, QtCore.QPoint(0, 0)).y()
+        bar.setValue(y if control.height() > viewport.height() else max(0, y + control.height() - viewport.height()))
+        QtWidgets.QApplication.processEvents()
+        top = control.mapToGlobal(QtCore.QPoint(0, 0)).y()
+        if top < view_top or top + min(control.height(), viewport.height()) > view_bottom + 1:
+            bad.append((step, type(control).__name__, control.objectName() or getattr(control, "text", str)()))
+    return bad
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
+        make_app, tmp_path, lang, expert) -> None:
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos), lang=lang)
+    app.expert.set_enabled(expert)
+    app.window.resize(1024, 768)
+    app.draft.add_photos(photos)
+    app.draft.kind = "person"
+    app.repaint()
+    problems = []
+    for step in STEPS:
+        if app.layout.sections.step.step_id != step:
+            if step == "prepare":
+                app.draft.set_names("Shape Demo", "")
+                app.draft.consent = app.draft.adult = True
+                app.draft.set_verbal(True)
+            if step == "train":
+                app.prepare()
+            if step == "result":
+                app.train()
+            app.repaint()
+            _next(app).click()
+        QtWidgets.QApplication.processEvents()
+        if step == "train":
+            from voxprint_forge.app.details import Details
+
+            names = {box.objectName() for box in app.window.findChildren(Details)}
+            assert names == {"forge.details.step.train", "forge.details.train.base"}
+            start = next(b for b in app.window.findChildren(QtWidgets.QPushButton)
+                         if b.text() == tr("forge.app.train.start"))
+            page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+            assert page.isAncestorOf(start)  # the Start/Pause row is part of the scrolling body
+        problems += _scroll_problems(app, step)
+    assert app.window.size() == QtCore.QSize(1024, 768)
+    assert problems == []

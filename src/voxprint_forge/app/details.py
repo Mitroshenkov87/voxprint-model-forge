@@ -57,5 +57,18 @@ class Details(QtWidgets.QWidget):
     def _flip(self, checked: bool, *, notify: bool = True) -> None:
         self.body.setVisible(checked)
         self.button.setText(tr("forge.app.details.hide" if checked else "forge.app.details"))
+        self.updateGeometry()
         if notify and self._on_toggle is not None:
             self._on_toggle(checked)
+        if notify and checked:
+            # After the page has grown, scroll so the opened text is in view (not left under the footer).
+            QtCore.QTimer.singleShot(0, self.reveal)
+
+    def reveal(self) -> None:
+        """Scroll the nearest scroll area so the button and the opened body are visible."""
+        area = self.parentWidget()
+        while area is not None and not isinstance(area, QtWidgets.QScrollArea):
+            area = area.parentWidget()
+        if area is None or not self.isVisible():
+            return
+        area.ensureWidgetVisible(self.body if self.opened else self.button, 0, 8)

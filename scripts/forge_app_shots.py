@@ -86,6 +86,10 @@ def main(out: Path) -> None:
             scroll = base_details.parentWidget().parentWidget().parentWidget()  # page -> viewport -> scroll area
             scroll.ensureWidgetVisible(base_details.body)
             shot("4-train-details-open-base")
+            forge.window.resize(1024, 768)  # the smallest window we check; both Details open, scrolled to Start
+            scroll_to_start(forge, app, scroll)
+            shot("4-train-details-open-start")
+            forge.window.resize(wide)
             for details in forge.window.findChildren(Details):
                 details.button.setChecked(False)
             runner.hold = True
@@ -99,6 +103,17 @@ def main(out: Path) -> None:
             shot("6-check")
             forge.window.close()
             forge.expert.set_enabled(False)
+
+
+def scroll_to_start(forge, app, scroll) -> None:
+    """Scroll the Train step so the Estimate/Start/Pause/Stop row sits at the bottom of the view."""
+    from PySide6 import QtCore, QtWidgets
+    from voxprint_common.i18n import tr
+
+    start = next(b for b in forge.window.findChildren(QtWidgets.QPushButton) if b.text() == tr("forge.app.train.start"))
+    app.processEvents()
+    y = start.mapTo(scroll.widget(), QtCore.QPoint(0, start.height())).y()
+    scroll.verticalScrollBar().setValue(max(0, y + 8 - scroll.viewport().height()))
 
 
 def shot_open_base(forge, app, path: Path) -> None:
