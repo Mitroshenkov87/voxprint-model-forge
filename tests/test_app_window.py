@@ -402,3 +402,88 @@ def test_base_vram_uses_measured_peaks_only_when_present(monkeypatch) -> None:
     assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_tier", gb=16)
     monkeypatch.setitem(basepicker.MEASURED_PEAK_GB, "z-image", {16: 14.5, 24: 19.0})
     assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_measured", gb="14.5")
+
+
+def _train(make_app, tmp_path, lang, expert):
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos), lang=lang)
+    app.expert.set_enabled(expert)
+    _walk_to(app, "train", photos)
+    QtWidgets.QApplication.processEvents()
+    return app
+
+
+def _labels_fit(page):
+    """Every visible label is inside the page width and tall enough for its wrapped text."""
+    bad = []
+    for label in page.findChildren(QtWidgets.QLabel):
+        if not label.isVisibleTo(page) or not label.text():
+            continue
+        corner = label.mapTo(page, QtCore.QPoint(label.width(), label.height()))
+        if corner.x() > page.width() + 1:
+            bad.append(("wide", label.text()[:40]))
+        if label.wordWrap() and label.height() + 1 < label.heightForWidth(label.width()):
+            bad.append(("short", label.text()[:40]))
+    return bad
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_train_step_text_is_never_cut_with_details_closed_or_open(make_app, tmp_path, lang, expert) -> None:
+    from voxprint_forge.app.details import Details
+
+    app = _train(make_app, tmp_path, lang, expert)
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    boxes = app.window.findChildren(Details)
+    assert {box.objectName() for box in boxes} == {"forge.details.step.train", "forge.details.train.base"}
+    assert all(not box.opened and not box.body.isVisibleTo(app.window) for box in boxes)
+    assert _labels_fit(page) == []
+    for box in boxes:
+        box.button.click()
+    QtWidgets.QApplication.processEvents()
+    QtWidgets.QApplication.processEvents()
+    assert all(box.body.isVisibleTo(app.window) for box in boxes)
+    assert _labels_fit(page) == []
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    assert all(box.opened for box in app.window.findChildren(Details))  # survives a repaint
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_base_list_opens_below_the_field(make_app, tmp_path, lang, expert) -> None:
+    app = _train(make_app, tmp_path, lang, expert)
+    combo = app.window.findChild(QtWidgets.QComboBox, "forge.train.base")
+    combo.showPopup()
+    QtWidgets.QApplication.processEvents()
+    popup = combo.view().window()
+    field = combo.mapToGlobal(QtCore.QPoint(0, combo.height()))
+    top_left = popup.mapToGlobal(QtCore.QPoint(0, 0))
+    combo.hidePopup()
+    assert top_left.y() >= field.y() and top_left.x() == field.x()
+
+
+def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_path) -> None:
+    from voxprint_forge.app.details import Details
+
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos))
+    app.draft.add_photos(photos)
+    app.draft.kind = "person"
+    app.repaint()
+    for step in STEPS:
+        if app.layout.sections.step.step_id != step:
+            if step == "prepare":
+                app.draft.set_names("Shape Demo", "")
+                app.draft.consent = app.draft.adult = True
+                app.draft.set_verbal(True)
+            if step == "train":
+                app.prepare()
+            if step == "result":
+                app.train()
+            app.repaint()
+            _next(app).click()
+        QtWidgets.QApplication.processEvents()
+        intro = app.window.findChild(Details, f"forge.details.step.{step}")
+        assert intro is not None and not intro.opened, step
+        assert len(tr(f"forge.app.step.{step}.short")) <= 60, step

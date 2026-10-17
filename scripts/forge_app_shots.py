@@ -75,7 +75,19 @@ def main(out: Path) -> None:
             forge.prepare()
             shot("3-prepare")
             next_button.click()
+            shot("4-train")
             shot_open_base(forge, app, out / f"{lang}-{mode}-4-train-base-open.png")
+            from voxprint_forge.app.details import Details
+
+            for details in forge.window.findChildren(Details):
+                details.button.setChecked(True)
+            shot("4-train-details-open")
+            base_details = forge.window.findChild(Details, "forge.details.train.base")
+            scroll = base_details.parentWidget().parentWidget().parentWidget()  # page -> viewport -> scroll area
+            scroll.ensureWidgetVisible(base_details.body)
+            shot("4-train-details-open-base")
+            for details in forge.window.findChildren(Details):
+                details.button.setChecked(False)
             runner.hold = True
             forge.train()
             shot("4-train-running")
