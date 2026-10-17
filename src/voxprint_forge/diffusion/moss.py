@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import os
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,11 +192,54 @@ def load_pipeline(
     return mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
 
 
+# Module-level kernels in transformers' Qwen3.5 linear-attention layers. With causal-conv1d or
+# flash-linear-attention installed, transformers binds these names to the package kernel, which
+# is CUDA-only (``Expected x.is_cuda()``) whatever device the module sits on.
+CUDA_ONLY_KERNELS = (
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
+    "torch_chunk_gated_delta_rule",
+    "torch_recurrent_gated_delta_rule",
+)
+
+
+@contextmanager
+def torch_reference_kernels(model: object) -> Iterator[list[str]]:
+    """Inside the block, the modeling modules of ``model`` call the pure-PyTorch kernels.
+
+    Every name in ``CUDA_ONLY_KERNELS`` found in a module that defines one of ``model``'s
+    submodule classes is replaced by ``inspect.unwrap`` of it (the decorated torch function)
+    and restored on exit. Yields the ``module.name`` entries it swapped.
+    """
+    mods = {type(m).__module__ for m in model.modules()}  # type: ignore[attr-defined]
+    saved: list[tuple[object, str, object]] = []
+    try:
+        for name in sorted(mods):
+            mod = sys.modules.get(name)
+            if mod is None:
+                continue
+            for fn_name in CUDA_ONLY_KERNELS:
+                fn = getattr(mod, fn_name, None)
+                if fn is None:
+                    continue
+                ref = inspect.unwrap(fn)
+                if ref is not fn:
+                    saved.append((mod, fn_name, fn))
+                    setattr(mod, fn_name, ref)
+        yield [f"{m.__name__}.{n}" for m, n, _ in saved]  # type: ignore[attr-defined]
+    finally:
+        for mod, fn_name, fn in reversed(saved):
+            setattr(mod, fn_name, fn)
+
+
 def encode_on_cpu(pipe: object, prompt: str, max_sequence_length: int = 4096) -> tuple[object, object]:
     """Same as the vendored ``encode_prompt`` for one prompt, with the text encoder on CPU.
 
     The vendored method moves the inputs to ``_execution_device``. That is the GPU once the
-    transformer sits there, which breaks a CPU text encoder.
+    transformer sits there, which breaks a CPU text encoder. The inputs follow the encoder's
+    own device, and on CPU the CUDA-only conv/delta-rule kernels are swapped for the torch
+    reference (see ``torch_reference_kernels``). Embeds and mask come back on that device; the
+    caller moves both to the transformer's device.
     """
     import torch
 
@@ -203,6 +249,10 @@ def encode_on_cpu(pipe: object, prompt: str, max_sequence_length: int = 4096) ->
     )
     inputs = pipe.tokenizer(formatted, return_tensors="pt", truncation=True, max_length=max_sequence_length).to(device)
     with torch.no_grad():
-        row = pipe.text_encoder(**inputs, use_cache=False, return_dict=True).last_hidden_state
-    mask = torch.ones(row.shape[:2], dtype=torch.bool)
+        if device.type == "cpu":
+            with torch_reference_kernels(pipe.text_encoder):
+                row = pipe.text_encoder(**inputs, use_cache=False, return_dict=True).last_hidden_state
+        else:
+            row = pipe.text_encoder(**inputs, use_cache=False, return_dict=True).last_hidden_state
+    mask = torch.ones(row.shape[:2], dtype=torch.bool, device=row.device)
     return row, mask
