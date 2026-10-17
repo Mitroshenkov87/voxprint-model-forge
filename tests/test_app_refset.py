@@ -157,17 +157,18 @@ def test_round_keep_and_this_is_it_hand_the_set_to_prepare(make_app, tmp_path) -
     assert call[call.index("--candidates") + 1] == "24" and call[call.index("--strength") + 1] == "0.50"
     assert "--consent-obtained" in call and "--subject-adult" in call and call.count("--ref") == 3
     keeps = _buttons(app, "forge.refset.keep.")
-    rejects = _buttons(app, "forge.refset.reject.")
-    assert len(keeps) == 24 and len(rejects) == 24
-    for button in keeps[:7]:
+    assert len(keeps) == 24
+    assert not _buttons(app, "forge.refset.reject.")  # one checkmark toggle per card, no Keep/Reject pair
+    for button in keeps[:9]:
         button.click()
-    rejects[7].click()
-    keeps[7].click()  # Keep after Reject: only one stays ticked
-    assert not rejects[7].isChecked()
+    keeps[8].click()  # unticking leaves the picture out again
+    assert not keeps[8].isChecked()
     state = refset.load_state(app.project)
     assert len(refset.kept(state)) == 8
+    assert refset.candidates(state)[8]["verdict"] == "pending"
     label = _find(app, QtWidgets.QLabel, "presetLabel")
-    assert label.text() == tr("forge.app.refset.kept", kept=8, total=11, low=10, high=30)
+    assert label.text() == tr("forge.app.refset.kept", kept=8, shown=24, low=10, high=30)
+    assert not _next(app).isEnabled()  # Next stays off until This is it
     _find(app, QtWidgets.QPushButton, "forge.refset.finish").click()
     assert app.runner.calls[-1][2:4] == ["refset", "finish"]
     assert len(app.draft.approved) == 11
@@ -202,15 +203,22 @@ def test_simple_has_no_round_settings_and_expert_has_them(make_app, tmp_path) ->
     assert tr("forge.app.refset.simple", count=24) in [w.text() for w in page.findChildren(QtWidgets.QLabel)]
     app.expert.set_enabled(True)
     page = _find(app, QtWidgets.QWidget, "forgeStepPage")
-    count = page.findChild(QtWidgets.QSpinBox, "forge.refset.count")
-    strength = page.findChild(QtWidgets.QDoubleSpinBox, "forge.refset.strength")
-    steps = page.findChild(QtWidgets.QSpinBox, "forge.refset.steps")
+    assert not page.findChildren(QtWidgets.QAbstractSpinBox)  # the round settings live in the Expert panel
+    panel = _find(app, QtWidgets.QWidget, "expertPanel")
+    box = _find(app, QtWidgets.QWidget, "forge.refset.expert")
+    assert panel.isAncestorOf(box)
+    labels = [w.text() for w in box.findChildren(QtWidgets.QLabel) if w.isVisibleTo(app.window)]
+    assert tr("forge.app.refset.prompts") in labels and tr("forge.app.refset.prompts_later") in labels
+    count = box.findChild(QtWidgets.QSpinBox, "forge.refset.count")
+    strength = box.findChild(QtWidgets.QDoubleSpinBox, "forge.refset.strength")
+    steps = box.findChild(QtWidgets.QSpinBox, "forge.refset.steps")
     assert (count.minimum(), count.maximum()) == (8, 64)
     assert (strength.minimum(), strength.maximum()) == (0.25, 0.9)
     count.setValue(12)
     strength.setValue(0.4)
     steps.setValue(6)
-    assert page.findChild(QtWidgets.QTableWidget, "forge.refset.prompts") is None
+    assert box.findChild(QtWidgets.QTableWidget, "forge.refset.prompts") is None
+    assert page.isAncestorOf(_make(app)) and page.isAncestorOf(_find(app, QtWidgets.QPushButton, "forge.refset.finish"))
     _make(app).click()
     call = app.runner.calls[-1]
     assert call[call.index("--candidates") + 1] == "12"
@@ -218,6 +226,7 @@ def test_simple_has_no_round_settings_and_expert_has_them(make_app, tmp_path) ->
     assert len(_buttons(app, "forge.refset.keep.")) == 12
     table = _find(app, QtWidgets.QTableWidget, "forge.refset.prompts")
     assert table is not None and table.rowCount() == 2
+    assert _find(app, QtWidgets.QWidget, "expertPanel").isAncestorOf(table)
     table.item(0, 1).setText("an edited description")
     rid = table.item(0, 1).data(QtCore.Qt.ItemDataRole.UserRole)
     assert refset.load_prompts(app.project)[rid] == "an edited description"
@@ -276,3 +285,66 @@ def test_every_refset_control_has_a_tooltip(make_app, tmp_path, lang, expert) ->
     assert not missing
     for key in ("forge.app.step.refset.short",):
         assert len(tr(key)) <= 60
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_refset_step_has_one_details_and_one_action_row(make_app, tmp_path, lang) -> None:
+    app = make_app(_engine([]), lang=lang)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    details = [w for w in page.findChildren(QtWidgets.QWidget)
+               if w.objectName().startswith("forge.details.") and w.isVisibleTo(app.window)]
+    assert len(details) == 1
+    make, finish = _make(app), _find(app, QtWidgets.QPushButton, "forge.refset.finish")
+    restart = _find(app, QtWidgets.QPushButton, "forge.refset.restart")
+    assert make.mapTo(app.window, QtCore.QPoint()).y() == finish.mapTo(app.window, QtCore.QPoint()).y() \
+        == restart.mapTo(app.window, QtCore.QPoint()).y()
+    assert not _next(app).isEnabled()
+    _make(app).click()
+    for keep in _buttons(app, "forge.refset.keep.")[:8]:
+        keep.click()  # 2 references + 8 kept = the Simple minimum of 10
+    assert not _next(app).isEnabled()
+    _find(app, QtWidgets.QPushButton, "forge.refset.finish").click()
+    assert _next(app).isEnabled()
+
+
+def test_cards_line_up_with_and_without_the_similar_badge(make_app, tmp_path) -> None:
+    app = make_app(_engine([]))
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 3))
+    _make(app).click()
+    state = refset.load_state(app.project)
+    similar = {str(c["id"]) for c in refset.candidates(state) if c.get("near_duplicate_of")}
+    cards = [w for w in app.window.findChildren(QtWidgets.QFrame, "card") if w.property("candidate")]
+    assert similar and len(similar) < len(cards)  # the stub round has both kinds
+    assert len({card.sizeHint().height() for card in cards}) == 1
+    texts = {w.text() for w in app.window.findChildren(QtWidgets.QLabel, "forge.refset.similar")}
+    assert texts == {"", tr("forge.app.refset.similar_mark")}
+    labels = [w.text() for w in app.window.findChildren(QtWidgets.QLabel) if w.isVisibleTo(app.window)]
+    assert not any("(≈)" in text for text in labels)  # no round total, only the per-card badge
+    card = next(c for c in cards if c.property("candidate") not in similar)
+    picture = next(w for w in card.findChildren(QtWidgets.QLabel) if w.pixmap() is not None and not w.pixmap().isNull())
+    QtCore.QCoreApplication.sendEvent(picture, _click(picture))
+    keep = card.findChild(QtWidgets.QPushButton)
+    assert keep.isChecked() and card.property("kept") == "true"
+
+
+def _click(widget):
+    from PySide6 import QtGui
+
+    pos = QtCore.QPointF(widget.rect().center())
+    return QtGui.QMouseEvent(QtCore.QEvent.Type.MouseButtonPress, pos, widget.mapToGlobal(pos),
+                             QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+                             QtCore.Qt.KeyboardModifier.NoModifier)
+
+
+@pytest.mark.parametrize("expert", [False, True])
+def test_open_folder_lines_up_with_back(make_app, tmp_path, expert) -> None:
+    app = make_app(_engine([]))
+    app.expert.set_enabled(expert)
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    QtWidgets.QApplication.processEvents()
+    folder = _find(app, QtWidgets.QPushButton, "openFolder")
+    back = _find(app, QtWidgets.QPushButton, "wizardBack")
+    assert folder.mapTo(app.window, QtCore.QPoint()).x() == back.mapTo(app.window, QtCore.QPoint()).x()
