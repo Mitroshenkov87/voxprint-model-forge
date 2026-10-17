@@ -224,7 +224,12 @@ def test_fp8_native_plan_requires_quant_fp8(tmp_path: Path) -> None:
 
 
 def test_sm80_skips_native_and_keeps_dequant() -> None:
-    job = load_compare_plan(PLAN).job("D1")
+    plan_job = load_compare_plan(PLAN).job("D1")
+    # Arms c and d are dropped in the plan; switch them back on to test the gate.
+    job = replace(
+        plan_job,
+        arms=tuple(replace(a, enabled=True, skip_reason="") if a.id in {"c", "d"} else a for a in plan_job.arms),
+    )
     gated = gate_fp8_native(job, (8, 0))
     assert gated.arm("c").enabled is False
     assert gated.arm("c").skip_reason == "fp8-native needs sm_89+"
