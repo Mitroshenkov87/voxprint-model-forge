@@ -365,16 +365,19 @@ options:
 ## `forge compare`
 
 ```text
-usage: forge compare [-h] --job JOB [--plan PLAN] [--make-fp8] [--out OUT]
+usage: forge compare [-h] [--job JOB] [--plan PLAN] [--make-fp8] [--out OUT]
+                     [--reclaim-cache]
 
 options:
-  -h, --help   show this help message and exit
-  --job JOB    Job id from the compare plan, for example D1.
-  --plan PLAN  Compare plan. Default: plans/compare-synth4.toml.
-  --make-fp8   Write local FP8 files for D1 or D4 from the reference snapshot
-               and exit.
-  --out OUT    Directory for --make-fp8. Files stay local and are not
-               uploaded.
+  -h, --help       show this help message and exit
+  --job JOB        Job id from the compare plan, for example D1.
+  --plan PLAN      Compare plan. Default: plans/compare-synth4.toml.
+  --make-fp8       Write local FP8 files for D1 or D4 from the reference
+                   snapshot and exit.
+  --out OUT        Directory for --make-fp8. Files stay local and are not
+                   uploaded.
+  --reclaim-cache  Delete every snapshot under $FORGE_OUT/compare-cache and
+                   exit.
 ```
 
 ## `forge kl`

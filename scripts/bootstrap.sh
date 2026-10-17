@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One command on an Ubuntu 24.04 A100 box, from a bundle with no .git directory.
+# One command on an Ubuntu 24.04 synth4 box, from a bundle with no .git directory.
 # This script does not enable command tracing and does not unset tokens.
 # FORGE_HOST_KIND=local (default) keeps tokens in the process only.
 # FORGE_HOST_KIND=rented-vm logs in once after the venv exists and leaves the logins.

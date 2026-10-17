@@ -195,7 +195,7 @@ def summarise(
         "missing_private_sets": list(missing_sets),
         "skipped_arms": skipped,
         "arms": arms,
-        "a100_fp8": _fp8_note(job),
+        "fp8_note": fp8_note(job, _gpu_name(gpu), _gpu_capability(gpu)),
         "int4": [dict(item) for item in int4_loads] if int4_loads else [],
         "prompt_ids_only": True,
         "note": job.note,
@@ -233,7 +233,7 @@ def render_markdown(payload: Mapping[str, object]) -> str:
         "SSIM, PSNR, DINOv2 cosine, and CLIP-I are reported only.",
         "",
     ]
-    note = payload.get("a100_fp8")
+    note = payload.get("fp8_note")
     if isinstance(note, str) and note:
         lines.extend([note, ""])
     lines.append(
@@ -314,14 +314,41 @@ def _fmt(value: object) -> str:
     return str(value)
 
 
-def _fp8_note(job: Job) -> str:
-    if any(item.compute == "bf16-dequant" for item in job.arms):
-        return (
-            "A100 (sm_80) has no FP8 tensor cores. FP8 arms are dequantised to BF16. "
-            "Seconds per image and VRAM on this GPU are not RTX 40/50 numbers. "
-            "Quality metrics and file sizes still apply."
-        )
-    return ""
+def fp8_note(job: Job, gpu_name: str, capability: str) -> str:
+    """One sentence per enabled FP8 arm. The detected GPU name is used, never a fixed A100 label."""
+    device = gpu_name or "this datacenter GPU"
+    sm = _sm_label(capability)
+    lines: list[str] = []
+    for arm in job.enabled_arms():
+        if arm.compute == "bf16-dequant":
+            lines.append(f"{arm.id}: FP8 weights expanded to BF16; s/img and VRAM are BF16 numbers.")
+        elif arm.compute == "fp8-native":
+            lines.append(
+                f"{arm.id}: FP8 E4M3 weights and dynamic per-tensor FP8 activations on FP8 tensor cores "
+                f"(sm_{sm}). s/img is {device}, not an RTX 40/50 number; resident VRAM is representative."
+            )
+    return " ".join(lines)
+
+
+def _gpu_name(gpu: Mapping[str, object] | None) -> str:
+    if not isinstance(gpu, dict):
+        return ""
+    value = gpu.get("name")
+    return value if isinstance(value, str) else ""
+
+
+def _gpu_capability(gpu: Mapping[str, object] | None) -> str:
+    if not isinstance(gpu, dict):
+        return ""
+    value = gpu.get("compute_capability")
+    return value if isinstance(value, str) else ""
+
+
+def _sm_label(capability: str) -> str:
+    if not capability or "." not in capability:
+        return capability or "unknown"
+    major, minor = capability.split(".", 1)
+    return f"{major}{minor}"
 
 
 def _metric(row: Mapping[str, object], key: str) -> float | None:
