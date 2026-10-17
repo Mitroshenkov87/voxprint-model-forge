@@ -15,8 +15,10 @@ dependencies = [
   "safetensors>=0.4",
   "accelerate>=1.0",
   "gguf>=0.10",
-  # 0.1.* is not on PyPI. Install the v0.1.1 wheel before this editable install.
-  "voxprint-common>=0.1.1,<0.2",
+  # Not on PyPI. CI installs vendor/voxprint_common-0.2.5-py3-none-any.whl, the Yitro
+  # tag v0.2.5 (8a94b531cb4f3526425a80a86a1e64624b5de606). The core helpers also run on
+  # 0.1.1, which the VM bootstrap scripts still install. The GUI extra needs 0.2.5.
+  "voxprint-common>=0.1.1,<0.3",
 ]
 
 [project.optional-dependencies]
@@ -43,7 +45,7 @@ compare = [
   "nvidia-ml-py",
 ]
 gui = [
-  "voxprint-common[ui]>=0.1.1,<0.2",
+  "voxprint-common[ui]==0.2.5",
   "PySide6>=6.8",
   "keyring>=25",
   "nvidia-ml-py>=12",
