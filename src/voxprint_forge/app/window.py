@@ -29,7 +29,7 @@ from voxprint_common.ui.simple_image import SimpleImageWidget, SimpleLayout
 from voxprint_common.ui.theme import build_shell_style
 from voxprint_common.ui.variants import state_names, surface_for
 
-from voxprint_forge.app import engine
+from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
@@ -629,19 +629,15 @@ class ForgeApp:
                     row.count() - 1, _button("forge.app.preset.reset", "forge.app.preset.reset.tip", self.apply_simple)
                 )
             column.addLayout(row)
-        form = QtWidgets.QFormLayout()
-        base = QtWidgets.QComboBox()
-        base.setObjectName("forge.train.base")
-        base.setToolTip(tr("lora.base.tip"))
-        for mdl_id, label, permissive in self._bases():
-            base.addItem(label, mdl_id)
-            if not permissive:
-                base.setItemData(base.count() - 1, tr("lora.base.external.tip"), QtCore.Qt.ItemDataRole.ToolTipRole)
-        index = base.findData(self.simple["base"])
-        base.setCurrentIndex(max(0, index))
+        heading = QtWidgets.QLabel(tr("forge.app.base.label"))
+        heading.setObjectName("settingGroup")
+        column.addWidget(heading)
+        base = basepicker.build_picker(self._base_options(), self.simple["base"])
         base.currentIndexChanged.connect(lambda _i: self.simple.__setitem__("base", str(base.currentData() or "")))
-        form.addRow(tr("forge.app.base.label"), base)
-        column.addLayout(form)
+        base_row = QtWidgets.QHBoxLayout()
+        base_row.addWidget(base, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        base_row.addWidget(basepicker.hint_label(), 1)  # beside the picker, so the step keeps its height
+        column.addLayout(base_row)
         previews = QtWidgets.QCheckBox(tr("forge.app.previews.label"))
         previews.setToolTip(tr("lora.previews.tip"))
         previews.setChecked(self.previews)
@@ -1117,7 +1113,14 @@ class ForgeApp:
             from voxprint_forge.lora import bases
         except ImportError:
             return []
-        return [(info.mdl_id, info.display_name, info.permissive) for info in bases.available()]
+        return [(info.mdl_id, info.display_name, info.permissive) for info in bases.trainable()]
+
+    def _base_options(self) -> list[tuple[str, str, str, str, bool]]:
+        try:
+            from voxprint_forge.lora import bases
+        except ImportError:
+            return []
+        return [(i.mdl_id, i.display_name, i.repo, i.licence, i.permissive) for i in bases.trainable()]
 
 
 class _DropList(QtWidgets.QListWidget):

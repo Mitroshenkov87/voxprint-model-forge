@@ -54,6 +54,7 @@ class BaseAdapter(ABC):
     info: BaseInfo
     target_modules: tuple[str, ...] = ()
     requires_gpu: bool = True
+    trainable: bool = True  # False while the adapter has no training loader yet
 
     @abstractmethod
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
@@ -103,6 +104,11 @@ def unregister(mdl_id: str) -> None:
 def available() -> list[BaseInfo]:
     """Registered bases."""
     return [cls.info for cls in _REGISTRY.values()]
+
+
+def trainable() -> list[BaseInfo]:
+    """Registered bases this build can actually train on (what the app offers)."""
+    return [cls.info for cls in _REGISTRY.values() if cls.trainable]
 
 
 def get_adapter(mdl_id: str) -> BaseAdapter:
@@ -238,6 +244,7 @@ class MossImageAdapter(BaseAdapter):
     """
 
     info = BaseInfo("moss-image-base", "OpenMOSS-Team/MOSS-Image-Base", "main", "Apache-2.0", "MOSS-Image Base")
+    trainable = False
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
         """Not available in this release."""

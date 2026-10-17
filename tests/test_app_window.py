@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtWidgets  # noqa: E402
 from voxprint_common.i18n import set_language, tr  # noqa: E402
 
 from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_prepared  # noqa: E402
@@ -370,3 +370,35 @@ def test_open_guide_opens_the_offline_page_in_the_app_language(make_app, lang) -
     app.open_guide()
     assert opened and opened[0].name == f"{lang}.html" and opened[0].is_file()
     assert 'src="http' not in opened[0].read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp_path, lang, expert) -> None:
+    from voxprint_forge.app import basepicker
+    from voxprint_forge.lora import bases
+
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos), lang=lang)
+    app.expert.set_enabled(expert)
+    _walk_to(app, "train", photos)
+    QtWidgets.QApplication.processEvents()
+    combo = app.window.findChild(QtWidgets.QComboBox, "forge.train.base")
+    ids = [combo.itemData(i) for i in range(combo.count())]
+    assert ids == [info.mdl_id for info in bases.trainable()]
+    assert "z-image" in ids and "moss-image-base" not in ids
+    assert combo.itemText(0) == "Z-Image" and combo.width() <= basepicker.MAX_WIDTH
+    detail = combo.itemData(0, basepicker.DETAIL_ROLE)
+    assert detail == f"{tr('forge.app.base.z-image.note')} · {tr('forge.app.base.vram_tier', gb=16)}"
+    assert "16" in detail and tr("forge.app.base.vram_tier.tip", vram=tr("forge.app.base.vram_tier", gb=16)) in (
+        combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole))
+    hint = app.window.findChild(QtWidgets.QLabel, "forge.train.base.hint")
+    assert hint is not None and hint.text() == tr("forge.app.base.hint") and hint.isVisibleTo(app.window)
+
+
+def test_base_vram_uses_measured_peaks_only_when_present(monkeypatch) -> None:
+    from voxprint_forge.app import basepicker
+
+    assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_tier", gb=16)
+    monkeypatch.setitem(basepicker.MEASURED_PEAK_GB, "z-image", {16: 14.5, 24: 19.0})
+    assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_measured", gb="14.5")

@@ -174,9 +174,10 @@
 <li><strong>Preset:</strong> <strong>Quick test</strong> (a fast first look), <strong>Balanced</strong> (recommended) or <strong>Best quality</strong> (slower).</li>
 <li><strong>Likeness:</strong> <strong>Flexible</strong> (easier to put in new scenes), <strong>Balanced</strong> or <strong>Close</strong> (looks more like the photos).</li>
 <li><strong>Graphics card memory:</strong> <strong>Auto</strong>, <strong>16 GB</strong> or <strong>24 GB</strong>. Auto reads your card.</li>
-<li><strong>Base model:</strong> Z-Image.</li>
-<li><strong>Show test pictures:</strong> draws a few pictures during training so you can see progress.</li>
+<li><strong>Base model:</strong> the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is <strong>Z-Image</strong> (best for maximum quality; slower; 16 GB+). The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option for details. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.</li>
 </ul>
+<p><img alt="Base model list open" src="img/en-simple-4-train-base-open.png" />
+- <strong>Show test pictures:</strong> draws a few pictures during training so you can see progress.</p>
 <p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. The bar shows the step, what is happening and the time left (after the first few steps).</p>
 <ul>
 <li><strong>Pause</strong> saves a version and stops. Press <strong>Start training</strong> later to continue from that version.</li>

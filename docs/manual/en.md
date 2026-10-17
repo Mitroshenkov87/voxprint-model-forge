@@ -127,7 +127,9 @@ You can read the crops, the descriptions and the reasons for set-aside photos, a
 - **Preset:** **Quick test** (a fast first look), **Balanced** (recommended) or **Best quality** (slower).
 - **Likeness:** **Flexible** (easier to put in new scenes), **Balanced** or **Close** (looks more like the photos).
 - **Graphics card memory:** **Auto**, **16 GB** or **24 GB**. Auto reads your card.
-- **Base model:** Z-Image.
+- **Base model:** the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is **Z-Image** (best for maximum quality; slower; 16 GB+). The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option for details. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.
+
+  ![Base model list open](img/en-simple-4-train-base-open.png)
 - **Show test pictures:** draws a few pictures during training so you can see progress.
 
 Press **Estimate time** for a forecast, then **Start training**. The bar shows the step, what is happening and the time left (after the first few steps).
