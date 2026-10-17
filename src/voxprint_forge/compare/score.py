@@ -64,7 +64,9 @@ class LiveMetrics:
 
     def _clip_text(self, image: Image.Image, text: str) -> float:
         image_inputs = self.clip_processor(images=image, return_tensors="pt")
-        text_inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True)
+        text_inputs = self.clip_processor(
+            text=[text], return_tensors="pt", padding=True, truncation=True, max_length=clip_text_limit(self.clip)
+        )
         pixels = image_inputs["pixel_values"].to(self.device)
         input_ids = text_inputs["input_ids"].to(self.device)
         mask = text_inputs.get("attention_mask")
@@ -126,3 +128,10 @@ def _cosine(left: torch.Tensor, right: torch.Tensor) -> float:
     left_n = torch.nn.functional.normalize(left.float().flatten(), dim=0)
     right_n = torch.nn.functional.normalize(right.float().flatten(), dim=0)
     return float((left_n * right_n).sum())
+
+
+def clip_text_limit(model: object) -> int:
+    """CLIP's text length in tokens (77 for ViT-B/32). Longer prompts are truncated to it."""
+    config = getattr(getattr(model, "config", None), "text_config", None)
+    value = getattr(config, "max_position_embeddings", None)
+    return int(value) if isinstance(value, int) and value > 0 else 77
