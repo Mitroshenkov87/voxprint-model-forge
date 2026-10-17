@@ -70,7 +70,7 @@ The safety check (section 5.3) works the same in both modes. Expert mode has no 
 
 ## 5. Training a LoRA: person, object, style
 
-Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 5 … Step 5 of 5). The **?** button shows or hides the help for each step.
+Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 5 … Step 5 of 5). Each step shows one short line. **Details ▸** under it opens the full explanation; it starts closed. The subject and base-model choices have their own **Details ▸**.
 
 ### 5.1 Photos
 
@@ -127,9 +127,11 @@ You can read the crops, the descriptions and the reasons for set-aside photos, a
 - **Preset:** **Quick test** (a fast first look), **Balanced** (recommended) or **Best quality** (slower).
 - **Likeness:** **Flexible** (easier to put in new scenes), **Balanced** or **Close** (looks more like the photos).
 - **Graphics card memory:** **Auto**, **16 GB** or **24 GB**. Auto reads your card.
-- **Base model:** the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is **Z-Image** (best for maximum quality; slower; 16 GB+). The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option for details. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.
+- **Base model:** the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is **Z-Image** (best for maximum quality; slower; 16 GB+). The list opens below the field. The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option, or open **Details ▸**, for more. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.
 
   ![Base model list open](img/en-simple-4-train-base-open.png)
+
+  ![Step 4 with Details open](img/en-simple-4-train-details-open.png)
 - **Show test pictures:** draws a few pictures during training so you can see progress.
 
 Press **Estimate time** for a forecast, then **Start training**. The bar shows the step, what is happening and the time left (after the first few steps).

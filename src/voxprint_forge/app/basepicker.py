@@ -45,6 +45,13 @@ def vram_text(mdl_id: str) -> str:
     return tr("forge.app.base.vram_tier", gb=min(VRAM_TIERS))
 
 
+def memory_details() -> str:
+    """What the video memory figure in the list means (the preset tier, or measured peaks)."""
+    if not MEASURED_PEAK_GB:
+        return tr("forge.app.base.vram_tier.tip", vram=tr("forge.app.base.vram_tier", gb=min(VRAM_TIERS)))
+    return tr("forge.app.base.vram_measured.tip", vram=", ".join(vram_text(mdl_id) for mdl_id in MEASURED_PEAK_GB))
+
+
 def detail_line(mdl_id: str) -> str:
     """The muted second line: what the base is best for, then video memory."""
     key = f"forge.app.base.{mdl_id}.note"
@@ -115,9 +122,29 @@ def _small(font: QtGui.QFont) -> QtGui.QFont:
     return small
 
 
+class DownwardCombo(QtWidgets.QComboBox):
+    """A combo whose list always opens below the field, left edges aligned.
+
+    Some styles open the list over the field (on the current item), which hides
+    the label and the controls above it.
+    """
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt API
+        """Qt hook: open, then move the list under the field."""
+        super().showPopup()
+        self._place_popup()
+        # Opening focuses the field and the step may scroll it into view; place the list again after that.
+        QtCore.QTimer.singleShot(0, self._place_popup)
+
+    def _place_popup(self) -> None:
+        popup = self.view().window()
+        if popup.isVisible():
+            popup.move(self.mapToGlobal(QtCore.QPoint(0, self.height())))
+
+
 def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -> QtWidgets.QComboBox:
     """A sane-width combo of ``(mdl_id, name, repo, licence, permissive)`` with two-line options."""
-    combo = QtWidgets.QComboBox()
+    combo = DownwardCombo()
     combo.setObjectName("forge.train.base")
     combo.setToolTip(tr("lora.base.tip"))
     combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)

@@ -30,6 +30,7 @@ from voxprint_common.ui.theme import build_shell_style
 from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
+from voxprint_forge.app.details import Details
 from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
@@ -317,6 +318,9 @@ class ForgeApp:
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Always on: with "as needed" the page is sized for the width before the bar appears, so wrapped
+        # text (the Details boxes, the base hint) gets too little height and is cut.
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         scroll.setToolTip(tr(f"lora.step.{step}.desc"))
         page.setObjectName("forgeStepPage")
         scroll.setWidget(page)
@@ -336,53 +340,17 @@ class ForgeApp:
         layout.insertWidget(0, outer, 1)  # type: ignore[attr-defined]
 
     def _intro(self, column: QtWidgets.QVBoxLayout, step: str) -> None:
-        row = QtWidgets.QHBoxLayout()
-        desc = QtWidgets.QLabel(tr(f"lora.step.{step}.desc"))
-        desc.setObjectName("panel")
-        desc.setWordWrap(True)
-        row.addWidget(desc, 1)
-        toggle = QtWidgets.QPushButton(tr("forge.app.help.button"))
-        toggle.setObjectName("disclosure")
-        toggle.setCheckable(True)
-        toggle.setToolTip(tr("forge.app.help.tip"))
-        row.addWidget(toggle)
-        column.addLayout(row)
-        box = QtWidgets.QFrame()
-        box.setObjectName("card")
-        inner = QtWidgets.QVBoxLayout(box)
-        title = QtWidgets.QLabel(tr("forge.app.help.title"))
-        title.setObjectName("settingGroup")
-        text = QtWidgets.QLabel(tr(f"lora.step.{step}.help"))
-        text.setWordWrap(True)
-        text.setObjectName("simpleNote")
-        inner.addWidget(title)
-        inner.addWidget(text)
-        column.addWidget(box)
-        opened = self.help_open.get(step, self._first_run(step))
-        box.setVisible(opened)
-        toggle.setChecked(opened)
+        short = QtWidgets.QLabel(tr(f"forge.app.step.{step}.short"))
+        short.setObjectName("panel")
+        short.setWordWrap(True)
+        short.setToolTip(tr(f"lora.step.{step}.desc"))
+        column.addWidget(short)
+        column.addWidget(self._details(f"step.{step}", (tr(f"lora.step.{step}.desc"), tr(f"lora.step.{step}.help"))))
 
-        def flip(checked: bool) -> None:
-            box.setVisible(checked)
-            self.help_open[step] = checked
-            self._remember_help(step, checked)
-
-        toggle.toggled.connect(flip)
-
-    def _first_run(self, step: str) -> bool:
-        seen = self.home / "help-seen.txt"
-        names = set(seen.read_text(encoding="utf-8").split()) if seen.is_file() else set()
-        return step not in names
-
-    def _remember_help(self, step: str, opened: bool) -> None:
-        seen = self.home / "help-seen.txt"
-        names = set(seen.read_text(encoding="utf-8").split()) if seen.is_file() else set()
-        if opened:
-            names.discard(step)
-        else:
-            names.add(step)
-        seen.parent.mkdir(parents=True, exist_ok=True)
-        seen.write_text("\n".join(sorted(names)), encoding="utf-8")
+    def _details(self, key: str, paragraphs: tuple[str, ...]) -> Details:
+        """A collapsed Details expander; its open state survives repaints of the step."""
+        return Details(f"forge.details.{key}", paragraphs, opened=self.help_open.get(key, False),
+                       on_toggle=lambda checked: self.help_open.__setitem__(key, checked))
 
     def _photos(self, column: QtWidgets.QVBoxLayout) -> None:
         drop = _DropList(self._dropped)
@@ -493,7 +461,7 @@ class ForgeApp:
         elif kind == "object":
             column.addWidget(self._box("lora.subject.rights_object", "lora.subject.rights_object.tip", "rights"))
         elif kind == "style":
-            column.addWidget(self._box("lora.subject.rights_style", "lora.subject.rights_style.tip", "rights"))
+            column.addWidget(self._box("forge.app.subject.rights_style", "lora.subject.rights_style", "rights"))
         else:
             hint = QtWidgets.QLabel(tr("forge.app.subject.choose_kind"))
             hint.setObjectName("warn")
@@ -520,6 +488,14 @@ class ForgeApp:
                 _button("forge.app.subject.release_clear", "forge.app.subject.release_clear.tip", self.clear_release)
             )
         column.addLayout(release_row)
+        details = {
+            "person": ("lora.subject.consent.tip", "lora.subject.verbal.tip", "lora.subject.release.tip",
+                       "lora.subject.adult.tip", "lora.subject.adult_content.tip"),
+            "object": ("lora.subject.rights_object.tip", "lora.subject.release.tip"),
+            "style": ("lora.subject.rights_style", "lora.subject.rights_style.tip", "lora.subject.release.tip"),
+        }.get(kind)
+        if details:
+            column.addWidget(self._details(f"subject.{kind}", tuple(tr(key) for key in details)))
         note = _edit(self.draft.note, "lora.subject.note.tip", "forge.app.subject.note.field")
         note.textChanged.connect(lambda text: setattr(self.draft, "note", text))
         notes = QtWidgets.QFormLayout()
@@ -634,10 +610,9 @@ class ForgeApp:
         column.addWidget(heading)
         base = basepicker.build_picker(self._base_options(), self.simple["base"])
         base.currentIndexChanged.connect(lambda _i: self.simple.__setitem__("base", str(base.currentData() or "")))
-        base_row = QtWidgets.QHBoxLayout()
-        base_row.addWidget(base, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        base_row.addWidget(basepicker.hint_label(), 1)  # beside the picker, so the step keeps its height
-        column.addLayout(base_row)
+        column.addWidget(basepicker.hint_label())
+        column.addWidget(base, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        column.addWidget(self._details("train.base", (tr("forge.app.base.details"), basepicker.memory_details())))
         previews = QtWidgets.QCheckBox(tr("forge.app.previews.label"))
         previews.setToolTip(tr("lora.previews.tip"))
         previews.setChecked(self.previews)

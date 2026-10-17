@@ -133,8 +133,9 @@ def _dtype(config: TrainConfig) -> torch.dtype:
 class ZImageAdapter(BaseAdapter):
     """Z-Image (Tongyi-MAI/Z-Image, Apache-2.0), flow matching, via diffusers ``ZImagePipeline``.
 
-    LoRAs trained here load on Z-Image and Z-Image-Turbo in Canvas. The real
-    path needs a CUDA GPU; CI covers the engine with a tiny stand-in.
+    LoRAs trained here are for Z-Image. Loading them on Z-Image-Turbo is
+    untested; revisit after a Canvas test. The real path needs a CUDA GPU; CI
+    covers the engine with a tiny stand-in.
     """
 
     info = BaseInfo("z-image", "Tongyi-MAI/Z-Image", "main", "Apache-2.0", "Z-Image")
