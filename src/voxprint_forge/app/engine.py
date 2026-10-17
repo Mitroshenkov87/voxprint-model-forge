@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.app.draft import Draft
+from voxprint_forge.lora.project import Project
 
 # Expert values that map one-to-one onto CLI flags (plan §3).
 FLAG_FOR = {
@@ -269,3 +270,20 @@ def prepared_from(project: Path) -> tuple[list[dict[str, object]], list[dict[str
             if isinstance(row, dict):
                 drops[str(row.get("id") or row.get("name") or len(drops))] = row
     return kept, list(drops.values())
+
+
+def pause_file(project: Path) -> Path:
+    """``<project>/PAUSE`` (docs/LORA.md, pause file contract). The engine only reads it."""
+    return Project(project).pause
+
+
+def request_pause(project: Path) -> None:
+    """Pause: create ``PAUSE``; the engine saves a version and exits 0 with ``state: paused``."""
+    path = pause_file(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def clear_pause(project: Path) -> None:
+    """Delete ``PAUSE`` before ``train``/``extend`` start or ``--resume`` (else ``lora.err.pause_file``)."""
+    pause_file(project).unlink(missing_ok=True)

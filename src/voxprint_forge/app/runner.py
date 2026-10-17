@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import signal
 from collections.abc import Callable
 
 from voxprint_forge.app.engine import EngineEvent, LineReader, Outcome, cli_command
@@ -13,7 +11,7 @@ OnDone = Callable[[Outcome], None]
 
 
 class ProcessRunner:
-    """One job at a time. ``interrupt`` sends SIGINT: the engine checkpoints and pauses."""
+    """One job at a time. Pause is the ``PAUSE`` file (``engine.request_pause``); ``stop`` ends the process."""
 
     def __init__(self) -> None:
         self._process: object | None = None
@@ -53,13 +51,9 @@ class ProcessRunner:
         self._process = process
         process.start(command[0], command[1:])
 
-    def interrupt(self) -> None:
-        """Pause: SIGINT on POSIX (the engine saves a checkpoint); terminate elsewhere."""
+    def stop(self) -> None:
+        """Stop for good: end the process. Versions saved so far stay in the project."""
         process = self._process
         if process is None:
             return
-        pid = int(process.processId())  # type: ignore[attr-defined]
-        if os.name == "posix" and pid:
-            os.kill(pid, signal.SIGINT)
-        else:
-            process.terminate()  # type: ignore[attr-defined]
+        process.kill()  # type: ignore[attr-defined]

@@ -51,12 +51,15 @@ class StubRunner:
         self.calls: list[list[str]] = []
         self.effects: dict[str, object] = {}
         self.busy = False
-        self.interrupted = 0
+        self.stopped = 0
+        self.pause_seen_at_start: list[bool] = []
         self.hold = False
         self._pending: tuple[object, object, Outcome] | None = None
 
     def start(self, args, on_event, on_done) -> None:
         self.calls.append(list(args))
+        project = Path(args[args.index("--project") + 1])
+        self.pause_seen_at_start.append((project / "PAUSE").exists())
         events, outcome = self.script.get(args[2], ([], Outcome(True, {})))
         effect = self.effects.get(args[2])
         if effect is not None:
@@ -77,5 +80,6 @@ class StubRunner:
         self.busy = False
         on_done(outcome or scripted)  # type: ignore[operator]
 
-    def interrupt(self) -> None:
-        self.interrupted += 1
+    def stop(self) -> None:
+        self.stopped += 1
+        self.busy = False

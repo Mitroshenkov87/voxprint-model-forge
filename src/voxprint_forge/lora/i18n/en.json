@@ -1,9 +1,9 @@
 {
- "lora.base": "`--base MODEL_ID` (MDL id)",
+ "lora.base": "Base model",
  "lora.base.external.tip": "This base has its own licence and is downloaded from its official source. Read the licence before use.",
  "lora.base.tip": "The picture model this one is trained on. Use the same one in Canvas.",
- "lora.caption_model": "`--caption-model qwen3-vl-4b-instruct\\",
- "lora.crop": "`--crop subject\\",
+ "lora.caption_model": "Description model",
+ "lora.crop": "Crop",
  "lora.drop.blurry": "Too blurry to learn from.",
  "lora.drop.duplicate": "Almost the same as another photo.",
  "lora.drop.safety": "Set aside by the safety check.",
@@ -144,6 +144,6 @@
  "lora.train.pause.tip": "Pause and save progress. Continue later from the same point.",
  "lora.train.start.tip": "Start training on your graphics card. You can pause at any time.",
  "lora.train.stop.tip": "Stop now and keep the best checkpoint so far.",
- "lora.vram": "`--vram auto\\",
+ "lora.vram": "Graphics card memory",
  "lora.warn.count": "{count} photos is outside the usual 10-30; results may be less predictable."
 }
