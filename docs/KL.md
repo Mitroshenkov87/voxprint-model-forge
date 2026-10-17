@@ -21,7 +21,7 @@ The base run passes `--kl-divergence-base`. On b11476 that flag is an alias of `
 
 For the base: perplexity, file size of the F16 GGUF, and tokens/s. For each quant: perplexity, mean KL, KL p99 (`99.0% KLD`), top-1 agreement (`Same top p`), delta-p RMS, file size, and tokens/s.
 
-Tokens/s is the A100 figure. It is not a consumer-GPU number.
+Tokens/s is the figure from the GPU that ran the job. `summary.json` names that GPU in `tokens_per_second_gpu`. `tokens_per_second_is_a100` is true only on compute capability 8.0. The number is not a consumer-GPU figure. The llama.cpp build includes sm_90 (`FORGE_CUDA_ARCHS`, default `80;89;90;120`, or `90-real` for a single-arch synth4 build).
 
 ## 16 GB and 24 GB fit
 

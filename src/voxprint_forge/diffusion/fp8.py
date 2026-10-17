@@ -142,7 +142,7 @@ def dequant_file(path: Path) -> dict[str, torch.Tensor]:
 
 
 def load_dequant_bf16(path: Path) -> dict[str, torch.Tensor]:
-    """A100 loader. sm_80 has no FP8 tensor cores, so the file is expanded to BF16.
+    """Expand a ``voxprint-fp8-v1`` file to BF16 for ``compute = "bf16-dequant"``.
 
     Publishing the FP8 file is a separate decision. This function only reads it.
     """
