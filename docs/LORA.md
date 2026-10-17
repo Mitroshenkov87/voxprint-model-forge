@@ -39,11 +39,11 @@ Simple mode (default) takes 10 to 30 photos. Expert mode (`--mode expert` or `--
 
 ## Safety check (always on)
 
-The minors ban and the age check run on every photo of every kind, whatever the checkboxes say. There is no setting and no override. A visible face (or an unsure answer) needs both judges to read every person as 20 or older: the VLM judge (Qwen3-VL-4B-Instruct, Apache-2.0) and the age estimator (MiVOLO v2, Apache-2.0, on YuNet face crops). Any age cue answered present or unsure, a low confidence, a malformed answer or a judge error sets the photo aside as `lora.drop.safety`. A clear minor signal blocks the whole project (`lora.err.blocked`). If a judge is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b`, `mivolo-v2`, `yunet-2023mar`.
+The minors ban and the age check run on every photo of every kind, whatever the checkboxes say. There is no setting and no override. A visible face (or an unsure answer) needs both judges to read every person as 20 or older: the VLM judge (Qwen3-VL-4B-Instruct, Apache-2.0) and the age estimator (MiVOLO v2, Apache-2.0, on YuNet face crops). Any age cue answered present or unsure, a low confidence, a malformed answer or a judge error sets the photo aside as `lora.drop.safety`. A clear minor signal blocks the whole project (`lora.err.blocked`). If a judge is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
 
 ## Captions
 
-Qwen3-VL-4B-Instruct (`qwen3-vl-4b`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
+Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
 
 ## Bases
 

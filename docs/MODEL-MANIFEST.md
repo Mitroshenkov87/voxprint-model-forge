@@ -92,6 +92,7 @@ deliverable.
 voxprint-forge-cli index build --from DIR --out index.json
 voxprint-forge-cli index build --from DIR --out index.json --revision REPO=40HEX
 voxprint-forge-cli index push --index index.json --push
+voxprint-forge-cli index host --from DIR --push
 voxprint-forge-cli index backfill --out DIR
 ```
 
@@ -121,6 +122,45 @@ CI does not pass `--push`.
 It does not upload. A repo with no licence tag, or a file larger than 8 MiB
 that has no LFS sha256, is skipped and named in the result. VRAM defaults
 to 16 GB and 24 GB when the file names do not contain `16gb` or `24gb`.
+
+## Official-source models
+
+A model that Forge uses straight from its author (a LoRA base, the captioner,
+the age-gate judges) has no `Mitroshenkov87` repo, and no mirror is made. Its
+descriptor lists only the author's source: the `hf` repo at a pinned commit,
+or a `url` folder for a file that is not on Hugging Face. Each file has its
+size and sha256 from that commit. `card_url` is the author's page.
+
+The descriptor is kept in the index dataset itself:
+
+```text
+Mitroshenkov87/voxprint-model-index (dataset)
+  descriptors/<id>/voxprint-model.json
+```
+
+The index row keeps the same four keys:
+
+```json
+{"id": "z-image", "repo": "datasets/Mitroshenkov87/voxprint-model-index", "revision": "<dataset commit with the descriptor>", "sha256": "<sha256 of voxprint-model.json>"}
+```
+
+`repo` is the Hub path of the dataset, so the descriptor URL is
+`https://huggingface.co/<repo>/resolve/<revision>/descriptors/<id>/voxprint-model.json`.
+A reader checks that file against `sha256` like any other descriptor. The
+weights still come from the author's URLs listed in the descriptor.
+
+A descriptor is official-source when it has an `hf` or `url` mirror, no
+mirror marked `ours`, and no mirror under `Mitroshenkov87`. Publish order:
+
+```text
+forge index host --from DIR --push             # one dataset commit; prints "commit"
+forge index build --from DIR --out index.json \
+  --revision datasets/Mitroshenkov87/voxprint-model-index=<commit>
+forge index push --index index.json --push     # signs and uploads, next serial
+```
+
+Without the pin, `index build` asks the Hub for the last commit that touches
+`descriptors/<id>/voxprint-model.json`.
 
 ## Schema
 

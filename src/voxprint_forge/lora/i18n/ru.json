@@ -2,7 +2,7 @@
  "lora.base": "train",
  "lora.base.external.tip": "У этой основной модели своя лицензия, она загружается из официального источника. Прочитайте лицензию перед использованием.",
  "lora.base.tip": "Основная модель, на которой идёт обучение. В Canvas используйте её же.",
- "lora.caption_model": "florence2-large` (MDL ids; default qwen3-vl-4b)",
+ "lora.caption_model": "florence2-large` (MDL ids; default qwen3-vl-4b-instruct)",
  "lora.crop": "whole`",
  "lora.drop.blurry": "Слишком размытое, чтобы по нему учиться.",
  "lora.drop.duplicate": "Почти совпадает с другим фото.",

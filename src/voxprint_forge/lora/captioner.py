@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-DEFAULT = "qwen3-vl-4b"
+DEFAULT = "qwen3-vl-4b-instruct"
 FALLBACK = "florence2-large"
 LICENCES = {DEFAULT: "Apache-2.0", FALLBACK: "MIT"}
 LONG = "Describe this photo for training an image model in two or three plain sentences. Do not guess names."

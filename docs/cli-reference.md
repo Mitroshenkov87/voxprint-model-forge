@@ -434,7 +434,7 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--mode {simple,expert}]
                           [--allow-count-outside-range]
                           [--crop {subject,whole}] [--captions CAPTIONS]
-                          [--caption-model {qwen3-vl-4b,florence2-large}]
+                          [--caption-model {qwen3-vl-4b-instruct,florence2-large}]
                           [--min-side MIN_SIDE]
                           [--blur-threshold BLUR_THRESHOLD]
                           [--dup-threshold DUP_THRESHOLD]
@@ -464,7 +464,7 @@ options:
   --crop {subject,whole}
                         How photos are cropped.
   --captions CAPTIONS   JSONL caption overrides: id, long, short.
-  --caption-model {qwen3-vl-4b,florence2-large}
+  --caption-model {qwen3-vl-4b-instruct,florence2-large}
                         Captioner.
   --min-side MIN_SIDE   Smallest short side in pixels (Expert).
   --blur-threshold BLUR_THRESHOLD
@@ -613,14 +613,16 @@ options:
 ## `forge index`
 
 ```text
-usage: forge index [-h] {build,push,backfill} ...
+usage: forge index [-h] {build,push,host,backfill} ...
 
 positional arguments:
-  {build,push,backfill}
+  {build,push,host,backfill}
     build               Write index.json from local voxprint-model.json files.
                         Does not upload.
     push                Sign index.json and upload it with index.json.sig.
                         Does nothing unless --push is set.
+    host                Upload official-source voxprint-model.json files into
+                        the index dataset. Needs --push.
     backfill            Write voxprint-model.json for published voxprint-*
                         repos. Does not upload.
 
@@ -656,6 +658,18 @@ options:
   --index INDEX        index.json to upload.
   --key-file KEY_FILE  Ed25519 private key PEM. Default:
                        VOXPRINT_MDL_INDEX_KEY_FILE. Never printed.
+```
+
+## `forge index host`
+
+```text
+usage: forge index host [-h] --from MANIFEST_FROM [--push]
+
+options:
+  -h, --help            show this help message and exit
+  --from MANIFEST_FROM  Directory to scan.
+  --push                Upload to Mitroshenkov87/voxprint-model-index under
+                        descriptors/<id>/. Required.
 ```
 
 ## `forge index backfill`

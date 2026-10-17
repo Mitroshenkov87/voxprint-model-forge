@@ -19,6 +19,7 @@ from voxprint_forge.hashing import sha256_file
 from voxprint_forge.layout import Layout
 from voxprint_forge.manifest import write_run_manifest
 from voxprint_forge.mdl import (
+    HOSTED_REPO,
     INDEX_REPO,
     MANIFEST_NAME,
     SCHEMA_ID,
@@ -30,7 +31,10 @@ from voxprint_forge.mdl import (
     check_document,
     descriptor_commit,
     gb_to_gib,
+    host_descriptors,
+    hosted_path,
     index_document,
+    is_hosted,
     next_serial,
     per_file_sources,
     push_index,
@@ -502,7 +506,7 @@ def test_descriptor_commit_reads_the_published_file(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("voxprint_forge.mdl.HfApi", FakeApi)
     assert descriptor_commit("Mitroshenkov87/voxprint-gemma4-31b") == DERIVATIVE_ROWS[0]["revision"]
     assert seen["paths"] == [MANIFEST_NAME]
-    assert seen["kwargs"] == {"expand": True, "token": False}
+    assert seen["kwargs"] == {"repo_type": "model", "expand": True, "token": False}
 
 
 def test_descriptor_commit_fails_without_a_commit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -534,8 +538,9 @@ def test_descriptor_commit_scrubs_a_token(monkeypatch: pytest.MonkeyPatch) -> No
     assert token not in str(caught.value)
 
 
-def test_index_build_rejects_an_author_only_mirror(tmp_path: Path) -> None:
+def _author_only(tmp_path: Path, model_id: str = "t-lite-it-2.1") -> Path:
     document = _sample()
+    document["id"] = model_id
     document["mirrors"] = [
         {
             "kind": "hf",
@@ -544,12 +549,122 @@ def test_index_build_rejects_an_author_only_mirror(tmp_path: Path) -> None:
         }
     ]
     document["card_url"] = "https://huggingface.co/paperscarecrow/Gemma-4-31B-it-abliterated"
-    path = tmp_path / MANIFEST_NAME
+    folder = tmp_path / model_id
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / MANIFEST_NAME
     path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    return path
+
+
+def test_author_only_descriptor_is_hosted_in_the_index_dataset(tmp_path: Path) -> None:
+    path = _author_only(tmp_path)
+    asked: list[str] = []
+
+    def lookup(repo: str) -> str:
+        asked.append(repo)
+        return "cd" * 20
+
+    rows = write_index([path], tmp_path / "index.json", commits=lookup, serial=3, head="ab" * 20)
+    assert rows == [
+        {
+            "id": "t-lite-it-2.1",
+            "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+            "revision": "cd" * 20,
+            "sha256": sha256_file(path),
+        }
+    ]
+    assert asked == ["datasets/Mitroshenkov87/voxprint-model-index/descriptors/t-lite-it-2.1/voxprint-model.json"]
+
+
+def test_hosted_rows_take_one_dataset_pin(tmp_path: Path) -> None:
+    paths = [_author_only(tmp_path, "a-model"), _author_only(tmp_path, "b-model")]
+
+    def forbid(repo: str) -> str:
+        raise AssertionError(repo)
+
+    rows = write_index(
+        paths,
+        tmp_path / "index.json",
+        revisions={HOSTED_REPO: "ef" * 20},
+        commits=forbid,
+        serial=3,
+        head="ab" * 20,
+    )
+    assert [(row["id"], row["repo"], row["revision"]) for row in rows] == [
+        ("a-model", HOSTED_REPO, "ef" * 20),
+        ("b-model", HOSTED_REPO, "ef" * 20),
+    ]
+
+
+def test_unresolved_hosted_descriptor_writes_nothing(tmp_path: Path) -> None:
+    path = _author_only(tmp_path)
+
+    def missing(repo: str) -> str:
+        raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
+
     with pytest.raises(StageError) as caught:
-        write_index([path], tmp_path / "index.json")
+        write_index([path], tmp_path / "index.json", commits=missing, serial=3, head="ab" * 20)
     assert caught.value.code == "mdl"
-    assert "no mirror that holds" in str(caught.value)
+    assert not (tmp_path / "index.json").exists()
+
+
+def test_a_drive_only_descriptor_is_not_hosted(tmp_path: Path) -> None:
+    document = _sample()
+    document["mirrors"] = [{"kind": "gdrive", "ref": "folder-id", "revision": ""}]
+    assert not is_hosted(document)
+    assert is_hosted(json.loads(_author_only(tmp_path).read_text(encoding="utf-8")))
+    assert not is_hosted(_sample())
+
+
+def test_descriptor_commit_reads_a_hosted_file_from_the_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeApi:
+        def get_paths_info(self, repo_id: str, paths: list[str], **kwargs: object) -> list[SimpleNamespace]:
+            seen.update(repo=repo_id, paths=paths, kwargs=kwargs)
+            return [SimpleNamespace(last_commit=SimpleNamespace(oid="cd" * 20))]
+
+    monkeypatch.setattr("voxprint_forge.mdl.HfApi", FakeApi)
+    assert descriptor_commit(hosted_path("z-image")) == "cd" * 20
+    assert seen == {
+        "repo": "Mitroshenkov87/voxprint-model-index",
+        "paths": ["descriptors/z-image/voxprint-model.json"],
+        "kwargs": {"repo_type": "dataset", "expand": True, "token": False},
+    }
+
+
+def test_host_uploads_only_official_source_descriptors(tmp_path: Path) -> None:
+    hosted = _author_only(tmp_path / "src", "z-image")
+    ours = tmp_path / "src" / "ours" / MANIFEST_NAME
+    ours.parent.mkdir(parents=True)
+    ours.write_text(json.dumps(_sample()) + "\n", encoding="utf-8")
+    sent: list[tuple[list[tuple[str, Path]], str]] = []
+
+    def upload(items: list[tuple[str, Path]], message: str) -> str:
+        sent.append((items, message))
+        return "12" * 20
+
+    result = host_descriptors(tmp_path / "src", upload=upload)
+    assert result == {
+        "repo": HOSTED_REPO,
+        "commit": "12" * 20,
+        "paths": ["descriptors/z-image/voxprint-model.json"],
+        "pushed": True,
+    }
+    assert sent[0][0] == [("descriptors/z-image/voxprint-model.json", hosted)]
+
+
+def test_host_needs_push(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[object] = []
+    monkeypatch.setattr("voxprint_forge.mdl._upload_descriptors", lambda *args: called.append(args))
+    _author_only(tmp_path)
+    assert main(["index", "host", "--from", str(tmp_path)]) == 2
+    assert called == []
+
+
+def test_hosted_path_rejects_a_bad_id() -> None:
+    with pytest.raises(StageError):
+        hosted_path("../escape")
 
 
 def test_explicit_ours_is_the_index_repo(tmp_path: Path) -> None:

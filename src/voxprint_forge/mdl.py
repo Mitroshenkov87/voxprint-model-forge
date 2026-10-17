@@ -33,6 +33,11 @@ INDEX_REPO = "Mitroshenkov87/voxprint-model-index"
 INDEX_FILE = "index.json"
 INDEX_SIG_FILE = "index.json.sig"
 INDEX_KEY_ENV = "VOXPRINT_MDL_INDEX_KEY_FILE"
+# Official-source models have no forge repo. Their descriptor lives in the
+# index dataset at descriptors/<id>/voxprint-model.json, and the index row's
+# repo is this string (the Hub URL prefix of the dataset).
+HOSTED_REPO = f"datasets/{INDEX_REPO}"
+HOSTED_DIR = "descriptors"
 # Serial and head of the index bundled in voxprint-common 0.2.5. A published
 # index must be newer, so the first signed one is serial 2.
 BUNDLED_INDEX_SERIAL = 1
@@ -141,10 +146,7 @@ def build_document(
     date: str = "",
 ) -> dict[str, object]:
     """Build one ``voxprint-model/1`` document. VRAM arguments are decimal GB."""
-    copied = [
-        {"path": str(item["path"]), "size": item["size"], "sha256": str(item["sha256"])}
-        for item in files
-    ]
+    copied = [{"path": str(item["path"]), "size": item["size"], "sha256": str(item["sha256"])} for item in files]
     copied.sort(key=lambda item: str(item["path"]))
     document: dict[str, object] = {
         "schema": SCHEMA_ID,
@@ -677,12 +679,18 @@ def revision_map(items: Sequence[str]) -> dict[str, str]:
 def descriptor_commit(repo: str) -> str:
     """Last commit that touches ``voxprint-model.json`` on the published ref.
 
+    ``repo`` is a model repo, or a :func:`hosted_path` in the index dataset.
+
     No token is passed. A missing file or a value that is not a full commit
     id is an error. This does not read a mirror revision.
     """
     api = HfApi()
+    if repo.startswith(HOSTED_REPO + "/"):
+        target, kind, files = INDEX_REPO, "dataset", [repo[len(HOSTED_REPO) + 1 :]]
+    else:
+        target, kind, files = repo, "model", [MANIFEST_NAME]
     try:
-        infos = api.get_paths_info(repo, [MANIFEST_NAME], expand=True, token=False)
+        infos = api.get_paths_info(target, files, repo_type=kind, expand=True, token=False)
     except Exception as exc:
         message = scrub(str(exc), active_secrets())
         raise StageError(f"{repo} descriptor commit could not be resolved: {message}", code="mdl") from exc
@@ -733,6 +741,69 @@ def run_backfill(dest: Path, user: str = HF_AUTHOR) -> dict[str, object]:
     }
 
 
+def is_hosted(document: Mapping[str, object]) -> bool:
+    """True when no forge repo holds the descriptor, so the index dataset does.
+
+    That is an official-source model: it has an ``hf`` or ``url`` mirror,
+    none is marked ``ours``, and none is under ``Mitroshenkov87``.
+    """
+    mirrors = document.get("mirrors")
+    items = [item for item in mirrors if isinstance(item, Mapping)] if isinstance(mirrors, list) else []
+    if any(item.get("ours") is True or _forge_repo(str(item.get("ref", ""))) for item in items):
+        return False
+    return any(item.get("kind") in ("hf", "url") for item in items)
+
+
+def hosted_path(model_id: str) -> str:
+    """Row-side name of a hosted descriptor: ``datasets/<index>/descriptors/<id>/voxprint-model.json``."""
+    if _ID.fullmatch(model_id) is None:
+        raise StageError(f"model id {model_id!r} is not valid", code="mdl")
+    return f"{HOSTED_REPO}/{HOSTED_DIR}/{model_id}/{MANIFEST_NAME}"
+
+
+def host_descriptors(
+    source: Path,
+    *,
+    upload: Callable[[list[tuple[str, Path]], str], str] | None = None,
+) -> dict[str, object]:
+    """Upload official-source descriptors into the index dataset in one commit.
+
+    Only documents that :func:`is_hosted` accepts are sent, to
+    ``descriptors/<id>/voxprint-model.json``. The CLI calls this only after
+    ``--push``. Returns the dataset commit to pin with
+    ``index build --revision datasets/Mitroshenkov87/voxprint-model-index=SHA``.
+    """
+    items: list[tuple[str, Path]] = []
+    for path in find_manifests(source):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        check_document(document)
+        if isinstance(document, dict) and is_hosted(document):
+            items.append((hosted_path(str(document["id"]))[len(HOSTED_REPO) + 1 :], path))
+    if not items:
+        raise UsageError(f"no official-source voxprint-model.json under {source}", code="usage")
+    names = [name for name, _ in items]
+    if len(names) != len(set(names)):
+        raise StageError("hosted descriptor ids are not unique", code="mdl")
+    sender = _upload_descriptors if upload is None else upload
+    commit = sender(items, f"Official-source descriptors: {', '.join(sorted(n.split('/')[1] for n in names))}")
+    if _COMMIT.fullmatch(commit) is None:
+        raise StageError("descriptor upload returned no commit", code="mdl")
+    return {"repo": HOSTED_REPO, "commit": commit, "paths": sorted(names), "pushed": True}
+
+
+def _upload_descriptors(items: list[tuple[str, Path]], message: str) -> str:
+    from huggingface_hub import CommitOperationAdd
+
+    api = HfApi()
+    info = api.create_commit(
+        repo_id=INDEX_REPO,
+        repo_type="dataset",
+        operations=[CommitOperationAdd(path_in_repo=name, path_or_fileobj=str(path)) for name, path in items],
+        commit_message=message,
+    )
+    return str(info.oid)
+
+
 def _upload_index(repo_id: str, path: Path, signature: Path) -> None:
     from huggingface_hub import CommitOperationAdd
 
@@ -774,15 +845,20 @@ def _index_row(
     mirrors = document["mirrors"]
     if not isinstance(mirrors, list):
         raise StageError(f"{path} has no mirrors", code="mdl")
-    chosen = _descriptor_mirror(mirrors, label=str(path))
-    repo = str(chosen["ref"])
-    # chosen["revision"] is the weights commit. The row needs the commit that
-    # contains voxprint-model.json, and there is no fallback to the mirror.
-    revision = revisions[repo] if repo in revisions else commits(repo)
+    model_id = str(document["id"])
+    if is_hosted(document):
+        repo = HOSTED_REPO
+        revision = revisions[repo] if repo in revisions else commits(hosted_path(model_id))
+    else:
+        chosen = _descriptor_mirror(mirrors, label=str(path))
+        repo = str(chosen["ref"])
+        # chosen["revision"] is the weights commit. The row needs the commit that
+        # contains voxprint-model.json, and there is no fallback to the mirror.
+        revision = revisions[repo] if repo in revisions else commits(repo)
     if _COMMIT.fullmatch(revision) is None:
         raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
     return {
-        "id": str(document["id"]),
+        "id": model_id,
         "repo": repo,
         "revision": revision,
         "sha256": sha256_file(path),

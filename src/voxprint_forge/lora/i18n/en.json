@@ -2,7 +2,7 @@
  "lora.base": "`--base MODEL_ID` (MDL id)",
  "lora.base.external.tip": "This base has its own licence and is downloaded from its official source. Read the licence before use.",
  "lora.base.tip": "The picture model this one is trained on. Use the same one in Canvas.",
- "lora.caption_model": "`--caption-model qwen3-vl-4b\\",
+ "lora.caption_model": "`--caption-model qwen3-vl-4b-instruct\\",
  "lora.crop": "`--crop subject\\",
  "lora.drop.blurry": "Too blurry to learn from.",
  "lora.drop.duplicate": "Almost the same as another photo.",

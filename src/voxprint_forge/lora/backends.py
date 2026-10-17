@@ -14,7 +14,7 @@ from typing import Any
 
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
 
-JUDGE_ID = "qwen3-vl-4b"
+JUDGE_ID = "qwen3-vl-4b-instruct"
 ESTIMATOR_ID = "mivolo-v2"
 FACE_DETECTOR_ID = "yunet-2023mar"
 FACE_SCORE = 0.6
