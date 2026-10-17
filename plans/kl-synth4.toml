@@ -1,6 +1,6 @@
 # Synth4 perplexity / KL jobs. Prompt text is not stored here.
-# L2's pinned revision publishes an F16 GGUF, so that job does not reconvert.
-# L1, L3, and L4 download safetensors and run convert_hf_to_gguf.py --outtype f16.
+# L2 and L3 pin a published F16 GGUF, so those jobs do not reconvert.
+# L1 and L4 download safetensors and run convert_hf_to_gguf.py --outtype f16.
 # L4 is QA of an upstream mirror. The index gap is recorded and nothing is uploaded.
 
 [defaults]
@@ -51,18 +51,19 @@ ours = true
 
 [[jobs.quants]]
 quant = "Q4_K_M"
-repo = "Mitroshenkov87/voxprint-gemma4-31b"
-revision = "0d84d5f0"
-pattern = "*Q4_K_M*.gguf"
-ours = true
+repo = "paperscarecrow/Gemma-4-31B-it-abliterated"
+revision = "2491ee58472b82a2372d288f982943b9d5e6a82c"
+pattern = "gemma-4-31b-abliterated-Q4_K_M.gguf"
+ours = false
 
 [[jobs]]
 id = "L3"
-bf16_repo = "huihui-ai/Huihui-Qwen3.6-27B-abliterated"
-bf16_revision = "27502c8717fd5a2f8c0c77188c10c243fd4f672e"
-source_format = "safetensors"
+bf16_repo = "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+bf16_revision = "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3"
+source_format = "gguf"
+f16_file = "Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gguf"
 expect_mtp = true
-note = "Confirm llama.cpp b11476 keeps the Qwen3.6 MTP head: GGUF nextn_predict_layers must match the checkpoint."
+note = "Reference is the published F16 GGUF our Q3_K_M was quantised from. The job fails if that file has no MTP head."
 
 [[jobs.quants]]
 quant = "Q3_K_M"
@@ -73,10 +74,10 @@ ours = true
 
 [[jobs.quants]]
 quant = "Q5_K"
-repo = "Mitroshenkov87/voxprint-huihui-qwen36-27b"
-revision = "29771181"
-pattern = "*Q5_K.gguf"
-ours = true
+repo = "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+revision = "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3"
+pattern = "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf"
+ours = false
 
 [[jobs]]
 id = "L4"

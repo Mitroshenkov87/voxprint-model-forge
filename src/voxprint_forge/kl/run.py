@@ -15,7 +15,13 @@ from huggingface_hub import snapshot_download
 from voxprint_forge.errors import DownloadError, StageError
 from voxprint_forge.evaluate import data_dir, parse_ppl
 from voxprint_forge.fitmath import Arch, fits_budget
-from voxprint_forge.kl.arch import mtp_status, read_model_arch, require_mtp, source_mtp_layers
+from voxprint_forge.kl.arch import (
+    gguf_reference_mtp,
+    mtp_status,
+    read_model_arch,
+    require_mtp,
+    source_mtp_layers,
+)
 from voxprint_forge.kl.parse import parse_kl, tokens_per_second
 from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat
 from voxprint_forge.kl.preflight import require_llama_arch
@@ -23,10 +29,23 @@ from voxprint_forge.llama import Runner, convert_argv, convert_script, kl_argv, 
 from voxprint_forge.measure import parse_buffers
 from voxprint_forge.scrub import active_secrets, scrub
 
-A100_NOTE = (
-    "tokens/s is the A100 figure from this box. It is not a consumer-GPU number. "
-    "The 16 GB and 24 GB rows are weights plus q8_0 KV at context 8192 with 3 GB headroom."
-)
+
+def gpu_note(name: str) -> str:
+    """Tokens/s sentence for the GPU that produced the figure."""
+    label = name or "this GPU"
+    return (
+        f"tokens/s is the {label} figure from this box. It is not a consumer-GPU number. "
+        "The 16 GB and 24 GB rows are weights plus q8_0 KV at context 8192 with 3 GB headroom."
+    )
+
+
+def speed_facts(name: str, capability: tuple[int, int] | None) -> dict[str, object]:
+    """``tokens_per_second_is_a100`` is true only on compute capability 8.0."""
+    return {
+        "tokens_per_second_is_a100": capability == (8, 0),
+        "tokens_per_second_gpu": name,
+        "gpu_note": gpu_note(name),
+    }
 SERVER_PATTERN = "KV buffer size"
 FetchFn = Callable[[str, str, Path, list[str] | None], None]
 ConvertFn = Callable[[Runner, Path, Path], None]
@@ -86,8 +105,7 @@ def run_kl(
             "ctx": job.ctx,
             "ppl_base": parse_ppl(base_log),
             "base_tokens_per_second": tokens_per_second(base_log),
-            "tokens_per_second_is_a100": True,
-            "a100_note": A100_NOTE,
+            **speed_facts(*_detected_gpu()),
             "architecture": meta,
             "mtp": mtp,
             "index_gap": job.index_gap,
@@ -99,6 +117,13 @@ def run_kl(
         return payload
     finally:
         reclaim_base(source, f16, logits)
+
+
+def _detected_gpu() -> tuple[str, tuple[int, int] | None]:
+    if not torch.cuda.is_available():
+        return "", None
+    major, minor = torch.cuda.get_device_capability()
+    return torch.cuda.get_device_name(0), (int(major), int(minor))
 
 
 def _preflight_llama() -> None:
@@ -224,10 +249,17 @@ def _unexpected_format(fmt: Never) -> Never:
 def _mtp(job: KlJob, source: Path, meta: dict[str, object]) -> dict[str, object] | None:
     if not job.expect_mtp:
         return None
-    layers, mtp_layers = source_mtp_layers(source)
-    status = mtp_status(layers, mtp_layers, meta)
-    require_mtp(status)
-    return status
+    fmt: SourceFormat = job.source_format
+    if fmt == "safetensors":
+        layers, mtp_layers = source_mtp_layers(source)
+        status = mtp_status(layers, mtp_layers, meta)
+        require_mtp(status)
+        return status
+    if fmt == "gguf":
+        status = gguf_reference_mtp(meta)
+        require_mtp(status)
+        return status
+    return _unexpected_format(fmt)
 
 
 def _one_quant(
@@ -292,7 +324,7 @@ def _markdown(payload: dict[str, object]) -> str:
         "",
         f"Base PPL: {payload['ppl_base']}",
         "",
-        str(payload["a100_note"]),
+        str(payload["gpu_note"]),
         "",
     ]
     if payload.get("index_gap"):

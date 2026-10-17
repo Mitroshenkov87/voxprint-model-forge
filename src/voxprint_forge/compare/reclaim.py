@@ -19,7 +19,11 @@ def reclaim_weights(path: Path) -> bool:
 
 
 def component_bytes(root: Path) -> dict[str, int]:
-    """Byte size of each weight file under ``root``, keyed by a relative path."""
+    """Byte size of each weight file the arm folder actually contains.
+
+    The shared cache is not walked. A local FP8 arm does not link the base
+    ``transformer/*.safetensors``, so those bytes are not counted.
+    """
     if not root.is_dir():
         return {}
     found: dict[str, int] = {}

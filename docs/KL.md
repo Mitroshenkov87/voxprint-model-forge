@@ -11,7 +11,7 @@ forge kl --bf16 t-tech/T-lite-it-2.1@d125c970c553de58fcee3c937d5e4867d4a448d8 \
 
 `scripts/vm_run_kl.sh --job L1` reads `plans/kl-synth4.toml`. `--json` is a global flag and goes before the subcommand.
 
-Safetensors jobs download the pinned BF16 repo and run `convert_hf_to_gguf.py --outtype f16` from llama.cpp b11476 (`scripts/llama.rev`, commit `988190680d5a89fce97de3c20df2c2813731fd61`). Set `FORGE_LLAMA_SRC` to that tree and `FORGE_LLAMA_BIN` to `llama-perplexity` and `llama-server`.
+Safetensors jobs download the pinned BF16 repo and run `convert_hf_to_gguf.py --outtype f16` from llama.cpp b11476 (`scripts/llama.rev`, commit `988190680d5a89fce97de3c20df2c2813731fd61`). A job whose source is already an F16 GGUF downloads that file only and does not reconvert it. Set `FORGE_LLAMA_SRC` to that tree and `FORGE_LLAMA_BIN` to `llama-perplexity` and `llama-server`.
 
 `scripts/bootstrap.sh` and `scripts/vm_setup_synth4.sh` build llama.cpp with `FORGE_CUDA_ARCHS` (default `80;89;90;120`). The `llama-cpp.done` stamp includes that list, so an older sm_80-only build is rebuilt. On synth4, `FORGE_CUDA_ARCHS=90-real` is a single-arch Hopper build and is about three times faster to compile. Before a live `forge kl` run, the harness checks `llama-perplexity --version` and, when `cuobjdump` is installed, that the binary contains SASS for the current GPU. A missing arch is exit 9. Base and quant runs both pass `-fa on`.
 
@@ -21,7 +21,7 @@ The base run passes `--kl-divergence-base`. On b11476 that flag is an alias of `
 
 For the base: perplexity, file size of the F16 GGUF, and tokens/s. For each quant: perplexity, mean KL, KL p99 (`99.0% KLD`), top-1 agreement (`Same top p`), delta-p RMS, file size, and tokens/s.
 
-Tokens/s is the A100 figure. It is not a consumer-GPU number.
+Tokens/s is the figure from the GPU that ran the job. `summary.json` names that GPU in `tokens_per_second_gpu`. `tokens_per_second_is_a100` is true only on compute capability 8.0. The number is not a consumer-GPU figure. The llama.cpp build includes sm_90 (`FORGE_CUDA_ARCHS`, default `80;89;90;120`, or `90-real` for a single-arch synth4 build).
 
 ## 16 GB and 24 GB fit
 
@@ -31,7 +31,7 @@ The same row is also filled from `llama-server` at that context. CUDA model and 
 
 ## L3 and L4
 
-L3 converts `huihui-ai/Huihui-Qwen3.6-27B-abliterated`. The job fails if the checkpoint declares an MTP head and the F16 GGUF `nextn_predict_layers` does not match. That is the b11476 Qwen3.6 check.
+L3 uses the published F16 GGUF `Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gguf` from `huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF` at `2da8c0432f0a42c25c14cbc99f90028a90d3dcd3`. That is the file our Q3_K_M was quantised from, so the job does not reconvert the BF16 safetensors repo. The job fails if that GGUF has no MTP head (`nextn_predict_layers` is missing or zero). A safetensors job still fails when the checkpoint declares an MTP head and the converted F16 does not keep it. That remains the b11476 Qwen3.6 check.
 
 L2's pinned paperscarecrow revision is already an F16 GGUF (`gemma-4-31b-abliterated-f16.gguf`), so that job uses the file as the base and does not reconvert it. Recheck the `google/gemma-4-31b-it` Apache-2.0 listing before publishing.
 
@@ -39,6 +39,6 @@ L4 scores the upstream t-tech Q4_K_M mirror. We did not quantise it. `voxprint-m
 
 ## Disk
 
-When the job finishes, the BF16 tree, the converted F16 file, and the base logits are deleted so the next L-job can use the disk. Downloaded quant files stay under `results/kl/<job>/quants/` until you remove them.
+When the job finishes, the downloaded source, the F16 file, and the base logits are deleted so the next L-job can use the disk. Downloaded quant files stay under `results/kl/<job>/quants/` until you remove them.
 
 Exit codes are the normal forge table: 0 when the report is written, 6 when conversion, KL parsing, or the MTP check fails, 9 when a llama.cpp tool is missing.
