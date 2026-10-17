@@ -93,8 +93,16 @@ def test_reclaim_cache_deletes_every_snapshot(tmp_path: Path) -> None:
     assert not cache.exists()
 
 
+def _with_native(job):
+    """D1 with the dropped native FP8 arms switched back on, to test the note text."""
+    return replace(
+        job,
+        arms=tuple(replace(arm, enabled=True, skip_reason="") if arm.id in {"c", "d"} else arm for arm in job.arms),
+    )
+
+
 def test_fp8_notes_use_the_detected_gpu() -> None:
-    job = load_compare_plan(PLAN).job("D1")
+    job = _with_native(load_compare_plan(PLAN).job("D1"))
     text = fp8_note(job, "NVIDIA H100 NVL", "9.0")
     assert "A100" not in text
     assert "c-dq: FP8 weights expanded to BF16; s/img and VRAM are BF16 numbers." in text
@@ -105,7 +113,7 @@ def test_fp8_notes_use_the_detected_gpu() -> None:
 
 
 def test_fp8_note_skips_disabled_arms() -> None:
-    job = load_compare_plan(PLAN).job("D1")
+    job = _with_native(load_compare_plan(PLAN).job("D1"))
     disabled = replace(
         job,
         arms=tuple(replace(arm, enabled=False) if arm.id == "d" else arm for arm in job.arms),

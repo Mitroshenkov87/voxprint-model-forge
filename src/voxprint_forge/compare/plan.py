@@ -80,6 +80,8 @@ class Job:
     note: str
     attention: str = "sdpa"
     requires_cc: tuple[str, ...] = ()
+    lpips_gate: bool = True
+    review: tuple[str, ...] = ()
 
     def arm(self, arm_id: str) -> Arm:
         """Return one arm by id."""
@@ -184,7 +186,15 @@ def _job(raw: object, defaults: dict[str, object]) -> Job:
         note=str(raw.get("note", "")),
         attention=_attention(raw.get("attention", defaults.get("attention", "sdpa")), job_id),
         requires_cc=_cc_list(raw.get("requires_cc"), f"{job_id} requires_cc"),
+        lpips_gate=_bool(raw.get("lpips_gate", defaults.get("lpips_gate", True)), f"{job_id} lpips_gate"),
+        review=tuple(_strs(raw.get("review", defaults.get("review", ())))),
     )
+
+
+def _bool(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise CompareSetup(f"{label} is not a boolean", code="compare_plan")
+    return value
 
 
 def _arm(raw: object, job_id: str) -> Arm:

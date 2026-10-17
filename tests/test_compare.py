@@ -113,7 +113,10 @@ def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     turbo = plan.job("D1")
     assert turbo.steps == TURBO_STEPS
     assert turbo.guidance == TURBO_GUIDANCE
-    assert [item.id for item in turbo.enabled_arms()] == ["a", "b", "c", "c-dq", "d"]
+    assert [item.id for item in turbo.enabled_arms()] == ["a", "b", "c-dq"]
+    assert {item.id for item in turbo.arms if not item.enabled} == {"c", "d"}
+    assert turbo.lpips_gate is False
+    assert "SFace" in turbo.review
     assert turbo.arm("a").quant == "fp32"
     assert turbo.arm("a").compute == "bf16"
     assert turbo.arm("c").compute == "fp8-native"
@@ -211,7 +214,7 @@ def test_local_fp8_arms_wait_for_the_directory(tmp_path: Path, monkeypatch: pyte
     (folder / "qwen3-4b-text-encoder-fp8.safetensors").write_bytes(b"e")
     monkeypatch.setenv("FORGE_FP8_DIR", str(folder))
     opened = gate_local_arms(job)
-    assert [item.id for item in opened.enabled_arms()] == ["a", "b", "c", "c-dq", "d"]
+    assert [item.id for item in opened.enabled_arms()] == ["a", "b", "c-dq"]
 
 
 def test_disabled_candidate_is_a_setup_error(tmp_path: Path) -> None:
@@ -602,3 +605,14 @@ def _write_shards(folder: Path, stem: str, keys: tuple[str, str], *, index: bool
 def _dump(path: Path, payload: dict[str, object]) -> Path:
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def test_set_level_bar_makes_lpips_informational() -> None:
+    from voxprint_forge.compare.metrics import passes
+    from voxprint_forge.compare.results import _bar_lines
+
+    assert not passes(0.4, 0.0, lpips_max=0.10, clip_drop_max=0.01)
+    assert passes(0.4, 0.0, lpips_max=0.10, clip_drop_max=0.01, lpips_gate=False)
+    assert not passes(0.0, 0.02, lpips_max=0.10, clip_drop_max=0.01, lpips_gate=False)
+    text = "\n".join(_bar_lines({"lpips_gate": False, "clip_drop_max": 0.01, "review_required": ["SFace"]}))
+    assert "LPIPS" in text and "reported only" in text and "SFace" in text

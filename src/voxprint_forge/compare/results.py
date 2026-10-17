@@ -153,6 +153,7 @@ def summarise(
             drop_mean,
             lpips_max=job.lpips_max,
             clip_drop_max=job.clip_drop_max,
+            lpips_gate=job.lpips_gate,
         )
         if not ok:
             failed.append(candidate.id)
@@ -190,6 +191,8 @@ def summarise(
         "failed_arms": failed,
         "lpips_max": job.lpips_max,
         "clip_drop_max": job.clip_drop_max,
+        "lpips_gate": job.lpips_gate,
+        "review_required": list(job.review),
         "cases": case_count,
         "pairs": len(pairs),
         "missing_private_sets": list(missing_sets),
@@ -219,6 +222,23 @@ def write_summary(directory: Path, payload: Mapping[str, object], secrets: Seque
     (directory / SUMMARY_MD).write_text(text, encoding="utf-8")
 
 
+def _bar_lines(payload: Mapping[str, object]) -> list[str]:
+    if payload.get("lpips_gate", True):
+        return [
+            f"Bar: mean LPIPS <= {payload.get('lpips_max')} and CLIP-T drop <= {payload.get('clip_drop_max')}.",
+            "SSIM, PSNR, DINOv2 cosine, and CLIP-I are reported only.",
+        ]
+    lines = [
+        f"Automatic bar (set mean): CLIP-T drop <= {payload.get('clip_drop_max')}.",
+        "Same-seed LPIPS, SSIM, PSNR, DINOv2 cosine, and CLIP-I are reported only.",
+    ]
+    review = payload.get("review_required")
+    if isinstance(review, list) and review:
+        listed = "; ".join(map(str, review))
+        lines.append(f"Also required before a pass is final (not scored by this run): {listed}.")
+    return lines
+
+
 def render_markdown(payload: Mapping[str, object]) -> str:
     """Human summary. Identifiers are prompt hashes, repos, and arm ids."""
     lines = [
@@ -229,8 +249,7 @@ def render_markdown(payload: Mapping[str, object]) -> str:
         f"Reference arm: {payload.get('reference_arm')}.",
         _reference_line(payload.get("reference")),
         f"Pass: {'yes' if payload.get('passed') else 'no'}.",
-        f"Bar: mean LPIPS <= {payload.get('lpips_max')} and CLIP-T drop <= {payload.get('clip_drop_max')}.",
-        "SSIM, PSNR, DINOv2 cosine, and CLIP-I are reported only.",
+        *_bar_lines(payload),
         "",
     ]
     note = payload.get("fp8_note")

@@ -88,8 +88,18 @@ Each non-warmup pair records:
 | VRAM | peak `torch.cuda.max_memory_allocated`, and the peak of a 1 Hz `nvidia-smi` memory sample |
 | file bytes | size of each weight file used by the arm |
 
-The pass bar is the existing Forge gate: mean LPIPS <= 0.10 and CLIP-T drop
-<= 1%. SSIM, PSNR, DINOv2, and CLIP-I are reported until a bar is set for them.
+The D-row bar is set-level (Suite Lead, 2026-10-17). A D-row passes on:
+
+- set-mean CLIP-T drop <= 1% (scored by this run, `clip_drop_max`);
+- an aesthetic score or KID over the set;
+- SFace identity similarity;
+- a 20-pair blind side-by-side, reviewed by Suite Lead.
+
+The run scores only the CLIP-T part, so its `Pass` and exit code cover that
+part. The plan lists the other three under `review`, and `results.md` repeats
+them. Same-seed LPIPS is informational only (`lpips_gate = false`). SSIM,
+PSNR, DINOv2, and CLIP-I are reported only. A plan without `lpips_gate`
+keeps the old gate: mean LPIPS <= `lpips_max` and the CLIP-T drop.
 The summary also reports reference seconds per image over the same non-warmup
 cases.
 
@@ -110,6 +120,16 @@ A mirror split across safetensors shards is merged per module before the
 coverage check. A `*.safetensors.index.json` weight map selects the shard
 files when it is present. One shard of the text encoder or the transformer is
 not required to hold half of that module on its own.
+
+## Z-Image-Turbo defaults (Suite Lead, 2026-10-17)
+
+| VRAM | Default | Fallback |
+| --- | --- | --- |
+| 16 GB | BF16, text encoder offloaded | `c-dq` (FP8 storage, BF16 compute) for VRAM-tight cards, pending the ID-TURBO SFace result |
+| 24 GB | BF16, text encoder offloaded | same |
+
+Native FP8 compute (D1 arms `c` and `d`) is dropped. Those arms stay in the
+plan with `enabled = false` so the earlier results can still be read.
 
 ## FP8 modes
 
@@ -158,7 +178,7 @@ forge compare --make-fp8 --job D4 --out "$FORGE_FP8_DIR"
 `qwen3_encoder`), and `zimage-transformer-fp8.safetensors` for D4. An existing
 `voxprint-fp8-v1` file is left in place. The files stay local.
 
-Arms `c`, `c-dq`, and `d` on D1, and the D4 FP8 arm, read those files from
+Arm `c-dq` on D1 (and the dropped `c` and `d`), and the D4 FP8 arm, read those files from
 `FORGE_FP8_DIR`. When the variable is unset those arms are skipped and the
 other arms still run.
 

@@ -3,10 +3,15 @@
 # fp8-native runs on sm_89 and newer. bf16-dequant stays for weight-only numerics.
 # D2 INT4 is skipped on sm_90. Steps and CFG are the model under test.
 # Manifest steps and CFG are ignored.
+# Suite Lead decision (2026-10-17): the D-row bar is set-level. Automatic part: set-mean
+# CLIP-T drop. Also required: an aesthetic score or KID, SFace, and a 20-pair blind
+# side-by-side for Suite Lead review. Same-seed LPIPS is informational only.
 
 [defaults]
 lpips_max = 0.10
+lpips_gate = false
 clip_drop_max = 0.01
+review = ["aesthetic score or KID", "SFace", "20-pair blind side-by-side (Suite Lead)"]
 width = 1024
 height = 1024
 public_seeds = [0, 1]
@@ -23,7 +28,7 @@ guidance = 0.0
 prompts = "base"
 private_sets = ["vxp_yuna", "vxp_mei"]
 reference = "a"
-note = "Z-Image-Turbo tiers. Arms c and d are fp8-native. Arm c-dq dequantises the same transformer file. Local arms are skipped when FORGE_FP8_DIR is unset."
+note = "Z-Image-Turbo tiers. Default on 16/24 GB: BF16 with text-encoder offload. Arm c-dq (FP8 storage, BF16 compute) is the fallback for VRAM-tight cards, pending the ID-TURBO SFace result. Native FP8 arms c and d are dropped. Local arms are skipped when FORGE_FP8_DIR is unset."
 
 [[jobs.arms]]
 id = "a"
@@ -57,6 +62,8 @@ files = [
 id = "c"
 role = "candidate"
 local = true
+enabled = false
+skip_reason = "dropped: native FP8 (Suite Lead, 2026-10-17)"
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
 base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
@@ -79,6 +86,8 @@ files = ["zimage-turbo-transformer-fp8.safetensors"]
 id = "d"
 role = "candidate"
 local = true
+enabled = false
+skip_reason = "dropped: native FP8 (Suite Lead, 2026-10-17)"
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
 base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
