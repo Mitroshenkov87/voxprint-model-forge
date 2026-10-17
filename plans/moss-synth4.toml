@@ -1,0 +1,81 @@
+# MOSS-Image (OpenMOSS, Apache-2.0): mirror rows and the synth4 fit job.
+# Licence diff (2026-10-17): both LICENSE files are byte-identical to the canonical Apache-2.0
+# text (sha256 cfc7749b...). Third-party parts: the Qwen3.5-9B text encoder (Qwen/Qwen3.5-9B,
+# Apache-2.0) and the FLUX.2 small decoder VAE (black-forest-labs/FLUX.2-small-decoder,
+# Apache-2.0). The weights are not byte-identical to those repos: the text encoder is resharded
+# without vision weights, and the VAE sha differs.
+# The pipeline code is vendored at src/voxprint_forge/vendored/moss_image (see VENDOR.md).
+# Prompts here are public and neutral. No private prompts are used.
+
+[defaults]
+model = "sft"
+width = 1024
+height = 1024
+steps = 50
+guidance = 3.0
+uncond_skip_layers = [22]
+seeds = [0]
+warmup = 1
+caps_gb = [16.0, 24.0]
+prompts = [
+  "A lighthouse on a rocky coast at dusk, warm light in the window, long exposure sea.",
+  "A bowl of ramen on a wooden counter, steam rising, shallow depth of field.",
+  "A poster with the words \"OPEN STUDIO\" in bold red letters above a sketch of a city skyline.",
+  "An anime-style fox spirit walking through a bamboo forest, soft morning fog.",
+]
+
+[[mirrors]]
+key = "base"
+repo = "OpenMOSS-Team/MOSS-Image-Base"
+revision = "1ceede80badddd6a7812069619edaa5633587192"
+mirror = "Mitroshenkov87/voxprint-mirror-moss-image-base"
+mirror_revision = "85cc5ca1dc0b6b74555715dec6164bb3e81f3c55"
+size_gb = 27.23
+note = "Byte-identical except README.md (mirror card). The author's repo comes first in the MDL row."
+
+[[mirrors]]
+key = "sft"
+repo = "OpenMOSS-Team/MOSS-Image-SFT"
+revision = "fc5de0d56fc910cbca6f6625a70f5f582b26deb1"
+mirror = "Mitroshenkov87/voxprint-mirror-moss-image-sft"
+mirror_revision = "2d0da610484827b96bdb81c44d702b5cf79a0689"
+size_gb = 27.23
+note = "Same as base. text_encoder/, tokenizer/ and vae/ are byte-identical to base."
+
+[[arms]]
+id = "bf16-te-offload"
+role = "candidate"
+engine = "diffusers"
+weights = "snapshot"
+# 16 GB: prompts encoded with the text encoder on CPU, so it never touches the GPU.
+# 24 GB: diffusers model CPU offload (text_encoder -> transformer -> vae).
+te_mode = { "16" = "cpu", "24" = "swap" }
+note = "Default candidate on 16/24 GB, as for Z-Image-Turbo."
+
+[[arms]]
+id = "c-dq"
+role = "candidate"
+engine = "diffusers"
+weights = "env:FORGE_MOSS_FP8_DIR"
+te_mode = { "16" = "cpu", "24" = "swap" }
+note = "FP8 storage (voxprint-fp8-v1), BF16 compute after dequant at load. No weights built yet. The arm is skipped while FORGE_MOSS_FP8_DIR is unset, and the log says so."
+
+[[arms]]
+id = "comfy-int8"
+role = "reference"
+engine = "comfyui"
+repo = "Comfy-Org/MOSS-Image"
+revision = "f28da8f93449c16cfa7efa07dcd1303a1c0c44d1"
+files = [
+  "diffusion_models/moss_image_sft_int8_convrot.safetensors",
+  "text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+  "vae/flux2-vae.safetensors",
+]
+sha256 = [
+  "b4d1475bc7eeffd7b809e82ea13a1fba1fb85c4e18365af3813722faa5c0fe4f",
+  "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
+  "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+]
+comfyui_commit = "a639f187a9f6abfecbda9673034f2045148b6d85"
+comfy_kitchen = "0.2.38"
+note = "Third-party repack, used as a speed/VRAM reference only. Never a primary MDL source. ComfyUI at the merge of PR #17099 (contains #17095). The cap uses --reserve-vram = total - cap. Plain CFG 3, no block-22 uncond skip."
