@@ -44,3 +44,11 @@ L4 scores the upstream t-tech Q4_K_M mirror. We did not quantise it. `voxprint-m
 When the job finishes, the downloaded source, the F16 file, and the base logits are deleted so the next L-job can use the disk. Downloaded quant files stay under `results/kl/<job>/quants/` until you remove them.
 
 Exit codes are the normal forge table: 0 when the report is written, 6 when conversion, KL parsing, or the MTP check fails, 9 when a llama.cpp tool is missing.
+
+## KV-cache arms and the spec/prefix bench (Plotweaver)
+
+`plans/kv-synth4.toml` and `scripts/vm_run_kv.sh` use llama.cpp b11476.
+
+- **KV arms.** Each GGUF (L1, L3, L4; L2 once the L1/L2 eval fix is merged) is scored against the same file with an f16 KV cache. Arms are K/V = q8_0/q8_0, q8_0/q4_0 and q4_0/q4_0, run at ctx 512 (100 chunks) and ctx 8192 (12 chunks) on wikitext-2-raw test. The corpus is downloaded at runtime from `ggml-org/ci` @ `927b3642` and sha256-checked. `perplexity_argv` and `kl_argv` take `cache_k`/`cache_v`. A quantized cache always runs with `-fa on`. Proposed bar: KL ≤ 0.01 and PPL within 1% of f16 KV. Where PPL is unusable, KL alone decides.
+- **Bench.** `llama-server` runs with no draft and with `--spec-type ngram-simple | ngram-map-k | ngram-mod`, on a fixed rewrite set (wikitext passages returned with light edits) and a free-prose set. Settings: temperature 0, seed 7, 256 tokens. Prefix: one 12k-character shared system prompt and four turns, with the default prompt cache and with `--cache-reuse 256`. Reported: tokens/s, accept rate (`draft_n_accepted / draft_n`), `prompt_ms` and `cache_n`. Hybrid (L3) and SWA (L2) models may refuse speculation or cache reuse. The bench records `server_refused`.
+- **Preflight.** `python -m voxprint_forge.kl.kv --preflight` checks that `llama-server --help` lists `--spec-type` with every ngram type and `--cache-reuse`, that `llama-perplexity` has `-ctk`/`-ctv`/`--kl-divergence`, `protobuf==5.29.6`, and, for L2, the gemma4 GGUF BOS flag, BOS id and chat template. `--dry-run` prints every step.
