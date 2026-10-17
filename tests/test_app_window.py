@@ -76,6 +76,7 @@ def _walk_to(app, step, photos):
         if name == "subject":
             app.draft.set_names("Shape Demo", "")
             app.draft.consent = app.draft.adult = True
+            app.draft.set_verbal(True)
             app.repaint()
         if name == "prepare":
             app.prepare()
@@ -125,6 +126,71 @@ def test_next_is_gated_with_a_plain_reason(make_app, tmp_path) -> None:
     assert app.window.findChild(QtWidgets.QCheckBox, "forge.subject.consent") is None
 
 
+def _subject_step(app, tmp_path):
+    app.draft.add_photos(make_photos(tmp_path / "p", 12))
+    app.draft.kind = "person"
+    app.repaint()
+    _next(app).click()
+    app.draft.set_names("Shape Demo", "")
+    app.repaint()
+    QtWidgets.QApplication.processEvents()  # Qt shows widgets added to a visible window on the next pass
+
+
+def _box(app, name):
+    return app.window.findChild(QtWidgets.QCheckBox, f"forge.subject.{name}")
+
+
+def test_verbal_sits_by_consent_and_lifts_the_release(make_app, tmp_path) -> None:
+    app = make_app()
+    _subject_step(app, tmp_path)
+    consent, verbal = _box(app, "consent"), _box(app, "verbal")
+    assert consent.parent() is verbal.parent() and consent.parent().objectName() == "forge.subject.consent_row"
+    consent.click()
+    _box(app, "adult").click()
+    assert not _next(app).isEnabled() and _status(app) == tr("lora.err.no_release")
+    app.draft.release = tmp_path / "release.pdf"
+    app.repaint()
+    assert _next(app).isEnabled()
+    _box(app, "verbal").click()
+    QtWidgets.QApplication.processEvents()
+    assert app.draft.verbal and app.draft.release is None and _next(app).isEnabled()
+    assert not app.window.findChild(QtWidgets.QPushButton, "forge.subject.release").isEnabled()
+
+
+def test_adult_content_shows_right_of_18_only_when_ticked(make_app, tmp_path) -> None:
+    app = make_app()
+    _subject_step(app, tmp_path)
+    adult, content = _box(app, "adult"), _box(app, "adult_content")
+    assert adult.parent() is content.parent() and adult.parent().objectName() == "forge.subject.adult_row"
+    assert not content.isVisibleTo(app.window) and not app.draft.adult_content
+    adult.click()
+    assert content.isVisibleTo(app.window)
+    content.click()
+    assert app.draft.adult_content
+    QtWidgets.QApplication.processEvents()
+    assert content.geometry().left() > adult.geometry().right() and content.geometry().top() == adult.geometry().top()
+    adult.click()
+    assert not content.isVisibleTo(app.window) and not content.isChecked() and not app.draft.adult_content
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_subject_rows_wrap_without_clipping_in_a_narrow_window(make_app, tmp_path, lang) -> None:
+    app = make_app(lang=lang)
+    _subject_step(app, tmp_path)
+    _box(app, "consent").click()
+    _box(app, "verbal").click()
+    QtWidgets.QApplication.processEvents()
+    _box(app, "adult").click()
+    app.window.resize(560, app.window.height())
+    QtWidgets.QApplication.processEvents()
+    for name in ("consent", "verbal", "adult", "adult_content"):
+        box = _box(app, name)
+        assert box.isVisibleTo(app.window), name
+        assert box.width() >= box.sizeHint().width(), name
+        row = box.parentWidget()
+        assert row.rect().contains(box.geometry()), name
+
+
 def test_full_flow_runs_the_cli_commands(make_app, tmp_path) -> None:
     photos = make_photos(tmp_path / "p", 12)
     runner = _runner(photos)
@@ -133,6 +199,8 @@ def test_full_flow_runs_the_cli_commands(make_app, tmp_path) -> None:
     commands = [call[2] for call in runner.calls]
     assert commands == ["prepare", "train"]
     assert "--consent-obtained" in runner.calls[0] and "--subject-adult" in runner.calls[0]
+    assert runner.calls[0][runner.calls[0].index("--consent-method") + 1] == "verbal"
+    assert "--release" not in runner.calls[0] and "--adult-content" not in runner.calls[0]
     app.install()
     assert runner.calls[-1][2] == "export" and "--install-to-mdl" in runner.calls[-1]
     assert _status(app) == tr("forge.app.result.installed")
@@ -237,6 +305,7 @@ def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path,
             if step == "prepare":
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
+                app.draft.set_verbal(True)
             if step == "train":
                 app.prepare()
             if step == "result":

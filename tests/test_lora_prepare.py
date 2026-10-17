@@ -124,6 +124,83 @@ def test_consent_per_kind() -> None:
     assert person.trigger == "nova_lee" and person.adult_confirmed and not person.rights_confirmed
 
 
+def test_consent_method_verbal_or_file(tmp_path) -> None:
+    release = tmp_path / "release.txt"
+    release.write_text("signed")
+    base = {"name": "Demo", "consent_obtained": True, "subject_adult": True}
+    verbal = check_subject("person", consent_method="verbal", **base)
+    assert verbal.consent_method == "verbal" and not verbal.release_attached and verbal.release_sha256 == ""
+    filed = check_subject("person", consent_method="file", release=release, **base)
+    assert filed.consent_method == "file" and filed.release_attached and len(filed.release_sha256) == 64
+    assert check_subject("person", **base).consent_method == "verbal"
+    assert check_subject("person", release=release, **base).consent_method == "file"
+    with pytest.raises(LoraUsageError) as missing:
+        check_subject("person", consent_method="file", **base)
+    assert missing.value.code == "lora.err.no_release"
+    with pytest.raises(LoraUsageError) as both:
+        check_subject("person", consent_method="verbal", release=release, **base)
+    assert both.value.code == "lora.err.consent_method"
+    with pytest.raises(LoraUsageError) as no_consent:
+        check_subject("person", name="Demo", subject_adult=True, consent_method="verbal")
+    assert no_consent.value.code == "lora.err.no_consent"
+    assert check_subject("object", name="Mug", rights_confirmed=True).consent_method == ""
+
+
+def test_adult_content_needs_the_18_confirmation() -> None:
+    for kwargs in (
+        {"kind": "person", "name": "Demo", "consent_obtained": True},
+        {"kind": "object", "name": "Mug", "rights_confirmed": True},
+        {"kind": "style", "name": "Ink", "rights_confirmed": True},
+    ):
+        with pytest.raises(LoraUsageError) as refused:
+            check_subject(adult_content=True, **kwargs)
+        assert refused.value.code == "lora.err.adult_content"
+    person = check_subject("person", name="Demo", consent_obtained=True, subject_adult=True, adult_content=True)
+    assert person.adult_content and person.adult_confirmed
+
+
+class RecordingJudge(FakeJudge):
+    def __init__(self, verdict):
+        super().__init__(verdict)
+        self.seen = 0
+
+    def judge(self, image):
+        self.seen += 1
+        return super().judge(image)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "outcome"),
+    [
+        (ADULT_FACE, "kept"),
+        (replace(ADULT_FACE, min_age=19.0), "dropped"),
+        (replace(ADULT_FACE, min_age=12.0, reason_code="child_or_adolescent"), "blocked"),
+    ],
+)
+def test_age_gate_runs_the_same_with_or_without_adult_content(tmp_path, verdict, outcome) -> None:
+    files = photos(tmp_path / "in", 10)
+    results = []
+    for flag in (False, True):
+        subject = check_subject(
+            "person", name="Demo", consent_obtained=True, subject_adult=True, adult_content=flag
+        )
+        judge = RecordingJudge(verdict)
+        folder = tmp_path / f"run-{flag}"
+        folder.mkdir()
+        try:
+            summary = run(folder, files, gate=Gate(judge, FakeEstimator(AgeReading(1, (verdict.min_age,)))),
+                          subject=subject)
+            state = ("kept", summary["prepared"])
+        except LoraBlocked as blocked:
+            state = ("blocked", blocked.code)
+        except LoraUsageError as usage:
+            state = ("dropped", usage.code)
+        drops = [json.loads(line)["reason"] for line in (folder / "proj" / "drops.jsonl").read_text().splitlines()]
+        results.append((state, judge.seen, drops))
+    assert results[0] == results[1]
+    assert results[0][0][0] == outcome and results[0][1] == 10
+
+
 def test_release_only_keeps_a_hash(tmp_path) -> None:
     release = tmp_path / "release.txt"
     release.write_text("signed")

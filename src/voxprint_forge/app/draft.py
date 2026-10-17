@@ -54,7 +54,9 @@ class Draft:
     trigger: str = ""
     trigger_edited: bool = False
     consent: bool = False
+    verbal: bool = False
     adult: bool = False
+    adult_content: bool = False
     rights: bool = False
     release: Path | None = None
     note: str = ""
@@ -96,6 +98,24 @@ class Draft:
         if not self.trigger_edited:
             self.trigger = suggest_trigger(self.stage_name or self.name)
 
+    def set_verbal(self, verbal: bool) -> None:
+        """Verbal consent needs no file, so ticking it detaches the release."""
+        self.verbal = bool(verbal)
+        if self.verbal:
+            self.release = None
+
+    def set_adult(self, adult: bool) -> None:
+        """Unticking 18 or older also clears the adult-content label."""
+        self.adult = bool(adult)
+        if not self.adult:
+            self.adult_content = False
+
+    def consent_method(self) -> str:
+        """``verbal`` or ``file`` for a person, else empty."""
+        if self.kind != "person":
+            return ""
+        return "verbal" if self.verbal else "file"
+
     def check_photos(self) -> Check:
         """Photo count and kind (step 1)."""
         count = len(self.photos)
@@ -116,13 +136,21 @@ class Draft:
         return Check(True)
 
     def check_subject(self) -> Check:
-        """Names and the consent box for the kind (step 2)."""
+        """Names and the consent boxes for the kind (step 2).
+
+        A person needs Consent obtained plus either Verbal or an attached
+        release, and 18 or older. Adult content is a label only.
+        """
         if not (self.name or self.stage_name):
             return Check(False, "lora.err.no_name")
         if not self.trigger.strip():
             return Check(False, "forge.app.err.no_trigger")
         if self.kind == "person" and not (self.consent and self.adult):
             return Check(False, "lora.err.no_consent")
+        if self.kind == "person" and not (self.verbal or self.release is not None):
+            return Check(False, "lora.err.no_release")
+        if self.adult_content and not (self.kind == "person" and self.adult):
+            return Check(False, "lora.err.adult_content")
         if self.kind in ("object", "style") and not self.rights:
             return Check(False, "lora.err.no_rights")
         return Check(True)

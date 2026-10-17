@@ -149,7 +149,8 @@
 <p><img alt="Step 2, Subject and consent" src="img/en-simple-2-subject.png" /></p>
 <p>Enter a <strong>Name</strong> or a <strong>Stage name</strong> (one is enough). The <strong>Trigger word</strong> is the word you will later type in Canvas to call the model; the app suggests one.</p>
 <ul>
-<li><strong>Person:</strong> tick <strong>Consent obtained</strong> (the person agreed to this use; verbal consent counts) and <strong>Subject is 18+</strong>. You can attach a model release. The file stays in your project; only a note that it exists and its fingerprint go into the model file.</li>
+<li><strong>Person:</strong> tick <strong>Consent obtained</strong> (the person agreed to this use). Then either tick <strong>Verbal</strong>, right next to it, if consent was given in words, or attach a model release. With <strong>Verbal</strong> no file is needed; the model file records the consent as verbal. An attached release stays in your project; only a note that it exists and its fingerprint go into the model file. Also tick <strong>Subject is 18+</strong>.</li>
+<li><strong>Dataset contains adult content (18+):</strong> appears to the right of <strong>Subject is 18+</strong> once that box is ticked. It is off by default. Tick it if the photos contain adult content; apps such as Canvas use this label to sort and filter models. Unticking <strong>Subject is 18+</strong> clears it.</li>
 <li><strong>Object</strong> or <strong>Style:</strong> confirm that you have the right to use these photos. A style must not be presented as the work of a named living artist.</li>
 <li><strong>Provenance note</strong> (optional): where the photos come from.</li>
 </ul>
@@ -206,7 +207,7 @@
 <ul>
 <li>Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.</li>
 <li>The internet is used only to download the app libraries and models from their official sources.</li>
-<li>A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</li>
+<li>A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</li>
 <li>Uninstalling the app keeps your data. To remove everything, also delete <code>%LOCALAPPDATA%\Voxprint\state\model-forge</code> and, if no other VOXPrint app uses them, the models in <code>%LOCALAPPDATA%\Voxprint\models</code>.</li>
 </ul>
 <h2>8. Troubleshooting</h2>

@@ -92,7 +92,8 @@ Good photos make a good model:
 
 Enter a **Name** or a **Stage name** (one is enough). The **Trigger word** is the word you will later type in Canvas to call the model; the app suggests one.
 
-- **Person:** tick **Consent obtained** (the person agreed to this use; verbal consent counts) and **Subject is 18+**. You can attach a model release. The file stays in your project; only a note that it exists and its fingerprint go into the model file.
+- **Person:** tick **Consent obtained** (the person agreed to this use). Then either tick **Verbal**, right next to it, if consent was given in words, or attach a model release. With **Verbal** no file is needed; the model file records the consent as verbal. An attached release stays in your project; only a note that it exists and its fingerprint go into the model file. Also tick **Subject is 18+**.
+- **Dataset contains adult content (18+):** appears to the right of **Subject is 18+** once that box is ticked. It is off by default. Tick it if the photos contain adult content; apps such as Canvas use this label to sort and filter models. Unticking **Subject is 18+** clears it.
 - **Object** or **Style:** confirm that you have the right to use these photos. A style must not be presented as the work of a named living artist.
 - **Provenance note** (optional): where the photos come from.
 
@@ -159,7 +160,7 @@ To improve a model later, press **Add more photos** on this step. Training conti
 
 - Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.
 - The internet is used only to download the app libraries and models from their official sources.
-- A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.
+- A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.
 - Uninstalling the app keeps your data. To remove everything, also delete `%LOCALAPPDATA%\Voxprint\state\model-forge` and, if no other VOXPrint app uses them, the models in `%LOCALAPPDATA%\Voxprint\models`.
 
 ## 8. Troubleshooting

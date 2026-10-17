@@ -28,9 +28,11 @@ Pause with Ctrl+C, or by creating an empty file named `PAUSE` in the project fol
 
 ## Export and the Canvas hand-off
 
-Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `consent_obtained`, `adult_confirmed`, `provenance_note`, `release_attached`, `release_sha256`, and `rights_confirmed` for objects and styles; `voxprint.lora.base`, `base_revision`, `rank`, `alpha`, `steps`, `kind`, `trained_on`. Nothing else: no paths, usernames, machine ids or EXIF, and no key that reads like a gate or threshold setting.
+Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `consent_obtained`, `adult_confirmed`, `provenance_note`, `release_attached`, `release_sha256`, `consent_method` (`verbal` or `file`) for a person, and `rights_confirmed` for objects and styles; `voxprint.lora.base`, `base_revision`, `rank`, `alpha`, `steps`, `kind`, `trained_on`, `adult_content` (`true` or `false`, always present). Nothing else: no paths, usernames, machine ids or EXIF, and no key that reads like a gate or threshold setting.
 
-`voxprint-model.json` (`schema: voxprint-model/1`): `min_schema` 1, `id`, `kind`, `type` lora, `producer`, `file`, `sha256`, `size`, `base.mdl_id`, `base.revision`, `licence` (from the base), `default_strength` 0.8, `strength_range` [0, 1.5], `tags`, and `preview` with `preview_sha256` when a test picture exists (`preview.webp`).
+`voxprint-model.json` (`schema: voxprint-model/1`): `min_schema` 1, `id`, `kind`, `type` lora, `producer`, `file`, `sha256`, `size`, `base.mdl_id`, `base.revision`, `licence` (from the base), `default_strength` 0.8, `strength_range` [0, 1.5], `tags`, `voxprint.lora.adult_content` (JSON `true` or `false`, always present), `voxprint.subject.consent_method` (`"verbal"` or `"file"`, only for a person), and `preview` with `preview_sha256` when a test picture exists (`preview.webp`).
+
+`voxprint.lora.adult_content` is a label the user sets: the training photos contain adult content. Apps such as Canvas can use it to label, sort or filter LoRAs (for example, hide them unless the user opts in). It can be `true` only for a person confirmed as 18 or older. It is not a safety setting and changes no checks. `voxprint.subject.consent_method` says how a person's consent was given: `verbal` (no file, `release_sha256` empty) or `file` (a release is attached; only its sha256 is recorded). LoRAs exported before these fields have no `adult_content` key; treat that as `false`.
 
 `--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `$VOXPRINT_USER_MODELS_DIR/lora/<id>/`, by default `<models dir>/user-models/lora/<id>/`. The id is the trigger word plus 8 hex digits of the LoRA tensors.
 
@@ -40,11 +42,13 @@ Simple mode (default) takes 10 to 30 photos. Expert mode (`--mode expert` or `--
 
 | Kind | Required |
 | --- | --- |
-| `person` | `--name` or `--stage-name`, `--consent-obtained`, `--subject-adult` |
+| `person` | `--name` or `--stage-name`, `--consent-obtained`, `--subject-adult`, and `--consent-method verbal` or `--consent-method file --release FILE` |
 | `object` | `--name` or `--stage-name`, `--rights-confirmed` (I own this object or have the right to use these photos) |
 | `style` | `--name` or `--stage-name`, `--rights-confirmed` (I have the right to use these images; the style is not presented as a named living artist's work) |
 
-`--release FILE` stays in the project folder; only `release_attached` and its sha256 are recorded.
+`--release FILE` stays in the project folder; only `release_attached` and its sha256 are recorded. Without `--consent-method`, a person's consent is `file` when `--release` is given, else `verbal`. `--consent-method verbal` with `--release` is refused (`lora.err.consent_method`), and `--consent-method file` without it too (`lora.err.no_release`).
+
+`--adult-content` (person only, needs `--subject-adult`, else `lora.err.adult_content`) marks that the photos contain adult content. It is written as `voxprint.lora.adult_content`.
 
 ## Safety check (always on)
 

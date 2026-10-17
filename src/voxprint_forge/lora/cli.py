@@ -12,7 +12,7 @@ from pathlib import Path
 from voxprint_forge.lora import bases
 from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
 from voxprint_forge.lora.captioner import FALLBACK as CAPTION_FALLBACK
-from voxprint_forge.lora.consent import KINDS, Subject, check_subject
+from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_subject
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Event, Progress, json_line, sentence
 from voxprint_forge.lora.i18n import current_lang
@@ -58,6 +58,15 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--subject-adult", action="store_true", help="Person: the subject is 18 or older.")
     command.add_argument("--rights-confirmed", action="store_true", help="Object or style: you have the rights.")
     command.add_argument("--release", type=Path, default=None, help="Optional model release file.")
+    command.add_argument(
+        "--consent-method",
+        choices=CONSENT_METHODS,
+        default=None,
+        help="Person: verbal (no file) or file (needs --release). Default: file with --release, else verbal.",
+    )
+    command.add_argument(
+        "--adult-content", action="store_true", help="Person, 18+ only: the photos contain adult content (a label)."
+    )
     command.add_argument("--provenance-note", default="", help="Optional note on where the photos come from.")
     command.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Photo limits: 10-30, or 5+.")
     command.add_argument(
@@ -219,6 +228,23 @@ def _load_captioner(choice: str):
     return load_captioner(choice)
 
 
+def subject_from(args: argparse.Namespace) -> Subject:
+    """The checked :class:`Subject` from ``lora prepare`` flags (the GUI builds the same flags)."""
+    return check_subject(
+        args.kind or "",
+        name=args.name,
+        stage_name=args.stage_name,
+        trigger=args.trigger,
+        consent_obtained=args.consent_obtained,
+        subject_adult=args.subject_adult,
+        rights_confirmed=args.rights_confirmed,
+        provenance_note=args.provenance_note,
+        release=args.release,
+        consent_method=args.consent_method,
+        adult_content=args.adult_content,
+    )
+
+
 def _prepare(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.prepare import prepare
 
@@ -227,17 +253,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     if args.kind is None and isinstance(stored.get("subject"), dict):
         subject = Subject(**stored["subject"])  # type: ignore[arg-type]
     else:
-        subject = check_subject(
-            args.kind or "",
-            name=args.name,
-            stage_name=args.stage_name,
-            trigger=args.trigger,
-            consent_obtained=args.consent_obtained,
-            subject_adult=args.subject_adult,
-            rights_confirmed=args.rights_confirmed,
-            provenance_note=args.provenance_note,
-            release=args.release,
-        )
+        subject = subject_from(args)
     files = collect(args.photos, args.photo, args.exclude)
     mode = "expert" if args.allow_count_outside_range else args.mode
     result = prepare(

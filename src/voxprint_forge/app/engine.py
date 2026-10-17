@@ -179,11 +179,14 @@ def _subject_args(draft: Draft) -> list[str]:
     if draft.kind == "person":
         if draft.consent:
             args.append("--consent-obtained")
+        args += ["--consent-method", draft.consent_method()]
         if draft.adult:
             args.append("--subject-adult")
+            if draft.adult_content:
+                args.append("--adult-content")
     elif draft.rights:
         args.append("--rights-confirmed")
-    if draft.release is not None:
+    if draft.release is not None and not (draft.kind == "person" and draft.verbal):
         args += ["--release", str(draft.release)]
     if draft.note:
         args += ["--provenance-note", draft.note]
