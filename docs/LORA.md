@@ -78,3 +78,14 @@ All strings are in `src/voxprint_forge/lora/i18n/en.json` and `ru.json`; a test 
 ## Project folder
 
 `project.json`, `prepared/`, `captions.jsonl` (`id`, `file`, `long`, `short`, `round`), `drops.jsonl`, `checkpoints/step-NNNNNN.safetensors` plus `state.pt`, `previews/`.
+
+### Safety-check diagnostics (operators)
+
+`drops.jsonl` stays neutral: a safety drop is only `lora.drop.safety`. For runs on a VM, `lora prepare --gate-trace FILE`
+writes one JSON line per checked photo: the photo id (`sha256[:12]`), `keep`, `path`, the rule's reason codes, the judge's
+answer as codes and numbers (free text cut to 24 characters), the token counts (`new_tokens`, `hit_token_limit`), the age
+estimator's face count and ages, and for a stage that raised its `stage`, exception type and a short code
+(`judge.parse` `no_json` / `bad_json` / `bad_age` / `no_indicators`, `estimator.ipc` `bad_reply` / `worker_exited_rcN`, or the
+worker's own exception type). No file names, image content or model text. A raised stage still drops the photo, and the same
+stage and type are printed to stderr. The MiVOLO worker answers on a private copy of stdout, so a library that prints cannot
+shift its replies.

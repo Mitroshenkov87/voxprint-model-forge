@@ -80,6 +80,12 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--min-side", type=int, default=MIN_SIDE, help="Smallest short side in pixels (Expert).")
     command.add_argument("--blur-threshold", type=float, default=BLUR_THRESHOLD, help="Blur limit (Expert).")
     command.add_argument("--dup-threshold", type=int, default=DUP_THRESHOLD, help="Duplicate limit (Expert).")
+    command.add_argument(
+        "--gate-trace",
+        type=Path,
+        default=None,
+        help="Operator diagnostics: one JSON line per photo with each safety-check stage's result (ids and codes).",
+    )
 
 
 def _training_flags(command: argparse.ArgumentParser) -> None:
@@ -270,6 +276,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         blur_threshold=args.blur_threshold,
         dup_threshold=args.dup_threshold,
         release=args.release,
+        trace=getattr(args, "gate_trace", None),
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)
