@@ -404,6 +404,24 @@ def test_layout_omits_size_and_drops_keep_false(tmp_path: Path) -> None:
     assert caught.value.exit_code == 2
 
 
+def test_fp8_overlay_uses_the_a100_loader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "encoder.safetensors"
+    save_file({"layers.0.weight": torch.zeros(2, 2)}, path)
+    monkeypatch.setattr("voxprint_forge.diffusion.fp8.read_format", lambda _path: "voxprint-fp8-v1")
+    seen: list[Path] = []
+
+    def _load(source: Path) -> dict[str, torch.Tensor]:
+        seen.append(source)
+        return {"layers.0.weight": torch.ones(2, 2)}
+
+    monkeypatch.setattr("voxprint_forge.diffusion.fp8.load_dequant_bf16", _load)
+    state = _load_state(path)
+    assert seen == [path]
+    weight = state["layers.0.weight"]
+    assert isinstance(weight, torch.Tensor)
+    assert torch.equal(weight, torch.ones(2, 2))
+
+
 def test_overlay_merges_shards_before_the_coverage_check(tmp_path: Path) -> None:
     text = _module(("te.0.weight", "te.1.weight", "te.2.weight", "te.3.weight"))
     transformer = _module(("tr.0.weight", "tr.1.weight", "tr.2.weight", "tr.3.weight"))

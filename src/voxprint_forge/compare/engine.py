@@ -393,14 +393,13 @@ def _load_state(path: Path) -> dict[str, object]:
     import torch
     from safetensors.torch import load_file
 
-    from voxprint_forge.diffusion.fp8 import dequant_state, read_format
+    from voxprint_forge.diffusion.fp8 import load_dequant_bf16, read_format
 
+    if read_format(path) == "voxprint-fp8-v1":
+        return load_dequant_bf16(path)
     tensors = load_file(str(path))
-    fp8 = read_format(path) == "voxprint-fp8-v1" or any(
-        getattr(value, "dtype", None) == torch.float8_e4m3fn for value in tensors.values()
-    )
-    if fp8:
-        return dequant_state(tensors)
+    if any(getattr(value, "dtype", None) == torch.float8_e4m3fn for value in tensors.values()):
+        return load_dequant_bf16(path)
     return tensors
 
 
