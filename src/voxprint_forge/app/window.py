@@ -38,6 +38,20 @@ from voxprint_forge.lora import refset
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, SIMPLE_RANGE
 
 APP_ID = "model-forge"
+CARD_PICTURE = 136  # px, a review-grid picture
+KEEP_MARK = 30  # px, the checkmark toggle on a picture
+# The shell's action bar (Open folder) gets the wizard card's 16 px inset, so it lines up with Back.
+ACTION_BAR_MARGINS = (16, 0, 16, 16)
+FORGE_STYLE = """
+QPushButton#wizardNext:disabled, QPushButton#wizardBack:disabled {
+    background: #22222b; color: #6e6e7e; border-color: #33333f; }
+QPushButton[keepMark="true"] { background: #1c1c24; color: #9a9aa8; border: 2px solid #c4c4d0;
+    border-radius: 6px; padding: 0px; min-height: 0px; font-size: 16px; font-weight: 700; }
+QPushButton[keepMark="true"]:checked { background: #f5d76e; color: #1c1604; border-color: #fbe8a6; }
+QFrame#card[kept="true"] { border: 2px solid #f5d76e; border-radius: 6px; }
+QFrame#card[kept="false"] { border: 2px solid transparent; border-radius: 6px; }
+QLabel[similar="true"] { color: #fbbf24; }
+"""
 LOCALES = Path(__file__).resolve().parent / "locales"
 
 
@@ -89,6 +103,7 @@ class ForgeWidget(SimpleImageWidget):
             "overflow": self._overflow,  # type: ignore[attr-defined]
             "expert": self._expert_toggle,  # type: ignore[attr-defined]
             "tabs": self._section_bar,  # type: ignore[attr-defined]
+            "expert_form": self._expert_form,  # type: ignore[attr-defined]
         }
 
     EXPERT_WIDTH = 380
@@ -156,7 +171,7 @@ class ForgeApp:
         self.window = QtWidgets.QMainWindow()
         self.window.setObjectName("shell")
         self.window.setWindowTitle(tr(f"splash.app.{APP_ID}"))
-        self.window.setStyleSheet(build_shell_style(False))
+        self.window.setStyleSheet(build_shell_style(False) + FORGE_STYLE)
         self.window.setCentralWidget(self.widget.root)
         self.window.resize(1200, 900)
         self._painted: object = None
@@ -236,6 +251,10 @@ class ForgeApp:
         folder = self.widget.root.findChild(QtWidgets.QPushButton, "openFolder")
         if folder is not None:
             folder.setToolTip(tr("forge.app.folder.tip"))
+        bar = self.widget.root.findChild(QtWidgets.QWidget, "actionBar")
+        if bar is not None and bar.layout() is not None:
+            # The shell's action bar sits 4 px left of the wizard card's content; line Open folder up with Back.
+            bar.layout().setContentsMargins(*ACTION_BAR_MARGINS)
         self._fit_expert_fields()
 
     def _fit_expert_fields(self) -> None:
@@ -352,6 +371,40 @@ class ForgeApp:
             if item is not None and item.spacerItem() is not None:
                 layout.removeItem(item)  # type: ignore[attr-defined]
         layout.insertWidget(0, outer, 1)  # type: ignore[attr-defined]
+        self._expert_extra(step)
+
+    def _expert_extra(self, step: str) -> None:
+        """Step controls that live in the shell's Expert panel (the Build a set round settings)."""
+        form = self.widget._parts()["expert_form"]
+        host = form.parentWidget()  # type: ignore[attr-defined]
+        if host is not None:
+            for old in host.findChildren(QtWidgets.QWidget, "forge.refset.expert"):
+                form.removeWidget(old)  # type: ignore[attr-defined]
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
+        if not (self.draft.expert and step == "refset" and self.draft.source == "refs"):
+            return
+        box = QtWidgets.QWidget()
+        box.setObjectName("forge.refset.expert")
+        column = QtWidgets.QVBoxLayout(box)
+        column.setContentsMargins(0, 8, 0, 0)
+        column.setSpacing(8)
+        heading = QtWidgets.QLabel(tr("lora.step.refset.title"))
+        heading.setObjectName("settingGroup")
+        column.addWidget(heading)
+        self._refset_settings(column, self._refset_state())
+        index = form.count()  # type: ignore[attr-defined]
+        last = form.itemAt(index - 1) if index else None  # type: ignore[attr-defined]
+        if last is not None and last.spacerItem() is not None:
+            index -= 1  # above the shell's closing stretch
+        form.insertWidget(index, box)  # type: ignore[attr-defined]
+
+    def _refset_state(self) -> dict[str, object]:
+        state = refset.load_state(self.project)
+        if state.get("refs") and not refset.same_refs(state, self.draft.photos):
+            state = refset.empty_state()  # new references: the engine starts a new loop on the next round
+        return state
 
     def _intro(self, column: QtWidgets.QVBoxLayout, step: str) -> None:
         key = f"forge.app.step.{step}.short"
@@ -362,7 +415,12 @@ class ForgeApp:
         short.setWordWrap(True)
         short.setToolTip(tr(f"lora.step.{step}.desc"))
         column.addWidget(short)
-        column.addWidget(self._details(f"step.{step}", (tr(f"lora.step.{step}.desc"), tr(f"lora.step.{step}.help"))))
+        paragraphs = (tr(f"lora.step.{step}.desc"), tr(f"lora.step.{step}.help"))
+        if step == "refset" and self.draft.source == "refs":
+            # One Details for the whole step: the round notes join the step's own explanation.
+            notes = ("rounds", "strength", "similar", "check")
+            paragraphs += tuple(tr(f"forge.app.refset.more.{key}") for key in notes)
+        column.addWidget(self._details(f"step.{step}", paragraphs))
 
     def _details(self, key: str, paragraphs: tuple[str, ...]) -> Details:
         """A collapsed Details expander; its open state survives repaints of the step."""
@@ -567,9 +625,7 @@ class ForgeApp:
             column.addWidget(switch, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
             return
         self._kept_label = self._finish_button = None
-        state = refset.load_state(self.project)
-        if state.get("refs") and not refset.same_refs(state, self.draft.photos):
-            state = refset.empty_state()  # new references: the engine starts a new loop on the next round
+        state = self._refset_state()
         busy = self.runner.busy  # type: ignore[attr-defined]
         blocked = bool(state.get("blocked"))
         heading = QtWidgets.QLabel(tr("forge.app.refset.refs", count=len(self.draft.photos)))
@@ -587,7 +643,11 @@ class ForgeApp:
         for path in self.draft.photos:
             strip.addItem(QtWidgets.QListWidgetItem(_thumb(path), ""))
         column.addWidget(strip)
-        self._refset_settings(column, state)
+        if not self.draft.expert:
+            summary = QtWidgets.QLabel(tr("forge.app.refset.simple", count=refset.DEFAULT_CANDIDATES))
+            summary.setObjectName("panel")
+            summary.setWordWrap(True)
+            column.addWidget(summary)
         rounds = state.get("rounds") or []
         row = QtWidgets.QHBoxLayout()
         make_key = "forge.app.refset.next_round" if rounds else "forge.app.refset.make"
@@ -601,9 +661,11 @@ class ForgeApp:
         finish.setEnabled(not busy and not blocked and bool(refset.kept(state)))
         self._finish_button = finish
         restart.setEnabled(not busy and not blocked and bool(rounds))
-        for widget in (make, finish, restart):
-            row.addWidget(widget)
+        # One action row: draw, approve, and (set apart on the right) start over. Next stays off until This is it.
+        row.addWidget(make)
+        row.addWidget(finish)
         row.addStretch(1)
+        row.addWidget(restart)
         column.addLayout(row)
         if blocked:
             if self.status is None:
@@ -613,10 +675,6 @@ class ForgeApp:
             stop.setWordWrap(True)
             column.addWidget(stop)
         self._progress_widgets(column)
-        column.addWidget(self._details("refset.more", (
-            tr("forge.app.refset.more.rounds"), tr("forge.app.refset.more.strength"),
-            tr("forge.app.refset.more.similar"), tr("forge.app.refset.more.check"),
-        )))
         if blocked or not rounds:
             return
         self._kept_label = QtWidgets.QLabel()
@@ -624,12 +682,6 @@ class ForgeApp:
         self._kept_label.setWordWrap(True)
         column.addWidget(self._kept_label)
         shown = refset.candidates(state)
-        similar = sum(1 for item in shown if item.get("near_duplicate_of"))
-        if similar:
-            warn = QtWidgets.QLabel(tr("forge.app.refset.similar", count=similar))
-            warn.setObjectName("warn")
-            warn.setWordWrap(True)
-            column.addWidget(warn)
         if not shown:
             empty = QtWidgets.QLabel(tr("forge.app.refset.none_shown"))
             empty.setObjectName("panel")
@@ -642,13 +694,8 @@ class ForgeApp:
         self._update_kept()
 
     def _refset_settings(self, column: QtWidgets.QVBoxLayout, state: dict[str, object]) -> None:
+        """Expert round settings and descriptions; built into the Expert panel by :meth:`_expert_extra`."""
         values = self.refset_settings
-        if not self.draft.expert:
-            summary = QtWidgets.QLabel(tr("forge.app.refset.simple", count=refset.DEFAULT_CANDIDATES))
-            summary.setObjectName("panel")
-            summary.setWordWrap(True)
-            column.addWidget(summary)
-            return
         form = QtWidgets.QFormLayout()
         count = QtWidgets.QSpinBox()
         count.setObjectName("forge.refset.count")
@@ -708,6 +755,7 @@ class ForgeApp:
         column.addWidget(table)
 
     def _candidate_card(self, item: dict[str, object], path: Path, busy: bool) -> QtWidgets.QFrame:
+        """One picture with a checkmark toggle on it (ticked = kept) and a reserved line for the ≈ badge."""
         cid = str(item["id"])
         card = QtWidgets.QFrame()
         card.setObjectName("card")
@@ -715,50 +763,58 @@ class ForgeApp:
         inner = QtWidgets.QVBoxLayout(card)
         inner.setContentsMargins(6, 6, 6, 6)
         inner.setSpacing(4)
-        picture = QtWidgets.QLabel()
-        picture.setFixedSize(136, 136)
+        keep = QtWidgets.QPushButton("\u2713")
+        keep.setObjectName(f"forge.refset.keep.{cid}")
+        keep.setProperty("keepMark", "true")
+        keep.setCheckable(True)
+        keep.setChecked(str(item.get("verdict", "pending")) == "keep")
+        keep.setFixedSize(KEEP_MARK, KEEP_MARK)
+        keep.setToolTip(tr("forge.app.refset.keep.tip"))
+        keep.setAccessibleName(tr("forge.app.refset.keep"))
+        keep.setEnabled(not busy)
+        keep.setAutoDefault(False)
+        keep.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        picture = _ClickLabel(keep)
+        picture.setFixedSize(CARD_PICTURE, CARD_PICTURE)
         picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         pixmap = QtGui.QPixmap(str(path))
         if not pixmap.isNull():
-            picture.setPixmap(pixmap.scaled(136, 136, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            picture.setPixmap(pixmap.scaled(CARD_PICTURE, CARD_PICTURE, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                                             QtCore.Qt.TransformationMode.SmoothTransformation))
         picture.setToolTip(tr("forge.app.refset.picture.tip", seed=item.get("seed", ""),
                               round=int(item.get("round", 0)) + 1))
-        inner.addWidget(picture)
-        if item.get("near_duplicate_of"):
-            mark = QtWidgets.QLabel(tr("forge.app.refset.similar_mark"))
-            mark.setObjectName("warn")
+        stack = QtWidgets.QGridLayout()
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.addWidget(picture, 0, 0)
+        corner = QtWidgets.QWidget()
+        corner.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        corner_row = QtWidgets.QHBoxLayout(corner)
+        corner_row.setContentsMargins(0, 6, 6, 0)
+        corner_row.addWidget(keep)
+        stack.addWidget(corner, 0, 0, QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignRight)
+        inner.addLayout(stack)
+        similar = bool(item.get("near_duplicate_of"))
+        mark = QtWidgets.QLabel(tr("forge.app.refset.similar_mark") if similar else "")
+        mark.setObjectName("forge.refset.similar")
+        mark.setProperty("similar", "true" if similar else "false")
+        mark.setWordWrap(True)
+        mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        # Two lines are always reserved, so cards with and without the badge line up in the grid.
+        mark.setFixedHeight(mark.fontMetrics().lineSpacing() * 2 + 2)
+        if similar:
             mark.setToolTip(tr("forge.app.refset.similar_mark.tip"))
-            inner.addWidget(mark)
-        row = QtWidgets.QVBoxLayout()  # stacked: each chip gets the full card width, so RU labels are not cut
-        row.setSpacing(4)
-        verdict = str(item.get("verdict", "pending"))
-        buttons = {}
-        for value, label, tip in (("keep", "forge.app.refset.keep", "forge.app.refset.keep.tip"),
-                                  ("reject", "forge.app.refset.reject", "forge.app.refset.reject.tip")):
-            button = QtWidgets.QPushButton(tr(label))
-            button.setObjectName(f"forge.refset.{value}.{cid}")
-            button.setProperty("chip", "true")
-            button.setCheckable(True)
-            button.setChecked(verdict == value)
-            button.setToolTip(tr(tip))
-            button.setEnabled(not busy)
-            button.setAutoDefault(False)
-            buttons[value] = button
-            row.addWidget(button)
-        for value, button in buttons.items():
-            other = buttons["reject" if value == "keep" else "keep"]
-            button.toggled.connect(lambda checked, v=value, o=other: self._verdict(cid, v, checked, o))
-        inner.addLayout(row)
-        card.setFixedWidth(152)
+        inner.addWidget(mark)
+        card.setProperty("kept", "true" if keep.isChecked() else "false")
+        keep.toggled.connect(lambda checked, c=card: self._verdict(cid, checked, c))
+        card.setFixedWidth(CARD_PICTURE + 16)
         return card
 
-    def _verdict(self, cid: str, value: str, checked: bool, other: QtWidgets.QPushButton) -> None:
-        if checked and other.isChecked():
-            other.blockSignals(True)
-            other.setChecked(False)
-            other.blockSignals(False)
-        refset.set_verdict(self.project, cid, value if checked else "pending")
+    def _verdict(self, cid: str, checked: bool, card: QtWidgets.QFrame | None = None) -> None:
+        refset.set_verdict(self.project, cid, "keep" if checked else "pending")
+        if card is not None:
+            card.setProperty("kept", "true" if checked else "false")
+            card.style().unpolish(card)
+            card.style().polish(card)
         self.draft.approved = []
         self.draft.prepared = None
         self._update_kept()
@@ -775,8 +831,9 @@ class ForgeApp:
         low, high = SIMPLE_RANGE if not self.draft.expert else (EXPERT_FLOOR, EXPERT_CAP)
         busy = self.runner.busy  # type: ignore[attr-defined]
         try:
-            label.setText(tr("forge.app.refset.kept", kept=len(refset.kept(state)),
-                             total=refset.approved_count(state), low=low, high=high))
+            drawn = sum(len(r.get("candidates") or []) for r in state.get("rounds") or [])
+            label.setText(tr("forge.app.refset.kept", kept=len(refset.kept(state)), shown=drawn,
+                             low=low, high=high))
             if self._finish_button is not None:
                 self._finish_button.setEnabled(not busy and not state.get("blocked") and bool(refset.kept(state)))
         except RuntimeError:
@@ -1435,6 +1492,22 @@ class _DropList(QtWidgets.QListWidget):
         paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
         event.acceptProposedAction()
         self._on_drop(paths)
+
+
+class _ClickLabel(QtWidgets.QLabel):
+    """A candidate picture: a click on it flips the checkmark toggle laid over it."""
+
+    def __init__(self, toggle: QtWidgets.QAbstractButton) -> None:
+        super().__init__()
+        self._toggle = toggle
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self._toggle.isEnabled():
+            self._toggle.click()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 def _button(label: str, tip: str, slot: Callable[[], None], *, primary: bool = False) -> QtWidgets.QPushButton:

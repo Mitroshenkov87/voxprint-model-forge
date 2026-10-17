@@ -158,16 +158,16 @@ Have only a few good pictures? Model Forge can build the training set with you.
 1. On step 1 choose **Build a set from references** under **Train on** and add 1 to 10 references of one subject.
 2. Fill in step 2 as usual: names, **Consent obtained**, **Verbal** or a release, **Subject is 18+** and, if it applies, **Dataset contains adult content (18+)**.
 3. On step 3, **Build a set**, press **Make pictures**. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.
-4. Press **Keep** under each picture that looks right and **Reject** under the rest.
+4. Tick the checkmark on each picture that looks right (or click the picture). Leave the rest unticked; they are not used.
 5. Press **Next round**. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.
-6. Press **This is it**. The references and the kept pictures become the training set, and the usual steps follow: step 4 **Check photos**, step 5 training and step 6 the result.
+6. Press **This is it** (next to **Make pictures**). **Next** stays unavailable until you do. The references and the kept pictures become the training set, and the usual steps follow: step 4 **Check photos**, step 5 training and step 6 the result.
 
 Good to know:
 
-- Simple mode draws 24 pictures per round with medium variation. Expert mode sets **Pictures per round** (8 to 64), **Variation strength** (0.25 to 0.90; higher moves further from the source), **Steps** (4 to 16), and lets you edit the **Descriptions** after the first round.
+- Simple mode draws 24 pictures per round with medium variation. Expert mode shows **Pictures per round** (8 to 64), **Variation strength** (0.25 to 0.90; higher moves further from the source) and **Steps** (4 to 16) in the Expert settings panel on the right, under **Build a set**; there you can also edit the **Descriptions** after the first round.
 - The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.
-- Pictures marked **≈ similar** look almost the same as another one; keep only one of them.
-- The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. **Kept … · set … of …** shows where you are.
+- Pictures marked **≈ very similar to another** look almost the same as another one; keep only one of them.
+- The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. **Kept … of …. Training needs …** above the pictures shows how many you have kept.
 - Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.
 - The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.
 - **Start over** forgets the rounds and keeps the references.

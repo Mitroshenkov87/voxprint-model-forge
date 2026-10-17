@@ -201,16 +201,16 @@
 <li>On step 1 choose <strong>Build a set from references</strong> under <strong>Train on</strong> and add 1 to 10 references of one subject.</li>
 <li>Fill in step 2 as usual: names, <strong>Consent obtained</strong>, <strong>Verbal</strong> or a release, <strong>Subject is 18+</strong> and, if it applies, <strong>Dataset contains adult content (18+)</strong>.</li>
 <li>On step 3, <strong>Build a set</strong>, press <strong>Make pictures</strong>. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.</li>
-<li>Press <strong>Keep</strong> under each picture that looks right and <strong>Reject</strong> under the rest.</li>
+<li>Tick the checkmark on each picture that looks right (or click the picture). Leave the rest unticked; they are not used.</li>
 <li>Press <strong>Next round</strong>. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.</li>
-<li>Press <strong>This is it</strong>. The references and the kept pictures become the training set, and the usual steps follow: step 4 <strong>Check photos</strong>, step 5 training and step 6 the result.</li>
+<li>Press <strong>This is it</strong> (next to <strong>Make pictures</strong>). <strong>Next</strong> stays unavailable until you do. The references and the kept pictures become the training set, and the usual steps follow: step 4 <strong>Check photos</strong>, step 5 training and step 6 the result.</li>
 </ol>
 <p>Good to know:</p>
 <ul>
-<li>Simple mode draws 24 pictures per round with medium variation. Expert mode sets <strong>Pictures per round</strong> (8 to 64), <strong>Variation strength</strong> (0.25 to 0.90; higher moves further from the source), <strong>Steps</strong> (4 to 16), and lets you edit the <strong>Descriptions</strong> after the first round.</li>
+<li>Simple mode draws 24 pictures per round with medium variation. Expert mode shows <strong>Pictures per round</strong> (8 to 64), <strong>Variation strength</strong> (0.25 to 0.90; higher moves further from the source) and <strong>Steps</strong> (4 to 16) in the Expert settings panel on the right, under <strong>Build a set</strong>; there you can also edit the <strong>Descriptions</strong> after the first round.</li>
 <li>The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.</li>
-<li>Pictures marked <strong>≈ similar</strong> look almost the same as another one; keep only one of them.</li>
-<li>The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. <strong>Kept … · set … of …</strong> shows where you are.</li>
+<li>Pictures marked <strong>≈ very similar to another</strong> look almost the same as another one; keep only one of them.</li>
+<li>The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. <strong>Kept … of …. Training needs …</strong> above the pictures shows how many you have kept.</li>
 <li>Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.</li>
 <li>The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.</li>
 <li><strong>Start over</strong> forgets the rounds and keeps the references.</li>
