@@ -15,12 +15,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, SIMPLE_RANGE
+from voxprint_forge.lora.refset import REF_RANGE
 
 SIMPLE_MIN, SIMPLE_MAX = SIMPLE_RANGE
 PHOTO_SUFFIXES = EXTENSIONS
 KINDS = ("person", "object", "style")
+SOURCES = ("photos", "refs")
+REF_MIN, REF_MAX = REF_RANGE
 __all__ = ["EXPERT_CAP", "EXPERT_FLOOR", "SIMPLE_MAX", "SIMPLE_MIN", "Check", "Draft", "Prepared"]
-STEPS = ("photos", "subject", "prepare", "train", "result")
+STEPS = ("photos", "subject", "refset", "prepare", "train", "result")
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,8 @@ class Draft:
     trained: bool = False
     checkpoint: int | None = None
     extend_from: Path | None = None
+    source: str = "photos"
+    approved: list[Path] = field(default_factory=list)
 
     def add_photos(self, paths: list[Path]) -> int:
         """Add image files (folders are expanded). Returns how many were new."""
@@ -84,6 +89,7 @@ class Draft:
         if added:
             self.prepared = None
             self.trained = False
+            self.approved = []
         return added
 
     def remove_photo(self, path: Path) -> None:
@@ -91,6 +97,21 @@ class Draft:
         self.photos = [item for item in self.photos if item != path]
         self.prepared = None
         self.trained = False
+        self.approved = []
+
+    def set_source(self, source: str) -> None:
+        """``photos``: train on the user's own 10-30 photos. ``refs``: build the set from 1-10 references."""
+        if source not in SOURCES:
+            raise ValueError(f"unknown source {source!r}")
+        if source != self.source:
+            self.source = source
+            self.approved = []
+            self.prepared = None
+            self.trained = False
+
+    def training_photos(self) -> list[Path]:
+        """What ``lora prepare`` gets: the approved set when building from references, else the photos."""
+        return list(self.approved) if self.source == "refs" else list(self.photos)
 
     def set_names(self, name: str, stage_name: str) -> None:
         """Store the names and pre-fill the trigger word unless the user edited it."""
@@ -117,8 +138,14 @@ class Draft:
         return "verbal" if self.verbal else "file"
 
     def check_photos(self) -> Check:
-        """Photo count and kind (step 1)."""
+        """Photo count and kind (step 1). References: 1 to 10 in both modes."""
         count = len(self.photos)
+        if self.source == "refs":
+            if not REF_MIN <= count <= REF_MAX:
+                return Check(False, "forge.app.err.refs_count", {"low": REF_MIN, "high": REF_MAX})
+            if self.kind not in KINDS:
+                return Check(False, "forge.app.err.no_kind")
+            return Check(True)
         if self.expert:
             if count < EXPERT_FLOOR:
                 return Check(False, "lora.err.below_floor")
@@ -155,6 +182,14 @@ class Draft:
             return Check(False, "lora.err.no_rights")
         return Check(True)
 
+    def check_refset(self) -> Check:
+        """The set built from references is approved ("This is it"). Own photos skip this step."""
+        if self.source != "refs":
+            return Check(True)
+        if not self.approved:
+            return Check(False, "forge.app.err.refset_not_done")
+        return Check(True)
+
     def check_prepare(self) -> Check:
         """The engine's preparation result (step 3). A safety block is final."""
         if self.prepared is None:
@@ -176,6 +211,7 @@ class Draft:
         validators = {
             "photos": self.check_photos,
             "subject": self.check_subject,
+            "refset": self.check_refset,
             "prepare": self.check_prepare,
             "train": self.check_train,
             "result": lambda: Check(True),

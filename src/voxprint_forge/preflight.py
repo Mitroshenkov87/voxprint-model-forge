@@ -321,3 +321,130 @@ def run_preflight(
     if problems:
         raise StageError("; ".join(problems), code="preflight", report=report)
     return report
+
+
+# ----- Build a set from references (non-VM) --------------------------------------------------------
+REFSET_DIFFUSERS = ((0, 37, 1), (0, 38, 0))
+REFSET_MIN_VRAM_GB = 16
+REFSET_MIN_RAM_GB = 32
+REFSET_MIN_DISK_GB = 2.0
+
+
+def _version_tuple(text: str) -> tuple[int, ...]:
+    parts = []
+    for piece in text.split(".")[:3]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def _probe_cuda() -> int | None:
+    """Total memory of GPU 0 in bytes, or ``None`` without CUDA."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    return int(torch.cuda.get_device_properties(0).total_memory)
+
+
+def _mivolo_imports(python: str) -> bool:
+    import subprocess
+
+    try:
+        done = subprocess.run([python, "-c", "import mivolo, timm, cv2"], capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
+
+
+def refset_preflight(
+    *,
+    home: Path | None = None,
+    diffusers_version: Callable[[], str | None] | None = None,
+    img2img: Callable[[], bool] | None = None,
+    installed: Callable[[str], bool] | None = None,
+    vram: Callable[[], int | None] | None = None,
+    ram: Callable[[], int] | None = None,
+    mivolo: Callable[[str], bool] | None = None,
+) -> dict[str, object]:
+    """Seconds-long checks for "Build a set from references" on this computer (no GPU work, no downloads).
+
+    diffusers in [0.37.1, 0.38) with ``ZImageImg2ImgPipeline``; Z-Image-Turbo, the judge VLM, MiVOLO and the
+    face detector installed; the MiVOLO worker env imports; CUDA with at least 16 GB; at least 32 GB RAM
+    (model CPU offload); disk for the rounds. DINOv2 is reported but optional (no near-duplicate marks).
+    """
+    from importlib import metadata
+
+    from voxprint_forge.lora import refset
+    from voxprint_forge.lora.backends import (
+        ESTIMATOR_ID,
+        FACE_DETECTOR_ID,
+        JUDGE_ID,
+        installed_dir,
+        mivolo_python,
+        model_dir,
+    )
+
+    def version() -> str | None:
+        try:
+            return metadata.version("diffusers")
+        except metadata.PackageNotFoundError:
+            return None
+
+    def has_img2img() -> bool:
+        try:
+            return importlib.util.find_spec("diffusers.pipelines.z_image.pipeline_z_image_img2img") is not None
+        except (ImportError, ValueError):
+            return False
+
+    present = installed or (lambda mdl_id: installed_dir(mdl_id) is not None)
+    checks: list[dict[str, object]] = []
+    problems: list[str] = []
+
+    def add(name: str, ok: bool, detail: str, fix: str, *, required: bool = True) -> None:
+        checks.append({**_check(name, ok, detail, fix), "required": required})
+        if required and not ok:
+            problems.append(detail)
+
+    found = (diffusers_version or version)()
+    low, high = REFSET_DIFFUSERS
+    ok = found is not None and low <= _version_tuple(found) < high
+    add("diffusers", ok, f"diffusers {found or 'missing'} (need >=0.37.1,<0.38)",
+        'Install the app extras: pip install "diffusers>=0.37.1,<0.38".')
+    pipeline = ok and (img2img or has_img2img)()
+    add("img2img", pipeline, f"ZImageImg2ImgPipeline {'found' if pipeline else 'missing'}",
+        "Reinstall diffusers 0.37.1.")
+    for mdl_id, label in ((refset.TEACHER_ID, "Z-Image-Turbo"), (JUDGE_ID, "judge VLM")):
+        ready = present(mdl_id)
+        add(f"model:{mdl_id}", ready, f"{label} ({mdl_id}) {'installed' if ready else 'missing'}",
+            "Install it in Manage models.")
+    detector = model_dir(FACE_DETECTOR_ID) / "face_detection_yunet_2023mar.onnx"
+    estimator_ok = (installed(ESTIMATOR_ID) if installed else model_dir(ESTIMATOR_ID).is_dir()) and (
+        installed(FACE_DETECTOR_ID) if installed else detector.is_file())
+    add(f"model:{ESTIMATOR_ID}", estimator_ok,
+        f"estimator and face detector {'installed' if estimator_ok else 'missing'}",
+        "Install them in Manage models.")
+    python = mivolo_python()
+    worker = (mivolo or _mivolo_imports)(python)
+    add("mivolo-env", worker, f"estimator worker env {'imports' if worker else 'does not import'}",
+        "Repair the venv-mivolo env (installer/requirements-mivolo.txt).")
+    dino = present(refset.EMBEDDER_ID)
+    add(f"model:{refset.EMBEDDER_ID}", dino, f"DINOv2-base {'installed' if dino else 'missing'} (near-duplicate marks)",
+        "Install dinov2-base in Manage models; without it rounds show no near-duplicate marks.", required=False)
+    total = (vram or _probe_cuda)()
+    add("cuda", total is not None and total >= (REFSET_MIN_VRAM_GB - 0.5) * 2**30,
+        f"CUDA GPU {gib(total):.0f} GB" if total else "no CUDA GPU",
+        f"A CUDA GPU with at least {REFSET_MIN_VRAM_GB} GB is needed.")
+    memory = (ram or ram_bytes)()
+    add("ram", memory >= (REFSET_MIN_RAM_GB - 1) * 2**30, f"{gib(memory):.0f} GB RAM",
+        f"At least {REFSET_MIN_RAM_GB} GB RAM: the models wait in RAM between stages.")
+    where = home or Path.home()
+    try:
+        free = disk.free_bytes(where)
+    except OSError:
+        free = 0
+    add("disk", free >= REFSET_MIN_DISK_GB * 2**30, f"{gib(free):.1f} GiB free",
+        f"Free at least {REFSET_MIN_DISK_GB:.0f} GiB for the rounds.")
+    return {"ok": not problems, "problems": problems, "checks": checks}

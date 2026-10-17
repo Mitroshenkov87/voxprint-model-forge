@@ -97,14 +97,14 @@ def test_shell_parts_this_app_extends_exist(make_app) -> None:
 
 
 @pytest.mark.parametrize(("lang", "count", "reset"), [
-    ("en", "Step 1 of 5", "Reset to the “Balanced” preset"),
-    ("ru", "Шаг 1 из 5", "Сбросить к пресету «Сбалансированно»"),
+    ("en", "Step 1 of 6", "Reset to the “Balanced” preset"),
+    ("ru", "Шаг 1 из 6", "Сбросить к пресету «Сбалансированно»"),
 ])
 def test_review_wording(make_app, lang, count, reset) -> None:
     make_app()
     set_language(lang)
     try:
-        assert tr("wizard.step_count", current=1, total=5) == count
+        assert tr("wizard.step_count", current=1, total=len(STEPS)) == count
         name = "Balanced" if lang == "en" else "Сбалансированно"
         assert tr("simple.preset.reset", name=name) == reset
     finally:
@@ -302,7 +302,7 @@ def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path,
         for key in (f"lora.step.{step}.title", f"lora.step.{step}.desc", f"lora.step.{step}.help"):
             assert tr(key) != key, key
         if app.layout.sections.step.step_id != step:
-            if step == "prepare":
+            if step == "refset":
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)
@@ -490,7 +490,7 @@ def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_pa
     app.repaint()
     for step in STEPS:
         if app.layout.sections.step.step_id != step:
-            if step == "prepare":
+            if step == "refset":
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)
@@ -561,7 +561,7 @@ def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
     problems = []
     for step in STEPS:
         if app.layout.sections.step.step_id != step:
-            if step == "prepare":
+            if step == "refset":
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)

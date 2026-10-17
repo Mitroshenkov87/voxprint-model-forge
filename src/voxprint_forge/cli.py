@@ -82,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
         "imports. Default: all.",
     )
     preflight.add_argument("--min-free-gb", type=float, default=150.0, help="Disk needed for --vm. Default: 150.")
+    preflight.add_argument(
+        "--refset",
+        action="store_true",
+        help="Check this computer for Build a set from references: diffusers img2img, Z-Image-Turbo, the safety "
+        "check models and env, DINOv2, CUDA 16 GB+, 32 GB RAM and disk. Exit 6 on a missing requirement.",
+    )
     sub.add_parser("status", help="Read status.json and report stalled or failed work.")
     accounts = sub.add_parser("accounts", help="Store Hugging Face, Kaggle, and Drive credentials in the OS keyring.")
     account_sub = accounts.add_subparsers(dest="accounts_command", required=True)
@@ -339,6 +345,10 @@ def _release_source(root: Path, plan_path: Path, forge_out: Path, source_id: str
 
 
 def _dispatch(args: argparse.Namespace) -> object:
+    if args.command == "preflight" and getattr(args, "refset", False):
+        from voxprint_forge.preflight import refset_preflight
+
+        return refset_preflight()
     root = _repo_root(args.root)
     if args.command == "accounts":
         return execute_accounts(args)

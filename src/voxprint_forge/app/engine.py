@@ -109,12 +109,33 @@ def commands() -> frozenset[str]:
 def prepare_args(draft: Draft, project: Path) -> list[str]:
     """``lora prepare`` for the photos, the kind and the subject (steps 1-3)."""
     args = ["--json", "lora", "prepare", "--project", str(project), "--mode", "expert" if draft.expert else "simple"]
-    if draft.expert and not 10 <= len(draft.photos) <= 30:
+    photos = draft.training_photos()
+    if draft.expert and not 10 <= len(photos) <= 30:
         args.append("--allow-count-outside-range")
-    for photo in draft.photos:
+    for photo in photos:
         args += ["--photo", str(photo)]
     args += ["--kind", draft.kind, "--crop", draft.crop]
     args += _subject_args(draft)
+    return args
+
+
+def refset_round_args(draft: Draft, project: Path, *, count: int, strength: float, steps: int) -> list[str]:
+    """``lora refset round``: the references, the subject and the round settings."""
+    args = ["--json", "lora", "refset", "round", "--project", str(project)]
+    for ref in draft.photos:
+        args += ["--ref", str(ref)]
+    args += ["--kind", draft.kind]
+    args += _subject_args(draft)
+    args += ["--candidates", str(int(count)), "--strength", f"{float(strength):.2f}", "--steps", str(int(steps))]
+    return args
+
+
+def refset_finish_args(draft: Draft, project: Path, base: str) -> list[str]:
+    """``lora refset finish``: "This is it"."""
+    args = ["--json", "lora", "refset", "finish", "--project", str(project)]
+    args += ["--mode", "expert" if draft.expert else "simple"]
+    if base:
+        args += ["--base", base]
     return args
 
 
