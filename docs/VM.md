@@ -126,6 +126,8 @@ The card template is `templates/model_card.md.jinja`. It starts with Hub YAML (`
 
 `bash scripts/vm_run_diffusion_int4.sh` is the rental entry. It clones Wan2.2 at `1ea34ff48f87168174e12956e200b1d908b1c5ff`, city96/ComfyUI-GGUF at `6ea2651e7df66d7585f6ffee804b20e92fb38b8a`, and llama.cpp at `c8c07d658a6cefc5a50cfdf6be7d726503612303`, applies `ComfyUI-GGUF/tools/lcpp.patch`, and builds `llama-quantize` for architectures `80;90`. It creates `venv-wan` and exports `FORGE_WAN_REPO`, `FORGE_WAN_PYTHON`, `FORGE_COMFY_GGUF`, `FORGE_LLAMA_SRC`, and `FORGE_LLAMA_BIN`. `forge diffusion-int4` then converts Wan2.2-T2V-A14B to GGUF and FP8. Qwen-Image-Edit INT4 is removed.
 
+`FORGE_PYTHON` is the forge interpreter. When it is unset, the live run creates `$FORGE_OUT/venv-forge` with Python 3.14 before the first disk-floor check and exports that interpreter as `FORGE_PYTHON`. The venv installs torch from the cu130 index when `nvidia-smi` reports driver 580 or newer, and from the cu128 index otherwise, then `safetensors`, `huggingface_hub>=0.26`, `gguf`, `jinja2>=3.1`, and an editable install of this checkout. A preset `FORGE_PYTHON` is used as-is and the venv is not created. `--dry-run` does not create it.
+
 `--dry-run` is a CPU smoke with tiny files. It does not download weights, clone those trees, or start CUDA. `FORGE_SKIP_WAN=1` omits the Wan clones and steps. `forge diffusion-int4 fetch --dest DIR` downloads the Wan experts after the Apache-2.0 licence check. `forge diffusion-int4 estimates` prints 190 minutes on both the A100 and the H100.
 
 ## Z-Image INT4

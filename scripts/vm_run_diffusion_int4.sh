@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # One resumable Wan 2.2 diffusion-int4 run for a fresh Ubuntu A100 or H100 80GB.
-# sm_80 is an A100. sm_90 is an H100. Torch wheels are cu128. llama.cpp is built for 80;90.
+# sm_80 is an A100. sm_90 is an H100. llama.cpp is built for 80;90.
+# The forge interpreter is FORGE_PYTHON. When that is unset, the live path
+# creates $FORGE_OUT/venv-forge (Python 3.14) before the first disk-floor check.
+# Torch comes from the cu130 index when the driver is 580 or newer, else cu128.
 # FORGE_HOST_KIND=local (default) keeps tokens in the process only.
 # FORGE_HOST_KIND=rented-vm logs in once and leaves the logins for the rental.
 # This script does not enable command tracing and does not unset tokens.
@@ -94,13 +97,67 @@ prompt_secret() {
   export "$name"
 }
 
-PY="${FORGE_PYTHON:-python3}"
-if ! command -v "$PY" >/dev/null 2>&1; then
-  PY=python
-fi
-
 disk_floor() {
   "$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" --forge-out "$FORGE_OUT" disk-floor --done-dir "$DONE_DIR" --path "$FORGE_OUT"
+}
+
+torch_index_for_driver() {
+  local driver="$1" major
+  major="${driver%%.*}"
+  major="${major//[^0-9]/}"
+  if [[ -n "$major" && "$major" -ge 580 ]]; then
+    printf '%s\n' "https://download.pytorch.org/whl/cu130"
+    return 0
+  fi
+  printf '%s\n' "https://download.pytorch.org/whl/cu128"
+}
+
+ensure_uv() {
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="${HOME}/.local/bin:${PATH}"
+  fi
+}
+
+# Live path only. --dry-run does not call this and does not create a venv.
+# An operator-supplied FORGE_PYTHON is used as-is. Otherwise every forge
+# command, including the first disk-floor, runs under venv-forge.
+ensure_forge_python() {
+  if [[ -n "${FORGE_PYTHON:-}" ]]; then
+    PY="$FORGE_PYTHON"
+    export FORGE_PYTHON
+    return 0
+  fi
+  ensure_uv
+  local driver index
+  driver="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1 || true)"
+  driver="${driver#"${driver%%[![:space:]]*}"}"
+  driver="${driver%"${driver##*[![:space:]]}"}"
+  index="$(torch_index_for_driver "$driver")"
+  export FORGE_TORCH_INDEX="$index"
+  VENV_FORGE="$FORGE_OUT/venv-forge"
+  if [[ ! -x "$VENV_FORGE/bin/python" ]]; then
+    uv python install 3.14
+    uv venv --python 3.14 "$VENV_FORGE"
+  fi
+  uv pip install --python "$VENV_FORGE" torch --index-url "$index"
+  uv pip install --python "$VENV_FORGE" \
+    "safetensors" \
+    "huggingface_hub>=0.26" \
+    "gguf" \
+    "jinja2>=3.1"
+  if [[ -f "$ROOT/vendor/voxprint_common-0.1.1-py3-none-any.whl" ]]; then
+    uv pip install --python "$VENV_FORGE" "$ROOT/vendor/voxprint_common-0.1.1-py3-none-any.whl"
+  fi
+  uv pip install --python "$VENV_FORGE" -e "$ROOT" --extra-index-url "$index"
+  export FORGE_PYTHON="$VENV_FORGE/bin/python"
+  export VENV="$VENV_FORGE"
+  PY="$FORGE_PYTHON"
+  if [[ ! -x "$PY" ]]; then
+    printf 'forge venv python is missing at %s\n' "$PY" >&2
+    exit 2
+  fi
 }
 
 # shellcheck source=scripts/vm_logins.sh
@@ -108,6 +165,10 @@ source "$ROOT/scripts/vm_logins.sh"
 
 if [[ "$DRY" -eq 1 ]]; then
   printf 'dry-run: skip CUDA, clones, and venvs\n'
+  PY="${FORGE_PYTHON:-python3}"
+  if ! command -v "$PY" >/dev/null 2>&1; then
+    PY=python
+  fi
   "$PY" -m voxprint_forge.diffusion.int4 --root "$ROOT" estimates
   disk_floor
   args=(--json --root "$ROOT" --forge-out "$FORGE_OUT" run --dry-run --svd-rank "$SVD_RANK" --done-dir "$DONE_DIR" --watch "$WATCH")
@@ -164,13 +225,9 @@ for tool in git cmake ninja; do
   fi
 done
 printf 'preflight nvidia-smi nvcc git cmake ninja ok\n'
+ensure_forge_python
 disk_floor
-
-export PATH="${HOME}/.local/bin:${PATH}"
-if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="${HOME}/.local/bin:${PATH}"
-fi
+ensure_uv
 
 SRC="$FORGE_OUT/src"
 mkdir -p "$SRC"

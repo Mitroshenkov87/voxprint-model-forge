@@ -279,6 +279,158 @@ def test_script_dry_run(tmp_path: Path) -> None:
     assert "smoke_laptop" not in text
 
 
+def _stub(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the rental script is bash")
+def test_live_path_builds_forge_venv_and_never_uses_bare_python(tmp_path: Path) -> None:
+    """A fresh VM installs the forge venv before disk-floor. Bare python3 is not used."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    bare = tmp_path / "bare-python"
+    py_src = tmp_path / "py-stub.sh"
+    _stub(
+        py_src,
+        "#!/bin/bash\n"
+        'printf "%s %s\\n" "$0" "$*" >> "$PY_LOG"\n'
+        'dest=""\n'
+        'prev=""\n'
+        'for arg in "$@"; do\n'
+        '  if [[ "$prev" == "--dest" ]]; then dest="$arg"; fi\n'
+        '  prev="$arg"\n'
+        "done\n"
+        'if [[ -n "$dest" ]]; then\n'
+        '  mkdir -p "$dest"\n'
+        "  printf 'export FORGE_WAN_CKPT=\\n' > \"$dest/exports.sh\"\n"
+        "fi\n"
+        "exit 0\n",
+    )
+    _stub(
+        bin_dir / "python3",
+        "#!/bin/bash\nprintf 'bare\\n' >> \"$BARE_MARKER\"\nexit 9\n",
+    )
+    _stub(bin_dir / "python", "#!/bin/bash\nprintf 'bare\\n' >> \"$BARE_MARKER\"\nexit 9\n")
+    _stub(
+        bin_dir / "nvidia-smi",
+        "#!/bin/bash\n"
+        'if [[ "$*" == *driver_version* ]]; then printf "%s\\n" "$FORGE_TEST_DRIVER"; exit 0; fi\n'
+        'if [[ "$*" == *compute_cap* ]]; then printf "%s\\n" "NVIDIA A100-SXM4-80GB, 8.0"; exit 0; fi\n'
+        "exit 0\n",
+    )
+    for name in ("nvcc", "cmake", "ninja"):
+        _stub(bin_dir / name, "#!/bin/bash\nexit 0\n")
+    _stub(
+        bin_dir / "git",
+        "#!/bin/bash\n"
+        'if [[ "$1" == "clone" ]]; then\n'
+        '  dest="${@: -1}"\n'
+        '  mkdir -p "$dest/.git"\n'
+        '  printf "\\n" > "$dest/requirements.txt"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+    )
+    _stub(
+        bin_dir / "uv",
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$UV_LOG"\n'
+        'if [[ "$1" == "venv" ]]; then\n'
+        '  dest="${@: -1}"\n'
+        '  mkdir -p "$dest/bin"\n'
+        '  cp "$PY_STUB_SRC" "$dest/bin/python"\n'
+        '  chmod +x "$dest/bin/python"\n'
+        "fi\n"
+        'if [[ "$1" == "pip" && "$2" == "install" ]]; then\n'
+        '  py=""\n'
+        '  prev=""\n'
+        '  for arg in "$@"; do\n'
+        '    if [[ "$prev" == "--python" ]]; then py="$arg"; fi\n'
+        '    prev="$arg"\n'
+        "  done\n"
+        '  if [[ "$py" == *venv-forge/bin/python ]]; then\n'
+        '    venv="$(dirname "$(dirname "$py")")"\n'
+        '  elif [[ "$py" == *venv-forge ]]; then\n'
+        '    venv="$py"\n'
+        "  else\n"
+        '    venv=""\n'
+        "  fi\n"
+        '  if [[ -n "$venv" ]]; then\n'
+        '    printf "%s\\n" "$*" >> "$venv/installed-packages.txt"\n'
+        "  fi\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    def run_live(driver: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+        home = tmp_path / f"home-{driver.split('.', 1)[0]}"
+        forge_out = tmp_path / f"forge-{driver.split('.', 1)[0]}"
+        uv_log = tmp_path / f"uv-{driver.split('.', 1)[0]}.log"
+        py_log = tmp_path / f"py-{driver.split('.', 1)[0]}.log"
+        home.mkdir()
+        env = os.environ.copy()
+        env.pop("FORGE_PYTHON", None)
+        env.update(
+            {
+                "HOME": str(home),
+                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                "FORGE_OUT": str(forge_out),
+                "FORGE_DONE_DIR": str(tmp_path / f"done-{driver.split('.', 1)[0]}"),
+                "FORGE_WATCH": str(tmp_path / f"watch-{driver.split('.', 1)[0]}.json"),
+                "FORGE_HOST_KIND": "local",
+                "HF_TOKEN": "test-token",
+                "FORGE_TEST_DRIVER": driver,
+                "UV_LOG": str(uv_log),
+                "PY_LOG": str(py_log),
+                "PY_STUB_SRC": str(py_src),
+                "BARE_MARKER": str(bare),
+                "PYTHONPATH": "",
+            }
+        )
+        done = subprocess.run(
+            ["bash", str(SCRIPT)],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done, forge_out
+
+    low, forge_low = run_live("535.129.03")
+    assert low.returncode == 0, low.stdout + low.stderr
+    assert not bare.exists()
+    py_log = (tmp_path / "py-535.log").read_text(encoding="utf-8")
+    assert "disk-floor" in py_log
+    assert "python3" not in py_log
+    assert all("venv-forge/bin/python" in line for line in py_log.splitlines())
+    installed = (forge_low / "venv-forge" / "installed-packages.txt").read_text(encoding="utf-8")
+    for needle in (
+        "torch",
+        "https://download.pytorch.org/whl/cu128",
+        "safetensors",
+        "huggingface_hub>=0.26",
+        "gguf",
+        "jinja2>=3.1",
+        "-e",
+        str(ROOT),
+    ):
+        assert needle in installed
+    assert "cu130" not in installed
+    assert (forge_low / "venv-forge" / "bin" / "python").is_file()
+
+    high, forge_high = run_live("580.65.06")
+    assert high.returncode == 0, high.stdout + high.stderr
+    installed_high = (forge_high / "venv-forge" / "installed-packages.txt").read_text(encoding="utf-8")
+    assert "https://download.pytorch.org/whl/cu130" in installed_high
+    assert "https://download.pytorch.org/whl/cu128" not in installed_high
+    vm = (ROOT / "docs" / "VM.md").read_text(encoding="utf-8")
+    assert "FORGE_PYTHON" in vm
+    assert "venv-forge" in vm
+    assert "580" in vm
+
+
 def test_forge_help_lists_diffusion_int4() -> None:
     done = subprocess.run(
         [sys.executable, "-m", "voxprint_forge", "--help"],
