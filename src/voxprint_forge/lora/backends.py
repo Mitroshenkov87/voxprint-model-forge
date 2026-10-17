@@ -15,6 +15,8 @@ from typing import Any
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
 
 JUDGE_ID = "qwen3-vl-4b-instruct"
+# Folder names installed before the #47 rename. Same weights; the new name wins when both exist.
+LEGACY_IDS: dict[str, tuple[str, ...]] = {JUDGE_ID: ("qwen3-vl-4b",)}
 ESTIMATOR_ID = "mivolo-v2"
 FACE_DETECTOR_ID = "yunet-2023mar"
 FACE_SCORE = 0.6
@@ -56,6 +58,15 @@ def model_dir(mdl_id: str) -> Path:
     from voxprint_common.paths import models_dir
 
     return models_dir() / "model-forge" / mdl_id
+
+
+def installed_dir(mdl_id: str) -> Path | None:
+    """The installed folder for ``mdl_id``: the current name first, then any legacy name; ``None`` if neither."""
+    for name in (mdl_id, *LEGACY_IDS.get(mdl_id, ())):
+        folder = model_dir(name)
+        if folder.is_dir():
+            return folder
+    return None
 
 
 def parse_verdict(raw: str) -> Verdict:
@@ -201,8 +212,8 @@ def load_gate(device: str = "cuda") -> Gate:
     """The installed gate. A missing model or library leaves that part ``None`` (the run is then blocked)."""
     judge = estimator = None
     try:
-        folder = model_dir(JUDGE_ID)
-        if folder.is_dir():
+        folder = installed_dir(JUDGE_ID)
+        if folder is not None:
             judge = VlmJudge(folder, device)
     except Exception as exc:  # noqa: BLE001 - an unloadable judge means no gate
         _report("judge", exc)
