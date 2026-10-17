@@ -310,6 +310,13 @@ def _prepare_base(
             shutil.rmtree(tree)
         return f16, record
     if fmt == "gguf":
+        local = Path(job.f16_file)
+        if local.is_absolute():
+            # A reference built on this machine (GEMMA4-REQUANT): not downloaded and never deleted.
+            if not local.is_file():
+                raise StageError(f"{job.id} reference {local.name} is missing", code="kl_download")
+            _check_sha256(local, job.sha256, f"{job.id} reference")
+            return local, record
         fetch(job.bf16_repo, job.bf16_revision, source, [job.f16_file])
         path = select_quant_file(source, job.f16_file, "F16")
         _check_sha256(path, job.sha256, f"{job.id} reference")

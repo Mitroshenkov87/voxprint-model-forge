@@ -54,3 +54,10 @@ Our `mode = "ablate"` quants were made from the BF16 after Forge's refusal-direc
 llama-perplexity stores the base log-probs floored at the top logit minus 16. When the base PPL read back in a KL run differs from the base run by more than 2%, many tokens sit below that floor and the corpus is far outside what the model predicts. The summary then sets `ppl_valid = false`, prints PPL as n/a and says to compare by KL, top-1 and delta-p. Gemma 4 31B instruct does this on raw prose at context 512 (L2: base 6827, read back 3867). `forge kl --render <results folder>` rewrites an existing summary with these fields without a GPU.
 
 The pinned L2 GGUF matches google/gemma-4-31B-it byte for byte in the tensors checked, including layer 59 `attn_output` and `ffn_down`, which the author's ablation script changes. The ablated weights are only in the repo's safetensors folder.
+
+## Local reference
+
+A `gguf` job whose `f16_file` is an absolute path uses that file in place: it is not downloaded and not deleted
+afterwards. `scripts/vm_gemma4_requant.sh` (GEMMA4-REQUANT) uses this to score its re-quantised tiers against the F16
+it converted from the author's safetensors. Its other checks (tensor diff against stock, private refusal probe,
+verdict) are in `python -m voxprint_forge.requant_check`.
