@@ -151,11 +151,32 @@ def test_progress_shows_the_engine_sentence(make_app, tmp_path) -> None:
     assert tr("lora.progress.eta", minutes=2) in text
     assert not _next(app).isEnabled()
     app.pause()
-    assert runner.interrupted == 1
+    assert (app.project / "PAUSE").is_file()
     runner.release(Outcome(True, {"state": "paused"}))
     assert app.paused
     app.train()
-    assert "--resume" in runner.calls[-1]
+    assert "--resume" in runner.calls[-1] and runner.pause_seen_at_start[-1] is False
+
+
+def test_a_leftover_pause_file_is_removed_before_start(make_app, tmp_path) -> None:
+    photos = make_photos(tmp_path / "p", 12)
+    runner = _runner(photos)
+    app = make_app(runner)
+    _walk_to(app, "train", photos)
+    (app.project / "PAUSE").write_text("")
+    app.train()
+    assert runner.pause_seen_at_start[-1] is False
+
+
+def test_stop_ends_the_process_and_leaves_no_pause_file(make_app, tmp_path) -> None:
+    photos = make_photos(tmp_path / "p", 12)
+    runner = _runner(photos)
+    app = make_app(runner)
+    _walk_to(app, "train", photos)
+    runner.hold = True
+    app.train()
+    app.stop()
+    assert runner.stopped == 1 and not (app.project / "PAUSE").exists() and not app.paused
 
 
 def test_a_safety_block_cannot_be_bypassed(make_app, tmp_path) -> None:
@@ -270,3 +291,13 @@ def test_entry_point_builds_the_window(qapp, monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(QtWidgets.QApplication, "exec", lambda _self: 0)
     assert entry.main([]) == 0
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_open_guide_opens_the_offline_page_in_the_app_language(make_app, lang) -> None:
+    app = make_app(lang=lang)
+    opened = []
+    app._open_path = opened.append
+    app.open_guide()
+    assert opened and opened[0].name == f"{lang}.html" and opened[0].is_file()
+    assert 'src="http' not in opened[0].read_text(encoding="utf-8")

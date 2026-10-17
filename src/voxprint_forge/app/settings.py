@@ -12,6 +12,8 @@ from __future__ import annotations
 from voxprint_common.ui.presets import PresetFile, parse_presets
 from voxprint_common.ui.settings import Choice, Settings, SettingSpec, SettingType
 
+from voxprint_forge.lora import captioner
+
 SECTION = "train"
 WIZARD = "lora"
 PRESET_GROUP = "lora.preset"
@@ -36,7 +38,7 @@ CONFIG_FIELD = {
     "lora.preview_every": "preview_every",
     "lora.mix_old": "replay",
 }
-CAPTION_MODELS = ("qwen3-vl-4b", "florence2-large")
+CAPTION_MODELS = (captioner.DEFAULT, captioner.FALLBACK)
 # The v0.2.5 Expert panel shows a FLOAT with one decimal, so small numbers are lists.
 FLOAT_CHOICES = {
     "lora.lr": (1e-5, 2e-5, 5e-5, 8e-5, 1e-4, 2e-4, 3e-4, 5e-4),

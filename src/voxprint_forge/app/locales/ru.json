@@ -32,7 +32,7 @@
   "forge.app.expert.caption_mode.short": "Короткие",
   "forge.app.expert.caption_model": "Модель для описаний",
   "forge.app.expert.caption_model.florence2-large": "Florence-2",
-  "forge.app.expert.caption_model.qwen3-vl-4b": "Qwen3-VL 4B",
+  "forge.app.expert.caption_model.qwen3-vl-4b-instruct": "Qwen3-VL 4B",
   "forge.app.expert.grad_accum": "Накопление градиента",
   "forge.app.expert.grad_accum.tip": "Складывает несколько малых шагов в один. Как больший пакет, но с меньшим расходом памяти.",
   "forge.app.expert.grad_checkpointing": "Контрольные точки градиента",

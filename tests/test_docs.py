@@ -46,3 +46,17 @@ def test_install_names_stay_in_the_build_spec() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert readme.startswith("# voxprint-model-forge\n")
     assert "## Install names" in readme
+
+
+def test_the_offline_guide_matches_the_manual() -> None:
+    """``scripts/build_guide.py`` output is committed and current, so the wheel and setup carry it."""
+    import importlib.util
+
+    import pytest
+
+    pytest.importorskip("markdown")
+    path = Path(__file__).resolve().parents[1] / "scripts" / "build_guide.py"
+    spec = importlib.util.spec_from_file_location("build_guide", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.stale() == []

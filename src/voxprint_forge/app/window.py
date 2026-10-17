@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from voxprint_common.i18n import add_catalogs, tr
+from voxprint_common.i18n import add_catalogs, get_language, tr
 from voxprint_common.paths import state_dir
 from voxprint_common.ui.expert import ExpertMode
 from voxprint_common.ui.sections import BodyKind, Section, SectionSet, Wizard, WizardStep
@@ -893,7 +893,7 @@ class ForgeApp:
             return
         args = engine.prepare_args(self.draft, self.project)
         if self.draft.expert:
-            args += ["--caption-model", str(self.expert_values().get("lora.caption_model", "qwen3-vl-4b"))]
+            args += ["--caption-model", str(self.expert_values().get("lora.caption_model", "qwen3-vl-4b-instruct"))]
 
         def done(outcome: engine.Outcome) -> None:
             if outcome.ok:
@@ -948,18 +948,23 @@ class ForgeApp:
                 self.paused = False
             elif outcome.ok and result.get("state") == "paused":
                 self.paused = True
+            engine.clear_pause(self.project)
 
+        engine.clear_pause(self.project)
         self._run(self._train_args(resume=resume), done)
 
     def pause(self) -> None:
-        """Pause: the engine saves a checkpoint; Continue picks up from it."""
+        """Pause: create ``PAUSE``; the engine saves a version and exits. Continue resumes from it."""
+        if not self.runner.busy:  # type: ignore[attr-defined]
+            return
         self.paused = True
-        self.runner.interrupt()  # type: ignore[attr-defined]
+        engine.request_pause(self.project)
 
     def stop(self) -> None:
-        """Stop now and keep the best version so far."""
+        """Stop now and keep the versions saved so far."""
         if self.runner.busy:  # type: ignore[attr-defined]
-            self.runner.interrupt()  # type: ignore[attr-defined]
+            self.runner.stop()  # type: ignore[attr-defined]
+        engine.clear_pause(self.project)
         self.paused = False
         if self._checkpoints():
             self.draft.trained = True
@@ -1053,8 +1058,11 @@ class ForgeApp:
         self.repaint()
 
     def open_guide(self) -> None:
-        """Open the step-by-step user guide shipped with the app."""
-        guide = Path(__file__).resolve().parent / "guide" / "index.html"
+        """Open the offline user guide shipped with the app, in the app's language."""
+        folder = Path(__file__).resolve().parent / "guide"
+        guide = folder / f"{get_language()}.html"
+        if not guide.is_file():
+            guide = folder / "index.html"
         if guide.is_file():
             self._open_path(guide)
         else:
