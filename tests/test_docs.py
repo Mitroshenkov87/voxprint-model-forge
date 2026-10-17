@@ -42,7 +42,7 @@ def test_install_names_stay_in_the_build_spec() -> None:
     assert spec["project"]["name"] == "voxprint-forge"
     assert spec["project"]["scripts"]["voxprint-forge-cli"] == "voxprint_forge.cli:main"
     assert spec["project"]["scripts"]["forge"] == "voxprint_forge.cli:main"
-    assert spec["project"]["gui-scripts"]["voxprint-model-forge"] == "voxprint_forge.gui.__main__:main"
+    assert spec["project"]["gui-scripts"]["voxprint-model-forge"] == "voxprint_forge.app.__main__:main"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert readme.startswith("# voxprint-model-forge\n")
     assert "## Install names" in readme
