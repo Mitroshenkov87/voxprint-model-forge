@@ -21,7 +21,9 @@ def main(argv: list[str]) -> int:
     import torch
     from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-    dtype = torch.float16 if device == "cuda" else torch.float32
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        device = "cpu"  # the Windows installer gives this env a CPU-only torch
+    dtype = torch.float16 if device.startswith("cuda") else torch.float32
     model = AutoModelForImageClassification.from_pretrained(folder, trust_remote_code=True, torch_dtype=dtype)
     model = model.to(device).eval()
     processor = AutoImageProcessor.from_pretrained(folder, trust_remote_code=True)
