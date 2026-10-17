@@ -125,8 +125,26 @@ not required to hold half of that module on its own.
 
 | VRAM | Default | Fallback |
 | --- | --- | --- |
-| 16 GB | BF16, text encoder offloaded | `c-dq` (FP8 storage, BF16 compute) for VRAM-tight cards, pending the ID-TURBO SFace result |
+| 16 GB | BF16, text encoder offloaded | `c-dq` (FP8 storage, BF16 compute) for cards under 16 GB, cleared by inference (see below) |
 | 24 GB | BF16, text encoder offloaded | same |
+
+### c-dq clearance (Suite Lead, 2026-10-17)
+
+`c-dq` is cleared as the fallback for cards under 16 GB **by inference, not by
+a direct measurement**. No `c-dq` GPU arm is run for identity.
+
+- Evidence: ID-TURBO measured arm `c` (native FP8: FP8 E4M3 weights plus
+  dynamic per-tensor FP8 activations) against BF16 arm `a` on 64 scored
+  private-prompt images (4 sets x 16; ids only). Mean SFace: `c` 0.542,
+  `a` 0.531; paired difference +0.011. CLIP-T drop -0.0014.
+- Reasoning: `c-dq` uses the same FP8 weight file but computes in BF16, so
+  its error is a subset of arm `c`'s (weight rounding only, no activation
+  quantisation). On D1, same-seed LPIPS was 0.139 for `c-dq` against 0.217
+  for `c`.
+- If a later Windows or laptop check shows identity drift on `c-dq`, it is
+  measured directly then.
+- Still open for the D-row bar: the aesthetic score or KID, and the 20-pair
+  blind side-by-side.
 
 Native FP8 compute (D1 arms `c` and `d`) is dropped. Those arms stay in the
 plan with `enabled = false` so the earlier results can still be read.
