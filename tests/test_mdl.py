@@ -28,7 +28,9 @@ from voxprint_forge.mdl import (
     build_document,
     check_document,
     gb_to_gib,
+    retarget_mirrors,
     schema_path,
+    write_index,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,3 +287,111 @@ def test_int4_drive_fallback_drops_the_hub_mirror(tmp_path: Path, monkeypatch: p
     assert document["mirrors"][0]["ref"] == "Voxprint/model-forge/2026-10-11/voxprint-example"
     assert MANIFEST_NAME not in {item["path"] for item in document["files"]}
     assert (ROOT / "schemas" / "voxprint-model.schema.json").is_file()
+
+
+# id, repo, and sha256 are the model-index rows at dataset commit d2325ed.
+# That index records the descriptor commit as revision. These files store an
+# earlier weights commit on our mirror, and index build records that revision.
+DERIVATIVE_ROWS = [
+    {
+        "id": "gemma4-31b",
+        "repo": "Mitroshenkov87/voxprint-gemma4-31b",
+        "revision": "26495e1a45d8bde085a0681c3c43044eff5c8ac5",
+        "sha256": "4c53e3fe900639860827cd93ce0e8e31cf163dfbf9d1877e504f5b436ebf0b3c",
+    },
+    {
+        "id": "huihui-qwen36-27b",
+        "repo": "Mitroshenkov87/voxprint-huihui-qwen36-27b",
+        "revision": "cc596c1a74791b7fca57d037ef168dd57c76ed34",
+        "sha256": "2050fd29586f19a9e61b0cef12c7c4f051c5013f2276c752f3571f2a7743c33d",
+    },
+]
+
+
+def test_index_build_reproduces_the_derivative_rows(tmp_path: Path) -> None:
+    source = ROOT / "tests" / "fixtures" / "descriptors"
+    for row in DERIVATIVE_ROWS:
+        path = source / f"voxprint-{row['id']}" / MANIFEST_NAME
+        document = json.loads(path.read_text(encoding="utf-8"))
+        _schema(document)
+        assert sha256_file(path) == row["sha256"]
+        assert document["mirrors"][0]["ref"] != row["repo"]
+        assert document["mirrors"][1]["ref"] == row["repo"]
+    dest = tmp_path / "index.json"
+    assert main(["index", "build", "--from", str(source), "--out", str(dest)]) == 0
+    assert json.loads(dest.read_text(encoding="utf-8")) == DERIVATIVE_ROWS
+
+
+def test_index_build_rejects_an_author_only_mirror(tmp_path: Path) -> None:
+    document = _sample()
+    document["mirrors"] = [
+        {
+            "kind": "hf",
+            "ref": "paperscarecrow/Gemma-4-31B-it-abliterated",
+            "revision": "2491ee58472b82a2372d288f982943b9d5e6a82c",
+        }
+    ]
+    document["card_url"] = "https://huggingface.co/paperscarecrow/Gemma-4-31B-it-abliterated"
+    path = tmp_path / MANIFEST_NAME
+    path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    with pytest.raises(StageError) as caught:
+        write_index([path], tmp_path / "index.json")
+    assert caught.value.code == "mdl"
+    assert "no mirror that holds" in str(caught.value)
+
+
+def test_explicit_ours_is_the_index_repo(tmp_path: Path) -> None:
+    document = _sample()
+    document["mirrors"] = [
+        {"kind": "hf", "ref": "Mitroshenkov87/voxprint-t-lite-it-2.1", "revision": "main"},
+        {"kind": "hf", "ref": "example/held-copy", "revision": "abc123", "ours": True},
+    ]
+    document["card_url"] = "https://huggingface.co/example/held-copy"
+    _schema(document)
+    path = tmp_path / MANIFEST_NAME
+    path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    rows = write_index([path], tmp_path / "index.json")
+    assert rows[0]["repo"] == "example/held-copy"
+    assert rows[0]["revision"] == "abc123"
+
+
+def test_two_owned_mirrors_fail(tmp_path: Path) -> None:
+    document = _sample()
+    document["mirrors"] = [
+        {"kind": "hf", "ref": "Mitroshenkov87/voxprint-a", "revision": "main"},
+        {"kind": "hf", "ref": "Mitroshenkov87/voxprint-b", "revision": "main"},
+    ]
+    path = tmp_path / MANIFEST_NAME
+    path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    with pytest.raises(StageError) as caught:
+        write_index([path], tmp_path / "index.json")
+    assert caught.value.code == "mdl"
+    assert "more than one forge-owned" in str(caught.value)
+
+
+def test_retarget_card_url_uses_our_repo(tmp_path: Path) -> None:
+    path = tmp_path / MANIFEST_NAME
+    path.write_text(json.dumps(_sample()) + "\n", encoding="utf-8")
+    retarget_mirrors(
+        path,
+        [
+            {
+                "kind": "hf",
+                "ref": "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+                "revision": "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3",
+            },
+            {
+                "kind": "hf",
+                "ref": "Mitroshenkov87/voxprint-huihui-qwen36-27b",
+                "revision": "cc596c1a74791b7fca57d037ef168dd57c76ed34",
+            },
+        ],
+    )
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["card_url"] == "https://huggingface.co/Mitroshenkov87/voxprint-huihui-qwen36-27b"
+    retarget_mirrors(
+        path,
+        [{"kind": "gdrive", "ref": "Voxprint/model-forge/2026-10-11/tiny", "revision": ""}],
+    )
+    cleared = json.loads(path.read_text(encoding="utf-8"))
+    assert cleared["card_url"] == ""

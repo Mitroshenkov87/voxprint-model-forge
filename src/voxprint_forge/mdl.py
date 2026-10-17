@@ -250,15 +250,23 @@ def drive_mirror(model_id: str, date: str) -> dict[str, str]:
 
 
 def card_url_for(mirrors: Sequence[Mapping[str, str]]) -> str:
-    """Hub card URL for the first ``hf`` mirror, or an empty string."""
-    for item in mirrors:
-        if item.get("kind") == "hf" and item.get("ref"):
-            return f"https://huggingface.co/{item['ref']}"
-    return ""
+    """Hub card URL for the mirror that holds the descriptor.
+
+    An empty string when there is no ``hf`` mirror. A marked ``ours`` mirror
+    or the ``Mitroshenkov87`` mirror wins over an upstream author listed first.
+    One ``hf`` mirror is that repo: publish writes the card there.
+    """
+    if not any(item.get("kind") == "hf" and item.get("ref") for item in mirrors):
+        return ""
+    chosen = _descriptor_mirror(mirrors, label="mirrors", sole_repo=True)
+    return f"https://huggingface.co/{chosen['ref']}"
 
 
 def retarget_mirrors(path: Path, mirrors: Sequence[Mapping[str, str]], *, card_url: str | None = None) -> None:
-    """Rewrite mirrors on an existing manifest and refresh its digest."""
+    """Rewrite mirrors on an existing manifest and refresh its digest.
+
+    The default card URL is our repo, the mirror that holds the descriptor.
+    """
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise StageError(f"{path} is not a manifest object", code="mdl")
@@ -504,15 +512,49 @@ def _index_row(path: Path) -> dict[str, str]:
     mirrors = document["mirrors"]
     if not isinstance(mirrors, list):
         raise StageError(f"{path} has no mirrors", code="mdl")
-    chosen = next((item for item in mirrors if isinstance(item, dict) and item.get("kind") == "hf"), None)
-    if not isinstance(chosen, dict):
-        raise StageError(f"{path} has no hf mirror", code="mdl")
+    chosen = _descriptor_mirror(mirrors, label=str(path))
     return {
         "id": str(document["id"]),
         "repo": str(chosen["ref"]),
         "revision": str(chosen["revision"]),
         "sha256": sha256_file(path),
     }
+
+
+def _descriptor_mirror(
+    mirrors: Sequence[object],
+    *,
+    label: str,
+    sole_repo: bool = False,
+) -> Mapping[str, object]:
+    """The ``hf`` mirror that holds ``voxprint-model.json``.
+
+    An explicit ``ours`` flag wins. Otherwise the single mirror in the
+    forge-owned namespace ``Mitroshenkov87`` holds the descriptor. No
+    candidate, or more than one, is an error. ``sole_repo`` accepts one
+    ``hf`` mirror when a publish is writing the only copy.
+    """
+    hf = [item for item in mirrors if isinstance(item, Mapping) and item.get("kind") == "hf" and item.get("ref")]
+    if not hf:
+        raise StageError(f"{label} has no hf mirror", code="mdl")
+    marked = [item for item in hf if item.get("ours") is True]
+    if len(marked) > 1:
+        raise StageError(f"{label} marks more than one mirror as ours", code="mdl")
+    if len(marked) == 1:
+        return marked[0]
+    owned = [item for item in hf if _forge_repo(str(item.get("ref")))]
+    if len(owned) == 1:
+        return owned[0]
+    if len(owned) > 1:
+        raise StageError(f"{label} has more than one forge-owned hf mirror", code="mdl")
+    if sole_repo and len(hf) == 1:
+        return hf[0]
+    raise StageError(f"{label} has no mirror that holds voxprint-model.json", code="mdl")
+
+
+def _forge_repo(ref: str) -> bool:
+    owner, sep, name = ref.partition("/")
+    return sep == "/" and owner == HF_AUTHOR and bool(name)
 
 
 def _snapshot(api: HfApi, info: object) -> RemoteRepo:
@@ -686,13 +728,25 @@ def _mirrors(value: object) -> None:
     for item in value:
         if not isinstance(item, dict):
             raise StageError("mirror is not an object", code="mdl")
-        _exact_keys(item, _MIRROR_KEYS, "mirror")
+        _mirror_keys(item)
         kind = item["kind"]
         if not isinstance(kind, str) or kind not in _KINDS:
             raise StageError(f"mirror kind {kind!r} is not supported", code="mdl")
         _text(item["ref"], "mirror ref")
         if not isinstance(item["revision"], str):
             raise StageError("mirror revision must be a string", code="mdl")
+        if "ours" in item and not isinstance(item["ours"], bool):
+            raise StageError("mirror ours must be a boolean", code="mdl")
+
+
+def _mirror_keys(item: dict[str, object]) -> None:
+    allowed = set(_MIRROR_KEYS)
+    if "ours" in item:
+        allowed.add("ours")
+    if set(item) != allowed:
+        missing = sorted(set(_MIRROR_KEYS) - set(item))
+        extra = sorted(set(item) - allowed)
+        raise StageError(f"mirror keys mismatch missing={missing} extra={extra}", code="mdl")
 
 
 def _tier(value: object) -> None:
