@@ -478,9 +478,9 @@ options:
   --provenance-note PROVENANCE_NOTE
                         Optional note on where the photos come from.
   --mode {simple,expert}
-                        Photo limits: 10-30, or 5+.
+                        Photo limits: 10-30, or 5-60 in Expert.
   --allow-count-outside-range
-                        Expert limits: warn outside 10-30, at least 5.
+                        Expert limits: warn outside 10-30, allowed 5-60.
   --crop {subject,whole}
                         How photos are cropped.
   --captions CAPTIONS   JSONL caption overrides: id, long, short.
@@ -706,7 +706,7 @@ options:
   -h, --help            show this help message and exit
   --project PROJECT     Project folder.
   --mode {simple,expert}
-                        Set size: 10-30, or 5-60.
+                        Set size: 10-30, or 5-60 in Expert.
   --base BASE           Base model the set is for. Default: z-image.
 ```
 

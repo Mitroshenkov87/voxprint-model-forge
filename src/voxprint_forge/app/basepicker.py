@@ -8,8 +8,8 @@ from the lowest tier the presets target (``VRAM_TIERS``), shown as "16 GB+".
 from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from voxprint_common.i18n import tr
 
+from voxprint_forge.app.text import tr
 from voxprint_forge.lora.presets import VRAM_TIERS
 
 # Peak training memory in GB per base and tier, from LORA-CALIB (``train16`` / ``train24`` peak_vram_gb).

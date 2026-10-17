@@ -21,9 +21,13 @@ def _catalog(lang: str) -> dict[str, str]:
 def test_catalogs_have_the_same_keys_and_placeholders() -> None:
     english, russian = _catalog("en"), _catalog("ru")
     assert english.keys() == russian.keys()
+    def forms(value):  # a count string holds one text per plural form
+        return list(value.values()) if isinstance(value, dict) else [value]
+
     for key, text in english.items():
-        assert re.findall(r"{(\w+)}", text) == re.findall(r"{(\w+)}", russian[key]), key
-        assert russian[key].strip(), key
+        wanted = {tuple(re.findall(r"{(\w+)}", form)) for form in forms(text)}
+        assert wanted == {tuple(re.findall(r"{(\w+)}", form)) for form in forms(russian[key])}, key
+        assert all(form.strip() for form in forms(russian[key])), key
 
 
 def test_catalogs_hold_no_safety_or_age_settings() -> None:
@@ -50,7 +54,7 @@ def test_simple_mode_is_a_hard_10_to_30(tmp_path: Path) -> None:
     (tmp_path / "big").mkdir()
     draft.add_photos(_photos(tmp_path / "big", 21))
     result = draft.check("photos")
-    assert not result.ok and result.key == "lora.err.too_many" and result.params == {"extra": 1}
+    assert not result.ok and result.key == "lora.err.too_many" and result.params == {"extra": 1, "high": 30}
 
 
 def test_expert_mode_warns_outside_10_30_with_floor_5(tmp_path: Path) -> None:

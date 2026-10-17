@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from voxprint_common.i18n import add_catalogs, get_language, tr
+from voxprint_common.i18n import add_catalogs, get_language
 from voxprint_common.paths import state_dir
 from voxprint_common.ui.expert import ExpertMode
 from voxprint_common.ui.sections import BodyKind, Section, SectionSet, Wizard, WizardStep
@@ -34,8 +34,9 @@ from voxprint_forge.app.details import Details
 from voxprint_forge.app.draft import KINDS, SOURCES, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
+from voxprint_forge.app.text import tr
 from voxprint_forge.lora import refset
-from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, SIMPLE_RANGE
+from voxprint_forge.lora.limits import expert_range_differs
 
 APP_ID = "model-forge"
 CARD_PICTURE = 136  # px, a review-grid picture
@@ -450,12 +451,13 @@ class ForgeApp:
         add = _button("forge.app.photos.add", "lora.photos.add.tip", self.choose_photos, primary=True)
         folder = _button("forge.app.photos.add_folder", "forge.app.photos.add_folder.tip", self.choose_folder)
         remove = _button("forge.app.photos.remove", "lora.photos.remove.tip", lambda: self._remove(drop))
-        count_key = "forge.app.photos.count_expert" if self.draft.expert else "forge.app.photos.count"
+        expert_range = self.draft.expert and expert_range_differs()  # name the Expert range only if it differs
+        count_key = "forge.app.photos.count_expert" if expert_range else "forge.app.photos.count"
         if self.draft.source == "refs":
             count_key = "forge.app.photos.count_refs"
         count = QtWidgets.QLabel(tr(count_key, count=len(self.draft.photos)))
         count.setObjectName("presetLabel")
-        count.setToolTip(tr("lora.photos.count_expert.tip" if self.draft.expert else "lora.photos.count.tip"))
+        count.setToolTip(tr("lora.photos.count_expert.tip" if expert_range else "lora.photos.count.tip"))
         for widget in (add, folder, remove):
             row.addWidget(widget)
         row.addStretch(1)
@@ -828,12 +830,13 @@ class ForgeApp:
         if label is None:
             return
         state = refset.load_state(self.project)
-        low, high = SIMPLE_RANGE if not self.draft.expert else (EXPERT_FLOOR, EXPERT_CAP)
         busy = self.runner.busy  # type: ignore[attr-defined]
         try:
             drawn = sum(len(r.get("candidates") or []) for r in state.get("rounds") or [])
-            label.setText(tr("forge.app.refset.kept", kept=len(refset.kept(state)), shown=drawn,
-                             low=low, high=high))
+            # One recommended range (lora.limits) in both modes; Expert adds its allowed range only if it differs.
+            expert = self.draft.expert and expert_range_differs()
+            key = "forge.app.refset.kept_expert" if expert else "forge.app.refset.kept"
+            label.setText(tr(key, kept=len(refset.kept(state)), shown=drawn))
             if self._finish_button is not None:
                 self._finish_button.setEnabled(not busy and not state.get("blocked") and bool(refset.kept(state)))
         except RuntimeError:
