@@ -1,0 +1,106 @@
+"""Training project folder (plan §2): photos/, prepared/, captions.jsonl, drops.jsonl, checkpoints/, previews/."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from voxprint_forge.lora.errors import LoraUsageError
+
+SCHEMA = "voxprint-lora-project/1"
+
+
+@dataclass(frozen=True)
+class Item:
+    """One prepared photo and its captions. ``round`` is 0 for the first set, then +1 per extend."""
+
+    id: str
+    file: str
+    long: str
+    short: str
+    round: int = 0
+
+
+class Project:
+    """Paths and files of one project folder."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    @property
+    def file(self) -> Path:
+        """``project.json``."""
+        return self.root / "project.json"
+
+    @property
+    def prepared(self) -> Path:
+        """Cropped training images."""
+        return self.root / "prepared"
+
+    @property
+    def captions(self) -> Path:
+        """``captions.jsonl``, one :class:`Item` per line."""
+        return self.root / "captions.jsonl"
+
+    @property
+    def drops(self) -> Path:
+        """``drops.jsonl``: photos set aside, with a reason key."""
+        return self.root / "drops.jsonl"
+
+    @property
+    def checkpoints(self) -> Path:
+        """Intermediate LoRA versions and training state."""
+        return self.root / "checkpoints"
+
+    @property
+    def previews(self) -> Path:
+        """Test pictures."""
+        return self.root / "previews"
+
+    def read(self) -> dict[str, object]:
+        """``project.json``; a missing file means the photos were never prepared."""
+        if not self.file.is_file():
+            raise LoraUsageError("lora.err.not_prepared")
+        data = json.loads(self.file.read_text(encoding="utf-8"))
+        if data.get("schema") != SCHEMA:
+            raise LoraUsageError("lora.err.not_prepared")
+        return data
+
+    def write(self, data: dict[str, object]) -> None:
+        """Write ``project.json`` with the schema tag."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        payload = {"schema": SCHEMA, **{key: value for key, value in data.items() if key != "schema"}}
+        _atomic(self.file, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+    def items(self) -> list[Item]:
+        """Prepared items whose image exists."""
+        if not self.captions.is_file():
+            return []
+        found = []
+        for line in self.captions.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                item = Item(row["id"], row["file"], row.get("long", ""), row.get("short", ""), int(row.get("round", 0)))
+                if (self.root / item.file).is_file():
+                    found.append(item)
+        return found
+
+    def write_items(self, items: list[Item]) -> None:
+        """Replace ``captions.jsonl``."""
+        lines = [
+            json.dumps(
+                {"id": i.id, "file": i.file, "long": i.long, "short": i.short, "round": i.round},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            for i in items
+        ]
+        self.root.mkdir(parents=True, exist_ok=True)
+        _atomic(self.captions, "".join(line + "\n" for line in lines))
+
+
+def _atomic(path: Path, content: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
