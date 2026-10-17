@@ -87,6 +87,16 @@ class ForgeWidget(SimpleImageWidget):
             "tabs": self._section_bar,  # type: ignore[attr-defined]
         }
 
+    EXPERT_WIDTH = 380
+
+    def _fit_expert_panel(self) -> None:
+        """Open the Expert panel wide enough for its labels, values and the Reset button."""
+        super()._fit_expert_panel()  # type: ignore[misc]
+        split = self._centre_split  # type: ignore[attr-defined]
+        total = split.width() - split.handleWidth()
+        if total > self.EXPERT_WIDTH * 2:
+            split.setSizes([total - self.EXPERT_WIDTH, self.EXPERT_WIDTH])
+
 
 class ForgeApp:
     """Builds the window and runs the steps. ``runner`` runs CLI jobs (a stub in tests)."""
@@ -219,6 +229,19 @@ class ForgeApp:
         folder = self.widget.root.findChild(QtWidgets.QPushButton, "openFolder")
         if folder is not None:
             folder.setToolTip(tr("forge.app.folder.tip"))
+        self._fit_expert_fields()
+
+    def _fit_expert_fields(self) -> None:
+        """Give Expert combos and spins room for their longest value (bf16, Постоянное)."""
+        panel = self.widget.root.findChild(QtWidgets.QWidget, "expertPanel")
+        if panel is None:
+            return
+        for combo in panel.findChildren(QtWidgets.QComboBox):
+            metrics = combo.fontMetrics()
+            widest = max((metrics.horizontalAdvance(combo.itemText(i)) for i in range(combo.count())), default=0)
+            combo.setMinimumWidth(widest + 48)
+        for spin in panel.findChildren(QtWidgets.QAbstractSpinBox):
+            spin.setMinimumWidth(max(88, spin.fontMetrics().horizontalAdvance(spin.text()) + 44))
 
     def _extend_menu(self) -> None:
         menu = self.widget._parts()["overflow"].menu()  # type: ignore[attr-defined]
@@ -300,6 +323,9 @@ class ForgeApp:
         outer.setObjectName("forgeStep")
         stack = QtWidgets.QVBoxLayout(outer)
         stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(12)
+        status.setContentsMargins(0, 4, 0, 4)
+        status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         stack.addWidget(scroll, 1)
         stack.addWidget(status)
         for index in reversed(range(layout.count())):  # type: ignore[attr-defined]
@@ -873,6 +899,8 @@ class ForgeApp:
             if outcome.ok:
                 kept, drops = engine.prepared_from(self.project)
                 self.draft.prepared = Prepared(kept, drops, False)
+                self.progress_text = tr("forge.app.prepare.done", kept=len(kept), drops=len(drops))
+                self.progress_percent = None
             elif outcome.error_code == "lora.err.blocked":
                 self.draft.prepared = Prepared([], engine.prepared_from(self.project)[1], True)
             else:

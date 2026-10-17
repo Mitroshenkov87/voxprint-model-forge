@@ -109,6 +109,7 @@
   "forge.app.prepare.crop": "Кадрирование",
   "forge.app.prepare.crop.subject": "По объекту",
   "forge.app.prepare.crop.whole": "Фото целиком",
+  "forge.app.prepare.done": "Проверка закончена: к обучению готово {kept}, отложено {drops}.",
   "forge.app.prepare.dropped": "Отложено: {count}",
   "forge.app.prepare.kept": "Готово к обучению: {count}",
   "forge.app.prepare.run": "Проверить фото",
@@ -155,5 +156,7 @@
   "forge.app.train.pause": "Пауза",
   "forge.app.train.start": "Начать обучение",
   "forge.app.train.stop": "Стоп",
-  "forge.app.wizard.title": "Новая модель по вашим фотографиям"
+  "forge.app.wizard.title": "Новая модель по вашим фотографиям",
+  "simple.preset.reset": "Сбросить к пресету «{name}»",
+  "wizard.step_count": "Шаг {current} из {total}"
 }
