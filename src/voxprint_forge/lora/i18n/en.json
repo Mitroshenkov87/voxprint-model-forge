@@ -26,6 +26,7 @@
  "lora.err.no_photos": "No photos were found.",
  "lora.err.no_rights": "Confirm that you have the right to use these photos.",
  "lora.err.not_prepared": "Prepare the photos first.",
+ "lora.err.pause_file": "A PAUSE file is still in the project folder. Delete it, then start again.",
  "lora.err.text_encoder": "This base model cannot train its text encoder.",
  "lora.err.too_few": "Add at least {need} more photos to continue.",
  "lora.err.too_many": "Remove {extra} photos; 30 is the limit.",
