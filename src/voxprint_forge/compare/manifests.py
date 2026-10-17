@@ -1,8 +1,11 @@
 """Read both synthetic-set manifest layouts.
 
-The adapter keeps prompt, negative prompt, seed, and size. Steps and CFG from
-the source model are ignored: the job supplies the steps and CFG of the model
-under test.
+A row requires ``prompt`` and an integer ``seed``. ``negative_prompt`` (or
+``negative``) is optional. ``width`` and ``height``, or ``size``, are optional:
+a missing size is stored as 0 so the job width and height are used. ``model``,
+``model_id``, ``revision``, ``steps``, ``guidance``, ``guidance_scale``, and
+``cfg`` are ignored, because the job names the model under test and supplies
+its steps and CFG. ``keep: false`` drops the row.
 """
 
 from __future__ import annotations
@@ -38,7 +41,12 @@ def find_manifest(folder: Path) -> Path | None:
 
 
 def load_manifest(path: Path) -> list[ManifestItem]:
-    """Parse one manifest file. ``_run`` and other non-image keys are skipped."""
+    """Parse one manifest file.
+
+    ``_run`` and other non-image keys are skipped. ``keep: false`` drops the
+    row before required fields are checked. A missing prompt or seed names
+    that image key and is a setup error.
+    """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -49,6 +57,8 @@ def load_manifest(path: Path) -> list[ManifestItem]:
     for key, value in payload.items():
         if not isinstance(key, str) or key.startswith("_") or not isinstance(value, dict):
             continue
+        if value.get("keep") is False:
+            continue
         rows.append(_item(path.name, key, value))
     if not rows:
         raise CompareSetup(f"manifest {path.name} has no images", code="compare_manifest")
@@ -58,7 +68,7 @@ def load_manifest(path: Path) -> list[ManifestItem]:
 def _item(filename: str, key: str, value: dict[str, object]) -> ManifestItem:
     prompt = value.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
-        raise CompareSetup(f"manifest {filename} entry {key} has no prompt", code="compare_manifest")
+        raise CompareSetup(f"manifest {filename} entry {key} requires a prompt", code="compare_manifest")
     negative = value.get("negative_prompt", value.get("negative", ""))
     if negative is None:
         negative = ""
@@ -98,7 +108,7 @@ def _size(filename: str, key: str, value: dict[str, object]) -> tuple[int, int]:
     if isinstance(size, str) and "x" in size:
         left, _sep, right = size.partition("x")
         return _dim(filename, key, left), _dim(filename, key, right)
-    raise CompareSetup(f"manifest {filename} entry {key} has no size", code="compare_manifest")
+    return 0, 0
 
 
 def _dim(filename: str, key: str, value: object) -> int:

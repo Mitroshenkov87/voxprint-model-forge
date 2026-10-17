@@ -6,6 +6,7 @@ and must not load for the LLM commands.
 
 from __future__ import annotations
 
+import gc
 import json
 import tempfile
 from collections.abc import Callable
@@ -54,19 +55,51 @@ def fetch_arm(arm: Arm, dest: Path) -> None:
         raise CompareSetup(f"arm {arm.id} has no repo", code="compare_weights")
 
 
-def make_generator(job: Job, weights: Path):
-    """Return a generator that loads each arm once and reuses the pipeline."""
-    pipes: dict[str, object] = {}
+def make_generator(job: Job, weights: Path) -> _Resident:
+    """Return a generator that keeps a single pipeline resident.
 
-    def generate(arm: Arm, case: Case, current: Job) -> Image.Image:
-        pipe = pipes.get(arm.id)
-        if pipe is None:
-            pipe = load_pipe(current, arm, weights / arm.id)
-            pipes[arm.id] = pipe
-        return render(pipe, current, case)
-
+    Call ``load_arm`` before timing images. ``release`` drops that pipeline
+    before the next arm loads, so the peak is one arm and not the whole job.
+    """
     del job
-    return generate
+    return _Resident(weights)
+
+
+class _Resident:
+    """One compare pipeline. Loading another arm frees the previous one."""
+
+    def __init__(self, weights: Path) -> None:
+        self.weights = weights
+        self.pipe: object | None = None
+        self.arm_id: str | None = None
+        self.int4_notes: list[dict[str, str]] = []
+
+    def load_arm(self, arm: Arm, job: Job) -> None:
+        """Load ``arm`` after freeing the pipeline that was resident."""
+        if self.pipe is not None and self.arm_id == arm.id:
+            return
+        self.release()
+        pipe = load_pipe(job, arm, self.weights / arm.id)
+        info = getattr(pipe, "forge_int4", None)
+        if isinstance(info, dict):
+            self.int4_notes.append({str(key): str(value) for key, value in info.items()})
+        self.pipe = pipe
+        self.arm_id = arm.id
+
+    def release(self) -> None:
+        """Drop the pipeline, collect garbage, and empty the CUDA cache."""
+        pipe = self.pipe
+        self.pipe = None
+        self.arm_id = None
+        _free_pipe(pipe)
+
+    def __call__(self, arm: Arm, case: Case, job: Job) -> Image.Image:
+        """Render one case. Loads the arm when the caller has not."""
+        if self.pipe is None or self.arm_id != arm.id:
+            self.load_arm(arm, job)
+        if self.pipe is None:
+            raise CompareSetup(f"arm {arm.id} pipeline was released", code="compare_generate")
+        return render(self.pipe, job, case)
 
 
 def load_pipe(job: Job, arm: Arm, folder: Path) -> object:
@@ -182,15 +215,130 @@ def _control_file(arm: Arm, folder: Path) -> Path:
 
 
 def _overlay(pipe: object, folder: Path) -> None:
+    """Merge every shard of a module, then apply that module once.
+
+    A Hugging Face ``*.safetensors.index.json`` names the files when it is
+    present. Coverage is checked on the merged module, not on each shard.
+    """
     files = [path for path in sorted(folder.rglob("*.safetensors")) if "base" not in path.parts]
     if not files:
         raise CompareSetup("mirror folder has no safetensors to overlay", code="compare_weights")
-    for path in files:
-        state = _load_state(path)
+    loaded = {path: _load_state(path) for path in files}
+    for label, states in _shard_groups(pipe, folder, loaded):
+        merged: dict[str, object] = {}
+        for state in states:
+            merged.update(state)
+        module = _best_module(pipe, merged)
+        if module is None:
+            raise CompareSetup(f"{label} matched no pipeline module", code="compare_weights")
+        _apply(module, merged, label)
+
+
+def _shard_groups(
+    pipe: object,
+    folder: Path,
+    loaded: dict[Path, dict[str, object]],
+) -> list[tuple[str, list[dict[str, object]]]]:
+    claimed: set[Path] = set()
+    groups: list[tuple[str, list[dict[str, object]], object | None]] = []
+    for index in _index_files(folder):
+        members = _index_members(index, loaded, claimed)
+        if not members:
+            continue
+        states = [loaded[path] for path in members]
+        merged: dict[str, object] = {}
+        for state in states:
+            merged.update(state)
+        groups.append((index.name, states, _best_module(pipe, merged)))
+    buckets: dict[str, tuple[object, list[dict[str, object]]]] = {}
+    for path, state in loaded.items():
+        if path in claimed:
+            continue
         module = _best_module(pipe, state)
         if module is None:
             raise CompareSetup(f"{path.name} matched no pipeline module", code="compare_weights")
-        _apply(module, state, path.name)
+        attached = False
+        for _label, states, grouped in groups:
+            if grouped is module:
+                states.append(state)
+                attached = True
+                break
+        if attached:
+            continue
+        name = _module_attr(pipe, module) or path.name
+        bucket = buckets.get(name)
+        if bucket is None:
+            buckets[name] = (module, [state])
+        else:
+            bucket[1].append(state)
+    groups.extend((name, states, module) for name, (module, states) in buckets.items())
+    return [(label, states) for label, states, _module in groups]
+
+
+def _index_files(folder: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(folder.rglob("*.safetensors.index.json"))
+        if "base" not in path.parts
+    ]
+
+
+def _index_members(index: Path, loaded: dict[Path, dict[str, object]], claimed: set[Path]) -> list[Path]:
+    members: list[Path] = []
+    for filename in dict.fromkeys(_weight_map(index).values()):
+        match = _match_shard(index, filename, loaded)
+        if match is None or match in claimed:
+            continue
+        claimed.add(match)
+        members.append(match)
+    return members
+
+
+def _weight_map(index: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(index.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CompareSetup(f"{index.name} is not JSON", code="compare_weights") from exc
+    raw = payload.get("weight_map") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    mapping: dict[str, str] = {}
+    for key, filename in raw.items():
+        if isinstance(key, str) and isinstance(filename, str):
+            mapping[key] = filename
+    return mapping
+
+
+def _match_shard(index: Path, filename: str, loaded: dict[Path, dict[str, object]]) -> Path | None:
+    wanted = (index.parent / filename).resolve()
+    named = [path for path in loaded if path.name == Path(filename).name]
+    for path in loaded:
+        if path.resolve() == wanted:
+            return path
+    if len(named) == 1:
+        return named[0]
+    return None
+
+
+def _module_attr(pipe: object, module: object) -> str | None:
+    for name in ("transformer", "text_encoder", "vae", "controlnet"):
+        if getattr(pipe, name, None) is module:
+            return name
+    return None
+
+
+def _free_pipe(pipe: object | None) -> None:
+    if pipe is None:
+        return
+    for name in ("transformer", "text_encoder", "vae", "controlnet", "tokenizer", "scheduler"):
+        if hasattr(pipe, name):
+            setattr(pipe, name, None)
+    del pipe
+    gc.collect()
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _load_state(path: Path) -> dict[str, object]:

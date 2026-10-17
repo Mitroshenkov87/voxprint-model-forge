@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 import torch
 from PIL import Image
+from safetensors.torch import save_file
 
 from voxprint_forge.compare.cases import build_schedule
 from voxprint_forge.compare.codes import CompareSetup
-from voxprint_forge.compare.engine import seeded_generator
+from voxprint_forge.compare.engine import _apply, _load_state, _overlay, seeded_generator
 from voxprint_forge.compare.manifests import find_manifest, load_manifest
 from voxprint_forge.compare.metrics import finish_score, passes, ssim_psnr
 from voxprint_forge.compare.plan import Arm, Job, load_compare_plan
@@ -217,6 +221,10 @@ def test_run_passes_resumes_and_reclaims(tmp_path: Path) -> None:
     summary = json.loads((results / "summary.json").read_text(encoding="utf-8"))
     assert summary["arms"][0]["samples"] == len(BASE_PROMPTS) * 2 - 1
     assert summary["arms"][0]["seconds_per_image"] is not None
+    assert summary["reference"]["id"] == "a"
+    assert summary["reference"]["samples"] == len(BASE_PROMPTS) * 2 - 1
+    assert summary["reference"]["seconds_per_image"] is not None
+    assert "Reference s/img" in (results / "summary.md").read_text(encoding="utf-8")
     assert summary["arms"][0]["component_bytes"]["transformer.safetensors"] == len(b"weights")
     first = len(calls)
     again = run_compare(
@@ -319,10 +327,228 @@ def test_cuda_generator_uses_the_cuda_device_and_seed() -> None:
 
 def test_vm_script_requires_a_job() -> None:
     script = ROOT / "scripts" / "vm_run_compare.sh"
-    assert script.stat().st_mode & 0o111
-    done = subprocess.run(["bash", str(script)], check=False, capture_output=True, text=True)
+    indexed = subprocess.run(
+        ["git", "ls-files", "-s", "--", "scripts/vm_run_compare.sh"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert indexed.returncode == 0
+    assert indexed.stdout.split()[0] == "100755"
+    if sys.platform != "win32":
+        assert script.stat().st_mode & 0o111
+    done = subprocess.run([_bash(), str(script)], check=False, capture_output=True, text=True)
     assert done.returncode == 2
     assert "HF_TOKEN" not in done.stderr
+
+
+def test_layout_omits_size_and_drops_keep_false(tmp_path: Path) -> None:
+    payload = {
+        "kept": {
+            "prompt": "studio row",
+            "seed": 3,
+            "model": "Tongyi-MAI/Z-Image-Turbo",
+            "revision": "abc",
+            "steps": 8,
+            "guidance_scale": 0.0,
+        },
+        "aside": {"prompt": "unused row", "seed": 1, "keep": False, "size": 512},
+        "blank": {"keep": False},
+    }
+    rows = load_manifest(_dump(tmp_path / "rows.json", payload))
+    assert [item.image_key for item in rows] == ["kept"]
+    assert rows[0].seed == 3
+    assert (rows[0].width, rows[0].height) == (0, 0)
+    folder = tmp_path / "vxp_yuna" / "dataset"
+    folder.mkdir(parents=True)
+    _dump(folder / "manifest.json", payload)
+    job = _job(
+        (_arm("a", "reference"), _arm("b", "candidate")),
+        private_sets=("vxp_yuna",),
+        public_seeds=(),
+        width=1024,
+        height=1024,
+    )
+    schedule = build_schedule(job, tmp_path)
+    assert len(schedule.cases) == 1
+    assert schedule.cases[0].seed == 3
+    assert (schedule.cases[0].width, schedule.cases[0].height) == (1024, 1024)
+    bad = _dump(tmp_path / "bad.json", {"shot-7": {"seed": 1, "model": "Tongyi-MAI/Z-Image"}})
+    with pytest.raises(CompareSetup, match="shot-7") as caught:
+        load_manifest(bad)
+    assert "prompt" in str(caught.value)
+    assert caught.value.exit_code == 2
+
+
+def test_overlay_merges_shards_before_the_coverage_check(tmp_path: Path) -> None:
+    text = _module(("te.0.weight", "te.1.weight", "te.2.weight", "te.3.weight"))
+    transformer = _module(("tr.0.weight", "tr.1.weight", "tr.2.weight", "tr.3.weight"))
+    _write_shards(tmp_path / "text_encoder", "model", ("te.0.weight", "te.1.weight"))
+    _write_shards(tmp_path / "transformer", "diffusion_pytorch_model", ("tr.0.weight", "tr.1.weight"))
+    shard = tmp_path / "text_encoder" / "model-00001-of-00002.safetensors"
+    with pytest.raises(CompareSetup, match="matched 1 tensors"):
+        _apply(text, _load_state(shard), shard.name)
+
+    class _Pipe:
+        def __init__(self) -> None:
+            self.text_encoder = text
+            self.transformer = transformer
+
+    _overlay(_Pipe(), tmp_path)
+    assert set(text.loaded) == {"te.0.weight", "te.1.weight"}
+    assert set(transformer.loaded) == {"tr.0.weight", "tr.1.weight"}
+    loose = tmp_path / "loose"
+    _write_shards(loose, "model", ("te.0.weight", "te.1.weight"), index=False)
+    again = _module(("te.0.weight", "te.1.weight", "te.2.weight", "te.3.weight"))
+
+    class _Loose:
+        def __init__(self) -> None:
+            self.text_encoder = again
+
+    _overlay(_Loose(), loose)
+    assert set(again.loaded) == {"te.0.weight", "te.1.weight"}
+
+
+def test_one_pipeline_is_loaded_at_a_time(tmp_path: Path) -> None:
+    job = _job((_arm("a", "reference"), _arm("b", "candidate")))
+    seen: list[tuple[str, ...]] = []
+
+    class _Pipe:
+        def __init__(self) -> None:
+            self.loaded = 0
+            self.max_loaded = 0
+
+        def load_arm(self, arm: Arm, current: Job) -> None:
+            del current
+            assert self.loaded == 0
+            self.loaded = 1
+            self.max_loaded = max(self.max_loaded, self.loaded)
+            seen.append(("load", arm.id))
+
+        def release(self) -> None:
+            self.loaded = 0
+            seen.append(("release",))
+
+        def __call__(self, arm: Arm, case: object, current: Job) -> Image.Image:
+            del current
+            assert self.loaded == 1
+            seen.append(("gen", arm.id, str(getattr(case, "ordinal"))))
+            return _picture(arm, case, job)
+
+    pipe = _Pipe()
+    run_compare(
+        job,
+        tmp_path / "results",
+        private_root=None,
+        generate=pipe,
+        score=lambda *_args: _score(),
+        fetch=_fetch,
+        smi=lambda: None,
+        cuda=False,
+    )
+    assert pipe.loaded == 0
+    assert pipe.max_loaded == 1
+    count = len(BASE_PROMPTS) * 2
+    gens = [item for item in seen if item[0] == "gen"]
+    assert [item[1] for item in gens] == ["a"] * count + ["b"] * count
+    load_b = seen.index(("load", "b"))
+    assert any(item == ("release",) for item in seen[:load_b])
+
+
+def test_resumed_image_does_not_include_load_time(tmp_path: Path) -> None:
+    job = _job((_arm("a", "reference"), _arm("b", "candidate")))
+    results = tmp_path / "results"
+    run_compare(
+        job,
+        results,
+        private_root=None,
+        generate=_picture,
+        score=lambda *_args: _score(),
+        fetch=_fetch,
+        smi=lambda: None,
+        cuda=False,
+    )
+    lines = (results / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    payload = json.loads(lines[-1])
+    assert payload["warmup"] is False
+    control = payload["control"] or "none"
+    name = f"{payload['prompt_id']}-{payload['seed']}-{payload['width']}x{payload['height']}-{control}.png"
+    (results / "images" / str(payload["candidate_arm"]) / name).unlink()
+    (results / "pairs.jsonl").write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+
+    class _SlowLoad:
+        def __init__(self) -> None:
+            self.loads = 0
+            self.calls = 0
+
+        def load_arm(self, arm: Arm, current: Job) -> None:
+            del arm, current
+            self.loads += 1
+            time.sleep(0.2)
+
+        def release(self) -> None:
+            return None
+
+        def __call__(self, arm: Arm, case: object, current: Job) -> Image.Image:
+            self.calls += 1
+            return _picture(arm, case, current)
+
+    slow = _SlowLoad()
+    run_compare(
+        job,
+        results,
+        private_root=None,
+        generate=slow,
+        score=lambda *_args: _score(),
+        fetch=_fetch,
+        smi=lambda: None,
+        cuda=False,
+    )
+    fresh = json.loads((results / "pairs.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert fresh["pair_id"] == payload["pair_id"]
+    assert slow.loads == 1
+    assert slow.calls == 1
+    assert isinstance(fresh["seconds"], float)
+    assert fresh["seconds"] < 0.1
+
+
+def _bash() -> str:
+    found = shutil.which("bash")
+    if found:
+        return found
+    windows = Path(r"C:\Program Files\Git\bin\bash.exe")
+    if windows.is_file():
+        return str(windows)
+    return "bash"
+
+
+def _module(keys: tuple[str, ...]) -> object:
+    class _Weights:
+        def state_dict(self) -> dict[str, torch.Tensor]:
+            return {key: torch.zeros(2, 2) for key in keys}
+
+        def load_state_dict(self, mapped: dict[str, torch.Tensor], strict: bool = False) -> None:
+            del strict
+            self.loaded = mapped
+
+    return _Weights()
+
+
+def _write_shards(folder: Path, stem: str, keys: tuple[str, str], *, index: bool = True) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    save_file({keys[0]: torch.ones(2, 2)}, folder / f"{stem}-00001-of-00002.safetensors")
+    save_file({keys[1]: torch.ones(2, 2)}, folder / f"{stem}-00002-of-00002.safetensors")
+    if not index:
+        return
+    payload = {
+        "metadata": {"total_size": 32},
+        "weight_map": {
+            keys[0]: f"{stem}-00001-of-00002.safetensors",
+            keys[1]: f"{stem}-00002-of-00002.safetensors",
+        },
+    }
+    (folder / f"{stem}.safetensors.index.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _dump(path: Path, payload: dict[str, object]) -> Path:

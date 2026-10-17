@@ -13,6 +13,7 @@ from voxprint_forge.compare.plan import Arm, Job, kind_label
 from voxprint_forge.compare.privacy import assert_mapping_clean, assert_text_clean
 
 PAIRS_NAME = "pairs.jsonl"
+TIMINGS_NAME = "timings.jsonl"
 SUMMARY_JSON = "summary.json"
 SUMMARY_MD = "summary.md"
 
@@ -61,6 +62,41 @@ def pair_record(
     }
 
 
+def timing_id(arm_id: str, ordinal: int) -> str:
+    """Stable id for one arm's image. It contains no prompt text."""
+    return f"{arm_id}:{ordinal}"
+
+
+def load_timings(path: Path, secrets: Sequence[str]) -> dict[str, dict[str, object]]:
+    """Read per-image timings keyed by arm and ordinal. Prompt text is refused."""
+    if not path.is_file():
+        return {}
+    found: dict[str, dict[str, object]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        assert_text_clean(line, secrets, where=f"{path.name}:{line_number}")
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise CompareSetup(f"{path.name} line {line_number} is not JSON", code="compare_resume") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("arm"), str):
+            raise CompareSetup(f"{path.name} line {line_number} has no arm", code="compare_resume")
+        ordinal = payload.get("ordinal")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            raise CompareSetup(f"{path.name} line {line_number} has no ordinal", code="compare_resume")
+        found[timing_id(str(payload["arm"]), ordinal)] = payload
+    return found
+
+
+def append_timing(path: Path, record: Mapping[str, object], secrets: Sequence[str]) -> None:
+    """Append one arm timing. The line is refused when it contains prompt text."""
+    assert_mapping_clean(record, secrets, where=path.name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+
+
 def load_pairs(path: Path, secrets: Sequence[str]) -> dict[str, dict[str, object]]:
     """Read finished pairs keyed by ``pair_id``. A leaked prompt is a setup error."""
     if not path.is_file():
@@ -96,6 +132,7 @@ def summarise(
     missing_sets: Sequence[str],
     case_count: int,
     secrets: Sequence[str],
+    timings: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """Aggregate non-warmup pairs. New metrics are reported and do not gate."""
     arms: list[dict[str, object]] = []
@@ -146,6 +183,7 @@ def summarise(
         "steps": job.steps,
         "guidance": job.guidance,
         "reference_arm": job.reference,
+        "reference": _reference_speed(job, timings),
         "passed": not failed,
         "failed_arms": failed,
         "lpips_max": job.lpips_max,
@@ -184,6 +222,7 @@ def render_markdown(payload: Mapping[str, object]) -> str:
         f"Model: {payload.get('model')}",
         f"Steps: {payload.get('steps')}. Guidance: {payload.get('guidance')}.",
         f"Reference arm: {payload.get('reference_arm')}.",
+        _reference_line(payload.get("reference")),
         f"Pass: {'yes' if payload.get('passed') else 'no'}.",
         f"Bar: mean LPIPS <= {payload.get('lpips_max')} and CLIP-T drop <= {payload.get('clip_drop_max')}.",
         "SSIM, PSNR, DINOv2 cosine, and CLIP-I are reported only.",
@@ -233,6 +272,26 @@ def render_markdown(payload: Mapping[str, object]) -> str:
     if isinstance(extra, str) and extra:
         lines.extend(["", extra])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _reference_speed(job: Job, timings: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    rows = [item for item in timings if item.get("arm") == job.reference and item.get("warmup") is not True]
+    return {
+        "id": job.reference,
+        "samples": len(rows),
+        "seconds_per_image": _seconds(rows),
+        "vram_torch_peak_bytes": _peak(rows, "vram_torch_bytes"),
+        "vram_smi_peak_bytes": _peak(rows, "vram_smi_bytes"),
+    }
+
+
+def _reference_line(reference: object) -> str:
+    if not isinstance(reference, dict):
+        return "Reference s/img: ."
+    return (
+        f"Reference s/img: {_fmt(reference.get('seconds_per_image'))} "
+        f"over {reference.get('samples')} scored images."
+    )
 
 
 def _fmt(value: object) -> str:

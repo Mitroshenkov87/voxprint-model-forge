@@ -45,7 +45,11 @@ class Schedule:
 
 
 def build_schedule(job: Job, private_root: Path | None) -> Schedule:
-    """Public cases first, then up to ``private_limit`` rows from each named set."""
+    """Public cases first, then up to ``private_limit`` rows from each named set.
+
+    The first case is the warm-up image for every arm. Each arm renders it,
+    and the speed mean leaves it out.
+    """
     public = _public_cases(job)
     private, missing = _private_cases(job, private_root, start=len(public))
     rows = public + private
@@ -127,10 +131,11 @@ def _private_cases(job: Job, root: Path | None, *, start: int) -> tuple[list[Cas
 
 
 def _from_item(item: ManifestItem, *, ordinal: int, width: int, height: int) -> Case:
-    """Keep the manifest seed. Size falls back to the job when the row has one.
+    """Keep the manifest seed. A missing size uses the job width and height.
 
     The manifest size is what the source image used. The harness regenerates at
-    that size when it is present, so a 1024 row stays 1024.
+    that size when it is present, so a 1024 row stays 1024. Width or height 0
+    means the row did not set a size.
     """
     return Case(
         ordinal=ordinal,
