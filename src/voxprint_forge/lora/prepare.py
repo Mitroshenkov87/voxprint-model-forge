@@ -107,6 +107,8 @@ def prepare(
             _write_trace(trace, pid, decision)
         if decision.keep:
             safe.append((pid, image))
+            if decision.audit:
+                _write_audit(project, pid, decision.audit)
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
             minor = minor or decision.minor
@@ -221,6 +223,13 @@ def _write_trace(path: Path, pid: str, decision: Decision) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with Path(path).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _write_audit(project: Project, pid: str, audit: dict[str, object]) -> None:
+    """Rule v3: one line per photo kept despite an estimate under 20 (sha12 id, numbers, codes; no image/text)."""
+    project.root.mkdir(parents=True, exist_ok=True)
+    with (project.root / "gate_v3_audit.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"id": pid, **audit}, ensure_ascii=False) + "\n")
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:

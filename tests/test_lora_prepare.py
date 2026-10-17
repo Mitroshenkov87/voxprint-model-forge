@@ -173,7 +173,7 @@ class RecordingJudge(FakeJudge):
     ("verdict", "outcome"),
     [
         (ADULT_FACE, "kept"),
-        (replace(ADULT_FACE, min_age=19.0), "dropped"),
+        (replace(ADULT_FACE, min_age=19.0, could_be_under_20=True), "dropped"),
         (replace(ADULT_FACE, min_age=12.0, reason_code="child_or_adolescent"), "blocked"),
     ],
 )
@@ -275,12 +275,13 @@ def test_unsure_drops_without_blocking() -> None:
 def test_face_needs_both_judges_at_20_or_older() -> None:
     assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True).keep
     assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True).path == "full"
-    assert not decide(ADULT_FACE, AgeReading(1, (19.5,)), estimator_ok=True).keep
+    assert not decide(ADULT_FACE, AgeReading(1, (19.5,)), estimator_ok=True, rule="v1").keep
     assert decide(ADULT_FACE, AgeReading(1, (16.0,)), estimator_ok=True).minor
     assert not decide(ADULT_FACE, None, estimator_ok=False).keep
-    assert not decide(replace(ADULT_FACE, min_age=19.0), AgeReading(1, (30.0,)), estimator_ok=True).keep
+    assert not decide(replace(ADULT_FACE, min_age=19.0), AgeReading(1, (30.0,)), estimator_ok=True, rule="v1").keep
     assert not decide(replace(ADULT_FACE, face_visible="unsure"), None, estimator_ok=False).keep
-    assert not decide(replace(ADULT_FACE, reason_code="youthful_adult"), AgeReading(1, (30.0,)), estimator_ok=True).keep
+    youthful = replace(ADULT_FACE, reason_code="youthful_adult")
+    assert not decide(youthful, AgeReading(1, (30.0,)), estimator_ok=True, rule="v1").keep
     assert not decide(replace(ADULT_FACE, could_be_under_20=None), AgeReading(1, (30.0,)), estimator_ok=True).keep
     assert not decide(replace(ADULT_FACE, confidence=0.4), AgeReading(1, (30.0,)), estimator_ok=True).keep
 
