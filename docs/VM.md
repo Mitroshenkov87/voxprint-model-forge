@@ -65,7 +65,9 @@ Run it on a fresh image before any paid GPU job, after `scripts/vm_setup_synth4.
 FORGE_OUT=~/forge-out ~/forge-out/venv/bin/python -m voxprint_forge.cli --root ~/voxprint-model-forge preflight --vm
 ```
 
-It prints one `PASS` or `FAIL` line per check, with a fix hint on each FAIL, and exits 6 when anything fails (`--json` for one object). Checks: Python 3.12 or newer; torch imports, is a CUDA build, sees the GPU, and the driver is new enough for that CUDA (580 for cu130, 570 for cu128); every base and `[compare]` requirement installed at a matching version (for example `torchmetrics>=1.6`); `cmake`, `ninja`, `nvcc` (`CUDACXX`, else `/usr/local/cuda/bin/nvcc`, else `PATH`) and a C++ compiler; `third_party/llama.cpp` present at `scripts/llama.rev`; the vendored voxprint_common 0.1.1 wheel present and installed; `HF_TOKEN` set (the value is never printed); free disk at `FORGE_OUT` (`--min-free-gb`, default 150). Nothing is installed or downloaded.
+For a LoRA-only VM add `--for lora`: it skips `cmake`, `ninja`, `nvcc`, the C++ compiler and `third_party/llama.cpp`, which only the GGUF build needs.
+
+It prints one `PASS` or `FAIL` line per check, with a fix hint on each FAIL, and exits 6 when anything fails (`--json` for one object). Checks: Python 3.12 or newer; torch imports, is a CUDA build, sees the GPU, and the driver is new enough for that CUDA (580 for cu130, 570 for cu128); every base and `[compare]` requirement installed at a matching version (for example `torchmetrics>=1.6`); `cmake`, `ninja`, `nvcc` (`CUDACXX`, else `/usr/local/cuda/bin/nvcc`, else `PATH`) and a C++ compiler; `third_party/llama.cpp` present at `scripts/llama.rev`; the vendored voxprint_common wheel for the version pyproject.toml pins (0.2.5) present and installed; `HF_TOKEN` set (the value is never printed); free disk at `FORGE_OUT` (`--min-free-gb`, default 150). Nothing is installed or downloaded.
 
 ## What bootstrap does
 

@@ -72,6 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check a fresh VM image before a paid GPU job: Python, torch/CUDA, [compare] versions, build tools, "
         "llama.cpp, the voxprint_common wheel, HF_TOKEN and disk. Exit 6 on any FAIL.",
     )
+    preflight.add_argument(
+        "--for",
+        dest="vm_scope",
+        choices=("all", "lora"),
+        default="all",
+        help="With --vm: what the VM is for. 'lora' skips cmake, ninja, nvcc, c++ and llama.cpp. Default: all.",
+    )
     preflight.add_argument("--min-free-gb", type=float, default=150.0, help="Disk needed for --vm. Default: 150.")
     sub.add_parser("status", help="Read status.json and report stalled or failed work.")
     accounts = sub.add_parser("accounts", help="Store Hugging Face, Kaggle, and Drive credentials in the OS keyring.")
@@ -337,7 +344,7 @@ def _dispatch(args: argparse.Namespace) -> object:
         from voxprint_forge.vmcheck import run_vm_checks
 
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
-        return run_vm_checks(root, forge_out, min_free_gb=args.min_free_gb)
+        return run_vm_checks(root, forge_out, min_free_gb=args.min_free_gb, scope=args.vm_scope)
     if args.command == "index":
         return _index(args)
     if args.command == "sources":

@@ -65,7 +65,8 @@ options:
 ## `forge preflight`
 
 ```text
-usage: forge preflight [-h] [--vm] [--min-free-gb MIN_FREE_GB]
+usage: forge preflight [-h] [--vm] [--for {all,lora}]
+                       [--min-free-gb MIN_FREE_GB]
 
 options:
   -h, --help            show this help message and exit
@@ -73,6 +74,8 @@ options:
                         torch/CUDA, [compare] versions, build tools,
                         llama.cpp, the voxprint_common wheel, HF_TOKEN and
                         disk. Exit 6 on any FAIL.
+  --for {all,lora}      With --vm: what the VM is for. 'lora' skips cmake,
+                        ninja, nvcc, c++ and llama.cpp. Default: all.
   --min-free-gb MIN_FREE_GB
                         Disk needed for --vm. Default: 150.
 ```

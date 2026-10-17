@@ -20,7 +20,21 @@ from pathlib import Path
 
 MIN_PYTHON = (3, 12)
 MIN_FREE_GB = 150.0
-WHEEL = "vendor/voxprint_common-0.1.1-py3-none-any.whl"
+SCOPES = ("all", "lora")
+
+
+def pinned_common(root: Path) -> str:
+    """The voxprint-common version this checkout pins (the ``==`` pin in pyproject.toml)."""
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    found = re.findall(r"voxprint-common(?:\[[^\]]*\])?\s*==\s*([0-9][0-9A-Za-z.]*)", text)
+    if not found:
+        found = re.findall(r"voxprint-common(?:\[[^\]]*\])?\s*>=\s*([0-9][0-9A-Za-z.]*)", text)
+    return found[0] if found else ""
+
+
+def wheel_path(root: Path) -> str:
+    """Vendored wheel for the pinned version, relative to the checkout."""
+    return f"vendor/voxprint_common-{pinned_common(root)}-py3-none-any.whl"
 # Minimum driver major for each CUDA runtime major.minor of the torch build.
 DRIVER_FOR_CUDA = {"13.0": 580, "12.8": 570, "12.6": 560, "12.4": 550}
 
@@ -175,15 +189,17 @@ def check_llama(root: Path) -> dict[str, object]:
 
 
 def check_wheel(root: Path, probe: Probe) -> dict[str, object]:
-    """The vendored voxprint_common wheel exists and is the installed version."""
-    present = (root / WHEEL).is_file()
+    """The vendored wheel for the pinned voxprint_common exists and is the installed version."""
+    want = pinned_common(root)
+    wheel = wheel_path(root)
+    present = bool(want) and (root / wheel).is_file()
     installed = probe.version("voxprint-common")
-    ok = present and installed == "0.1.1"
+    ok = present and installed == want
     return _line(
         "voxprint_common",
         ok,
-        f"wheel {'present' if present else 'missing'}, installed {installed or 'none'}",
-        f"uv pip install {WHEEL}",
+        f"pinned {want or 'none'}, {wheel} {'present' if present else 'missing'}, installed {installed or 'none'}",
+        f"uv pip install {wheel}",
     )
 
 
@@ -202,19 +218,31 @@ def check_disk(path: Path, probe: Probe, min_free_gb: float = MIN_FREE_GB) -> di
     )
 
 
-def run_vm_checks(root: Path, forge_out: Path, probe: Probe | None = None, min_free_gb: float = MIN_FREE_GB) -> dict:
-    """All checks. ``ok`` is False when any check fails."""
+def run_vm_checks(
+    root: Path,
+    forge_out: Path,
+    probe: Probe | None = None,
+    min_free_gb: float = MIN_FREE_GB,
+    scope: str = "all",
+) -> dict:
+    """Checks for ``scope``. ``lora`` skips the build tools and llama.cpp (LoRA training builds nothing).
+
+    ``ok`` is False when any check fails.
+    """
+    if scope not in SCOPES:
+        raise ValueError(f"unknown preflight scope {scope}")
     probe = probe or Probe()
     checks = [check_python(probe), check_torch(probe), check_requirements(root, probe)]
-    checks += check_tools(probe)
+    if scope == "all":
+        checks += check_tools(probe)
+        checks.append(check_llama(root))
     checks += [
-        check_llama(root),
         check_wheel(root, probe),
         check_token(probe),
         check_disk(forge_out, probe, min_free_gb),
     ]
     ok = all(item["ok"] for item in checks)
-    return {"ok": ok, "checks": checks, "text": render(checks)}
+    return {"ok": ok, "scope": scope, "checks": checks, "text": render(checks)}
 
 
 def render(checks: list[dict[str, object]]) -> str:
