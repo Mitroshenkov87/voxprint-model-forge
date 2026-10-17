@@ -33,6 +33,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           $stage = "installer\windows\staging"
           New-Item -ItemType Directory -Force "$stage\wheels" | Out-Null
+          # The version line reads BUILD.json from the package folder.
+          Copy-Item BUILD.json src\voxprint_forge\BUILD.json
           python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
           if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
           $common = "vendor\voxprint_common-0.2.5-py3-none-any.whl"

@@ -25,3 +25,4 @@ site/
 *.local.*
 scripts/_*.json
 installer/windows/staging/
+src/voxprint_forge/BUILD.json
