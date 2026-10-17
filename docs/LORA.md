@@ -9,6 +9,7 @@
 | `lora prepare --project DIR --photos DIR --kind KIND ...` | Checks, crops and describes the photos. Photos that are unreadable, too small, blurry, near-duplicate or fail the safety check are listed in `drops.jsonl` with a reason key. Running it again on the same project adds the new photos as the next round (for `extend`). |
 | `lora train --project DIR` | Trains on the prepared photos of the project. `--dry-run` prints the plan and the time estimate. |
 | `lora extend --project DIR --from FILE` | Continues an existing LoRA with the newest photos of the project plus `--replay` share (default 0.25) of the older ones. A LoRA made on another base is refused (`lora.err.base_mismatch`). |
+| `lora export --project DIR` | Saves the last version (or `--checkpoint N`) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
 
 Training refuses to start unless the project was prepared and passed the safety check (`lora.err.gate_missing`). It needs at least 10 prepared photos, or 5 in Expert mode.
 
@@ -24,7 +25,6 @@ Pause with Ctrl+C, or by creating an empty file named `PAUSE` in the project fol
 - To continue, the GUI deletes `PAUSE`, then runs `lora train --project <project> --resume` (or `extend ... --resume`).
 - If `PAUSE` exists when `train` or `extend` starts, the engine refuses with `lora.err.pause_file` (exit code 2) and trains nothing.
 - To stop for good, pause and then export the last version, or end the process. Ctrl+C on Linux does the same as `PAUSE`.
-| `lora export --project DIR` | Saves the last version (or `--checkpoint N`) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
 
 ## Export and the Canvas hand-off
 

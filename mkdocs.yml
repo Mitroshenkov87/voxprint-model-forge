@@ -13,6 +13,9 @@ exclude_docs: |
   VM.md
 nav:
   - Home: index.md
+  - Manual:
+      - English: manual/en.md
+      - Русский: manual/ru.md
   - Roadmap: roadmap.md
   - Testing: TESTING.md
   - CLI: cli-reference.md
