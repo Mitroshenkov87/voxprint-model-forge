@@ -65,7 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan-summary", help="Print the plan's time estimate.")
     sub.add_parser("verify-logins", help="Check Hugging Face and Kaggle logins.")
-    sub.add_parser("preflight", help="Run the seconds-long checks and print the report.")
+    preflight = sub.add_parser("preflight", help="Run the seconds-long checks and print the report.")
+    preflight.add_argument(
+        "--vm",
+        action="store_true",
+        help="Check a fresh VM image before a paid GPU job: Python, torch/CUDA, [compare] versions, build tools, "
+        "llama.cpp, the voxprint_common wheel, HF_TOKEN and disk. Exit 6 on any FAIL.",
+    )
+    preflight.add_argument("--min-free-gb", type=float, default=150.0, help="Disk needed for --vm. Default: 150.")
     sub.add_parser("status", help="Read status.json and report stalled or failed work.")
     accounts = sub.add_parser("accounts", help="Store Hugging Face, Kaggle, and Drive credentials in the OS keyring.")
     account_sub = accounts.add_subparsers(dest="accounts_command", required=True)
@@ -212,6 +219,9 @@ def main(argv: list[str] | None = None) -> int:
         ):
             print(result["text"])
             return 0
+        if not args.json and args.command == "preflight" and getattr(args, "vm", False) and isinstance(result, dict):
+            print(result["text"])
+            return _exit_code(args.command, result)
         code = _exit_code(args.command, result)
         emit(args.command, result, ok=code == 0, exit_code=code, json_mode=args.json)
         return code
@@ -309,6 +319,11 @@ def _dispatch(args: argparse.Namespace) -> object:
     root = _repo_root(args.root)
     if args.command == "accounts":
         return execute_accounts(args)
+    if args.command == "preflight" and args.vm:
+        from voxprint_forge.vmcheck import run_vm_checks
+
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        return run_vm_checks(root, forge_out, min_free_gb=args.min_free_gb)
     if args.command == "index":
         return _index(args)
     if args.command == "sources":

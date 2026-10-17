@@ -5,6 +5,14 @@ arms for the synth4 queue. The plan is `plans/compare-synth4.toml`.
 `scripts/vm_run_compare.sh --job D1 --json` calls the same command.
 `scripts/vm_setup_synth4.sh` installs the `compare` extra and builds llama.cpp.
 It does not run a job. `--dry-run` prints the torch index and CUDA arch list.
+Before any download it checks for `cmake`, `ninja` and `nvcc` and exits 9 with
+the missing names. `CUDACXX` defaults to `/usr/local/cuda/bin/nvcc` when that
+exists, else `nvcc` on `PATH`; llama.cpp builds with `-G Ninja`. Torch and
+torchvision come from the CUDA index (cu130, or cu128 for drivers below 580)
+in a first step. Everything else then comes from PyPI only, with torch and
+torchvision held by a constraint file: mixing the CUDA index into that step
+made uv resolve index-first and pick torchmetrics 1.0.3 (`[compare]` needs
+1.6 or newer). See docs/VM.md.
 
 Exit codes for this command are separate from the rest of `forge`:
 

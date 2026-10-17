@@ -103,8 +103,13 @@ if ! command -v cmake >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1 || ! c
   exit 9
 fi
 
-if ! command -v nvcc >/dev/null 2>&1; then
+if [[ -d /usr/local/cuda/bin ]]; then
   export PATH="/usr/local/cuda/bin:${PATH}"
+fi
+if [[ -z "${CUDACXX:-}" && -x /usr/local/cuda/bin/nvcc ]]; then
+  export CUDACXX=/usr/local/cuda/bin/nvcc
+fi
+if [[ -z "${LD_LIBRARY_PATH:-}" || "$LD_LIBRARY_PATH" != */usr/local/cuda/* ]]; then
   cuda_lib=""
   if [[ -d /usr/local/cuda/lib64 ]]; then
     cuda_lib="/usr/local/cuda/lib64"
@@ -188,8 +193,13 @@ if ! install_torch 3.14; then
   fi
 fi
 uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.1.1-py3-none-any.whl"
-uv pip install --python "$VENV" -e "$ROOT" hf_transfer "kaggle>=1.6" \
-  --extra-index-url https://download.pytorch.org/whl/cu130
+# Torch came from the cu130 index above; everything else comes from PyPI only.
+# Mixing the torch index in here makes uv resolve index-first and pick old
+# packages. The constraint keeps the CUDA torch build.
+PINS="$FORGE_OUT/torch-pins.txt"
+mkdir -p "$FORGE_OUT"
+uv pip freeze --python "$VENV" | grep -E '^(torch|torchvision)==' > "$PINS"
+uv pip install --python "$VENV" -e "$ROOT" hf_transfer "kaggle>=1.6" --constraint "$PINS"
 
 # shellcheck source=scripts/vm_logins.sh
 source "$ROOT/scripts/vm_logins.sh"
@@ -217,7 +227,14 @@ ARCHS="${FORGE_CUDA_ARCHS:-80;89;90;120}"
 WANT="${LLAMA_COMMIT} ${ARCHS}"
 STAMP="$FORGE_OUT/stages/llama-cpp.done"
 if [[ ! -f "$STAMP" || "$(tr -d '\n' < "$STAMP")" != "$WANT" ]]; then
+  # An older Makefile build tree cannot switch to Ninja in place.
+  if [[ -f "$FORGE_OUT/llama-build/CMakeCache.txt" ]] \
+    && ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' "$FORGE_OUT/llama-build/CMakeCache.txt"; then
+    rm -rf "$FORGE_OUT/llama-build/CMakeCache.txt" "$FORGE_OUT/llama-build/CMakeFiles"
+  fi
   cmake -S "$LLAMA_SRC" -B "$FORGE_OUT/llama-build" \
+    -G Ninja \
+    -DCMAKE_CUDA_COMPILER="${CUDACXX:-$(command -v nvcc)}" \
     -DGGML_CUDA=ON \
     -DGGML_NATIVE=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="$ARCHS"

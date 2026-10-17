@@ -51,8 +51,48 @@ if [[ "$dry" == 1 ]]; then
   printf 'torch_index: %s\n' "$(torch_index)"
   printf 'extra: compare\n'
   printf 'cuda_archs: %s\n' "$(cuda_archs)"
+  printf 'needs: cmake ninja nvcc (CUDACXX, default /usr/local/cuda/bin/nvcc)\n'
   printf 'env: FORGE_LLAMA_BIN FORGE_LLAMA_SRC FORGE_VENV\n'
   exit 0
+fi
+
+# Build tools: install cmake, ninja-build and build-essential when missing,
+# put /usr/local/cuda on PATH, and fail before any download if still missing.
+need_apt=0
+for tool in cmake ninja g++; do
+  command -v "$tool" >/dev/null 2>&1 || need_apt=1
+done
+if [[ "$need_apt" == 1 ]] && command -v apt-get >/dev/null 2>&1; then
+  if [[ "$(id -u)" -eq 0 ]]; then
+    apt-get update && apt-get install -y cmake ninja-build build-essential || true
+  else
+    sudo -n apt-get update && sudo -n apt-get install -y cmake ninja-build build-essential || true
+  fi
+fi
+if [[ -d /usr/local/cuda/bin ]]; then
+  export PATH="/usr/local/cuda/bin:${PATH}"
+fi
+if [[ -z "${CUDACXX:-}" && -x /usr/local/cuda/bin/nvcc ]]; then
+  export CUDACXX=/usr/local/cuda/bin/nvcc
+fi
+missing=()
+for tool in cmake ninja g++; do
+  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if [[ -z "${CUDACXX:-}" ]]; then
+  if command -v nvcc >/dev/null 2>&1; then
+    CUDACXX="$(command -v nvcc)"
+    export CUDACXX
+  else
+    missing+=("nvcc (or set CUDACXX)")
+  fi
+elif [[ ! -x "$CUDACXX" ]]; then
+  missing+=("CUDACXX=$CUDACXX is not executable")
+fi
+if (( ${#missing[@]} )); then
+  printf 'missing build tools: %s\n' "${missing[*]}" >&2
+  printf 'install cmake, ninja-build, build-essential and the CUDA toolkit (nvcc); see docs/VM.md\n' >&2
+  exit 9
 fi
 
 export PATH="${HOME}/.local/bin:${PATH}"
@@ -76,7 +116,12 @@ if ! install_torch 3.14; then
   fi
 fi
 uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.1.1-py3-none-any.whl"
-uv pip install --python "$VENV" -e "$ROOT[compare]" --extra-index-url "$INDEX"
+# Step 2: everything else from PyPI only. Mixing the torch index in makes uv
+# resolve index-first and pick old packages (torchmetrics 1.0.3). The constraint
+# keeps the CUDA torch and torchvision from step 1.
+PINS="$FORGE_OUT/torch-pins.txt"
+uv pip freeze --python "$VENV" | grep -E '^(torch|torchvision)==' > "$PINS"
+uv pip install --python "$VENV" -e "${ROOT}[compare]" --constraint "$PINS"
 
 LLAMA_COMMIT="$(tr -d '[:space:]' < "$ROOT/scripts/llama.rev")"
 LLAMA_SRC="$ROOT/third_party/llama.cpp"
@@ -97,7 +142,14 @@ WANT="${LLAMA_COMMIT} ${ARCHS}"
 mkdir -p "$FORGE_OUT/stages"
 STAMP="$FORGE_OUT/stages/llama-cpp.done"
 if [[ ! -f "$STAMP" || "$(tr -d '\n' < "$STAMP")" != "$WANT" ]]; then
+  # An older Makefile build tree cannot switch to Ninja in place.
+  if [[ -f "$FORGE_OUT/llama-build/CMakeCache.txt" ]] \
+    && ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' "$FORGE_OUT/llama-build/CMakeCache.txt"; then
+    rm -rf "$FORGE_OUT/llama-build/CMakeCache.txt" "$FORGE_OUT/llama-build/CMakeFiles"
+  fi
   cmake -S "$LLAMA_SRC" -B "$FORGE_OUT/llama-build" \
+    -G Ninja \
+    -DCMAKE_CUDA_COMPILER="$CUDACXX" \
     -DGGML_CUDA=ON \
     -DGGML_NATIVE=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="$ARCHS"

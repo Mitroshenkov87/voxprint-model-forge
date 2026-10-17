@@ -346,7 +346,12 @@ def test_vm_setup_patches_the_converter_before_cmake() -> None:
     cmake_at = live.index("cmake -S")
     assert patch_at < cmake_at
     assert patch_at > live.index("BUNDLED_LLAMA")
-    assert patch_at > live.index('-e "$ROOT[compare]"')
+    assert patch_at > live.index('-e "${ROOT}[compare]"')
+    assert "--extra-index-url" not in live
+    assert '--constraint "$PINS"' in live
+    assert live.index("missing build tools") < live.index("uv python install")
+    assert "-G Ninja" in live and '-DCMAKE_CUDA_COMPILER="$CUDACXX"' in live
+    assert "/usr/local/cuda/bin/nvcc" in live
     assert "bundled llama.cpp commit does not match scripts/llama.rev" in live
 
 
