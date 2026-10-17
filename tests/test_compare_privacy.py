@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from PIL import Image
 
@@ -164,3 +165,34 @@ def test_cli_without_a_gpu_does_not_print_the_private_prompt(tmp_path: Path, mon
     assert sentinel not in captured.out
     assert sentinel not in captured.err
     assert load_compare_plan(ROOT / "plans" / "compare-synth4.toml").job("D1").id == "D1"
+
+
+def test_missing_private_sets_name_the_reason(tmp_path: Path, capsys) -> None:
+    from voxprint_forge.compare.cases import _private_cases
+
+    job = SimpleNamespace(private_sets=("vxp_yuna", "vxp_mei"), private_limit=5, width=64, height=64)
+    assert _private_cases(job, None, start=0) == ([], ("vxp_yuna", "vxp_mei"))
+    assert "FORGE_PRIVATE_PROMPTS is not set in this process" in capsys.readouterr().err
+    (tmp_path / "vxp_yuna").mkdir()
+    (tmp_path / "vxp_yuna" / "prompts.json").write_text("{}", encoding="utf-8")
+    rows, missing = _private_cases(job, tmp_path, start=0)
+    assert rows == [] and missing == ("vxp_yuna", "vxp_mei")
+    err = capsys.readouterr().err
+    assert str(tmp_path / "vxp_yuna" / "manifest.json") in err
+    assert str(tmp_path / "vxp_mei" / "dataset" / "manifest.json") in err
+
+
+def test_private_root_expands_home_and_names_a_bad_path(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+
+    from voxprint_forge.compare.codes import CompareSetup
+    from voxprint_forge.compare.privacy import private_root_from_env
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / "compare-synth4").mkdir()
+    monkeypatch.setenv("FORGE_PRIVATE_PROMPTS", "~/compare-synth4")
+    assert private_root_from_env() == tmp_path / "compare-synth4"
+    monkeypatch.setenv("FORGE_PRIVATE_PROMPTS", str(tmp_path / "nope"))
+    with pytest.raises(CompareSetup, match="nope"):
+        private_root_from_env()

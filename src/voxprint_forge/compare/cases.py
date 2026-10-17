@@ -7,6 +7,7 @@ job, never from a manifest.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Never
@@ -14,7 +15,7 @@ from typing import Literal, Never
 from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.compare.manifests import ManifestItem, find_manifest, load_manifest
 from voxprint_forge.compare.plan import Job, PromptSet
-from voxprint_forge.compare.privacy import prompt_id
+from voxprint_forge.compare.privacy import PRIVATE_ENV, prompt_id
 from voxprint_forge.diffusion.prompts import BASE_PROMPTS, CONTROL_PROMPTS, CONTROL_TYPES
 
 Source = Literal["public", "private"]
@@ -115,6 +116,7 @@ def _private_cases(job: Job, root: Path | None, *, start: int) -> tuple[list[Cas
     if not job.private_sets:
         return [], ()
     if root is None:
+        _warn(f"{PRIVATE_ENV} is not set in this process; private sets skipped: {', '.join(job.private_sets)}")
         return [], job.private_sets
     rows: list[Case] = []
     missing: list[str] = []
@@ -122,12 +124,21 @@ def _private_cases(job: Job, root: Path | None, *, start: int) -> tuple[list[Cas
         folder = root / name
         manifest = find_manifest(folder) if folder.is_dir() else None
         if manifest is None:
+            _warn(
+                f"private set {name}: no manifest at {folder / 'manifest.json'} "
+                f"or {folder / 'dataset' / 'manifest.json'}"
+            )
             missing.append(name)
             continue
         items = load_manifest(manifest)[: job.private_limit]
         for item in items:
             rows.append(_from_item(item, ordinal=start + len(rows), width=job.width, height=job.height))
     return rows, tuple(missing)
+
+
+def _warn(message: str) -> None:
+    """Local diagnostic on stderr. It names paths, never prompt text, and is not written to results."""
+    print(f"compare: {message}", file=sys.stderr, flush=True)
 
 
 def _from_item(item: ManifestItem, *, ordinal: int, width: int, height: int) -> Case:

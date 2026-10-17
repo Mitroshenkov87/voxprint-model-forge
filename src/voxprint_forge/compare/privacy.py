@@ -30,9 +30,9 @@ def private_root_from_env() -> Path | None:
     raw = os.environ.get(PRIVATE_ENV, "").strip()
     if not raw:
         return None
-    path = Path(raw)
+    path = Path(raw).expanduser()
     if not path.is_dir():
-        raise CompareSetup(f"{PRIVATE_ENV} is not a directory", code="compare_private")
+        raise CompareSetup(f"{PRIVATE_ENV} is not a directory: {path}", code="compare_private")
     return path
 
 

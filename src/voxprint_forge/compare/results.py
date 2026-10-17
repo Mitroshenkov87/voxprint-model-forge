@@ -276,7 +276,10 @@ def render_markdown(payload: Mapping[str, object]) -> str:
         lines.append("")
     missing = payload.get("missing_private_sets")
     if isinstance(missing, list) and missing:
-        lines.append("Private sets not on disk: " + ", ".join(str(item) for item in missing) + ".")
+        lines.append(
+            "Private sets not loaded (FORGE_PRIVATE_PROMPTS unset, or no <set>/manifest.json; "
+            "the log names the path tried): " + ", ".join(str(item) for item in missing) + "."
+        )
         lines.append("")
     lines.append(f"Cases: {payload.get('cases')}. Pairs: {payload.get('pairs')}.")
     lines.append("Outputs use sha256 prompt ids. Prompt text is not recorded.")
