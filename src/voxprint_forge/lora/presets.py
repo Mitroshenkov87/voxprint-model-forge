@@ -99,8 +99,11 @@ def build_config(
         steps=steps,
         lr=float(base["lr"]),  # type: ignore[arg-type]
         resolution=int(base["resolution"]),  # type: ignore[call-overload]
-        batch=1 if small or preset == "quick" else 2,
-        grad_accum=2 if small and preset != "quick" else 1,
+        # Batch 1 on both tiers. The 24 GB tier keeps an effective batch of 2 through
+        # accumulation: batch 2 OOMed in its first step under a 23.5 GiB cap (CALIB-R2,
+        # peak 24 743 MiB), and accumulation halves the activations at the same 1024 px.
+        batch=1,
+        grad_accum=1 if preset == "quick" else 2,
         # Both tiers: without checkpointing a 1024 px batch of 2 keeps every block's
         # activations, about 79 GB on Z-Image (synth4 LORA-CALIB), far over 24 GB.
         grad_checkpointing=True,

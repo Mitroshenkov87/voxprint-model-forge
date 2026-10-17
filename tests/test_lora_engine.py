@@ -61,7 +61,7 @@ def test_catalogs_cover_the_plan_tables() -> None:
 def test_presets_follow_memory_tier_and_likeness() -> None:
     big = build_config("balanced", "balanced", 24)
     small = build_config("balanced", "close", 16)
-    assert (big.batch, big.grad_accum, big.grad_checkpointing, big.base_fp8) == (2, 1, True, False)
+    assert (big.batch, big.grad_accum, big.grad_checkpointing, big.base_fp8) == (1, 2, True, False)
     assert (small.batch, small.grad_accum, small.grad_checkpointing, small.base_fp8) == (1, 2, True, True)
     assert small.steps == 1950 and small.caption_dropout == 0.05
     assert build_config("best", "flexible", 24).steps == 2100
@@ -341,3 +341,22 @@ def test_preview_prompts_are_encoded_before_the_encoders_leave(tmp_path) -> None
     config = build_config("quick", "balanced", 24, steps=2, resolution=64, save_every=2, previews=True, preview_every=2)
     train(make_project(tmp_path), config, Recording(), Progress(), preview_prompts=["a cube"])
     assert order == [("prepare", ("a cube",)), ("release", ())]
+
+
+def test_oom_names_the_training_phase(tmp_path) -> None:
+    class OomAdapter(TinyAdapter):
+        def loss(self, model, batch, caption_keys, rng):
+            raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 30.00 MiB.")
+
+    project = make_project(tmp_path / "p")
+    with pytest.raises(torch.OutOfMemoryError, match=r"\[phase=step "):
+        train(project, tiny(), OomAdapter(), Progress())
+
+
+def test_vram_phases_is_a_noop_without_cuda(monkeypatch) -> None:
+    from voxprint_forge.lora.train import VramPhases
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    phases = VramPhases()
+    phases.mark("load", "encode")
+    assert phases.peaks == {} and phases.phase == "encode"

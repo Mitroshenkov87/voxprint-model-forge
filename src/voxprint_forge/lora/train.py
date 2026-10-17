@@ -98,6 +98,33 @@ def vram_cap_gb() -> float | None:
     return value if value > 0 else None
 
 
+class VramPhases:
+    """Peak allocated and reserved GiB per training phase (load, encode, resident, step, preview).
+
+    Each mark records the peak since the previous one and resets it, so an OOM names its
+    phase and a passing run shows which phase sets the overall peak. No-op without CUDA.
+    """
+
+    def __init__(self) -> None:
+        self.peaks: dict[str, dict[str, float]] = {}
+        self.phase = "load"
+        self.on = torch.cuda.is_available()
+        if self.on:
+            torch.cuda.reset_peak_memory_stats()
+
+    def mark(self, done: str, next_phase: str) -> None:
+        if self.on:
+            alloc = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+            reserved = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+            old = self.peaks.get(done, {"alloc_gb": 0.0, "reserved_gb": 0.0})
+            self.peaks[done] = {
+                "alloc_gb": max(alloc, old["alloc_gb"]),
+                "reserved_gb": max(reserved, old["reserved_gb"]),
+            }
+            torch.cuda.reset_peak_memory_stats()
+        self.phase = next_phase
+
+
 def _schedule(config: TrainConfig):
     def factor(step: int) -> float:
         if config.warmup and step < config.warmup:
@@ -192,16 +219,58 @@ def train(
     chosen = select_items(items, config.replay, rng) if from_lora is not None else list(items)
     device = _device(adapter, config)
 
+    phases = VramPhases()
+    try:
+        return _train(
+            project,
+            config,
+            adapter,
+            progress,
+            data,
+            chosen,
+            saved,
+            from_lora,
+            rng,
+            stop,
+            preview_prompts,
+            base_dir,
+            device,
+            phases,
+        )
+    except torch.OutOfMemoryError as exc:
+        phases.mark(phases.phase, phases.phase)
+        raise torch.OutOfMemoryError(f"{exc} [phase={phases.phase} vram_phases={phases.peaks}]") from exc
+
+
+def _train(
+    project,
+    config,
+    adapter,
+    progress,
+    data,
+    chosen,
+    saved,
+    from_lora,
+    rng,
+    stop,
+    preview_prompts,
+    base_dir,
+    device,
+    phases: VramPhases,
+) -> dict[str, object]:
     progress.emit("train.load_base", "lora.progress.load_base", reason_key="lora.reason.load_base")
     model = adapter.load(base_dir or weights_dir(adapter.info.mdl_id), config, device)
     layers = inject(model, adapter.target_modules, config.rank, config.alpha)
     if from_lora is not None:
         load_lora_state(layers, load_file(str(from_lora)))
     images = _images(project, chosen, config.resolution)
+    phases.mark("load", "encode")
     samples = adapter.encode(images, [{"long": i.long, "short": i.short} for i in chosen], config)
     if config.previews and preview_prompts:
         adapter.prepare_previews(list(preview_prompts))
+    phases.mark("encode", "resident")
     adapter.release_encoders()
+    phases.mark("resident", "step")
 
     params = lora_parameters(layers)
     optimizer = torch.optim.AdamW(params, lr=config.lr, weight_decay=0.0)
@@ -258,14 +327,18 @@ def train(
             progress.emit("train.checkpoint", "lora.progress.checkpoint", reason_key="lora.reason.checkpoint")
             last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
         if config.previews and preview_prompts and step % config.preview_every == 0:
+            phases.mark("step", "preview")
             _previews(project, adapter, model, preview_prompts, step, config, progress)
+            phases.mark("preview", "step")
         if (stop.is_set() or project.pause.exists()) and step < config.steps:
             if last_good is None or not last_good.name.endswith(f"{step:06d}.safetensors"):
                 last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
             progress.emit("train.paused", "lora.progress.paused", state="paused")
-            return _finish(project, data, adapter, config, "paused", step, last_good, loss_value, from_lora)
+            phases.mark(phases.phase, phases.phase)
+            return _finish(project, data, adapter, config, "paused", step, last_good, loss_value, from_lora, phases)
     progress.emit("train.done", "lora.progress.done", state="done", done=config.steps, total=config.steps)
-    return _finish(project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora)
+    phases.mark(phases.phase, phases.phase)
+    return _finish(project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora, phases)
 
 
 def _previews(project, adapter, model, prompts, step, config, progress) -> None:
@@ -281,7 +354,7 @@ def _previews(project, adapter, model, prompts, step, config, progress) -> None:
         model.train()
 
 
-def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_lora) -> dict[str, object]:
+def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_lora, phases=None) -> dict[str, object]:
     record = {
         "base": adapter.info.mdl_id,
         "base_revision": adapter.info.revision,
@@ -295,8 +368,15 @@ def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_
     project.write({**data, "train": record})
     result = {"state": state, "step": step, "steps": config.steps, "checkpoint": record["checkpoint"], "loss": loss}
     if torch.cuda.is_available():
-        result["peak_vram_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
-        result["peak_reserved_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+        peaks = phases.peaks.values() if phases is not None and phases.peaks else []
+        result["peak_vram_gb"] = max(
+            (p["alloc_gb"] for p in peaks), default=round(torch.cuda.max_memory_allocated() / 2**30, 2)
+        )
+        result["peak_reserved_gb"] = max(
+            (p["reserved_gb"] for p in peaks), default=round(torch.cuda.max_memory_reserved() / 2**30, 2)
+        )
+        if phases is not None:
+            result["vram_phases_gb"] = phases.peaks
         cap = vram_cap_gb()
         if cap is not None:
             result["vram_cap_gb"] = cap
