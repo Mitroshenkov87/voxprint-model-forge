@@ -12,7 +12,9 @@ of 20 and no soft path: any doubt drops the photo.
 
 There are no thresholds to configure and no override.
 
-Rule v3 (default; ``rule="v1"`` keeps the strict rule): a face-age estimate of 18 or more but under 20 no
+Rule v1 (strict) always decides. Rule v3 runs only as a shadow (decision 01:24): its would-be result is
+recorded for measuring false refusals and never changes keep or drop.
+Shadow v3: a face-age estimate of 18 or more but under 20 no
 longer drops a face photo on its own. It passes only when the judge confirms an adult (clearly or youthful
 adult, confident, no "could be under 20") and every age cue is absent. Any estimate under 18 still drops
 and blocks. Each photo kept this way carries an ``audit`` record (id-free: estimates, verdict, cues).
@@ -26,8 +28,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 RULES = ("v1", "v3")
-DEFAULT_RULE = "v3"
-RULE_VERSION = 3
+DEFAULT_RULE = "v1"
+RULE_VERSION = 1
+SHADOW_RULE = "v3"
 ADULT_CODES = ("clearly_adult", "youthful_adult")
 RELAXABLE = ("youthful_adult", "under_20", "estimator_under_20")
 AGE_MIN = 20.0
@@ -100,6 +103,7 @@ class Decision:
     path: str
     trace: dict[str, Any] = field(default_factory=dict, compare=False)
     audit: dict[str, Any] | None = field(default=None, compare=False)
+    shadow: dict[str, Any] | None = field(default=None, compare=False)
 
     @property
     def keep(self) -> bool:
@@ -193,12 +197,9 @@ def decide(
 class Gate:
     """The judge plus the age estimator. A missing judge makes the gate unavailable."""
 
-    def __init__(self, judge: Judge | None, estimator: AgeEstimator | None, rule: str = DEFAULT_RULE) -> None:
-        if rule not in RULES:
-            raise ValueError(f"unknown gate rule {rule!r}")
+    def __init__(self, judge: Judge | None, estimator: AgeEstimator | None) -> None:
         self.judge = judge
         self.estimator = estimator
-        self.rule = rule
 
     @property
     def available(self) -> bool:
@@ -229,8 +230,15 @@ class Gate:
                 trace["estimator"] = {"ok": False, "stage": getattr(exc, "stage", "estimator"), **error_info(exc)}
         else:
             trace["estimator"] = {"ok": False, "missing": True}
-        decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=getattr(self, "rule", DEFAULT_RULE))
-        return Decision(decision.reasons, decision.minor, decision.path, trace, decision.audit)
+        decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=DEFAULT_RULE)
+        shadow = shadow_record(verdict, reading, estimator_ok)
+        return Decision(decision.reasons, decision.minor, decision.path, trace, shadow=shadow)
+
+
+def shadow_record(verdict: Verdict | None, reading: AgeReading | None, estimator_ok: bool) -> dict[str, Any]:
+    """What shadow v3 would have decided (codes and numbers only). Never used for keep/drop."""
+    s = decide(verdict, reading, estimator_ok=estimator_ok, rule=SHADOW_RULE)
+    return {"rule": SHADOW_RULE, "keep": s.keep, "reasons": list(s.reasons), "audit": s.audit}
 
 
 def error_info(exc: BaseException) -> dict[str, str]:
