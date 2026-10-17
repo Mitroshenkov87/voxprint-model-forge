@@ -580,3 +580,90 @@ def test_sha256_is_checked_after_download(tmp_path: Path, monkeypatch: pytest.Mo
     with pytest.raises(PlanError) as plan_error:
         load_kl_plan(broken)
     assert plan_error.value.code == "kl_plan"
+
+
+def write_header(path: Path, arch: str, fields: dict[str, object]) -> None:
+    """A GGUF with ``<arch>.*`` metadata copied from a real header and one tiny tensor."""
+    writer = gguf.GGUFWriter(str(path), arch)
+    for key, value in fields.items():
+        full = f"{arch}.{key}"
+        if isinstance(value, list):
+            writer.add_array(full, value)
+        elif isinstance(value, bool):
+            writer.add_bool(full, value)
+        elif isinstance(value, int):
+            writer.add_uint32(full, value)
+        else:
+            writer.add_float32(full, float(value))
+    writer.add_tensor("token_embd.weight", np.zeros((4, 32), dtype=np.float32))
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+
+
+# Gemma-4-31B-it-abliterated f16 (L2): 60 blocks, every 6th layer full attention.
+GEMMA4_PATTERN = [(index % 6) != 5 for index in range(60)]
+GEMMA4 = {
+    "block_count": 60,
+    "embedding_length": 5376,
+    "attention.head_count": 32,
+    "attention.head_count_kv": [16 if sliding else 4 for sliding in GEMMA4_PATTERN],
+    "attention.key_length": 512,
+    "attention.key_length_swa": 256,
+    "attention.sliding_window": 1024,
+    "attention.sliding_window_pattern": GEMMA4_PATTERN,
+}
+
+
+def test_gemma4_per_layer_kv_heads(tmp_path: Path) -> None:
+    """synth4 L2 failed with kl_arch: head_count_kv is an array on gemma4."""
+    path = tmp_path / "gemma4.gguf"
+    write_header(path, "gemma4", GEMMA4)
+    arch, meta = read_model_arch(path)
+    assert meta["architecture"] == "gemma4"
+    assert (meta["full_layers"], meta["swa_layers"]) == (10, 50)
+    assert (arch.full_kv_heads, arch.full_head_dim) == (4, 512)
+    assert (arch.swa_kv_heads, arch.swa_head_dim, arch.swa_window) == (16, 256, 1024)
+    assert meta["head_count_kv"] == 16
+    assert meta["head_count_kv_per_layer"] is True
+    expected = 10 * 4 * 512 * 2 * 8192 + 50 * 16 * 256 * 2 * 1024
+    assert arch.kv_bytes(8192, "f16") == expected * 2
+
+
+def test_qwen3_scalar_kv_heads(tmp_path: Path) -> None:
+    """T-lite / T-pro F16 from convert_hf_to_gguf.py (L1, L4)."""
+    path = tmp_path / "qwen3.gguf"
+    write_header(
+        path,
+        "qwen3",
+        {"block_count": 36, "embedding_length": 4096, "attention.head_count": 32,
+         "attention.head_count_kv": 8, "attention.key_length": 128},
+    )
+    arch, meta = read_model_arch(path)
+    assert (meta["full_layers"], meta["swa_layers"]) == (36, 0)
+    assert (arch.full_kv_heads, arch.full_head_dim) == (8, 128)
+    assert meta["head_count_kv_per_layer"] is False
+
+
+def test_qwen35_mtp_header(tmp_path: Path) -> None:
+    """Huihui Qwen3.6 27B MTP f16 (L3): scalar KV heads, one nextn layer."""
+    path = tmp_path / "qwen35.gguf"
+    write_header(
+        path,
+        "qwen35",
+        {"block_count": 65, "embedding_length": 5120, "attention.head_count": 24,
+         "attention.head_count_kv": 4, "attention.key_length": 256,
+         "full_attention_interval": 4, "nextn_predict_layers": 1},
+    )
+    arch, meta = read_model_arch(path)
+    assert meta["nextn_predict_layers"] == 1
+    assert (arch.full_kv_heads, arch.full_head_dim) == (4, 256)
+    assert gguf_reference_mtp(meta)["mtp_kept"] is True
+
+
+def test_missing_kv_heads_names_the_arch_key(tmp_path: Path) -> None:
+    path = tmp_path / "bare.gguf"
+    write_header(path, "gemma4", {"block_count": 60, "attention.key_length": 512})
+    with pytest.raises(StageError, match="gemma4.attention.head_count_kv"):
+        read_model_arch(path)

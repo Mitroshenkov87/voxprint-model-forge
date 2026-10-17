@@ -22,6 +22,11 @@ _LAYER = re.compile(r"(?:^|\.)mtp\.layers\.(\d+)\.")
 def read_model_arch(path: Path) -> tuple[Arch, dict[str, object]]:
     """KV shape from one GGUF, plus the raw fields the summary records.
 
+    Keys are read as ``<general.architecture>.*`` (``qwen3``, ``qwen35``, ``gemma4`` ...).
+    ``head_count_kv`` may be one integer or one integer per layer (Gemma 4 has 16 on
+    sliding layers and 4 on full ones). Per layer, each kind uses the largest count
+    among its layers, so the KV estimate never comes out low.
+
     ``block_count`` includes MTP layers when the converter appended them.
     A sliding-window pattern uses true for SWA and false for full attention.
     ``full_attention_interval`` splits the stack when the pattern is absent:
@@ -32,9 +37,16 @@ def read_model_arch(path: Path) -> tuple[Arch, dict[str, object]]:
     if not name:
         raise StageError(f"{path.name} has no architecture", code="kl_arch")
     blocks = _optional_int(reader, gguf.Keys.LLM.BLOCK_COUNT.format(arch=name))
-    kv_heads = _optional_int(reader, gguf.Keys.Attention.HEAD_COUNT_KV.format(arch=name))
+    kv_key = gguf.Keys.Attention.HEAD_COUNT_KV.format(arch=name)
+    kv_heads = _optional_int(reader, kv_key)
+    kv_layers = _int_list(reader, kv_key) if kv_heads is None else None
+    if kv_layers:
+        kv_heads = max(kv_layers)
     if blocks is None or kv_heads is None or blocks < 1 or kv_heads < 1:
-        raise StageError(f"{path.name} is missing block_count or head_count_kv", code="kl_arch")
+        raise StageError(
+            f"{path.name} is missing {name}.block_count or {name}.attention.head_count_kv",
+            code="kl_arch",
+        )
     key_length = _optional_int(reader, gguf.Keys.Attention.KEY_LENGTH.format(arch=name))
     embed = _optional_int(reader, gguf.Keys.LLM.EMBEDDING_LENGTH.format(arch=name))
     heads = _optional_int(reader, gguf.Keys.Attention.HEAD_COUNT.format(arch=name))
@@ -47,12 +59,13 @@ def read_model_arch(path: Path) -> tuple[Arch, dict[str, object]]:
     swa_dim = _optional_int(reader, gguf.Keys.Attention.KEY_LENGTH_SWA.format(arch=name)) or head_dim
     nextn = _optional_int(reader, gguf.Keys.LLM.NEXTN_PREDICT_LAYERS.format(arch=name)) or 0
     full, swa = _split(blocks, window, interval, pattern)
+    full_kv, swa_kv = _kv_heads(kv_heads, kv_layers, pattern)
     arch = Arch(
         full_layers=full,
-        full_kv_heads=kv_heads,
+        full_kv_heads=full_kv,
         full_head_dim=head_dim,
         swa_layers=swa,
-        swa_kv_heads=kv_heads if swa else 0,
+        swa_kv_heads=swa_kv if swa else 0,
         swa_head_dim=swa_dim if swa else 0,
         swa_window=window if swa else 0,
     )
@@ -60,6 +73,9 @@ def read_model_arch(path: Path) -> tuple[Arch, dict[str, object]]:
         "architecture": name,
         "block_count": blocks,
         "head_count_kv": kv_heads,
+        "head_count_kv_full": full_kv,
+        "head_count_kv_swa": swa_kv if swa else 0,
+        "head_count_kv_per_layer": bool(kv_layers),
         "head_dim": head_dim,
         "sliding_window": window,
         "full_attention_interval": interval,
@@ -141,6 +157,29 @@ def require_mtp(status: dict[str, object]) -> None:
         f"gguf nextn {status['gguf_nextn_predict_layers']})",
         code="kl_mtp",
     )
+
+
+def _kv_heads(kv_heads: int, per_layer: list[int] | None, pattern: list[bool] | None) -> tuple[int, int]:
+    """``(full, sliding)`` KV head counts. A scalar applies to both kinds."""
+    if not per_layer:
+        return kv_heads, kv_heads
+    if pattern and len(pattern) == len(per_layer):
+        full = [heads for heads, sliding in zip(per_layer, pattern, strict=True) if not sliding]
+        swa = [heads for heads, sliding in zip(per_layer, pattern, strict=True) if sliding]
+        return (max(full) if full else kv_heads), (max(swa) if swa else kv_heads)
+    return kv_heads, kv_heads
+
+
+def _int_list(reader: gguf.GGUFReader, key: str) -> list[int] | None:
+    field = reader.get_field(key)
+    if field is None:
+        return None
+    value: Any = field.contents()
+    if not isinstance(value, list) or not value:
+        return None
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in value):
+        return None
+    return [int(item) for item in value]
 
 
 def _split(blocks: int, window: int, interval: int, pattern: list[bool] | None) -> tuple[int, int]:
