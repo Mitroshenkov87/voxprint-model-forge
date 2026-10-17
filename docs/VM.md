@@ -53,6 +53,20 @@ scp <user>@<vm>:~/forge-out/manifests/<date>-a100.MODELS.md .
 
 Bootstrap prints those two paths. There is no push from the VM.
 
+## synth4 setup (`scripts/vm_setup_synth4.sh`)
+
+Needs `cmake`, `ninja` (`ninja-build`) and the CUDA toolkit. The script stops with exit 9 and names what is missing before it downloads anything. Set `CUDACXX` to the `nvcc` path when it is not `/usr/local/cuda/bin/nvcc` or on `PATH`. Install is two steps: torch and torchvision from the PyTorch CUDA index, then the `compare` extra from PyPI with torch pinned by a constraint file. Do not add `--extra-index-url` to the second step; uv then resolves index-first and installs torchmetrics 1.0.3. llama.cpp is configured with `-G Ninja`. `scripts/bootstrap.sh` does the same: apt installs `cmake`, `ninja-build` and `build-essential` when missing, puts `/usr/local/cuda/bin` on `PATH`, exports `CUDACXX`, installs torch from cu130 and the rest from PyPI. An older Makefile build tree is reset so it can switch to Ninja.
+
+### Check the image first: `forge preflight --vm`
+
+Run it on a fresh image before any paid GPU job, after `scripts/vm_setup_synth4.sh`:
+
+```
+FORGE_OUT=~/forge-out ~/forge-out/venv/bin/python -m voxprint_forge.cli --root ~/voxprint-model-forge preflight --vm
+```
+
+It prints one `PASS` or `FAIL` line per check, with a fix hint on each FAIL, and exits 6 when anything fails (`--json` for one object). Checks: Python 3.12 or newer; torch imports, is a CUDA build, sees the GPU, and the driver is new enough for that CUDA (580 for cu130, 570 for cu128); every base and `[compare]` requirement installed at a matching version (for example `torchmetrics>=1.6`); `cmake`, `ninja`, `nvcc` (`CUDACXX`, else `/usr/local/cuda/bin/nvcc`, else `PATH`) and a C++ compiler; `third_party/llama.cpp` present at `scripts/llama.rev`; the vendored voxprint_common 0.1.1 wheel present and installed; `HF_TOKEN` set (the value is never printed); free disk at `FORGE_OUT` (`--min-free-gb`, default 150). Nothing is installed or downloaded.
+
 ## What bootstrap does
 
 1. Print the forge commit from `VERSION`. Refuse anything other than Ubuntu 24.04.

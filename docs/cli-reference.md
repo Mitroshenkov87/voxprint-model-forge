@@ -65,10 +65,16 @@ options:
 ## `forge preflight`
 
 ```text
-usage: forge preflight [-h]
+usage: forge preflight [-h] [--vm] [--min-free-gb MIN_FREE_GB]
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+  --vm                  Check a fresh VM image before a paid GPU job: Python,
+                        torch/CUDA, [compare] versions, build tools,
+                        llama.cpp, the voxprint_common wheel, HF_TOKEN and
+                        disk. Exit 6 on any FAIL.
+  --min-free-gb MIN_FREE_GB
+                        Disk needed for --vm. Default: 150.
 ```
 
 ## `forge status`
@@ -400,11 +406,13 @@ options:
 ## `forge lora`
 
 ```text
-usage: forge lora [-h] {prepare,train,extend} ...
+usage: forge lora [-h] {prepare,export,train,extend} ...
 
 positional arguments:
-  {prepare,train,extend}
+  {prepare,export,train,extend}
     prepare             Check, crop and describe photos into a project.
+    export              Save the LoRA as one .safetensors file with voxprint-
+                        model.json.
     train               Train a LoRA on the prepared photos of a project.
     extend              Continue an existing LoRA with the newest photos of a
                         project.
@@ -463,6 +471,22 @@ options:
                         Blur limit (Expert).
   --dup-threshold DUP_THRESHOLD
                         Duplicate limit (Expert).
+```
+
+## `forge lora export`
+
+```text
+usage: forge lora export [-h] --project PROJECT [--checkpoint CHECKPOINT]
+                         [--out OUT] [--install-to-mdl] [--tag TAG]
+
+options:
+  -h, --help            show this help message and exit
+  --project PROJECT     Project folder.
+  --checkpoint CHECKPOINT
+                        Step of the version to save. Default: last.
+  --out OUT             Target .safetensors. Default: <project>/export/.
+  --install-to-mdl      Also add it to your models for Canvas.
+  --tag TAG             Plain-word tag for Canvas. Repeat as needed.
 ```
 
 ## `forge lora train`

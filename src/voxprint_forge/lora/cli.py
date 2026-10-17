@@ -26,6 +26,12 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     lora = sub.add_parser("lora", help="Train a LoRA from your photos: prepare, train, extend, export.")
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
     _prepare_flags(lora_sub.add_parser("prepare", help="Check, crop and describe photos into a project."))
+    export = lora_sub.add_parser("export", help="Save the LoRA as one .safetensors file with voxprint-model.json.")
+    export.add_argument("--project", type=Path, required=True, help="Project folder.")
+    export.add_argument("--checkpoint", type=int, default=None, help="Step of the version to save. Default: last.")
+    export.add_argument("--out", type=Path, default=None, help="Target .safetensors. Default: <project>/export/.")
+    export.add_argument("--install-to-mdl", action="store_true", help="Also add it to your models for Canvas.")
+    export.add_argument("--tag", action="append", default=[], help="Plain-word tag for Canvas. Repeat as needed.")
     train = lora_sub.add_parser("train", help="Train a LoRA on the prepared photos of a project.")
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
     for command in (train, extend):
@@ -100,6 +106,17 @@ _CONFIG_FLAGS = (
 
 def execute(args: argparse.Namespace) -> dict[str, object]:
     """Run one ``lora`` subcommand and return its result."""
+    if args.lora_command == "export":
+        from voxprint_forge.lora.export import export
+
+        return export(
+            Project(args.project),
+            Progress(printer(args.json)),
+            checkpoint=args.checkpoint,
+            out=args.out,
+            install_to_mdl=args.install_to_mdl,
+            tags=tuple(args.tag),
+        )
     if args.lora_command == "prepare":
         return _prepare(args)
     if args.lora_command in ("train", "extend"):
