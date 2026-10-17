@@ -8,7 +8,6 @@
   "forge.app.base.vram_measured": "пик {gb} ГБ",
   "forge.app.base.vram_measured.tip": "Видеопамять: {vram}, измерено при калибровке.",
   "forge.app.base.vram_tier": "от {gb} ГБ",
-  "forge.app.base.vram_tier.tip": "Видеопамять: {vram} — самая маленькая карта, под которую настроены предустановки. Ещё не измерено.",
   "forge.app.base.z-image.note": "Лучше всего для максимального качества; медленнее",
   "forge.app.check.base_missing": "{name}: не установлена",
   "forge.app.check.base_ready": "{name}: установлена",

@@ -8,7 +8,6 @@
   "forge.app.base.vram_measured": "{gb} GB peak",
   "forge.app.base.vram_measured.tip": "Video memory: {vram}, measured in a calibration run.",
   "forge.app.base.vram_tier": "{gb} GB+",
-  "forge.app.base.vram_tier.tip": "Video memory: {vram}, the smallest card the presets are set up for. Not measured yet.",
   "forge.app.base.z-image.note": "Best for maximum quality; slower",
   "forge.app.check.base_missing": "{name}: not installed",
   "forge.app.check.base_ready": "{name}: installed",
