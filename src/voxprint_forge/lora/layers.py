@@ -22,8 +22,10 @@ class LoRALinear(nn.Module):
         nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
         nn.init.zeros_(self.lora_B.weight)
         weight = base.weight
-        dtype = weight.dtype if weight.dtype.is_floating_point else torch.float32
-        self.lora_A.to(device=weight.device, dtype=torch.float32 if dtype == torch.float16 else dtype)
+        dtype = weight.dtype if weight.dtype in (torch.bfloat16, torch.float32) else None
+        # FP16 and FP8 storage (16 GB tier) keep the adapter in a trainable dtype.
+        dtype = dtype or (torch.float32 if weight.dtype == torch.float16 else torch.bfloat16)
+        self.lora_A.to(device=weight.device, dtype=dtype)
         self.lora_B.to(device=weight.device, dtype=self.lora_A.weight.dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

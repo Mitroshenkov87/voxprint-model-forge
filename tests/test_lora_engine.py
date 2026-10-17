@@ -207,3 +207,13 @@ def test_builtin_bases_are_permissive_and_zimage_is_default() -> None:
         bases.get_adapter("moss-image-base").load(None, tiny(), "cpu")
     with pytest.raises(LoraUsageError):
         bases.get_adapter("z-image").load(None, tiny(train_text_encoder=True), "cpu")
+
+
+def test_lora_layer_on_fp8_storage_trains_in_bf16() -> None:
+    from torch import nn
+
+    from voxprint_forge.lora.layers import LoRALinear
+
+    base = nn.Linear(8, 8).to(torch.float8_e4m3fn)
+    layer = LoRALinear(base, 4, 4)
+    assert layer.lora_A.weight.dtype == torch.bfloat16 and layer.lora_B.weight.dtype == torch.bfloat16

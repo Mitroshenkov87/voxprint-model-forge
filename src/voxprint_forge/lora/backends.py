@@ -124,47 +124,59 @@ class VlmJudge:
 
 
 class MivoloEstimator:
-    """MiVOLO v2 (Apache-2.0) on YuNet face crops (OpenCV Zoo, MIT)."""
+    """MiVOLO v2 (Apache-2.0) on YuNet face crops (OpenCV Zoo, MIT), in a worker process.
+
+    MiVOLO pins transformers 4.51, which Qwen3-VL cannot use, so the worker runs
+    in its own env: ``VOXPRINT_MIVOLO_PYTHON`` (default: this interpreter).
+    """
 
     name = ESTIMATOR_ID
 
-    def __init__(self, folder: Path, detector: Path, device: str = "cuda") -> None:
-        import cv2
-        import torch
-        from transformers import AutoImageProcessor, AutoModelForImageClassification
+    def __init__(self, folder: Path, detector: Path, device: str = "cuda", python: str | None = None) -> None:
+        import os
+        import subprocess
+        import sys
+        import tempfile
 
-        self.cv2 = cv2
-        self.model = AutoModelForImageClassification.from_pretrained(
-            str(folder), trust_remote_code=True, torch_dtype=torch.float16
-        ).to(device)
-        self.processor = AutoImageProcessor.from_pretrained(str(folder), trust_remote_code=True)
-        self.detector = cv2.FaceDetectorYN.create(str(detector), "", (320, 320), FACE_SCORE, 0.3, 50)
+        worker = Path(__file__).resolve().parent / "mivolo_worker.py"
+        exe = python or os.environ.get("VOXPRINT_MIVOLO_PYTHON", "").strip() or sys.executable
+        self.tmp = Path(tempfile.mkdtemp(prefix="vxp-mivolo-"))
+        self.proc = subprocess.Popen(
+            [exe, str(worker), str(folder), str(detector), device],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        ready = self.proc.stdout.readline() if self.proc.stdout else ""
+        if not ready or not json.loads(ready).get("ready"):
+            self.unload()
+            raise RuntimeError("MiVOLO worker did not start")
 
     def estimate(self, image: Any) -> AgeReading:
-        """Ages of every detected face."""
-        import numpy as np
-        import torch
-
-        bgr = np.asarray(_limit(image).convert("RGB"))[:, :, ::-1].copy()
-        height, width = bgr.shape[:2]
-        self.detector.setInputSize((width, height))
-        _, faces = self.detector.detect(bgr)
-        crops = []
-        for face in [] if faces is None else faces:
-            x, y, w, h = (int(round(v)) for v in face[:4])
-            crop = bgr[max(0, y) : min(height, y + h), max(0, x) : min(width, x + w)]
-            if crop.size:
-                crops.append(crop)
-        if not crops:
-            return AgeReading(0, ())
-        pixels = self.processor(images=crops)["pixel_values"].to(self.model.device, self.model.dtype)
-        with torch.no_grad():
-            out = self.model(faces_input=pixels, body_input=None)
-        return AgeReading(len(crops), tuple(float(a) for a in out.age_output.flatten().tolist()))
+        """Ages of every detected face. Any worker error raises (the photo then drops)."""
+        path = self.tmp / "frame.png"
+        image.convert("RGB").save(path)
+        assert self.proc.stdin is not None and self.proc.stdout is not None
+        self.proc.stdin.write(json.dumps({"path": str(path)}) + "\n")
+        self.proc.stdin.flush()
+        reply = json.loads(self.proc.stdout.readline() or "{}")
+        if "error" in reply or "n_faces" not in reply:
+            raise RuntimeError(str(reply.get("error", "no reply")))
+        return AgeReading(int(reply["n_faces"]), tuple(float(a) for a in reply["ages"]))
 
     def unload(self) -> None:
-        """Free graphics memory."""
-        del self.model
+        """Stop the worker."""
+        import shutil
+
+        if self.proc.poll() is None:
+            if self.proc.stdin:
+                self.proc.stdin.close()
+            try:
+                self.proc.wait(timeout=30)
+            except Exception:  # noqa: BLE001
+                self.proc.kill()
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
 
 def load_gate(device: str = "cuda") -> Gate:
@@ -174,15 +186,23 @@ def load_gate(device: str = "cuda") -> Gate:
         folder = model_dir(JUDGE_ID)
         if folder.is_dir():
             judge = VlmJudge(folder, device)
-    except Exception:  # noqa: BLE001 - an unloadable judge means no gate
+    except Exception as exc:  # noqa: BLE001 - an unloadable judge means no gate
+        _report("judge", exc)
         judge = None
     try:
         folder, detector = model_dir(ESTIMATOR_ID), model_dir(FACE_DETECTOR_ID) / "face_detection_yunet_2023mar.onnx"
         if folder.is_dir() and detector.is_file():
             estimator = MivoloEstimator(folder, detector, device)
-    except Exception:  # noqa: BLE001 - an unloadable estimator means no gate
+    except Exception as exc:  # noqa: BLE001 - an unloadable estimator means no gate
+        _report("estimator", exc)
         estimator = None
     return Gate(judge, estimator)
+
+
+def _report(part: str, exc: Exception) -> None:
+    import sys
+
+    print(f"safety gate {part} did not load: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def _limit(image: Any) -> Any:
