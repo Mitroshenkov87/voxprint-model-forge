@@ -31,7 +31,7 @@ def _bash(script: Path) -> list[str]:
 
 
 def _install_fake_generate() -> types.ModuleType:
-    """Quality imports diffusers. The dry run supplies the three evaluators instead."""
+    """Quality imports diffusers. The dry run supplies the evaluators instead."""
     passing = {"decision": "fp8", "lpips_mean": 0.01, "clip_drop": 0.001, "clip_i": 0.99}
     fake = types.ModuleType("voxprint_forge.diffusion.generate")
     fake.evaluate_base = lambda **kwargs: {  # type: ignore[attr-defined]
@@ -42,12 +42,6 @@ def _install_fake_generate() -> types.ModuleType:
         }
     }
     fake.evaluate_control = lambda **kwargs: {"components": {"controlnet-lite": dict(passing)}}  # type: ignore[attr-defined]
-    fake.evaluate_edit = lambda **kwargs: {  # type: ignore[attr-defined]
-        "components": {
-            "edit-transformer": dict(passing),
-            "qwen2.5-vl-encoder": dict(passing),
-        }
-    }
     return fake
 
 
@@ -131,7 +125,7 @@ def test_documented_canvas_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) 
     needle = 'args=(run "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")'
     assert needle in script
 
-    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish
+    from voxprint_forge.diffusion import part_base, part_control, publish
     from voxprint_forge.diffusion.cli import main
     from voxprint_forge.diffusion.names import (
         CONTROL_FULL_UPSTREAM,
@@ -161,7 +155,6 @@ def test_documented_canvas_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) 
 
     part_base.fetch_sources = fetch_sources
     part_control.fetch_sources = fetch_sources
-    part_edit.fetch_sources = fetch_sources
     previous = sys.modules.get("voxprint_forge.diffusion.generate")
     sys.modules["voxprint_forge.diffusion.generate"] = _install_fake_generate()
     monkeypatch.setattr(publish, "HubRemote", FakeHub)
@@ -195,7 +188,7 @@ def test_documented_canvas_command_dry_runs_on_cpu(tmp_path: Path, monkeypatch) 
     manifests = list((forge_out / "manifests").glob("*-canvas-zimage.json"))
     assert len(manifests) == 1
     body = json.loads(manifests[0].read_text(encoding="utf-8"))
-    assert [part["id"] for part in body["parts"]] == ["base", "controlnet", "edit"]
+    assert [part["id"] for part in body["parts"]] == ["base", "controlnet"]
     assert {part["status"] for part in body["parts"]} == {"uploaded"}
     for part in body["parts"]:
         assert part["files"]
@@ -231,13 +224,12 @@ def test_canvas_upload_still_requires_tokens(tmp_path: Path) -> None:
     script = (ROOT / "scripts/canvas_upload.sh").read_text(encoding="utf-8")
     needle = 'args=(upload "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")'
     assert needle in script
-    assert 'args=(upload "$ROOT/plans/canvas-qwen-image-2512-v1.toml"' in script
     env = os.environ.copy()
     env.pop("HF_TOKEN", None)
     env.pop("KAGGLE_API_TOKEN", None)
     env["FORGE_OUT"] = tmp_path.as_posix()
     proc = subprocess.run(
-        [*_bash(ROOT / "scripts/canvas_upload.sh"), "--parts", "A,B,C,D"],
+        [*_bash(ROOT / "scripts/canvas_upload.sh"), "--parts", "A,B"],
         input=b"",
         capture_output=True,
         env=env,
@@ -250,7 +242,7 @@ def test_canvas_upload_still_requires_tokens(tmp_path: Path) -> None:
 
 def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> None:
     """Exact canvas_job.sh args with --defer-upload, then canvas_upload.sh's upload line."""
-    from voxprint_forge.diffusion import part_base, part_control, part_edit, publish
+    from voxprint_forge.diffusion import part_base, part_control, publish
     from voxprint_forge.diffusion.cli import main
     from voxprint_forge.diffusion.defer import defer_requested
     from voxprint_forge.diffusion.names import CONTROL_FULL_UPSTREAM, CONTROL_LITE_UPSTREAM
@@ -284,7 +276,6 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
 
     part_base.fetch_sources = fetch_sources
     part_control.fetch_sources = fetch_sources
-    part_edit.fetch_sources = fetch_sources
     previous = sys.modules.get("voxprint_forge.diffusion.generate")
     sys.modules["voxprint_forge.diffusion.generate"] = _install_fake_generate()
     monkeypatch.setattr(publish, "HubRemote", _RefuseRemote)
@@ -314,10 +305,9 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
         assert [part["status"] for part in manifest["parts"]] == [
             "upload-deferred",
             "upload-deferred",
-            "upload-deferred",
         ]
         stages = forge_out / "stages" / "canvas-zimage-tiers-v1"
-        for name in ("base", "controlnet", "edit"):
+        for name in ("base", "controlnet"):
             assert (stages / f"{name}-upload-deferred.json").is_file()
             assert not (stages / f"{name}-upload.json").exists()
         output = forge_out / "work" / "canvas-zimage-tiers-v1" / "Tongyi-MAI--Z-Image-Turbo-voxprint"
@@ -331,7 +321,6 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
         assert not (work / "upstream" / "base").exists()
         assert (work / "sources" / "turbo").is_dir()
         assert (work / "sources" / "base").is_dir()
-        assert (work / "sources" / "edit").is_dir()
         assert not (work / "sources" / "controlnet").exists()
 
         monkeypatch.setattr(publish, "HubRemote", FakeHub)
@@ -345,12 +334,12 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
                 "--root",
                 str(ROOT),
                 "--parts",
-                "A,B,C",
+                "A,B",
                 "--force",
             ]
         )
         assert code == 0
-        for name in ("base", "controlnet", "edit"):
+        for name in ("base", "controlnet"):
             marker = json.loads((stages / f"{name}-upload.json").read_text(encoding="utf-8"))
             assert marker["files"]
             assert not (stages / f"{name}-upload-deferred.json").exists()
@@ -370,7 +359,7 @@ def test_deferred_canvas_job_then_batch_upload(tmp_path: Path, monkeypatch) -> N
                 "upload",
                 str(plan),
                 "--parts",
-                "A,B,C",
+                "A,B",
                 "--force",
             ]
         )

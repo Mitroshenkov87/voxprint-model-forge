@@ -1,13 +1,12 @@
-"""Unattended laptop smoke for the Windows vitoom wheel.
+"""Unattended laptop smoke for the Z-Image INT4 16 GB fit.
 
 The PowerShell entry is ``scripts/smoke_laptop.ps1``. This module is what that
 script runs after it has installed torch cu130 and the pinned cp312 wheel.
-Importing it does not import diffusers. The GPU steps import that stack on
+Importing it does not import diffusers. The GPU step imports that stack on
 first use so a CPU test process stays free of it.
 
-Windows cannot run the Linux deepcompressor quant entry. That substep is
-recorded as ``skip: deepcompressor linux-only`` and the tiny checkpoint is
-built in-process instead.
+The only step is ``zimage``: Nunchaku Z-Image-Turbo INT4 r128, with the text
+encoder and VAE offloaded, and a 16 GB peak check.
 """
 
 from __future__ import annotations
@@ -24,19 +23,14 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, Never
+from typing import Literal
 
 import torch
+from huggingface_hub import hf_hub_download, snapshot_download
 
-from voxprint_forge.diffusion.nunchaku_edit import (
+from voxprint_forge.diffusion.nunchaku_zimage import (
     ARMS,
-    NEGATIVE_PROMPT,
-    QWEN_BASE_REPO,
-    QWEN_BASE_REVISION,
-    QWEN_CASES,
-    QWEN_STEPS,
     SEED,
-    TRUE_CFG,
     TURBO_GUIDANCE,
     WHEEL_REPO,
     WHEEL_REVISION,
@@ -45,20 +39,18 @@ from voxprint_forge.diffusion.nunchaku_edit import (
     ZIMAGE_BASE_REVISION,
     ZIMAGE_CASES,
     ZIMAGE_STEPS,
-    asset_dir,
 )
-from voxprint_forge.diffusion.smoke_prefetch import DownloadError
+from voxprint_forge.diffusion.smoke_prefetch import DownloadError, weights_ready
 from voxprint_forge.errors import UsageError
 
 SCHEMA = "voxprint-forge-smoke-laptop/1"
-DEEPCOMPRESSOR_WINDOWS_SKIP = "skip: deepcompressor linux-only"
 TIME_CAP_SKIP = "skip: time cap"
 DEFAULT_MINUTES = 90
 MIN_CC = (8, 6)
 MIN_VRAM_MIB = 14_000
 FITS_16GB_MIB = 15.0 * 1024
-StepId = Literal["smoke-tiny", "quantfunc", "zimage", "calib-quant-timing"]
-STEP_ORDER: tuple[StepId, ...] = ("smoke-tiny", "quantfunc", "zimage", "calib-quant-timing")
+StepId = Literal["zimage"]
+STEP_ORDER: tuple[StepId, ...] = ("zimage",)
 Runner = Callable[[], dict[str, object]]
 WHEEL_URL = f"https://huggingface.co/{WHEEL_REPO}/resolve/{WHEEL_REVISION}/{WINDOWS_WHEEL.filename}"
 
@@ -75,13 +67,6 @@ def parse_steps(text: str) -> tuple[StepId, ...]:
     if not selected:
         raise UsageError("no smoke steps selected", code="usage")
     return tuple(selected)
-
-
-def deepcompressor_skip(platform: str) -> str | None:
-    """The Linux deepcompressor entry does not run on Windows."""
-    if platform == "win32":
-        return DEEPCOMPRESSOR_WINDOWS_SKIP
-    return None
 
 
 def max_abs_rel(reference: object, actual: object) -> tuple[float, float]:
@@ -181,7 +166,6 @@ def result_document(
     started: str,
     error: str | None = None,
     nunchaku: dict[str, object] | None = None,
-    extrapolation: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the ``voxprint-forge-smoke-laptop/1`` document."""
     return {
@@ -197,7 +181,6 @@ def result_document(
         "versions": versions,
         "nunchaku": nunchaku,
         "gpu": gpu,
-        "extrapolation": extrapolation,
         "steps": records,
     }
 
@@ -211,72 +194,31 @@ def write_result(path: Path, payload: dict[str, object]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the laptop smoke or the Linux QuantFunc preflight."""
-    parser = argparse.ArgumentParser(description="Laptop smoke or H100 preflight.")
-    parser.add_argument("command", choices=("run", "preflight"))
+    """Run the Z-Image laptop smoke."""
+    parser = argparse.ArgumentParser(description="Z-Image INT4 laptop smoke.")
+    parser.add_argument("command", choices=("run",))
     parser.add_argument("--results", type=Path, default=None)
     parser.add_argument("--repo", type=Path, default=None)
     parser.add_argument("--cache", type=Path, default=None)
     parser.add_argument("--steps", default=",".join(STEP_ORDER))
     parser.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
     parser.add_argument("--seconds", type=float, default=None)
-    parser.add_argument("--blocks", type=int, default=2)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--resume-from", type=Path, default=None)
-    parser.add_argument("--forge-out", type=Path, default=None)
-    parser.add_argument("--quantfunc", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
-        if args.command == "preflight":
-            return _preflight(args)
-        if args.command == "run":
-            return _run(args)
+        return _run(args)
     except UsageError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     except DownloadError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    unexpected: Never = args.command
-    raise UsageError(f"unknown command {unexpected}", code="usage")
-
-
-def _preflight(args: argparse.Namespace) -> int:
-    repo = args.repo
-    quantfunc = args.quantfunc
-    forge_out = args.forge_out
-    if repo is None or quantfunc is None or forge_out is None:
-        print("preflight needs --repo, --quantfunc, and --forge-out", file=sys.stderr)
-        return 2
-    weight = Path(quantfunc) / ARMS["qwen-r128"].filename
-    if not weight.is_file():
-        print(f"missing QuantFunc weight {weight}", file=sys.stderr)
-        return 2
-    if not torch.cuda.is_available():
-        print("preflight needs a CUDA GPU", file=sys.stderr)
-        return 3
-    results = Path(forge_out) / "preflight"
-    results.mkdir(parents=True, exist_ok=True)
-    tiny = _step_smoke_tiny(_Ctx(repo=Path(repo), results=results, cache=results, deadline=time.monotonic() + 600))
-    _print_step(tiny)
-    if tiny.get("status") != "pass":
-        print("preflight smoke-tiny failed. The long quant was not started.", file=sys.stderr)
-        return 1
-    try:
-        _load_quantfunc_transformer(weight)
-    except Exception as exc:
-        print(f"preflight QuantFunc load failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
-    print("PREFLIGHT-OK")
-    return 0
 
 
 def _run(args: argparse.Namespace) -> int:
     if args.results is None or args.repo is None or args.cache is None:
         print("run needs --results, --repo, and --cache", file=sys.stderr)
-        return 2
-    if int(args.blocks) < 1:
-        print("blocks must be at least 1", file=sys.stderr)
         return 2
     selected = parse_steps(str(args.steps))
     seconds_cap = float(args.minutes) * 60.0 if args.seconds is None else float(args.seconds)
@@ -289,28 +231,21 @@ def _run(args: argparse.Namespace) -> int:
     path = results / "result.json"
     previous = _load_previous(args.resume_from)
 
-    def _store(
-        partial: list[dict[str, object]],
-        code: int,
-        error: str | None = None,
-        *,
-        deadline_seconds: float = seconds_cap,
-    ) -> None:
+    def _store(partial: list[dict[str, object]], code: int, error: str | None = None) -> None:
         write_result(
             path,
             result_document(
                 records=partial,
                 code=code,
                 results_dir=results,
-                minutes_cap=deadline_seconds / 60.0,
-                seconds_cap=deadline_seconds,
+                minutes_cap=seconds_cap / 60.0,
+                seconds_cap=seconds_cap,
                 selected=selected,
                 gpu=gpu,
                 versions=versions,
                 started=started,
                 error=error,
                 nunchaku=nunchaku,
-                extrapolation=_extrapolation(partial),
             ),
         )
 
@@ -324,12 +259,10 @@ def _run(args: argparse.Namespace) -> int:
         print(reason, file=sys.stderr)
         print(f"RESULTS {results}")
         return 3
-    from voxprint_forge.diffusion.smoke_timing import reuse_step
-
     pending: list[StepId] = []
     carried: dict[StepId, dict[str, object]] = {}
     for step_id in selected:
-        reused = reuse_step(previous, step_id, force=bool(args.force))
+        reused = _reuse_step(previous, step_id, force=bool(args.force))
         if reused is None:
             pending.append(step_id)
         else:
@@ -347,19 +280,8 @@ def _run(args: argparse.Namespace) -> int:
         return 2
     os.environ["HF_HUB_OFFLINE"] = "1"
     deadline = time.monotonic() + seconds_cap
-    ctx = _Ctx(
-        repo=Path(args.repo),
-        results=results,
-        cache=Path(args.cache),
-        deadline=deadline,
-        blocks=int(args.blocks),
-    )
-    runners: dict[StepId, Runner] = {
-        "smoke-tiny": lambda: _step_smoke_tiny(ctx),
-        "quantfunc": lambda: _step_quantfunc(ctx),
-        "zimage": lambda: _step_zimage(ctx),
-        "calib-quant-timing": lambda: _step_calib_quant(ctx),
-    }
+    ctx = _Ctx(repo=Path(args.repo), results=results, cache=Path(args.cache), deadline=deadline)
+    runners: dict[StepId, Runner] = {"zimage": lambda: _step_zimage(ctx)}
 
     def clock() -> float:
         return time.monotonic()
@@ -405,12 +327,11 @@ def _run(args: argparse.Namespace) -> int:
 class _Ctx:
     """Paths and deadline for one laptop run."""
 
-    def __init__(self, *, repo: Path, results: Path, cache: Path, deadline: float, blocks: int = 2) -> None:
+    def __init__(self, *, repo: Path, results: Path, cache: Path, deadline: float) -> None:
         self.repo = repo
         self.results = results
         self.cache = cache
         self.deadline = deadline
-        self.blocks = blocks
 
 
 def _skipped(step_id: str, reason: str) -> dict[str, object]:
@@ -422,6 +343,25 @@ def _skipped(step_id: str, reason: str) -> dict[str, object]:
         "notes": [reason],
         "images": [],
     }
+
+
+def _reuse_step(previous: dict[str, object] | None, step_id: str, *, force: bool) -> dict[str, object] | None:
+    """Return a passed step from an earlier result, or None when it must run again."""
+    if force or previous is None:
+        return None
+    steps = previous.get("steps")
+    if not isinstance(steps, list):
+        return None
+    for item in steps:
+        if not isinstance(item, dict) or item.get("id") != step_id or item.get("status") != "pass":
+            continue
+        notes = [str(note) for note in item.get("notes") or []]
+        if "reused" not in notes:
+            notes.append("reused")
+        copied = dict(item)
+        copied["notes"] = notes
+        return copied
+    return None
 
 
 def _versions(nunchaku: dict[str, object] | None = None) -> dict[str, str]:
@@ -440,34 +380,20 @@ def _versions(nunchaku: dict[str, object] | None = None) -> dict[str, str]:
 
 
 def probe_nunchaku() -> dict[str, object]:
-    """Wheel version plus whether the Qwen, zero_cond_t, and smooth_factor paths import."""
+    """Wheel version plus whether the Z-Image transformer imports."""
     version = "missing"
     try:
         version = importlib.metadata.version("nunchaku")
     except importlib.metadata.PackageNotFoundError:
         version = "missing"
-    qwen = False
-    zero_cond_t = False
-    smooth_factor = False
+    zimage = False
     try:
-        module = importlib.import_module("nunchaku.models.transformers.transformer_qwenimage")
+        module = importlib.import_module("nunchaku.models.transformers.transformer_zimage")
     except ImportError:
         module = None
     if module is not None:
-        qwen = hasattr(module, "NunchakuQwenImageTransformer2DModel")
-        source_path = getattr(module, "__file__", None)
-        if isinstance(source_path, str):
-            text = Path(source_path).read_text(encoding="utf-8", errors="replace")
-            zero_cond_t = "zero_cond_t" in text
-    from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
-
-    smooth_factor = install_quantfunc_shim()
-    return {
-        "version": version,
-        "qwen": qwen,
-        "zero_cond_t": zero_cond_t,
-        "smooth_factor": smooth_factor,
-    }
+        zimage = hasattr(module, "NunchakuZImageTransformer2DModel")
+    return {"version": version, "zimage": zimage}
 
 
 def _load_previous(path: Path | None) -> dict[str, object] | None:
@@ -480,14 +406,6 @@ def _load_previous(path: Path | None) -> dict[str, object] | None:
     if not isinstance(payload, dict):
         return None
     return payload
-
-
-def _extrapolation(records: list[dict[str, object]]) -> dict[str, object] | None:
-    for record in records:
-        value = record.get("extrapolation")
-        if record.get("id") == "calib-quant-timing" and isinstance(value, dict):
-            return value
-    return None
 
 
 def _query_gpu() -> tuple[dict[str, object] | None, str | None]:
@@ -517,103 +435,6 @@ def _query_gpu() -> tuple[dict[str, object] | None, str | None]:
 
 def _print_step(record: dict[str, object]) -> None:
     print(f"STEP {record.get('id')} {record.get('status')} {record.get('error') or ''}".rstrip())
-
-
-def _step_smoke_tiny(ctx: _Ctx) -> dict[str, object]:
-    """In-process tiny INT4, then a nunchaku CUDA forward against the float block."""
-    notes: list[str] = []
-    skip = deepcompressor_skip(sys.platform)
-    if skip is not None:
-        notes.append(skip)
-    started = time.perf_counter()
-    # diffusers and nunchaku stay out of the import graph until this step runs.
-    from safetensors.torch import save_file
-
-    from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
-    from voxprint_forge.diffusion.int4.qwen_tiny import (
-        TINY_RANK,
-        _checkpoint_metadata,
-        _checkpoint_tensors,
-        _edit_batch,
-        _run_tiny,
-    )
-
-    _report, model, converted, images, prompts = _run_tiny(ctx.repo, rank=TINY_RANK, device=torch.device("cpu"))
-    dest = ctx.results / "tiny.safetensors"
-    save_file(_checkpoint_tensors(model, converted), dest, metadata=_checkpoint_metadata(TINY_RANK))
-    if not torch.cuda.is_available():
-        raise RuntimeError("nunchaku CUDA forward needs a CUDA device")
-    model = model.to(device="cuda", dtype=torch.bfloat16)
-    prompt = str(prompts[0].get("prompt", "edit"))
-    batch = _edit_batch(model, images[0], prompt)
-    with torch.no_grad():
-        reference = model(**batch).sample.detach()
-    if not install_quantfunc_shim():
-        raise RuntimeError("nunchaku Qwen transformer is not importable")
-    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
-    from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel
-
-    from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature
-
-    bind_qwen_config_signature(NunchakuQwenImageTransformer2DModel, QwenImageTransformer2DModel)
-    loaded = NunchakuQwenImageTransformer2DModel.from_pretrained(
-        str(dest),
-        device="cuda",
-        torch_dtype=torch.bfloat16,
-    )
-    moved = _move_batch(batch)
-    with torch.no_grad():
-        output = loaded(**moved)
-    sample = output.sample if hasattr(output, "sample") else output[0]
-    max_abs, max_rel = max_abs_rel(reference, sample.detach())
-    if not errors_finite(max_abs, max_rel):
-        raise RuntimeError(f"non-finite kernel error abs={max_abs} rel={max_rel}")
-    return {
-        "id": "smoke-tiny",
-        "status": "pass",
-        "seconds": round(time.perf_counter() - started, 3),
-        "error": None,
-        "notes": notes,
-        "images": [],
-        "max_abs": max_abs,
-        "max_rel": max_rel,
-        "checkpoint": "tiny.safetensors",
-        "cuda_kernels": True,
-    }
-
-
-def _step_quantfunc(ctx: _Ctx) -> dict[str, object]:
-    """Load QuantFunc r128 through the shim and run one c1 edit with cpu offload."""
-    started = time.perf_counter()
-    case = QWEN_CASES[0]
-    weight = _ensure_weight(ctx, "qwen-r128")
-    base = _ensure_base(ctx, "qwen-edit-2511", QWEN_BASE_REPO, QWEN_BASE_REVISION)
-    image_path = asset_dir() / str(case.image)
-    if not image_path.is_file():
-        image_path = ctx.repo / "tests" / "assets" / "nunchaku_edit" / str(case.image)
-    if not image_path.is_file():
-        raise RuntimeError(f"missing c1 image {case.image}")
-
-    def generate() -> object:
-        pipe = _load_edit_pipe(weight, base)
-        return _one_edit(pipe, image_path, case.prompt, case.width, case.height, QWEN_STEPS, TRUE_CFG)
-
-    image, peak = _peak_mib(generate)
-    filename = "c1.webp"
-    _save_webp(image, ctx.results / filename)
-    elapsed = time.perf_counter() - started
-    return {
-        "id": "quantfunc",
-        "status": "pass",
-        "seconds": round(elapsed, 3),
-        "seconds_per_image": round(elapsed, 3),
-        "error": None,
-        "notes": ["offload: model", f"wheel: {WINDOWS_WHEEL.filename}"],
-        "images": [filename],
-        "peak_vram_mib": peak,
-        "fits_16gb": None if peak is None else peak <= FITS_16GB_MIB,
-        "case": case.case_id,
-    }
 
 
 def _step_zimage(ctx: _Ctx) -> dict[str, object]:
@@ -663,8 +484,6 @@ def _ensure_weight(ctx: _Ctx, arm_id: str) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / spec.filename
     if not path.is_file():
-        from huggingface_hub import hf_hub_download
-
         hf_hub_download(
             repo_id=spec.repo,
             filename=spec.filename,
@@ -686,8 +505,6 @@ def _ensure_base(ctx: _Ctx, name: str, repo: str, revision: str) -> Path:
     if marker.is_file() and config.is_file():
         return dest
     dest.mkdir(parents=True, exist_ok=True)
-    from huggingface_hub import snapshot_download
-
     snapshot_download(
         repo_id=repo,
         revision=revision,
@@ -698,41 +515,9 @@ def _ensure_base(ctx: _Ctx, name: str, repo: str, revision: str) -> Path:
     return dest
 
 
-def _load_quantfunc_transformer(weight: Path) -> object:
-    from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
-
-    if not install_quantfunc_shim():
-        raise RuntimeError("nunchaku Qwen transformer is not importable")
-    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
-    from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel
-
-    from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature
-
-    bind_qwen_config_signature(NunchakuQwenImageTransformer2DModel, QwenImageTransformer2DModel)
-    return NunchakuQwenImageTransformer2DModel.from_pretrained(str(weight), torch_dtype=torch.bfloat16)
-
-
-def _load_edit_pipe(weight: Path, base: Path) -> object:
-    from voxprint_forge.diffusion.smoke_prefetch import weights_ready
-
-    weights_ready(weight, base)
-    from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
-
-    transformer = _load_quantfunc_transformer(weight)
-    pipe = QwenImageEditPlusPipeline.from_pretrained(
-        str(base),
-        transformer=transformer,
-        torch_dtype=torch.bfloat16,
-        local_files_only=True,
-    )
-    _offload_16gb(pipe, transformer)
-    return pipe
-
-
 def _load_zimage_pipe(weight: Path, base: Path) -> object:
-    from voxprint_forge.diffusion.smoke_prefetch import weights_ready
-
     weights_ready(weight, base)
+    # Imported here so a CPU test import does not load diffusers or nunchaku.
     from diffusers.pipelines.z_image.pipeline_z_image import ZImagePipeline
     from nunchaku.models.transformers.transformer_zimage import NunchakuZImageTransformer2DModel
 
@@ -764,100 +549,6 @@ def _offload_16gb(pipe: object, transformer: object) -> None:
     pipe.enable_model_cpu_offload()  # type: ignore[attr-defined]
 
 
-def _step_calib_quant(ctx: _Ctx) -> dict[str, object]:
-    """Time a short syh quant on the first N real blocks and extrapolate to 60 and an H100."""
-    started = time.perf_counter()
-    snapshot = ctx.cache / "weights" / "qwen-edit-2511"
-    config = snapshot / "transformer" / "config.json"
-    if not config.is_file():
-        raise RuntimeError(f"setup: download failed: missing {config}")
-
-    def measure() -> tuple[dict[str, object], list[str]]:
-        notes: list[str] = []
-        timed: dict[str, object] | None = None
-        remaining = max(1.0, ctx.deadline - time.monotonic())
-        if torch.cuda.is_available():
-            try:
-                from voxprint_forge.diffusion.smoke_timing import try_deepcompressor
-
-                timed = try_deepcompressor(
-                    ctx.cache,
-                    snapshot,
-                    ctx.results / "calib-quant",
-                    repo=ctx.repo,
-                    blocks=ctx.blocks,
-                    timeout=remaining,
-                )
-            except Exception as exc:
-                notes.append(f"cpu fallback: deepcompressor could not use CUDA: {type(exc).__name__}: {exc}")
-        else:
-            notes.append("cpu fallback: deepcompressor could not use CUDA")
-        if timed is None:
-            from voxprint_forge.diffusion.smoke_timing import CPU_FALLBACK, time_real_blocks
-
-            if not any(str(note).startswith(CPU_FALLBACK) for note in notes):
-                notes.append(CPU_FALLBACK)
-            timed = time_real_blocks(ctx.repo, snapshot, blocks=ctx.blocks, rank=8)
-        return timed, notes
-
-    timed, peak = _peak_mib(measure)
-    if not isinstance(timed, tuple):
-        raise RuntimeError("calibration timing returned nothing")
-    payload, notes = timed
-    extrapolation = payload["extrapolation"]
-    if not isinstance(extrapolation, dict):
-        raise RuntimeError("calibration timing did not report an extrapolation")
-    extra_notes = payload.get("notes")
-    if isinstance(extra_notes, list):
-        notes = [str(item) for item in extra_notes] + notes
-    sample_seconds = payload["sample_seconds"]
-    block_seconds = payload["block_seconds"]
-    per_sample = extrapolation["seconds_per_calibration_sample"]
-    per_block = extrapolation["seconds_per_block"]
-    return {
-        "id": "calib-quant-timing",
-        "status": "pass",
-        "seconds": round(time.perf_counter() - started, 3),
-        "error": None,
-        "notes": notes,
-        "images": [],
-        "blocks": ctx.blocks,
-        "seconds_per_calibration_sample": per_sample,
-        "seconds_per_block": per_block,
-        "sample_seconds": sample_seconds,
-        "block_seconds": block_seconds,
-        "peak_vram_mib": peak,
-        "extrapolation": extrapolation,
-    }
-
-
-def _one_edit(
-    pipe: object,
-    image_path: Path,
-    prompt: str,
-    width: int,
-    height: int,
-    steps: int,
-    true_cfg: float,
-) -> object:
-    from PIL import Image
-
-    source = Image.open(image_path).convert("RGB")
-    generator = torch.Generator(device="cuda").manual_seed(SEED)
-    output = pipe(  # type: ignore[operator]
-        image=source,
-        prompt=prompt,
-        negative_prompt=NEGATIVE_PROMPT,
-        true_cfg_scale=true_cfg,
-        num_inference_steps=steps,
-        height=height,
-        width=width,
-        generator=generator,
-        output_type="pil",
-    )
-    return output.images[0]
-
-
 def _one_zimage(pipe: object, prompt: str, width: int, height: int) -> object:
     generator = torch.Generator(device="cuda").manual_seed(SEED)
     output = pipe(  # type: ignore[operator]
@@ -874,16 +565,6 @@ def _one_zimage(pipe: object, prompt: str, width: int, height: int) -> object:
 def _save_webp(image: object, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path, format="WEBP", quality=95, method=6)  # type: ignore[attr-defined]
-
-
-def _move_batch(batch: dict[str, object]) -> dict[str, object]:
-    moved: dict[str, object] = {}
-    for key, value in batch.items():
-        if isinstance(value, torch.Tensor):
-            moved[key] = value.to(device="cuda")
-        else:
-            moved[key] = value
-    return moved
 
 
 def _peak_mib(fn: Callable[[], object]) -> tuple[object, float | None]:

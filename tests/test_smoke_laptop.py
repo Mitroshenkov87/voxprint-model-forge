@@ -11,13 +11,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from voxprint_forge.diffusion.nunchaku_edit import WINDOWS_WHEEL
+from voxprint_forge.diffusion.nunchaku_zimage import WINDOWS_WHEEL
 from voxprint_forge.diffusion.smoke_laptop import (
-    DEEPCOMPRESSOR_WINDOWS_SKIP,
     SCHEMA,
     TIME_CAP_SKIP,
     WHEEL_URL,
-    deepcompressor_skip,
     exit_code,
     main,
     max_abs_rel,
@@ -63,12 +61,10 @@ def test_import_does_not_load_diffusers() -> None:
 
 def test_steps_errors_and_gpu_gate() -> None:
     """Step order, kernel error, and the 16 GB sm_89 gate are pure functions."""
-    assert parse_steps("") == ("smoke-tiny", "quantfunc", "zimage", "calib-quant-timing")
-    assert parse_steps("zimage,smoke-tiny") == ("smoke-tiny", "zimage")
+    assert parse_steps("") == ("zimage",)
+    assert parse_steps("zimage") == ("zimage",)
     with pytest.raises(Exception, match="unknown smoke step"):
         parse_steps("wan")
-    assert deepcompressor_skip("win32") == DEEPCOMPRESSOR_WINDOWS_SKIP
-    assert deepcompressor_skip("linux") is None
     left = torch.tensor([1.0, 2.0, 4.0])
     right = torch.tensor([1.0, 2.5, 4.0])
     max_abs, max_rel = max_abs_rel(left, right)
@@ -86,34 +82,40 @@ def test_plan_isolates_failures_and_the_time_cap() -> None:
     clock = {"now": 0.0}
 
     def fail() -> dict[str, object]:
-        raise RuntimeError("missing smooth_factor")
+        raise RuntimeError("missing weight")
 
     def ok() -> dict[str, object]:
         clock["now"] = 10.0
         return {"id": "zimage", "status": "pass", "notes": [], "images": ["z1.webp"]}
 
     records = run_plan(
-        ("quantfunc", "zimage"),
-        {"quantfunc": fail, "zimage": ok},
+        ("zimage",),
+        {"zimage": fail},
         deadline=100.0,
         now=lambda: clock["now"],
     )
     assert records[0]["status"] == "fail"
-    assert "smooth_factor" in str(records[0]["error"])
-    assert records[1]["status"] == "pass"
+    assert "missing weight" in str(records[0]["error"])
     assert exit_code(records) == 1
 
+    passed = run_plan(
+        ("zimage",),
+        {"zimage": ok},
+        deadline=100.0,
+        now=lambda: clock["now"],
+    )
+    assert passed[0]["status"] == "pass"
+
     def skipped_later() -> dict[str, object]:
-        return {"id": "smoke-tiny", "status": "pass"}
+        return {"id": "zimage", "status": "pass"}
 
     capped = run_plan(
-        ("smoke-tiny", "quantfunc"),
-        {"smoke-tiny": skipped_later, "quantfunc": ok},
+        ("zimage",),
+        {"zimage": skipped_later},
         deadline=0.0,
         now=lambda: 1.0,
     )
     assert capped[0]["error"] == TIME_CAP_SKIP
-    assert capped[1]["status"] == "skip"
     assert exit_code([{"status": "pass"}, {"status": "pass"}]) == 0
 
     from voxprint_forge.diffusion.smoke_prefetch import DownloadError
@@ -122,18 +124,18 @@ def test_plan_isolates_failures_and_the_time_cap() -> None:
         raise DownloadError("setup: download failed: transformer")
 
     with pytest.raises(DownloadError, match="setup: download failed"):
-        run_plan(("quantfunc",), {"quantfunc": broken_download}, deadline=100.0, now=lambda: 0.0)
+        run_plan(("zimage",), {"zimage": broken_download}, deadline=100.0, now=lambda: 0.0)
 
 
 def test_result_schema_and_setup_exit() -> None:
     """The document name and a missing-argument exit do not touch the network."""
     payload = result_document(
-        records=[{"id": "smoke-tiny", "status": "pass"}],
+        records=[{"id": "zimage", "status": "pass"}],
         code=0,
         results_dir=Path("results"),
         minutes_cap=90,
         seconds_cap=5400,
-        selected=("smoke-tiny",),
+        selected=("zimage",),
         gpu={"name": "RTX 4090 Laptop", "compute_capability": "8.9"},
         versions={"torch": "2.11.0"},
         started="2026-10-11T00:00:00Z",
@@ -142,7 +144,6 @@ def test_result_schema_and_setup_exit() -> None:
     assert payload["ok"] is True
     assert payload["exit_code"] == 0
     assert main(["run"]) == 2
-    assert main(["preflight"]) == 2
 
 
 def test_script_is_unattended_and_pins_the_windows_wheel() -> None:
@@ -166,22 +167,26 @@ def test_script_is_unattended_and_pins_the_windows_wheel() -> None:
         "transformers==4.57.6",
         "3.12",
         "--no-deps",
-        "smoke-tiny,quantfunc,zimage",
+        "$Steps = 'zimage'",
         "Minutes = 90",
-        "diffusion-int4-v4-smoke2",
         "hf_xet",
         "hf_transfer",
         "Force",
-        "Blocks",
         "WindowStyle Hidden",
         "-NoProfile",
         "latest.txt",
     ):
         assert needle in text
     bash = BASH.read_text(encoding="utf-8")
-    assert bash.index("PREFLIGHT-OK") < bash.index('OUT" run --svd-rank')
-    assert "The long quant does not start" in bash
-    assert "set +e" in bash
+    assert "FORGE_WAN_REPO" in bash
+    assert "FORGE_WAN_PYTHON" in bash
+    assert "lcpp.patch" in bash
+    assert 'CMAKE_CUDA_ARCHITECTURES="${FORGE_CUDA_ARCHS:-80;89;90;120}"' in bash
+    assert "deepcompressor" not in bash
+    assert "--own-edit" not in bash
+    assert "smoke_laptop" not in bash
+    assert "smoke-tiny" not in text
+    assert "--blocks" not in text
 
 
 def test_powershell_parses_when_present() -> None:
@@ -217,7 +222,7 @@ def test_written_result_roundtrip(tmp_path: Path) -> None:
         results_dir=tmp_path,
         minutes_cap=90,
         seconds_cap=5400,
-        selected=("smoke-tiny",),
+        selected=("zimage",),
         gpu=None,
         versions={},
         started="2026-10-11T00:00:00Z",
@@ -227,70 +232,28 @@ def test_written_result_roundtrip(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8"))["schema"] == SCHEMA
 
 
-def test_tiny_config_reaches_the_nunchaku_constructor() -> None:
-    """A star-args init hides num_layers. Binding the parent signature keeps one block."""
-    import inspect
-
-    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformer2DModel
-
-    from voxprint_forge.diffusion.int4.qwen_tiny import tiny_config
-    from voxprint_forge.diffusion.nunchaku_config import bind_qwen_config_signature, layers_agree
-
-    class Hidden(QwenImageTransformer2DModel):
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            kwargs.pop("offload", None)
-            super().__init__(*args, **kwargs)
-
-    hidden_keys = set(inspect.signature(Hidden.__init__).parameters)
-    assert "num_layers" not in hidden_keys
-    bind_qwen_config_signature(Hidden, QwenImageTransformer2DModel)
-    assert "num_layers" in inspect.signature(Hidden.__init__).parameters
-    model = Hidden.from_config(tiny_config())
-    assert len(model.transformer_blocks) == 1
-    assert layers_agree(int(model.config.num_layers), len(model.transformer_blocks))
-    assert not layers_agree(1, 60)
-
-
-def test_download_retry_and_extrapolation() -> None:
-    """A dropped connection is retryable, and the H100 scale uses both TFLOPs and bandwidth."""
+def test_download_retry() -> None:
+    """A dropped connection is retryable. A hash mismatch is not."""
+    from voxprint_forge.diffusion.smoke_laptop import _reuse_step
     from voxprint_forge.diffusion.smoke_prefetch import is_retryable_download
-    from voxprint_forge.diffusion.smoke_timing import SMOKE_SAMPLES, extrapolate_quant, reuse_step
 
     class ChunkedEncodingError(Exception):
         pass
 
     assert is_retryable_download(ChunkedEncodingError("Connection broken: IncompleteRead"))
     assert not is_retryable_download(ValueError("sha256"))
-    report = extrapolate_quant(sample_seconds=[1.0, 3.0], block_seconds=[10.0, 30.0])
-    assert report["seconds_per_calibration_sample"] == pytest.approx(2.0)
-    assert report["seconds_per_block"] == pytest.approx(20.0)
-    assert report["full_blocks"] == 60
-    assert report["laptop_seconds"] == pytest.approx(1.0 + 3.0 + 20.0 * 60)
-    assert float(report["h100_seconds"]) < float(report["laptop_seconds"])
-    assert "576" in str(report["assumption"])
-    assert "3350" in str(report["assumption"])
-    previous = {"steps": [{"id": "quantfunc", "status": "pass", "notes": []}]}
-    assert reuse_step(previous, "quantfunc", force=False)["status"] == "pass"
-    assert reuse_step(previous, "quantfunc", force=True) is None
-    assert reuse_step(previous, "zimage", force=False) is None
-    assert "reused" in reuse_step(previous, "quantfunc", force=False)["notes"]
-    assert SMOKE_SAMPLES == 2
+    previous = {"steps": [{"id": "zimage", "status": "pass", "notes": []}]}
+    reused = _reuse_step(previous, "zimage", force=False)
+    assert reused is not None
+    assert reused["status"] == "pass"
+    assert "reused" in reused["notes"]
+    assert _reuse_step(previous, "zimage", force=True) is None
+    assert _reuse_step(previous, "other", force=False) is None
 
 
-def test_verify_download_rejects_a_short_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_download_rejects_a_short_file(tmp_path: Path) -> None:
     """A truncated weight is a setup error and is not left on disk."""
-    monkeypatch.delenv("FORGE_DEEPCOMPRESSOR", raising=False)
-    from voxprint_forge.diffusion.int4.config import write_configs
     from voxprint_forge.diffusion.smoke_prefetch import DownloadError, call_with_retry, verify_download
-    from voxprint_forge.diffusion.smoke_timing import SMOKE_SAMPLES
-
-    configs = write_configs(tmp_path, "qwen-image-edit-2511", rank=256, num_samples=SMOKE_SAMPLES)
-    collect = configs["collect"].read_text(encoding="utf-8")
-    overlay = configs["overlay"].read_text(encoding="utf-8")
-    assert f"num_samples: {SMOKE_SAMPLES}" in collect
-    assert f"num_samples: {SMOKE_SAMPLES}" in overlay
-    assert "num_samples: 64" not in collect
-    assert "num_samples: 64" not in overlay
 
     path = tmp_path / "weight.bin"
     path.write_bytes(b"abc")

@@ -1,4 +1,4 @@
-"""Public Hub create, licence gate, ControlNet link, and part C VRAM free."""
+"""Public Hub create, licence gate, and ControlNet link."""
 
 from __future__ import annotations
 
@@ -108,18 +108,6 @@ def test_free_eval_stage_drops_mocked_vram(monkeypatch: pytest.MonkeyPatch) -> N
     assert pipe is None
     assert after < before
     assert calls == ["empty", "sync"]
-
-
-def test_edit_eval_frees_between_stages() -> None:
-    text = (ROOT / "src/voxprint_forge/diffusion/generate.py").read_text(encoding="utf-8")
-    body = text.split("def evaluate_edit", 1)[1].split("\ndef ", 1)[0]
-    bf16 = body.index('"edit-bf16"')
-    first = body.index("free_eval_stage()", bf16)
-    trans = body.index('"edit-transformer-fp8"', first)
-    second = body.index("free_eval_stage()", trans)
-    enc = body.index('"edit-encoder-fp8"', second)
-    last = body.index("free_eval_stage(pipe)", enc)
-    assert bf16 < first < trans < second < enc < last
 
 
 def _git_bash() -> str:

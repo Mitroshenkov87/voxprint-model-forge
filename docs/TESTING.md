@@ -26,7 +26,7 @@ images.
 
 | Check | Hard cases | Minimum before a stop |
 | --- | --- | --- |
-| Base and Qwen image | 8 prompts, seed 0 | 4 |
+| Base image | 8 prompts, seed 0 | 4 |
 | Control | 6 typed cases, seed 0, one of each type first | 3 |
 | Inpaint | 4 prompts | 2 |
 | Edit | 6 pairs, seed 0 | 4 |
@@ -40,7 +40,7 @@ lean list back into the 24-pair catalogue.
 
 These checks stay on the CPU. Remotes are mocked. Nothing in this tier needs a GPU.
 
-`tests/test_diffusion_int4.py` is the same tier for `forge diffusion-int4`. It runs `--dry-run` with tiny files, mocks Hub and Drive, and does not download weights or start CUDA. `scripts/vm_run_diffusion_int4.sh --dry-run` is the bash smoke on Linux. Windows CI reads the script and skips the bash process. `tests/test_qwen_edit_int4.py` runs the one-block CPU chain, the issue 116 scale, and the QuantFunc header plan. `tests/test_smoke_laptop.py` checks the laptop result schema, the Windows deepcompressor skip, the tiny-layer signature, the download retry, and `scripts/smoke_laptop.ps1` without a GPU. The header test uses an HTTP range for the JSON header and does not download tensor bytes. It does not load the vitoom wheel.
+`tests/test_diffusion_int4.py` is the same tier for `forge diffusion-int4`. It runs `--dry-run` with tiny Wan files, mocks Hub and Drive, and does not download weights or start CUDA.
 
 After a model's or a part's final files match on one mirror, delete that item's
 source weights, f16/bf16 GGUF, safetensors downloads, and upload staging. A

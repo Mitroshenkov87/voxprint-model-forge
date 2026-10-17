@@ -19,7 +19,6 @@ nav:
   - Compare: COMPARE.md
   - KL: KL.md
   - Model manifest: MODEL-MANIFEST.md
-  - Diffusion INT4: DIFFUSION-INT4.md
   - API: api.md
 markdown_extensions:
   - pymdownx.snippets:

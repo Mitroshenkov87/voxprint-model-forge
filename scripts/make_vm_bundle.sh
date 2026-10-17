@@ -16,7 +16,6 @@ CANVAS_OVERLAY_PATHS=(
   scripts/vm_logins.sh
   src/voxprint_forge/diffusion
   plans/canvas-zimage-tiers-v1.toml
-  plans/canvas-qwen-image-2512-v1.toml
   templates/canvas_model_card.md.jinja
   docs/CANVAS.md
 )

@@ -137,7 +137,7 @@ def test_source_is_kept_until_the_last_consumer(tmp_path: Path) -> None:
 
     plan = load_canvas_plan(ROOT / "plans" / "canvas-zimage-tiers-v1.toml")
     names = consumers_for(plan, "turbo")
-    assert names == ("base", "controlnet", "qwen", "bake-off")
+    assert names == ("base", "controlnet", "bake-off")
     tree = source_store(tmp_path, plan.id) / "turbo"
     tree.mkdir(parents=True)
     (tree / "weights").write_text("x", encoding="utf-8")

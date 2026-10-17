@@ -34,29 +34,6 @@ from voxprint_forge.mdl import (
 )
 from voxprint_forge.upload import Artifact, HubRemote, assert_public_upload, upload_verified
 
-INT4_METHOD = (
-    "SVDQuant INT4 (W4A4, group 64) with a high-precision low-rank branch, "
-    "run by MIT HAN Lab deepcompressor at the pinned commit. The fast_int4 "
-    "overlay uses the upstream fast calibration budget and the SVD rank on "
-    "this card. The checkpoint is exported to the Nunchaku svdquant safetensors "
-    "layout. Qwen-Image-Edit-2511 keeps zero_cond_t from the base transformer "
-    "config. Inference for that edit model uses the pinned tonera vitoom-nunchaku "
-    "wheel, because upstream Nunchaku does not apply zero_cond_t."
-)
-INT4_CALIBRATION = (
-    "Calibration prompts and image refs live in data/diffusion_calib. "
-    "The prompts are original Russian and English edit instructions covering "
-    "people, text, and hands. The image refs are original synthetic swatches, "
-    "not photographs of real people. Both are Apache-2.0 and written for this "
-    "repository. This is not the COCO or MJHQ calibration set."
-)
-INT4_LIMITS = (
-    "A 16 GB fit means the sampled nvidia-smi peak is at most 15.0 GiB. "
-    "A 24 GB fit means that peak is at most 23.0 GiB. Seconds per image are "
-    "measured after one warm-up. This card is not a safety filter. "
-    "Dry-run numbers are synthetic and are not a quality claim."
-)
-INT4_NOTICE = "Modified by Voxprint: SVDQuant INT4 calibration and Nunchaku export."
 WAN_METHOD = (
     "Wan2.2-T2V-A14B high-noise and low-noise experts are converted with "
     "city96 ComfyUI-GGUF at the pinned commit and quantized with llama.cpp "
@@ -98,10 +75,9 @@ def render_int4_card(
     notice: str | None = None,
 ) -> str:
     """Render the canvas card template. Method text is Forge-authored."""
-    if kind == "wan":
-        method, calibration, limits, notice_text = WAN_METHOD, WAN_CALIBRATION, WAN_LIMITS, WAN_NOTICE
-    else:
-        method, calibration, limits, notice_text = INT4_METHOD, INT4_CALIBRATION, INT4_LIMITS, INT4_NOTICE
+    if kind != "wan":
+        raise StageError(f"unknown diffusion-int4 card {kind}", code="card")
+    method, calibration, limits, notice_text = WAN_METHOD, WAN_CALIBRATION, WAN_LIMITS, WAN_NOTICE
     if method_text is not None:
         method = method_text
     if calibration_text is not None:

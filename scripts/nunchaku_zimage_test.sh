@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Nunchaku INT4 matrix on Linux or Git Bash. Non-interactive.
-# The 4090 host is Windows Server 2025; use scripts/nunchaku_edit_test.ps1 there.
+# The 4090 host is Windows Server 2025; use scripts/nunchaku_zimage_test.ps1 there.
 # This script does not prompt and does not install upstream nunchaku.
 set +x
 set -euo pipefail
@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-CACHE="${NUNCHAKU_CACHE:-${HOME}/.cache/voxprint-forge/nunchaku-edit}"
+CACHE="${NUNCHAKU_CACHE:-${HOME}/.cache/voxprint-forge/nunchaku-zimage}"
 PY="${NUNCHAKU_PYTHON:-}"
 if [[ -z "$PY" ]]; then
   if [[ -x "${CACHE}/venv/Scripts/python.exe" ]]; then
@@ -33,4 +33,4 @@ if [[ ! -x "$PY" ]] && ! command -v "$PY" >/dev/null 2>&1; then
   exit 2
 fi
 
-exec "$PY" -m voxprint_forge.diffusion.nunchaku_edit "$@"
+exec "$PY" -m voxprint_forge.diffusion.nunchaku_zimage "$@"

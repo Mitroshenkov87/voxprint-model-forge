@@ -82,8 +82,7 @@ if [[ -f "$ROOT/CANVAS_VERSION" ]]; then
 fi
 printf 'estimate part base 55 min\n'
 printf 'estimate part controlnet 25 min\n'
-printf 'estimate part edit 55 min\n'
-printf 'estimate total 135 min\n'
+printf 'estimate total 80 min\n'
 
 llm_still_running() {
   local lock="${FORGE_OUT}/bootstrap.lock"
@@ -170,7 +169,7 @@ uv pip install --python "$VENV" \
   "sentencepiece" \
   "protobuf"
 
-if ! "$VENV/bin/python" -c 'import torchao, lpips, pillow_avif; from diffusers import ZImagePipeline, ZImageControlNetPipeline, ZImageControlNetInpaintPipeline, QwenImageEditPlusPipeline'; then
+if ! "$VENV/bin/python" -c 'import torchao, lpips, pillow_avif; from diffusers import ZImagePipeline, ZImageControlNetPipeline, ZImageControlNetInpaintPipeline'; then
   printf 'ZImagePipeline or a canvas extra is missing. diffusers==0.41.0 did not import.\n' >&2
   exit 9
 fi
@@ -181,7 +180,7 @@ progress_line() {
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '%s  %s  %s  %s%%  eta %s min\n' "$stamp" "$model" "$stage" "$pct" "$eta" >> "$FORGE_OUT/progress.log"
 }
-progress_line canvas-zimage-tiers-v1 start 0 135
+progress_line canvas-zimage-tiers-v1 start 0 80
 
 # Positional command, then flags. This module is not a forge subcommand.
 args=(run "$ROOT/plans/canvas-zimage-tiers-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")

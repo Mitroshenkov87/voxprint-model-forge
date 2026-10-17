@@ -7,8 +7,8 @@ you pass `--push`.
 
 This file is not the Plotweaver run export. `run-all` still writes
 `manifests/<date>-a100.json` and `manifests/<date>-a100.MODELS.md`. Canvas
-still writes `manifests/<date>-canvas-zimage.json` and the Qwen
-`manifests/<date>-canvas-qwen-image-2512.json` pair. Copy those back as
+still writes `manifests/<date>-canvas-zimage.json` and
+`manifests/<date>-canvas-zimage.MODELS.md`. Copy those back as
 before. `voxprint-model.json` is one document per published model, uploaded
 to the repo.
 
@@ -78,7 +78,6 @@ One tier sets both.
 | --- | --- | --- |
 | LLM GGUF | `llama.cpp` | Plan `llama_cpp_tag` (default `b11476`) |
 | Canvas dtype conversion | `diffusers` | `>=0.37.1,<0.38` |
-| Qwen SVDQuant INT4 | `nunchaku` | `>=1.0` |
 | Wan 2.2 GGUF and FP8 | `llama.cpp` | `b3962` |
 
 The Wan repo also contains FP8 weights. Those files are listed in `files`.

@@ -7,8 +7,7 @@ from typing import Never
 
 from voxprint_forge.diffusion.common import Ctx, run_stage
 from voxprint_forge.diffusion.defer import drop_marker
-from voxprint_forge.diffusion.planload import CanvasPlan, PartId, load_canvas_plan
-from voxprint_forge.diffusion.qwen_select import parse_parts
+from voxprint_forge.diffusion.planload import PART_ORDER, CanvasPlan, PartId, load_canvas_plan
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.layout import Layout, read_marker
 
@@ -17,19 +16,28 @@ def _unexpected(part_id: Never) -> Never:
     raise UsageError(f"unhandled canvas part {part_id}", code="parts")
 
 
+_LETTERS: dict[str, PartId] = {"a": "base", "b": "controlnet"}
+
+
 def _canvas_ids(text: str | None) -> tuple[PartId, ...] | None:
-    """None uploads every deferred canvas part. An explicit list must be A, B, or C."""
+    """None uploads every deferred canvas part. An explicit list must be A or B."""
     if text is None or not text.strip():
         return None
-    chosen = parse_parts(text)
-    allowed: tuple[PartId, ...] = ("base", "controlnet", "edit")
-    found = tuple(part for part in allowed if part in chosen)
-    if not found or len(found) != len(chosen):
-        raise UsageError(
-            "canvas upload parts must be A, B, C or base, controlnet, edit",
-            code="parts",
-        )
-    return found
+    chosen: set[PartId] = set()
+    for token in text.split(","):
+        key = token.strip().lower()
+        if not key:
+            raise UsageError(f"empty part in {text!r}", code="parts")
+        part = _LETTERS.get(key)
+        if part is None and key in PART_ORDER:
+            part = key
+        if part is None:
+            raise UsageError(
+                "canvas upload parts must be A, B or base, controlnet",
+                code="parts",
+            )
+        chosen.add(part)
+    return tuple(part for part in PART_ORDER if part in chosen)
 
 
 def _resumed(part_id: str, estimate_min: int, hf_repo: str, marker: dict[str, object]) -> dict[str, object]:
@@ -53,10 +61,6 @@ def _publish(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
         return _upload(ctx, quality)
     if part_id == "controlnet":
         from voxprint_forge.diffusion.part_control import _upload
-
-        return _upload(ctx, quality)
-    if part_id == "edit":
-        from voxprint_forge.diffusion.part_edit import _upload
 
         return _upload(ctx, quality)
     return _unexpected(part_id)

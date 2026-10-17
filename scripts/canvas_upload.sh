@@ -82,12 +82,9 @@ source "$ROOT/scripts/vm_logins.sh"
 persist_rented_vm_logins
 
 RUN_AC=0
-RUN_DE=0
 AC_PARTS=""
-DE_PARTS=""
 if [[ -z "$PARTS" ]]; then
   RUN_AC=1
-  RUN_DE=1
 else
   IFS=',' read -ra TOKENS <<< "$PARTS"
   for token in "${TOKENS[@]}"; do
@@ -100,18 +97,6 @@ else
       b|controlnet)
         RUN_AC=1
         AC_PARTS="${AC_PARTS:+$AC_PARTS,}B"
-        ;;
-      c|edit)
-        RUN_AC=1
-        AC_PARTS="${AC_PARTS:+$AC_PARTS,}C"
-        ;;
-      d|qwen)
-        RUN_DE=1
-        DE_PARTS="${DE_PARTS:+$DE_PARTS,}D"
-        ;;
-      e|encoder)
-        RUN_DE=1
-        DE_PARTS="${DE_PARTS:+$DE_PARTS,}E"
         ;;
       *)
         printf 'unknown part %s\n' "$token" >&2
@@ -132,18 +117,6 @@ if [[ "$RUN_AC" -eq 1 ]]; then
     args+=(--force)
   fi
   "$VENV/bin/python" -m voxprint_forge.diffusion "${args[@]}" 2>&1 \
-    | python3 "$ROOT/scripts/logscrub.py" \
-    | tee -a "$FORGE_OUT/logs/canvas-upload.log"
-fi
-if [[ "$RUN_DE" -eq 1 ]]; then
-  args=(upload "$ROOT/plans/canvas-qwen-image-2512-v1.toml" --json --forge-out "$FORGE_OUT" --root "$ROOT")
-  if [[ -n "$DE_PARTS" ]]; then
-    args+=(--parts "$DE_PARTS")
-  fi
-  if [[ "$FORCE" -eq 1 ]]; then
-    args+=(--force)
-  fi
-  "$VENV/bin/python" -m voxprint_forge.diffusion.qwen_main "${args[@]}" 2>&1 \
     | python3 "$ROOT/scripts/logscrub.py" \
     | tee -a "$FORGE_OUT/logs/canvas-upload.log"
 fi

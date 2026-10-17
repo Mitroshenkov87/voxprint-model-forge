@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from voxprint_forge.diffusion.int4.pins import StepEstimate
 
 H100_QUANT_SPEEDUP = 1.8
-QUANT_STEPS = frozenset({"qwen-edit-2511-quant", "qwen-image-quant"})
+# Wan GGUF and FP8 are not SVDQuant, so no step uses the H100 quant speedup.
+QUANT_STEPS: frozenset[str] = frozenset()
 EMULATED_NOTE = (
     "FP8 is emulated and weight-only on this GPU, so speed comparisons vs FP8 are not representative."
 )

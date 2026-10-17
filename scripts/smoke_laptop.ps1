@@ -5,8 +5,7 @@ Unattended RTX 4090 laptop smoke. No prompts, no tokens, no tty.
 
 Fetch and launch (session drop is fine; the window is hidden):
 
-irm https://raw.githubusercontent.com/Mitroshenkov87/voxprint-model-forge/diffusion-int4-v4-smoke2/scripts/smoke_laptop.ps1 -OutFile "$env:TEMP\smoke_laptop.ps1"
-Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:TEMP\smoke_laptop.ps1" -WindowStyle Hidden
+Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\smoke_laptop.ps1' -WindowStyle Hidden
 
 Results: %LOCALAPPDATA%\VoxprintForgeSmoke\results\<timestamp>\result.json
 The same path is printed and written to %LOCALAPPDATA%\VoxprintForgeSmoke\latest.txt.
@@ -15,9 +14,8 @@ The same path is printed and written to %LOCALAPPDATA%\VoxprintForgeSmoke\latest
 param(
     [switch]$KeepVenv,
     [switch]$Force,
-    [string]$Steps = 'smoke-tiny,quantfunc,zimage,calib-quant-timing',
-    [int]$Minutes = 90,
-    [int]$Blocks = 2
+    [string]$Steps = 'zimage',
+    [int]$Minutes = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,7 +30,6 @@ $env:PYTHONUNBUFFERED = '1'
 Remove-Item Env:HF_TOKEN -ErrorAction SilentlyContinue
 Remove-Item Env:HUGGING_FACE_HUB_TOKEN -ErrorAction SilentlyContinue
 
-$Tag = 'diffusion-int4-v4-smoke2'
 $RepoUrl = 'https://github.com/Mitroshenkov87/voxprint-model-forge'
 $WheelName = 'nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp312-cp312-win_amd64.whl'
 $WheelSha = 'ddc015bfa6fc6b84957532823c23418f5b986cb61e3c02c97a646cfe2a1fd955'
@@ -112,7 +109,7 @@ try {
             exit 2
         }
         if (-not (Test-Path -LiteralPath (Join-Path $Checkout '.git'))) {
-            Invoke-Setup 'git' @('-c', 'advice.detachedHead=false', 'clone', '--depth', '1', '--branch', $Tag, $RepoUrl, $Checkout) 'git clone'
+            Invoke-Setup 'git' @('clone', '--depth', '1', $RepoUrl, $Checkout) 'git clone'
         }
     }
 
@@ -166,15 +163,14 @@ try {
     $Cache = Join-Path $SmokeRoot 'cache'
     New-Item -ItemType Directory -Force -Path $Cache | Out-Null
 
-    Write-Log "python smoke compute_minutes=$Minutes blocks=$Blocks force=$Force"
+    Write-Log "python smoke compute_minutes=$Minutes force=$Force"
     $RunArgs = @(
         '-m', 'voxprint_forge.diffusion.smoke_laptop', 'run',
         '--results', $Results,
         '--repo', $Checkout,
         '--cache', $Cache,
         '--steps', $Steps,
-        '--minutes', "$Minutes",
-        '--blocks', "$Blocks"
+        '--minutes', "$Minutes"
     )
     if ($Force) {
         $RunArgs += '--force'

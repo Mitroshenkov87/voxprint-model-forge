@@ -28,7 +28,7 @@ positional arguments:
                         Kaggle stays private.
     fit                 Measure quants and record the VRAM/RAM split for each tier.
     canvas              Prepare canvas image tiers.
-    diffusion-int4      SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.
+    diffusion-int4      Wan 2.2 GGUF and FP8.
     compare             Score original and compressed arms for one synth4 job.
     kl                  Perplexity and KL of GGUF quants against an F16 base.
     index               Build or push the model index, or backfill voxprint-model.json.
@@ -300,19 +300,16 @@ options:
 ## `forge diffusion-int4`
 
 ```text
-usage: forge diffusion-int4 [-h]
-                            {run,estimates,disk-floor,fetch,smoke-tiny} ...
+usage: forge diffusion-int4 [-h] {run,estimates,disk-floor,fetch} ...
 
 positional arguments:
-  {run,estimates,disk-floor,fetch,smoke-tiny}
-    run                 Calibrate, quantize, evaluate, card, and upload.
+  {run,estimates,disk-floor,fetch}
+    run                 Convert Wan 2.2 to GGUF and FP8, smoke, card, and
+                        upload.
     estimates           Print the planning minutes for each step.
     disk-floor          Exit 2 when free space stays under 15 percent after
                         reclaim.
-    fetch               Download QuantFunc, the edit base, Wan experts, and
-                        the FP8 reference.
-    smoke-tiny          One-block calib, INT4, convert, and one latent.
-                        Optional nunchaku load on CUDA.
+    fetch               Download the Wan experts.
 
 options:
   -h, --help            show this help message and exit
@@ -322,43 +319,25 @@ options:
 
 ```text
 usage: forge diffusion-int4 run [-h] [--dry-run] [--svd-rank SVD_RANK]
-                                [--qwen-image] [--done-dir DONE_DIR]
-                                [--watch WATCH] [--only ONLY]
-                                [--own-edit {auto,on,off}]
-                                [--phase0-result PHASE0_RESULT]
+                                [--done-dir DONE_DIR] [--watch WATCH]
+                                [--only ONLY]
 
 options:
-  -h, --help            show this help message and exit
-  --dry-run             CPU smoke with tiny files. No GPU and no downloads.
-  --svd-rank SVD_RANK   SVD rank. Default 256.
-  --qwen-image          Also quantize Qwen-Image INT4 r256.
-  --done-dir DONE_DIR   Marker directory. Default: ~/.done/diffusion-int4.
-  --watch WATCH         Watch file. Default: ~/watch.json.
-  --only ONLY           Run one step. Earlier steps must already have markers.
-  --own-edit {auto,on,off}
-                        on (default) always runs the own INT4 r256 quant. auto
-                        may skip it. off mirrors QuantFunc.
-  --phase0-result PHASE0_RESULT
-                        Phase 0 result.json. Missing is ignored. Present is an
-                        eval and card baseline, not the winner.
+  -h, --help           show this help message and exit
+  --dry-run            CPU smoke with tiny files. No GPU and no downloads.
+  --svd-rank SVD_RANK  SVD rank. Default 256.
+  --done-dir DONE_DIR  Marker directory. Default: ~/.done/diffusion-int4.
+  --watch WATCH        Watch file. Default: ~/watch.json.
+  --only ONLY          Run one step. Earlier steps must already have markers.
 ```
 
 ## `forge diffusion-int4 estimates`
 
 ```text
-usage: forge diffusion-int4 estimates [-h] [--qwen-image]
-                                      [--own-edit {auto,on,off}]
-                                      [--phase0-result PHASE0_RESULT]
+usage: forge diffusion-int4 estimates [-h]
 
 options:
-  -h, --help            show this help message and exit
-  --qwen-image          Include the optional Qwen-Image steps.
-  --own-edit {auto,on,off}
-                        on (default) always runs the own INT4 r256 quant. auto
-                        may skip it. off mirrors QuantFunc.
-  --phase0-result PHASE0_RESULT
-                        Phase 0 result.json. Missing is ignored. Present is an
-                        eval and card baseline, not the winner.
+  -h, --help  show this help message and exit
 ```
 
 ## `forge diffusion-int4 disk-floor`
@@ -381,17 +360,6 @@ usage: forge diffusion-int4 fetch [-h] --dest DEST
 options:
   -h, --help   show this help message and exit
   --dest DEST  Directory that receives the snapshots.
-```
-
-## `forge diffusion-int4 smoke-tiny`
-
-```text
-usage: forge diffusion-int4 smoke-tiny [-h] [--device {cpu,cuda}]
-
-options:
-  -h, --help           show this help message and exit
-  --device {cpu,cuda}  Torch device. Default: cuda when it is available,
-                       otherwise cpu.
 ```
 
 ## `forge compare`
