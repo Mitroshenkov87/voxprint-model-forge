@@ -15,10 +15,10 @@ dependencies = [
   "safetensors>=0.4",
   "accelerate>=1.0",
   "gguf>=0.10",
-  # Not on PyPI. CI installs vendor/voxprint_common-0.2.5-py3-none-any.whl, the Yitro
-  # tag v0.2.5 (8a94b531cb4f3526425a80a86a1e64624b5de606). The core helpers also run on
-  # 0.1.1, which the VM bootstrap scripts still install. The GUI extra needs 0.2.5.
-  "voxprint-common>=0.1.1,<0.3",
+  # Not on PyPI. CI, the VM scripts and the installer install
+  # vendor/voxprint_common-0.2.5-py3-none-any.whl, the Yitro tag v0.2.5
+  # (8a94b531cb4f3526425a80a86a1e64624b5de606). preflight --vm checks this pin.
+  "voxprint-common==0.2.5",
 ]
 
 [project.optional-dependencies]
