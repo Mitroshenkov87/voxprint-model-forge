@@ -65,10 +65,16 @@ options:
 ## `forge preflight`
 
 ```text
-usage: forge preflight [-h]
+usage: forge preflight [-h] [--vm] [--min-free-gb MIN_FREE_GB]
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+  --vm                  Check a fresh VM image before a paid GPU job: Python,
+                        torch/CUDA, [compare] versions, build tools,
+                        llama.cpp, the voxprint_common wheel, HF_TOKEN and
+                        disk. Exit 6 on any FAIL.
+  --min-free-gb MIN_FREE_GB
+                        Disk needed for --vm. Default: 150.
 ```
 
 ## `forge status`
