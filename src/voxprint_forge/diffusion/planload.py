@@ -9,8 +9,8 @@ from typing import Literal, Never
 
 from voxprint_forge.errors import PlanError
 
-PartId = Literal["base", "controlnet", "edit"]
-PART_ORDER: tuple[PartId, ...] = ("base", "controlnet", "edit")
+PartId = Literal["base", "controlnet"]
+PART_ORDER: tuple[PartId, ...] = ("base", "controlnet")
 
 
 def _unexpected_part(part_id: Never) -> Never:
@@ -58,8 +58,6 @@ class CanvasPlan:
             return next(item for item in self.parts if item.id == "base")
         if part_id == "controlnet":
             return next(item for item in self.parts if item.id == "controlnet")
-        if part_id == "edit":
-            return next(item for item in self.parts if item.id == "edit")
         return _unexpected_part(part_id)
 
 
@@ -108,8 +106,6 @@ def _part_id(value: str) -> PartId:
         return "base"
     if value == "controlnet":
         return "controlnet"
-    if value == "edit":
-        return "edit"
     raise PlanError(f"unknown canvas part {value!r}", code="plan_shape")
 
 

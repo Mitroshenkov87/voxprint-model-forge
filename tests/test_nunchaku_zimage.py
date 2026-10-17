@@ -1,37 +1,16 @@
-"""CPU tests for the Nunchaku edit matrix. No GPU and no downloads."""
+"""CPU tests for the Z-Image Nunchaku matrix. No GPU and no downloads."""
 
 from __future__ import annotations
 
 import json
 import os
-import struct
 from pathlib import Path
 
 import pytest
 
-from voxprint_forge.diffusion import nunchaku_edit as edit
+from voxprint_forge.diffusion import nunchaku_zimage as edit
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS = ROOT / "tests" / "assets" / "nunchaku_edit"
-
-
-def _jpeg_size(path: Path) -> tuple[int, int]:
-    data = path.read_bytes()
-    index = 2
-    while index < len(data) - 8:
-        if data[index] != 0xFF:
-            index += 1
-            continue
-        marker = data[index + 1]
-        if marker in {0xC0, 0xC1, 0xC2}:
-            height, width = struct.unpack(">HH", data[index + 5 : index + 9])
-            return width, height
-        if marker in {0xD8, 0xD9}:
-            index += 2
-            continue
-        segment = struct.unpack(">H", data[index + 2 : index + 4])[0]
-        index += 2 + segment
-    raise AssertionError(f"no SOF marker in {path}")
 
 
 def _gpu() -> edit.GpuFacts:
@@ -71,29 +50,23 @@ def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_assets_match_the_plan() -> None:
-    assert _jpeg_size(ASSETS / "e1.jpg") == (1280, 720)
-    assert _jpeg_size(ASSETS / "e2.jpg") == (1280, 720)
-    assert _jpeg_size(ASSETS / "e3.jpg") == (1024, 1024)
-    prompts = {case.case_id: case.prompt for case in edit.QWEN_CASES}
-    assert "deep red silk evening dress" in prompts["c1"]
-    assert "five clearly separated fingers" in prompts["c2"]
-    assert "VOXPRINT" in prompts["c3"]
+def test_zimage_prompts() -> None:
     zipped = {case.case_id: case.prompt for case in edit.ZIMAGE_CASES}
     assert "fully clothed" in zipped["z1"]
     assert "five clearly separated fingers" in zipped["z2"]
     assert "VOXPRINT" in zipped["z3"]
     assert "печать" in zipped["z3"]
+    assert all(case.image is None for case in edit.ZIMAGE_CASES)
 
 
 def test_default_arms_omit_r256_and_smoke_is_one_case() -> None:
     args = edit.parse_args(["--smoke"])
-    assert args.arm_ids == ["qwen-r128", "qwen-r32", "zimage-r128"]
-    assert edit.cases_for("qwen-r128", None, smoke=True) == (edit.QWEN_CASES[0],)
+    assert args.arm_ids == ["zimage-r128"]
     assert edit.cases_for("zimage-r128", None, smoke=True) == (edit.ZIMAGE_CASES[0],)
-    assert edit.steps_for("qwen-r128", True) == 20
-    assert edit.steps_for("qwen-r128", False) == 40
     assert edit.steps_for("zimage-r256", True) == 8
+    assert edit.steps_for("zimage-fp8", False) == 8
+    with pytest.raises(edit.SetupError):
+        edit.steps_for("missing", False)
 
 
 def test_wheel_pins_match_the_plan(tmp_path: Path) -> None:
@@ -139,12 +112,6 @@ def test_hash_mismatch_deletes_the_file_and_exits_2(tmp_path: Path) -> None:
     assert not path.exists()
 
 
-def test_zero_cond_source_is_required() -> None:
-    edit.assert_zero_cond_source("def forward(self, zero_cond_t=True):\n    return zero_cond_t\n")
-    with pytest.raises(edit.SetupError):
-        edit.assert_zero_cond_source("def forward(self):\n    return None\n")
-
-
 def test_gpu_gate() -> None:
     edit.gate_gpu(_gpu())
     edit.gate_gpu(edit.parse_gpu_csv("NVIDIA GeForce RTX 4090, 24564, 610.88, 8.9"))
@@ -177,8 +144,6 @@ def test_fits_16gb_and_memory_fraction() -> None:
 
 
 def test_offload_plan_and_block_call() -> None:
-    assert edit.plan_modes("qwen-r128", "unconstrained", "auto") == ("model-offload", "block-offload")
-    assert edit.plan_modes("qwen-r128", "cap16", "block-offload") == ("block-offload",)
     assert edit.plan_modes("zimage-r128", "unconstrained", "auto") == (
         "resident",
         "model-offload",
@@ -225,16 +190,16 @@ def test_disk_short_is_setup(tmp_path: Path) -> None:
 
 
 def test_budget_skips_r256_first() -> None:
-    arms = ["qwen-r128", "qwen-r32", "zimage-r128", "zimage-r256"]
-    selected, _baselines, skipped = edit.plan_arm_ids(arms, 60)
+    arms = ["zimage-r128", "zimage-r256"]
+    selected, _baselines, skipped = edit.plan_arm_ids(arms, 20)
     assert "zimage-r256" not in selected
     assert skipped == [{"id": "zimage-r256", "reason": "time_budget"}]
     kept, _, none = edit.plan_arm_ids(arms, 90)
     assert kept[-1] == "zimage-r256"
     assert none == []
     assert edit.skip_for_elapsed("zimage-r256", elapsed_min=80, budget_min=90, kind="int4") == "time_budget"
-    assert edit.skip_for_elapsed("qwen-r128", elapsed_min=80, budget_min=90, kind="int4") is None
-    assert edit.skip_for_elapsed("qwen-fp8", elapsed_min=80, budget_min=90, kind="fp8") == "time_budget"
+    assert edit.skip_for_elapsed("zimage-r128", elapsed_min=80, budget_min=90, kind="int4") is None
+    assert edit.skip_for_elapsed("zimage-fp8", elapsed_min=85, budget_min=90, kind="fp8") == "time_budget"
 
 
 def test_budget_that_drops_every_arm_fails(isolated: Path) -> None:
@@ -298,7 +263,7 @@ def test_execute_records_both_caps_and_schema(isolated: Path) -> None:
         fraction = edit.memory_fraction(str(job["cap"]), total)
         return _fit_payload(mode, fraction=fraction)
 
-    args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "unconstrained,cap16", "--smoke"])
+    args = _options(isolated / "out", ["--arms", "zimage-r128", "--caps", "unconstrained,cap16", "--smoke"])
     code, result = edit.execute(
         args,
         spawn=spawn,
@@ -309,14 +274,14 @@ def test_execute_records_both_caps_and_schema(isolated: Path) -> None:
         mirror_lookup=lambda _name: [],
     )
     assert code == 0
-    assert result["schema"] == "voxprint-forge-nunchaku-edit/1"
+    assert result["schema"] == "voxprint-forge-nunchaku-zimage/1"
     assert result["tag"] == "nunchaku-test-2"
     assert result["precision"] == "int4"
     assert "fp8_timing_note" not in result
     assert result["fits_16gb"] is True
     assert result["wheel"]["sha256"] == edit.WINDOWS_WHEEL.sha256
     arm = result["arms"][0]
-    assert arm["weight_sha256"] == edit.ARMS["qwen-r128"].sha256
+    assert arm["weight_sha256"] == edit.ARMS["zimage-r128"].sha256
     assert set(arm["caps"]) == {"unconstrained", "cap16"}
     assert arm["caps"]["cap16"]["memory_fraction"] == pytest.approx((16 * 1024) / 24564)
     assert arm["caps"]["cap16"]["peak_vram_smi_mib"] == 14000.0
@@ -339,11 +304,11 @@ def test_a100_uses_real_total_and_marks_fp8(isolated: Path) -> None:
         fraction = edit.memory_fraction(str(job["cap"]), int(job["memory_mib"]))
         return _fit_payload(str(job["mode"]), fraction=fraction)
 
-    transformer = isolated / "cache" / "bases" / "qwen-edit-2511" / "transformer"
+    transformer = isolated / "cache" / "bases" / "z-image-turbo" / "transformer"
     transformer.mkdir(parents=True)
     (transformer / "model.safetensors").write_bytes(b"bf16")
     gpu = edit.GpuFacts("NVIDIA A100-SXM4-80GB", 81920, "535.129.03", 8, 0)
-    args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "cap16", "--smoke"])
+    args = _options(isolated / "out", ["--arms", "zimage-r128", "--caps", "cap16", "--smoke"])
     code, result = edit.execute(
         args,
         spawn=spawn,
@@ -372,7 +337,7 @@ def test_cap16_fallback_and_fail(isolated: Path) -> None:
             return {"ok": False, "oom": True, "error": "CUDA out of memory", "offload_mode": mode}
         return _fit_payload(mode, peak=12000.0)
 
-    args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "cap16", "--mode", "auto"])
+    args = _options(isolated / "out", ["--arms", "zimage-r128", "--caps", "cap16", "--mode", "auto"])
     code, result = edit.execute(
         args,
         spawn=spawn,
@@ -387,7 +352,7 @@ def test_cap16_fallback_and_fail(isolated: Path) -> None:
     def over(job: dict[str, object]) -> dict[str, object]:
         return _fit_payload(str(job["mode"]), peak=16000.0)
 
-    fail_args = _options(isolated / "fail", ["--arms", "qwen-r32", "--caps", "cap16"])
+    fail_args = _options(isolated / "fail", ["--arms", "zimage-r256", "--caps", "cap16"])
     fail_code, fail_result = edit.execute(
         fail_args,
         spawn=over,
@@ -432,11 +397,11 @@ def test_elapsed_skip_drops_r256_before_fp8(isolated: Path) -> None:
 
     def elapsed() -> float:
         clock["n"] += 1
-        return 80.0 if clock["n"] >= 4 else 0.0
+        return 85.0 if clock["n"] >= 2 else 0.0
 
     args = _options(
         isolated / "out",
-        ["--arms", "qwen-r128,qwen-r32,zimage-r128,zimage-r256", "--caps", "cap16", "--smoke"],
+        ["--arms", "zimage-r128,zimage-r256", "--caps", "cap16", "--smoke"],
     )
     code, result = edit.execute(
         args,
@@ -447,20 +412,21 @@ def test_elapsed_skip_drops_r256_before_fp8(isolated: Path) -> None:
         mirror_lookup=lambda _name: [],
     )
     assert code == 0
-    assert "zimage-r256" not in seen
+    assert seen == ["zimage-r128"]
     assert any(item["id"] == "zimage-r256" and item["reason"] == "time_budget" for item in result["skipped"])
+    assert any(item["id"] == "zimage-fp8" and item["reason"] == "time_budget" for item in result["skipped"])
 
 
 def test_cleanup_deletes_only_the_int4_file(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cache = isolated / "cache"
     monkeypatch.setenv("NUNCHAKU_CACHE", str(cache))
-    weight = cache / "weights" / edit.ARMS["qwen-r128"].filename
+    weight = cache / "weights" / edit.ARMS["zimage-r128"].filename
     weight.parent.mkdir(parents=True)
     weight.write_bytes(b"int4")
-    base = cache / "bases" / "qwen-edit-2511" / "model_index.json"
+    base = cache / "bases" / "z-image-turbo" / "model_index.json"
     base.parent.mkdir(parents=True)
     base.write_text("{}", encoding="utf-8")
-    args = _options(isolated / "out", ["--arms", "qwen-r128", "--caps", "cap16", "--smoke", "--cleanup"])
+    args = _options(isolated / "out", ["--arms", "zimage-r128", "--caps", "cap16", "--smoke", "--cleanup"])
     edit.execute(
         args,
         spawn=lambda job: _fit_payload(str(job["mode"])),
@@ -474,14 +440,14 @@ def test_cleanup_deletes_only_the_int4_file(isolated: Path, monkeypatch: pytest.
 
 
 def test_aliases_and_scripts(tmp_path: Path) -> None:
-    source = tmp_path / "qwen-r128-cap16-c1.webp"
+    source = tmp_path / "zimage-r128-cap16-z1.webp"
     source.write_bytes(b"webp")
-    edit.export_aliases(tmp_path, "qwen-r128", "cap16", ["c1"])
-    assert (tmp_path / "c1.webp").read_bytes() == b"webp"
-    shell = (ROOT / "scripts" / "nunchaku_edit_test.sh").read_text(encoding="utf-8")
-    powershell = (ROOT / "scripts" / "nunchaku_edit_test.ps1").read_text(encoding="utf-8")
-    assert "voxprint_forge.diffusion.nunchaku_edit" in shell
-    assert "voxprint_forge.diffusion.nunchaku_edit" in powershell
+    edit.export_aliases(tmp_path, "zimage-r128", "cap16", ["z1"])
+    assert (tmp_path / "z1.webp").read_bytes() == b"webp"
+    shell = (ROOT / "scripts" / "nunchaku_zimage_test.sh").read_text(encoding="utf-8")
+    powershell = (ROOT / "scripts" / "nunchaku_zimage_test.ps1").read_text(encoding="utf-8")
+    assert "voxprint_forge.diffusion.nunchaku_zimage" in shell
+    assert "voxprint_forge.diffusion.nunchaku_zimage" in powershell
     assert "set +x" in shell
     assert "Read-Host" not in powershell
     assert "read -s" not in shell
@@ -491,14 +457,14 @@ def test_aliases_and_scripts(tmp_path: Path) -> None:
 
 def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(edit, "read_gpu", lambda: (_ for _ in ()).throw(edit.GpuError("no CUDA GPU")))
-    assert edit.main(["--out", str(tmp_path), "--json", "--arms", "qwen-r128"]) == 3
+    assert edit.main(["--out", str(tmp_path), "--json", "--arms", "zimage-r128"]) == 3
     monkeypatch.setattr(edit, "read_gpu", lambda: _gpu())
     monkeypatch.setattr(edit, "gate_gpu", lambda _gpu: None)
     def _boom(*_args: object, **_kwargs: object) -> None:
         raise edit.SetupError("hash mismatch")
 
     monkeypatch.setattr(edit, "prepare_runtime", _boom)
-    assert edit.main(["--out", str(tmp_path / "b"), "--arms", "qwen-r128"]) == 2
+    assert edit.main(["--out", str(tmp_path / "b"), "--arms", "zimage-r128"]) == 2
 
 
 def test_reexec_compares_the_venv_prefix(tmp_path: Path) -> None:
@@ -524,7 +490,7 @@ def test_reexec_compares_the_venv_prefix(tmp_path: Path) -> None:
 
 
 def test_offline_fp8_resolves_the_base_before_load(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    family = "qwen-edit-2511"
+    family = "z-image-turbo"
     downloaded = {"n": 0}
 
     def boom(**_kwargs: object) -> None:
@@ -576,8 +542,8 @@ def test_offline_fp8_resolves_the_base_before_load(isolated: Path, monkeypatch: 
             del strict
             return None
 
-    monkeypatch.setattr(edit, "QwenImageEditPlusPipeline", Pipe)
-    monkeypatch.setattr(edit, "QwenImageTransformer2DModel", Model)
+    monkeypatch.setattr(edit, "ZImagePipeline", Pipe)
+    monkeypatch.setattr(edit, "ZImageTransformer2DModel", Model)
     dest = isolated / "cache" / "bases" / family
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "model_index.json").write_text("{}", encoding="utf-8")
@@ -598,15 +564,15 @@ def test_one_arm_failure_does_not_skip_the_rest(isolated: Path) -> None:
 
     def spawn(job: dict[str, object]) -> dict[str, object]:
         seen.append(str(job["arm"]))
-        if job["arm"] == "qwen-r128":
-            raise edit.SetupError("missing smooth_factor")
+        if job["arm"] == "zimage-r128":
+            raise edit.SetupError("missing weight")
         if job.get("kind") == "fp8":
             raise edit.SetupError("offline base")
         return _fit_payload(str(job["mode"]))
 
     mirror = isolated / "fp8.safetensors"
     mirror.write_bytes(b"z")
-    args = _options(isolated / "out", ["--arms", "qwen-r128,qwen-r32", "--caps", "cap16", "--smoke"])
+    args = _options(isolated / "out", ["--arms", "zimage-r128,zimage-r256", "--caps", "cap16", "--smoke"])
     code, result = edit.execute(
         args,
         spawn=spawn,
@@ -616,9 +582,9 @@ def test_one_arm_failure_does_not_skip_the_rest(isolated: Path) -> None:
         mirror_lookup=lambda _name: [mirror],
     )
     assert code == 1
-    assert seen == ["qwen-r128", "qwen-r32", "qwen-fp8"]
-    assert [arm["id"] for arm in result["arms"]] == ["qwen-r128", "qwen-r32"]
-    assert result["arms"][0]["caps"]["cap16"]["error"] == "missing smooth_factor"
+    assert seen == ["zimage-r128", "zimage-r256", "zimage-fp8"]
+    assert [arm["id"] for arm in result["arms"]] == ["zimage-r128", "zimage-r256"]
+    assert result["arms"][0]["caps"]["cap16"]["error"] == "missing weight"
     assert result["arms"][1]["caps"]["cap16"]["fits_16gb"] is True
     assert result["baselines"][0]["status"] == "error"
     assert result["baselines"][0]["error"] == "offline base"
@@ -631,7 +597,7 @@ def test_missing_cuda_stops_before_later_arms(isolated: Path) -> None:
         seen.append(str(job["arm"]))
         raise edit.GpuError("no CUDA GPU")
 
-    args = _options(isolated / "fail", ["--arms", "qwen-r128,qwen-r32", "--caps", "cap16", "--smoke"])
+    args = _options(isolated / "fail", ["--arms", "zimage-r128,zimage-r256", "--caps", "cap16", "--smoke"])
     with pytest.raises(edit.GpuError, match="no CUDA GPU"):
         edit.execute(
             args,
@@ -641,7 +607,7 @@ def test_missing_cuda_stops_before_later_arms(isolated: Path) -> None:
             wheel=edit.WINDOWS_WHEEL,
             mirror_lookup=lambda _name: [],
         )
-    assert seen == ["qwen-r128"]
+    assert seen == ["zimage-r128"]
 
 
 def test_docs_mention_the_matrix() -> None:
@@ -652,6 +618,5 @@ def test_docs_mention_the_matrix() -> None:
         assert "8.0" in text
         assert "not representative of RTX 40/50" in text
         assert "525.60.13" in text
-        assert "nunchaku_edit_test" in text
-        assert "zero_cond_t" in text
+        assert "nunchaku_zimage_test" in text
         assert "cap16" in text

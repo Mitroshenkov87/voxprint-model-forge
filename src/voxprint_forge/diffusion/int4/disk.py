@@ -8,7 +8,7 @@ from pathlib import Path
 
 from voxprint_forge.diffusion.int4.markers import load_done
 from voxprint_forge.diffusion.int4.pins import DISK_FLOOR
-from voxprint_forge.errors import UsageError
+from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.reclaim import delete_logged
 
 
@@ -50,6 +50,19 @@ def reclaim_verified(done: Path) -> int:
         for item in sources:
             freed += delete_logged(Path(str(item)))
     return freed
+
+
+def reclaim_sources(sources: list[str], *, verified: bool) -> list[str]:
+    """Delete source paths only after a mirror has verified."""
+    if not verified:
+        raise StageError("refusing to delete sources before a mirror verifies", code="reclaim")
+    removed: list[str] = []
+    for item in sources:
+        path = Path(item)
+        if path.exists() or path.is_symlink():
+            delete_logged(path)
+            removed.append(str(path))
+    return removed
 
 
 def guard_disk(

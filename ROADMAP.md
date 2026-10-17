@@ -15,7 +15,7 @@ can drive it.
   offload that fits is kept ahead of a smaller quant.
 - Preflight, heartbeats, and `forge status`.
 - Desktop window for a local run and a remote session.
-- Canvas image tiers (Z-Image and Qwen-Image) as a separate entry point.
+- Canvas image tiers (Z-Image) as a separate entry point.
 - Public Hugging Face upload and private Kaggle upload, with sha256 and size
   checked after the upload. A public upload requires a permissive licence and
   a complete card.

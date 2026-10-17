@@ -21,11 +21,6 @@ I2I_METRICS = "checks/i2i-fp8-vs-bf16.json"
 I2I_GRID = "checks/grid.avif"
 INPAINT_GRID = "checks/grid-inpaint.avif"
 
-EDIT_FP8_PREFIX = "qwen-image-edit-2511-transformer-fp8"
-EDIT_BF16_PREFIX = "qwen-image-edit-2511-transformer-bf16"
-EDIT_ENCODER_FP8 = "qwen2.5-vl-7b-text-encoder-fp8.safetensors"
-EDIT_TRANSFORMER_CONFIG = "qwen-image-edit-2511-transformer.config.json"
-
 NOTICE_TEXT = "Apache-2.0\n\nModified by Voxprint: dtype conversion\n"
 
 

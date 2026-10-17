@@ -14,7 +14,7 @@ The display name is VOXPrint AI Model Forge. Shortcuts use that name inside the 
 
 The public roadmap is [ROADMAP.md](ROADMAP.md). The API docs, the CLI reference, and that roadmap are published at <https://mitroshenkov87.github.io/voxprint-model-forge/>.
 
-SVDQuant INT4 for Qwen-Image-Edit-2511, plus Wan 2.2 GGUF and FP8, is `forge diffusion-int4`. The A100 or H100 80GB script and the minute tables are in [docs/DIFFUSION-INT4.md](docs/DIFFUSION-INT4.md).
+Wan 2.2 GGUF and FP8 is `forge diffusion-int4`. The minute tables are `forge diffusion-int4 estimates`.
 
 ## Testing
 

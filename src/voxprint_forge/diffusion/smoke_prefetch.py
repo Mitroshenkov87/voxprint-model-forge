@@ -11,10 +11,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from voxprint_forge.diffusion.nunchaku_edit import (
+from voxprint_forge.diffusion.nunchaku_zimage import (
     ARMS,
-    QWEN_BASE_REPO,
-    QWEN_BASE_REVISION,
     ZIMAGE_BASE_REPO,
     ZIMAGE_BASE_REVISION,
 )
@@ -126,21 +124,7 @@ def weights_ready(weight: Path, base: Path) -> None:
 
 def prefetch_weights(cache: Path, steps: tuple[str, ...], *, attempts: int = DOWNLOAD_ATTEMPTS) -> None:
     """Download every weight the selected steps need. Existing sha256 matches are kept."""
-    need_qwen_int4 = "quantfunc" in steps
-    need_qwen_base = "quantfunc" in steps or "calib-quant-timing" in steps
-    need_transformer = "calib-quant-timing" in steps
     need_zimage = "zimage" in steps
-    if need_qwen_int4:
-        _prefetch_arm(cache, "qwen-r128", attempts=attempts)
-    if need_qwen_base:
-        _prefetch_snapshot(
-            cache,
-            "qwen-edit-2511",
-            QWEN_BASE_REPO,
-            QWEN_BASE_REVISION,
-            keep_transformer=need_transformer,
-            attempts=attempts,
-        )
     if need_zimage:
         _prefetch_arm(cache, "zimage-r128", attempts=attempts)
         _prefetch_snapshot(

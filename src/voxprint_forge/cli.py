@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     canvas_upload.add_argument("canvas_plan", type=Path, metavar="PLAN")
     canvas_upload.add_argument("--parts", default=None, help="Comma-separated part ids. Default: the whole plan.")
     canvas_upload.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
-    int4 = sub.add_parser("diffusion-int4", help="SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.")
+    int4 = sub.add_parser("diffusion-int4", help="Wan 2.2 GGUF and FP8.")
     add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
     add_compare_command(sub)
     add_kl_command(sub)
@@ -219,7 +219,6 @@ def main(argv: list[str] | None = None) -> int:
 
 def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | None, force: bool) -> dict[str, object]:
     from voxprint_forge.diffusion.guard import llm_job_running
-    from voxprint_forge.errors import PlanError
 
     if not force and llm_job_running(forge_out):
         raise UsageError(
@@ -228,28 +227,15 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
             code="llm_running",
         )
     token = os.environ.get("HF_TOKEN", "").strip() or None
-    try:
-        from voxprint_forge.diffusion.release import release_canvas_plan
+    from voxprint_forge.diffusion.release import release_canvas_plan
 
-        return release_canvas_plan(
-            repo=root,
-            plan_path=plan_path,
-            forge_out=forge_out,
-            token=token,
-            parts_text=parts,
-        )
-    except PlanError:
-        from voxprint_forge.diffusion.qwen_job import release_deferred
-        from voxprint_forge.diffusion.qwen_plan import load_qwen_plan
-
-        return release_deferred(
-            repo=root,
-            plan=load_qwen_plan(plan_path),
-            forge_out=forge_out,
-            token=token,
-            parts_text=parts,
-            force=force,
-        )
+    return release_canvas_plan(
+        repo=root,
+        plan_path=plan_path,
+        forge_out=forge_out,
+        token=token,
+        parts_text=parts,
+    )
 
 
 def _index(args: argparse.Namespace) -> dict[str, object]:

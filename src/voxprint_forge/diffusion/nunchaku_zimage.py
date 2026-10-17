@@ -1,10 +1,10 @@
-"""Nunchaku INT4 matrix for Qwen-Image-Edit-2511 and Z-Image-Turbo.
+"""Nunchaku INT4 checks for Z-Image-Turbo on the RTX 4090 (sm_89) and sm_80.
 
-One uv venv installs the pinned ``tonera/vitoom-nunchaku`` wheel (it implements
-``zero_cond_t`` and ships both transformer modules). Upstream ``nunchaku`` is
-never installed. INT4 covers sm_80, sm_86, and sm_89. NVFP4 is not selected.
-``scripts/nunchaku_edit_test.sh`` is the Linux entry. ``scripts/nunchaku_edit_test.ps1``
-is the Windows entry.
+One uv venv installs the pinned ``tonera/vitoom-nunchaku`` wheel, which ships
+the Z-Image transformer and sm_89 kernels. Upstream ``nunchaku`` is never
+installed. INT4 covers sm_80, sm_86, and sm_89. NVFP4 is not selected.
+``scripts/nunchaku_zimage_test.sh`` is the Linux entry.
+``scripts/nunchaku_zimage_test.ps1`` is the Windows entry.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ import transformers
 from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
 
 from voxprint_forge.diffusion.fp8 import dequant_file, read_format
-from voxprint_forge.diffusion.int4.quantfunc_smooth import install_quantfunc_shim
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.scrub import active_secrets, scrub
 
@@ -40,11 +39,8 @@ diffusers = None
 nunchaku = None
 Image = None
 pytesseract = None
-NunchakuQwenImageTransformer2DModel = None
 NunchakuZImageTransformer2DModel = None
-QwenImageEditPlusPipeline = None
 ZImagePipeline = None
-QwenImageTransformer2DModel = None
 ZImageTransformer2DModel = None
 _OPTIONAL_BOUND = False
 
@@ -52,9 +48,7 @@ _OPTIONAL_BOUND = False
 def _bind_optional_stack() -> None:
     """Import diffusers, nunchaku, Pillow, and pytesseract on first GPU use."""
     global diffusers, nunchaku, Image, pytesseract
-    global NunchakuQwenImageTransformer2DModel, NunchakuZImageTransformer2DModel
-    global QwenImageEditPlusPipeline, ZImagePipeline
-    global QwenImageTransformer2DModel, ZImageTransformer2DModel, _OPTIONAL_BOUND
+    global NunchakuZImageTransformer2DModel, ZImagePipeline, ZImageTransformer2DModel, _OPTIONAL_BOUND
     if _OPTIONAL_BOUND:
         return
     _OPTIONAL_BOUND = True
@@ -75,33 +69,15 @@ def _bind_optional_stack() -> None:
     except ImportError:
         _pytesseract = None
     try:
-        from nunchaku.models.transformers.transformer_qwenimage import (
-            NunchakuQwenImageTransformer2DModel as _nunchaku_qwen,
-        )
-    except ImportError:
-        _nunchaku_qwen = None
-    try:
         from nunchaku.models.transformers.transformer_zimage import (
             NunchakuZImageTransformer2DModel as _nunchaku_zimage,
         )
     except ImportError:
         _nunchaku_zimage = None
     try:
-        from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import (
-            QwenImageEditPlusPipeline as _qwen_pipe,
-        )
-    except ImportError:
-        _qwen_pipe = None
-    try:
         from diffusers.pipelines.z_image.pipeline_z_image import ZImagePipeline as _zimage_pipe
     except ImportError:
         _zimage_pipe = None
-    try:
-        from diffusers.models.transformers.transformer_qwenimage import (
-            QwenImageTransformer2DModel as _qwen_model,
-        )
-    except ImportError:
-        _qwen_model = None
     try:
         from diffusers.models.transformers.transformer_z_image import (
             ZImageTransformer2DModel as _zimage_model,
@@ -112,38 +88,24 @@ def _bind_optional_stack() -> None:
     nunchaku = _nunchaku
     Image = _image
     pytesseract = _pytesseract
-    NunchakuQwenImageTransformer2DModel = _nunchaku_qwen
     NunchakuZImageTransformer2DModel = _nunchaku_zimage
-    QwenImageEditPlusPipeline = _qwen_pipe
     ZImagePipeline = _zimage_pipe
-    QwenImageTransformer2DModel = _qwen_model
     ZImageTransformer2DModel = _zimage_model
-    if NunchakuQwenImageTransformer2DModel is None and nunchaku is not None:
-        NunchakuQwenImageTransformer2DModel = getattr(nunchaku, "NunchakuQwenImageTransformer2DModel", None)
     if NunchakuZImageTransformer2DModel is None and nunchaku is not None:
         NunchakuZImageTransformer2DModel = getattr(nunchaku, "NunchakuZImageTransformer2DModel", None)
-    if QwenImageEditPlusPipeline is None and diffusers is not None:
-        QwenImageEditPlusPipeline = getattr(diffusers, "QwenImageEditPlusPipeline", None)
     if ZImagePipeline is None and diffusers is not None:
         ZImagePipeline = getattr(diffusers, "ZImagePipeline", None)
-    if QwenImageTransformer2DModel is None and diffusers is not None:
-        QwenImageTransformer2DModel = getattr(diffusers, "QwenImageTransformer2DModel", None)
     if ZImageTransformer2DModel is None and diffusers is not None:
         ZImageTransformer2DModel = getattr(diffusers, "ZImageTransformer2DModel", None)
 
-SCHEMA = "voxprint-forge-nunchaku-edit/1"
+SCHEMA = "voxprint-forge-nunchaku-zimage/1"
 TAG = "nunchaku-test-2"
 WHEEL_REPO = "tonera/vitoom-nunchaku"
 WHEEL_REVISION = "85bad5510d409570527b018387491fd0c81e4727"
-QWEN_WEIGHT_REPO = "QuantFunc/Nunchaku-Qwen-Image-EDIT-2511"
-QWEN_WEIGHT_REVISION = "4ca543a1e91db4183ee16fd5aa5950e0b02803e5"
 ZIMAGE_WEIGHT_REPO = "nunchaku-ai/nunchaku-z-image-turbo"
 ZIMAGE_WEIGHT_REVISION = "ca6bac69c3b0b2bdd31ca5196bf87c5f2a9eaedf"
-QWEN_BASE_REPO = "Qwen/Qwen-Image-Edit-2511"
-QWEN_BASE_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 ZIMAGE_BASE_REPO = "Tongyi-MAI/Z-Image-Turbo"
 ZIMAGE_BASE_REVISION = "f332072aa78be7aecdf3ee76d5c247082da564a6"
-QWEN_FP8_REPO = "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
 ZIMAGE_FP8_REPO = "Mitroshenkov87/voxprint-mirror-z-image-turbo"
 FITS_16GB_MIB = 15.0 * 1024
 CAP16_MIB = 16 * 1024
@@ -156,19 +118,12 @@ MIN_VRAM_BYTES = int(16 * (1024**3) * 0.97)
 DISK_MARGIN = 5 * 1024**3
 DEFAULT_BUDGET_MIN = 90.0
 SEED = 0
-QWEN_STEPS = 40
-QWEN_SMOKE_STEPS = 20
 ZIMAGE_STEPS = 8
-TRUE_CFG = 4.0
 TURBO_GUIDANCE = 0.0
-NEGATIVE_PROMPT = " "
-ARM_ORDER = ("qwen-r128", "qwen-r32", "zimage-r128", "zimage-r256")
+ARM_ORDER = ("zimage-r128", "zimage-r256")
 ESTIMATE_MIN = {
-    "qwen-r128": 22.0,
-    "qwen-r32": 18.0,
     "zimage-r128": 8.0,
     "zimage-r256": 14.0,
-    "qwen-fp8": 16.0,
     "zimage-fp8": 6.0,
 }
 
@@ -263,28 +218,6 @@ LINUX_WHEEL = WheelSpec(
 )
 
 ARMS: dict[str, ArmSpec] = {
-    "qwen-r128": ArmSpec(
-        "qwen-r128",
-        "qwen-edit-2511",
-        128,
-        QWEN_WEIGHT_REPO,
-        QWEN_WEIGHT_REVISION,
-        "nunchaku_qwen_image_edit_2511_balance_int4.safetensors",
-        "ec36d349309057f245e77255c008fc97330f2bc280dc8d704de715bcbaf6841b",
-        12_650_000_000,
-        "qwen-fp8",
-    ),
-    "qwen-r32": ArmSpec(
-        "qwen-r32",
-        "qwen-edit-2511",
-        32,
-        QWEN_WEIGHT_REPO,
-        QWEN_WEIGHT_REVISION,
-        "nunchaku_qwen_image_edit_2511_ultimate_speed_int4.safetensors",
-        "432d5b807f4345de4ec3d0b7ac1a6143930a81a3d35b582b1f603c18d07d56ec",
-        11_520_000_000,
-        "qwen-fp8",
-    ),
     "zimage-r128": ArmSpec(
         "zimage-r128",
         "z-image-turbo",
@@ -310,11 +243,6 @@ ARMS: dict[str, ArmSpec] = {
 }
 
 BASES: dict[str, dict[str, object]] = {
-    "qwen-edit-2511": {
-        "repo": QWEN_BASE_REPO,
-        "revision": QWEN_BASE_REVISION,
-        "bytes": 18_000_000_000,
-    },
     "z-image-turbo": {
         "repo": ZIMAGE_BASE_REPO,
         "revision": ZIMAGE_BASE_REVISION,
@@ -322,32 +250,6 @@ BASES: dict[str, dict[str, object]] = {
     },
 }
 
-QWEN_CASES: tuple[CaseSpec, ...] = (
-    CaseSpec(
-        "c1",
-        "Change her black evening dress to a deep red silk evening dress; keep the same woman, "
-        "face, hairstyle, pose, lighting, window and background unchanged.",
-        "e1.jpg",
-        1280,
-        720,
-    ),
-    CaseSpec(
-        "c2",
-        "Make her raise her right hand toward the camera with an open palm and five clearly "
-        "separated fingers; keep the same woman, face, dress and balcony unchanged.",
-        "e2.jpg",
-        1280,
-        720,
-    ),
-    CaseSpec(
-        "c3",
-        'Add a neon shop sign on the brick wall above her that reads "VOXPRINT" in bold white '
-        "letters; keep the same woman, face, pose and street unchanged.",
-        "e3.jpg",
-        1024,
-        1024,
-    ),
-)
 ZIMAGE_CASES: tuple[CaseSpec, ...] = (
     CaseSpec(
         "z1",
@@ -381,25 +283,20 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def asset_dir() -> Path:
-    """Committed JPEG inputs for the Qwen edit cases."""
-    return repo_root() / "tests" / "assets" / "nunchaku_edit"
-
-
 def cache_dir() -> Path:
     """Wheel, venv, and weight cache. ``NUNCHAKU_CACHE`` overrides it."""
     override = os.environ.get("NUNCHAKU_CACHE")
     if override:
         return Path(override)
-    return Path.home() / ".cache" / "voxprint-forge" / "nunchaku-edit"
+    return Path.home() / ".cache" / "voxprint-forge" / "nunchaku-zimage"
 
 
 def done_dir() -> Path:
-    """Resume markers. ``NUNCHAKU_DONE`` overrides ``~/.done/nunchaku-edit``."""
+    """Resume markers. ``NUNCHAKU_DONE`` overrides ``~/.done/nunchaku-zimage``."""
     override = os.environ.get("NUNCHAKU_DONE")
     if override:
         return Path(override)
-    return Path.home() / ".done" / "nunchaku-edit"
+    return Path.home() / ".done" / "nunchaku-zimage"
 
 
 def select_wheel(platform: str | None = None) -> WheelSpec:
@@ -420,7 +317,7 @@ def build_install_commands(python: Path, wheel: Path, spec: WheelSpec) -> list[l
     """uv pip commands. The wheel is installed from disk with ``--no-deps``.
 
     A bare ``nunchaku`` requirement is never passed, so pip cannot select the
-    upstream package that lacks ``zero_cond_t``.
+    upstream package.
     """
     py = str(python)
     return [
@@ -460,12 +357,6 @@ def reject_upstream_install(commands: list[list[str]]) -> None:
                 raise SetupError("refusing to install upstream nunchaku")
             if name == "nunchaku" or name.startswith("nunchaku=="):
                 raise SetupError("refusing to install upstream nunchaku")
-
-
-def assert_zero_cond_source(source: str) -> None:
-    """Raise when the installed Qwen transformer source lacks ``zero_cond_t``."""
-    if "zero_cond_t" not in source:
-        raise SetupError("installed nunchaku has no zero_cond_t; refusing to run Qwen-Image-Edit-2511")
 
 
 def require_hash(path: Path, expected: str) -> str:
@@ -523,15 +414,18 @@ def plan_modes(arm: str, cap: str, mode: str) -> tuple[str, ...]:
 
 
 def steps_for(arm: str, smoke: bool) -> int:
-    """Sampling steps. Smoke keeps one case and shortens Qwen from 40 to 20."""
-    if arm.startswith("qwen"):
-        return QWEN_SMOKE_STEPS if smoke else QWEN_STEPS
+    """Sampling steps. Z-Image stays at 8; ``smoke`` only shortens the case list."""
+    if arm not in ARMS and arm != "zimage-fp8":
+        raise SetupError(f"unknown arm {arm}")
+    del smoke
     return ZIMAGE_STEPS
 
 
 def cases_for(arm: str, requested: tuple[str, ...] | None, *, smoke: bool) -> tuple[CaseSpec, ...]:
-    """Cases for an arm. ``--smoke`` keeps the first case of that family."""
-    pool = QWEN_CASES if arm.startswith("qwen") else ZIMAGE_CASES
+    """Cases for an arm. ``--smoke`` keeps the first Z-Image case."""
+    if arm not in ARMS and arm != "zimage-fp8":
+        raise SetupError(f"unknown arm {arm}")
+    pool = ZIMAGE_CASES
     if smoke:
         return (pool[0],)
     if not requested:
@@ -545,12 +439,9 @@ def cases_for(arm: str, requested: tuple[str, ...] | None, *, smoke: bool) -> tu
 
 def baselines_for(arms: tuple[str, ...] | list[str]) -> list[str]:
     """FP8 baseline ids for the families present in ``arms``."""
-    names: list[str] = []
-    if any(arm.startswith("qwen") for arm in arms):
-        names.append("qwen-fp8")
     if any(arm.startswith("zimage") for arm in arms):
-        names.append("zimage-fp8")
-    return names
+        return ["zimage-fp8"]
+    return []
 
 
 def sort_arms(arms: tuple[str, ...] | list[str]) -> list[str]:
@@ -754,8 +645,8 @@ def fp8_strategy(mirror_files: list[Path], base: Path, vram_mib: int) -> str:
 
 
 def export_aliases(out: Path, arm: str, cap: str, case_ids: list[str]) -> None:
-    """Copy the Qwen r128 16 GB outputs to ``c1.webp`` and the other contract names."""
-    if arm != "qwen-r128" or cap != "cap16":
+    """Copy the r128 16 GB outputs to ``z1.webp`` and the other case names."""
+    if arm != "zimage-r128" or cap != "cap16":
         return
     for case_id in case_ids:
         source = out / f"{arm}-{cap}-{case_id}.webp"
@@ -969,14 +860,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", help="print result.json on stdout")
     parser.add_argument(
         "--arms",
-        default="qwen-r128,qwen-r32,zimage-r128",
-        help="comma list: qwen-r128, qwen-r32, zimage-r128, zimage-r256 (default omits r256)",
+        default="zimage-r128",
+        help="comma list: zimage-r128, zimage-r256 (default omits r256)",
     )
-    parser.add_argument("--cases", default="", help="comma list of c1,c2,c3 and/or z1,z2,z3")
-    parser.add_argument("--out", default="", help="output directory (default results/nunchaku-edit/<tag>)")
+    parser.add_argument("--cases", default="", help="comma list of z1, z2, z3")
+    parser.add_argument("--out", default="", help="output directory (default results/nunchaku-zimage/<tag>)")
     parser.add_argument("--mode", default="auto", choices=["auto", "model-offload", "block-offload"])
     parser.add_argument("--caps", default="unconstrained,cap16", help="unconstrained and/or cap16")
-    parser.add_argument("--smoke", action="store_true", help="one case per arm; Qwen uses 20 steps")
+    parser.add_argument("--smoke", action="store_true", help="one case per arm")
     parser.add_argument("--cleanup", action="store_true", help="delete INT4 weight files after the run")
     parser.add_argument("--budget-min", type=float, default=DEFAULT_BUDGET_MIN)
     parser.add_argument("--worker", default="", help=argparse.SUPPRESS)
@@ -991,7 +882,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SetupError("--caps is empty")
     args.caps = caps
     if not args.out:
-        args.out = str(Path("results") / "nunchaku-edit" / TAG)
+        args.out = str(Path("results") / "nunchaku-zimage" / TAG)
     return args
 
 
@@ -1215,7 +1106,7 @@ def spawn_worker(job: dict[str, object]) -> dict[str, object]:
     job_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(job_path, job)
     proc = subprocess.run(
-        [sys.executable, "-m", "voxprint_forge.diffusion.nunchaku_edit", "--worker", str(job_path)],
+        [sys.executable, "-m", "voxprint_forge.diffusion.nunchaku_zimage", "--worker", str(job_path)],
         capture_output=True,
         text=True,
         check=False,
@@ -1320,7 +1211,7 @@ def _run_baseline(
     gpu: GpuFacts,
     mirror_lookup: Callable[[str], list[Path]],
 ) -> dict[str, object]:
-    family = "qwen-edit-2511" if baseline.startswith("qwen") else "z-image-turbo"
+    family = "z-image-turbo"
     base = cache_dir() / "bases" / family
     mirror = mirror_lookup(baseline)
     strategy = fp8_strategy(mirror, base, gpu.memory_mib)
@@ -1381,11 +1272,11 @@ def _job(
     strategy: str = "",
     mirror: list[Path] | None = None,
 ) -> dict[str, object]:
-    family = ARMS[arm].family if arm in ARMS else ("qwen-edit-2511" if arm.startswith("qwen") else "z-image-turbo")
+    family = ARMS[arm].family if arm in ARMS else "z-image-turbo"
     cases = cases_for(arm, requested, smoke=smoke)
     case_rows = []
     for case in cases:
-        image = None if case.image is None else str(asset_dir() / case.image)
+        image = case.image
         case_rows.append(
             {
                 "id": case.case_id,
@@ -1579,16 +1470,7 @@ def _download_url(url: str, dest: Path) -> None:
 
 
 def _assert_installed_sources(python: Path, *, need_zimage: bool) -> None:
-    script = (
-        "import nunchaku.models.transformers.transformer_qwenimage as qwen\n"
-        "print(qwen.__file__)\n"
-    )
-    proc = subprocess.run([str(python), "-c", script], capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        raise SetupError(scrub(proc.stderr[-1000:] or "nunchaku import failed", active_secrets()))
-    source = Path(proc.stdout.strip()).read_text(encoding="utf-8", errors="replace")
-    assert_zero_cond_source(source)
-    if need_zimage and not _probe(python, need_zimage=True):
+    if not _probe(python, need_zimage=need_zimage):
         raise SetupError(
             "pinned vitoom-nunchaku wheel does not export the Z-Image transformer; "
             "upstream nunchaku is not installed"
@@ -1619,35 +1501,27 @@ def _load_pipe(job: dict[str, object]) -> object:
     if str(job.get("kind")) == "fp8":
         return _load_fp8(job)
     weight = str(job["weight"])
-    if family == "qwen-edit-2511":
-        install_quantfunc_shim()
-        transformer_cls = _require_cls(NunchakuQwenImageTransformer2DModel, "NunchakuQwenImageTransformer2DModel")
-        pipeline_cls = _require_cls(QwenImageEditPlusPipeline, "QwenImageEditPlusPipeline")
-    elif family == "z-image-turbo":
-        transformer_cls = _require_cls(NunchakuZImageTransformer2DModel, "NunchakuZImageTransformer2DModel")
-        pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
-    else:
+    if family != "z-image-turbo":
         raise SetupError(f"unknown family {family}")
+    transformer_cls = _require_cls(NunchakuZImageTransformer2DModel, "NunchakuZImageTransformer2DModel")
+    pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
     base = str(_ensure_base(family))
     transformer = transformer_cls.from_pretrained(weight, torch_dtype=torch.bfloat16)
-    kwargs: dict[str, object] = {
-        "transformer": transformer,
-        "torch_dtype": torch.bfloat16,
-        "local_files_only": True,
-    }
-    if family == "z-image-turbo":
-        kwargs["low_cpu_mem_usage"] = False
-    return pipeline_cls.from_pretrained(base, **kwargs)
+    return pipeline_cls.from_pretrained(
+        base,
+        transformer=transformer,
+        torch_dtype=torch.bfloat16,
+        local_files_only=True,
+        low_cpu_mem_usage=False,
+    )
 
 
 def _load_fp8(job: dict[str, object]) -> object:
     family = str(job["family"])
-    if family == "qwen-edit-2511":
-        pipeline_cls = _require_cls(QwenImageEditPlusPipeline, "QwenImageEditPlusPipeline")
-        model_cls = _require_cls(QwenImageTransformer2DModel, "QwenImageTransformer2DModel")
-    else:
-        pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
-        model_cls = _require_cls(ZImageTransformer2DModel, "ZImageTransformer2DModel")
+    if family != "z-image-turbo":
+        raise SetupError(f"unknown family {family}")
+    pipeline_cls = _require_cls(ZImagePipeline, "ZImagePipeline")
+    model_cls = _require_cls(ZImageTransformer2DModel, "ZImageTransformer2DModel")
     base = str(_ensure_base(family))
     if str(job.get("strategy")) == "diffusers-layerwise":
         if job.get("fp8_timing_note"):
@@ -1674,22 +1548,9 @@ def _load_fp8(job: dict[str, object]) -> object:
 
 def _generate(pipe: object, family: str, case: dict[str, object], steps: int) -> object:
     _bind_optional_stack()
+    if family != "z-image-turbo":
+        raise SetupError(f"unknown family {family}")
     generator = torch.Generator(device="cuda").manual_seed(SEED)
-    if family == "qwen-edit-2511":
-        if Image is None or not case.get("image"):
-            raise SetupError("Pillow and the edit input are required")
-        source = Image.open(str(case["image"])).convert("RGB")
-        return pipe(  # type: ignore[operator]
-            image=source,
-            prompt=str(case["prompt"]),
-            negative_prompt=NEGATIVE_PROMPT,
-            true_cfg_scale=TRUE_CFG,
-            num_inference_steps=steps,
-            height=int(case["height"]),
-            width=int(case["width"]),
-            generator=generator,
-            output_type="pil",
-        ).images[0]
     return pipe(  # type: ignore[operator]
         prompt=str(case["prompt"]),
         height=int(case["height"]),
@@ -1744,11 +1605,7 @@ def _mirror_files(baseline: str) -> list[Path]:
     except Exception as exc:
         _log(f"fp8 mirror {repo} unavailable: {exc}")
         return []
-    globs = (
-        ("qwen-image-edit-2511-transformer-fp8",)
-        if baseline.startswith("qwen")
-        else ("zimage-turbo-transformer-fp8", "zimage-transformer-fp8")
-    )
+    globs = ("zimage-turbo-transformer-fp8", "zimage-transformer-fp8")
     matched = [
         name
         for name in names
@@ -1765,8 +1622,7 @@ def _mirror_files(baseline: str) -> list[Path]:
 
 
 def _fp8_repo(baseline: str) -> str:
-    if baseline.startswith("qwen"):
-        return QWEN_FP8_REPO
+    del baseline
     return ZIMAGE_FP8_REPO
 
 
@@ -1877,7 +1733,7 @@ def _reexec(python: Path, argv: list[str]) -> None:
     current = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = root if not current else root + os.pathsep + current
     env["PYTHONUNBUFFERED"] = "1"
-    os.execve(str(python), [str(python), "-m", "voxprint_forge.diffusion.nunchaku_edit", *argv], env)
+    os.execve(str(python), [str(python), "-m", "voxprint_forge.diffusion.nunchaku_zimage", *argv], env)
 
 
 def _run(command: list[str]) -> None:

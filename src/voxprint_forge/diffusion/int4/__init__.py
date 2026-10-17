@@ -1,8 +1,7 @@
-"""SVDQuant INT4 for Qwen-Image-Edit and GGUF/FP8 for Wan 2.2.
+"""GGUF and FP8 for Wan 2.2.
 
 ``run`` is loaded on first use. Importing this package must not import
-``stage``, which pulls ``voxprint_common``. The laptop smoke venv is
-Python 3.12 for the Windows nunchaku wheel and does not install that library.
+``stage``, which pulls ``voxprint_common``.
 """
 
 from __future__ import annotations

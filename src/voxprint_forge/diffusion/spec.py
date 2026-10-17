@@ -9,9 +9,7 @@ CREATIVE_GUIDANCE = 4.0
 CONTROL_STEPS = 8
 CONTROL_GUIDANCE = 0.0
 CONTROL_SCALE = 0.75
-EDIT_STEPS = 40
-EDIT_TRUE_CFG = 4.0
 IMAGE_SIZE = 1024
 
-PART_MINUTES = {"base": 55, "controlnet": 25, "edit": 55}
+PART_MINUTES = {"base": 55, "controlnet": 25}
 JOB_ID = "canvas-zimage-tiers-v1"

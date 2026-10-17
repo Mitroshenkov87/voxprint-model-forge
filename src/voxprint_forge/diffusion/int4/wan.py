@@ -12,6 +12,7 @@ from safetensors.torch import load_file, save_file
 
 from voxprint_forge.diffusion.fp8 import quantize_state, save_quantized
 from voxprint_forge.diffusion.int4.context import StageContext
+from voxprint_forge.diffusion.int4.disk import reclaim_sources
 from voxprint_forge.diffusion.int4.pins import (
     COMFY_GGUF_COMMIT,
     LLAMA_CPP_COMMIT,
@@ -33,7 +34,6 @@ from voxprint_forge.diffusion.int4.publish import (
     render_int4_card,
     write_publish_tree,
 )
-from voxprint_forge.diffusion.int4.qwen import reclaim_sources
 from voxprint_forge.diffusion.int4.runtime import execute
 from voxprint_forge.errors import ToolMissingError
 from voxprint_forge.mdl import LLAMA_CC, WAN_LLAMA_TAG, ManifestInput
