@@ -30,6 +30,10 @@ from voxprint_forge.mdl import (
     check_document,
     descriptor_commit,
     gb_to_gib,
+    index_document,
+    next_serial,
+    per_file_sources,
+    push_index,
     retarget_mirrors,
     schema_path,
     write_index,
@@ -42,6 +46,12 @@ SCHEMA = json.loads(schema_path().read_text(encoding="utf-8"))
 def _schema(document: dict[str, object]) -> None:
     jsonschema.Draft202012Validator.check_schema(SCHEMA)
     jsonschema.validate(document, SCHEMA)
+
+
+@pytest.fixture(autouse=True)
+def _published_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    head = "d2325ed8de2eec808b22a88381bfb35055f84203"
+    monkeypatch.setattr("voxprint_forge.mdl.published_index_state", lambda: (1, head))
 
 
 def _sample(*, engine: str = "llama.cpp", min_gb: float = 16, rec_gb: float = 24) -> dict[str, object]:
@@ -126,7 +136,7 @@ def test_index_build_writes_local_index_and_does_not_upload(tmp_path: Path, monk
     path.write_text(json.dumps(document) + "\n", encoding="utf-8")
     dest = tmp_path / "index.json"
     assert main(["index", "build", "--from", str(tmp_path / "models"), "--out", str(dest)]) == 0
-    rows = json.loads(dest.read_text(encoding="utf-8"))
+    rows = json.loads(dest.read_text(encoding="utf-8"))["models"]
     assert rows == [
         {
             "id": "t-lite-it-2.1",
@@ -151,7 +161,7 @@ def test_index_build_accepts_an_explicit_descriptor_commit(tmp_path: Path, monke
     dest = tmp_path / "index.json"
     pin = "Mitroshenkov87/voxprint-t-lite-it-2.1=" + ("cd" * 20)
     assert main(["index", "build", "--from", str(folder.parent), "--out", str(dest), "--revision", pin]) == 0
-    rows = json.loads(dest.read_text(encoding="utf-8"))
+    rows = json.loads(dest.read_text(encoding="utf-8"))["models"]
     assert rows[0]["revision"] == "cd" * 20
 
 
@@ -196,15 +206,73 @@ def test_unresolved_descriptor_commit_writes_nothing(tmp_path: Path, monkeypatch
     assert not dest.exists()
 
 
-def test_index_push_requires_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[str] = []
-    monkeypatch.setattr("voxprint_forge.mdl._upload_index", lambda repo, path: called.append(repo))
+def _signed_fixture(tmp_path: Path, serial: int = 2) -> tuple[Path, Path, bytes]:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+    key = Ed25519PrivateKey.generate()
+    key_file = tmp_path / "key.pem"
+    key_file.write_bytes(key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+    row = {"id": "tiny", "repo": "Mitroshenkov87/voxprint-tiny", "revision": "ab" * 20, "sha256": "cd" * 32}
     index = tmp_path / "index.json"
-    index.write_text("[]\n", encoding="utf-8")
+    document = index_document([row], serial=serial, head="d2325ed", generated_at="2026-10-17T12:00:00Z")
+    index.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    from cryptography.hazmat.primitives.serialization import PublicFormat
+
+    public = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return index, key_file, public
+
+
+def test_index_push_requires_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    called: list[tuple[str, str]] = []
+    monkeypatch.setattr("voxprint_forge.mdl._upload_index", lambda repo, path, sig: called.append((repo, sig.name)))
+    index, key_file, public = _signed_fixture(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MDL_INDEX_KEY_FILE", str(key_file))
     assert main(["index", "push", "--index", str(index)]) == EXIT_USAGE
     assert called == []
     assert main(["index", "push", "--push", "--index", str(index)]) == 0
-    assert called == [INDEX_REPO]
+    assert called == [(INDEX_REPO, "index.json.sig")]
+    signature = base64.b64decode((tmp_path / "index.json.sig").read_bytes())
+    Ed25519PublicKey.from_public_bytes(public).verify(signature, index.read_bytes())
+
+
+def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[str] = []
+    monkeypatch.setattr("voxprint_forge.mdl._upload_index", lambda repo, path, sig: called.append(repo))
+    index, key_file, _ = _signed_fixture(tmp_path, serial=3)
+    with pytest.raises(StageError):
+        push_index(index, key_file=key_file, published_serial=3)
+    index.write_text("[]\n", encoding="utf-8")
+    with pytest.raises(StageError):
+        push_index(index, key_file=key_file, published_serial=None)
+    assert called == []
+    assert not (tmp_path / "index.json.sig").exists()
+
+
+def test_index_serial_follows_the_published_one() -> None:
+    assert next_serial(None) == 2
+    assert next_serial(1) == 2
+    assert next_serial(7) == 8
+
+
+def test_strict_priority_sources_and_030_fields_are_accepted() -> None:
+    document = _sample()
+    ours = {"kind": "hf", "ref": "Mitroshenkov87/voxprint-t-lite-it-2.1", "revision": "ab" * 20}
+    document["mirror_policy"] = "strict-priority"
+    document["files"][0]["sources"] = [{"kind": "hf", "ref": "author/repo", "revision": "cd" * 20}, ours]
+    document["files"][0]["built_for"] = {"onnxruntime": "1.22", "opset": 17}
+    document["file_groups"] = [{"paths": ["a.gguf"], "mirror_policy": "race", "sources": [ours]}]
+    document["prebuilt"] = [{"path": "a.onnx", "built_for": {"onnxruntime": "1.22", "opset": 17}}]
+    document["post_install"] = {"steps": []}
+    document["runtime"]["engine"] = "onnxruntime"
+    check_document(document)
+    document["mirror_policy"] = "fastest"
+    with pytest.raises(StageError):
+        check_document(document)
 
 
 def test_backfill_writes_local_files_and_does_not_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,7 +469,7 @@ def test_index_build_reproduces_the_derivative_rows(tmp_path: Path, monkeypatch:
     dest = tmp_path / "index.json"
     assert main(["index", "build", "--from", str(source), "--out", str(dest)]) == 0
     text = dest.read_text(encoding="utf-8")
-    assert json.loads(text) == DERIVATIVE_ROWS
+    assert json.loads(text)["models"] == DERIVATIVE_ROWS
     assert asked == [row["repo"] for row in DERIVATIVE_ROWS]
     for weights in _WEIGHTS_COMMITS:
         assert weights not in text
@@ -418,7 +486,7 @@ def test_explicit_revisions_skip_the_descriptor_lookup(tmp_path: Path, monkeypat
     for row in DERIVATIVE_ROWS:
         argv.extend(["--revision", f"{row['repo']}={row['revision']}"])
     assert main(argv) == 0
-    assert json.loads(dest.read_text(encoding="utf-8")) == DERIVATIVE_ROWS
+    assert json.loads(dest.read_text(encoding="utf-8"))["models"] == DERIVATIVE_ROWS
 
 
 def test_descriptor_commit_reads_the_published_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -548,3 +616,19 @@ def test_retarget_card_url_uses_our_repo(tmp_path: Path) -> None:
     )
     cleared = json.loads(path.read_text(encoding="utf-8"))
     assert cleared["card_url"] == ""
+
+
+def test_per_file_sources_put_the_author_first_only_where_the_bytes_match() -> None:
+    document = _sample()
+    author = {"kind": "hf", "ref": "author/repo", "revision": "cd" * 20}
+    document["mirrors"] = [author, *document["mirrors"]]
+    first = document["files"][0]["path"]
+    result = per_file_sources(document, [first])
+    assert result["mirror_policy"] == "strict-priority"
+    assert result["files"][0]["sources"][0] == author
+    assert result["files"][0]["sources"][1]["ref"].startswith("Mitroshenkov87/")
+    assert result["mirrors"] == document["mirrors"]
+    for before, after in zip(document["files"], result["files"], strict=True):
+        assert {key: after[key] for key in ("path", "size", "sha256")} == before
+    with pytest.raises(StageError):
+        per_file_sources(document, ["missing.gguf"])

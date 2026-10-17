@@ -134,9 +134,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="REPO=SHA",
         help="Commit of voxprint-model.json in REPO, 40 hex digits. Repeat for each repo.",
     )
+    index_build.add_argument(
+        "--serial",
+        type=int,
+        default=None,
+        help="Index serial. Default: the published serial plus one, at least 2.",
+    )
     index_push = index_sub.add_parser(
         "push",
-        help="Upload index.json to the model index dataset. Does nothing unless --push is set.",
+        help="Sign index.json and upload it with index.json.sig. Does nothing unless --push is set.",
     )
     index_push.add_argument(
         "--push",
@@ -144,6 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Upload to Mitroshenkov87/voxprint-model-index. Required; omitted runs do not upload.",
     )
     index_push.add_argument("--index", type=Path, required=True, help="index.json to upload.")
+    index_push.add_argument(
+        "--key-file",
+        type=Path,
+        default=None,
+        help="Ed25519 private key PEM. Default: VOXPRINT_MDL_INDEX_KEY_FILE. Never printed.",
+    )
     index_backfill = index_sub.add_parser(
         "backfill",
         help="Write voxprint-model.json for published voxprint-* repos. Does not upload.",
@@ -247,11 +259,11 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
 
 def _index(args: argparse.Namespace) -> dict[str, object]:
     if args.index_command == "build":
-        return run_build(args.manifest_from, args.out, revisions=revision_map(args.revision))
+        return run_build(args.manifest_from, args.out, revisions=revision_map(args.revision), serial=args.serial)
     if args.index_command == "push":
         if not args.push:
             raise UsageError("index push does not upload unless --push is set", code="usage")
-        return push_index(args.index)
+        return push_index(args.index, key_file=args.key_file)
     if args.index_command == "backfill":
         return run_backfill(args.out, str(args.user))
     raise UsageError(f"unknown index command {args.index_command}", code="usage")

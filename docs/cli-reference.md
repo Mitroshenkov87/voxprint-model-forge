@@ -405,8 +405,8 @@ positional arguments:
   {build,push,backfill}
     build               Write index.json from local voxprint-model.json files.
                         Does not upload.
-    push                Upload index.json to the model index dataset. Does
-                        nothing unless --push is set.
+    push                Sign index.json and upload it with index.json.sig.
+                        Does nothing unless --push is set.
     backfill            Write voxprint-model.json for published voxprint-*
                         repos. Does not upload.
 
@@ -418,7 +418,7 @@ options:
 
 ```text
 usage: forge index build [-h] --from MANIFEST_FROM --out OUT
-                         [--revision REPO=SHA]
+                         [--revision REPO=SHA] [--serial SERIAL]
 
 options:
   -h, --help            show this help message and exit
@@ -426,18 +426,22 @@ options:
   --out OUT             Where to write index.json.
   --revision REPO=SHA   Commit of voxprint-model.json in REPO, 40 hex digits.
                         Repeat for each repo.
+  --serial SERIAL       Index serial. Default: the published serial plus one,
+                        at least 2.
 ```
 
 ## `forge index push`
 
 ```text
-usage: forge index push [-h] [--push] --index INDEX
+usage: forge index push [-h] [--push] --index INDEX [--key-file KEY_FILE]
 
 options:
-  -h, --help     show this help message and exit
-  --push         Upload to Mitroshenkov87/voxprint-model-index. Required;
-                 omitted runs do not upload.
-  --index INDEX  index.json to upload.
+  -h, --help           show this help message and exit
+  --push               Upload to Mitroshenkov87/voxprint-model-index.
+                       Required; omitted runs do not upload.
+  --index INDEX        index.json to upload.
+  --key-file KEY_FILE  Ed25519 private key PEM. Default:
+                       VOXPRINT_MDL_INDEX_KEY_FILE. Never printed.
 ```
 
 ## `forge index backfill`
