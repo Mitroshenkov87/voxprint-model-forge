@@ -12,6 +12,8 @@ from voxprint_forge.hashing import is_sha256
 
 SourceFormat = Literal["safetensors", "gguf"]
 _FORMATS = ("safetensors", "gguf")
+Reference = Literal["upstream", "recover-ablation"]
+_REFERENCES = ("upstream", "recover-ablation")
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,12 @@ class KlJob:
     """One L-job: a BF16 (or already-F16) source and the quants to compare.
 
     ``sha256`` is optional. When set, the downloaded F16 GGUF must match.
+
+    ``reference`` says what the quants were made from. ``upstream`` scores them
+    against the pinned weights as published. ``recover-ablation`` is for our
+    ``mode = "ablate"`` quants: the refusal direction is read back from the quant
+    named by ``ablation_quant`` (see ``kl.recover``), projected out of the pinned
+    BF16, and that tree is converted to F16.
     """
 
     id: str
@@ -52,6 +60,8 @@ class KlJob:
     budgets_gb: tuple[float, ...]
     kv_cache: str
     sha256: str = ""
+    reference: Reference = "upstream"
+    ablation_quant: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,15 @@ def _job(raw: object, defaults: dict[str, object]) -> KlJob:
     digest = _optional_sha(raw, job_id)
     if source_format == "safetensors" and digest:
         raise PlanError(f"{job_id} sha256 needs one GGUF source file", code="kl_plan")
+    reference = _reference(str(raw.get("reference", "upstream")), job_id)
+    ablation_quant = str(raw.get("ablation_quant", ""))
+    if reference == "recover-ablation":
+        if source_format != "safetensors":
+            raise PlanError(f"{job_id} reference recover-ablation needs safetensors", code="kl_plan")
+        if not any(item.quant == ablation_quant and item.ours for item in quants):
+            raise PlanError(f"{job_id} ablation_quant must name one of our quants in this job", code="kl_plan")
+    elif ablation_quant:
+        raise PlanError(f"{job_id} ablation_quant needs reference recover-ablation", code="kl_plan")
     budgets = _floats(raw.get("budgets_gb", defaults.get("budgets_gb", [16, 24])), f"{job_id} budgets_gb")
     return KlJob(
         id=job_id,
@@ -126,7 +145,17 @@ def _job(raw: object, defaults: dict[str, object]) -> KlJob:
         budgets_gb=tuple(budgets),
         kv_cache=str(raw.get("kv_cache", defaults.get("kv_cache", "q8_0"))),
         sha256=digest,
+        reference=reference,
+        ablation_quant=ablation_quant,
     )
+
+
+def _reference(value: str, job_id: str) -> Reference:
+    if value == "upstream":
+        return "upstream"
+    if value == "recover-ablation":
+        return "recover-ablation"
+    raise PlanError(f"{job_id} reference must be one of {', '.join(_REFERENCES)}", code="kl_plan")
 
 
 def _quant(raw: object, job_id: str) -> QuantRef:
