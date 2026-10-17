@@ -264,7 +264,8 @@ def _canvas_upload(root: Path, plan_path: Path, forge_out: Path, parts: str | No
 
     if not force and llm_job_running(forge_out):
         raise UsageError(
-            "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). Pass --force to start anyway.",
+            "LLM bootstrap is still running (bootstrap.lock or scripts/bootstrap.sh). "
+            "Pass --force to start anyway.",
             code="llm_running",
         )
     token = os.environ.get("HF_TOKEN", "").strip() or None

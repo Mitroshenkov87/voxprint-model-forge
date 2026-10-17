@@ -146,7 +146,10 @@ def build_document(
     date: str = "",
 ) -> dict[str, object]:
     """Build one ``voxprint-model/1`` document. VRAM arguments are decimal GB."""
-    copied = [{"path": str(item["path"]), "size": item["size"], "sha256": str(item["sha256"])} for item in files]
+    copied = [
+        {"path": str(item["path"]), "size": item["size"], "sha256": str(item["sha256"])}
+        for item in files
+    ]
     copied.sort(key=lambda item: str(item["path"]))
     document: dict[str, object] = {
         "schema": SCHEMA_ID,
