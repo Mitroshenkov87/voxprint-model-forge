@@ -81,7 +81,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voxprint_forge = ["data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json"]
+voxprint_forge = ["data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/licences/*.txt"]
 
 [tool.ruff]
 line-length = 120
