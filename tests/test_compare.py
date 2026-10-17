@@ -109,7 +109,7 @@ def _picture(arm: Arm, case: object, job: Job) -> Image.Image:
 
 def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     plan = load_compare_plan(PLAN)
-    assert [item.id for item in plan.jobs] == ["D1", "D2", "D3", "D4"]
+    assert [item.id for item in plan.jobs] == ["D1", "D2", "D3", "D3-LITE", "D4"]
     turbo = plan.job("D1")
     assert turbo.steps == TURBO_STEPS
     assert turbo.guidance == TURBO_GUIDANCE
@@ -143,8 +143,18 @@ def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     control = plan.job("D3")
     assert control.prompts == "control"
     assert control.private_sets == ()
-    assert [item.id for item in control.candidates()] == ["mirror-bf16", "mirror-lite-fp8"]
-    assert control.arm("mirror-lite-fp8").compute == "fp8-native"
+    assert [item.id for item in control.candidates()] == ["mirror-bf16"]
+    assert control.arm("mirror-lite-fp8").enabled is False
+    assert "D3-LITE" in control.arm("mirror-lite-fp8").skip_reason
+    lite = plan.job("D3-LITE")
+    assert lite.reference_arm().id == "upstream-lite-bf16"
+    assert lite.reference_arm().repo == "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+    assert lite.reference_arm().files == ("Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",)
+    assert lite.reference_arm().sha256 == "3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35"
+    assert [item.id for item in lite.candidates()] == ["mirror-lite-fp8"]
+    assert lite.arm("mirror-lite-fp8").compute == "fp8-native"
+    for field in ("prompts", "controls", "public_seeds", "width", "height", "steps", "guidance", "control_scale"):
+        assert getattr(lite, field) == getattr(control, field), field
     text = PLAN.read_text(encoding="utf-8")
     assert "HF_TOKEN" not in text
     assert "BEGIN OPENSSH" not in text

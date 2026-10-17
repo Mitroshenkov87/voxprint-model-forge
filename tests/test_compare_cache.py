@@ -64,22 +64,20 @@ def test_one_base_snapshot_is_hardlinked(tmp_path: Path, monkeypatch: pytest.Mon
     assert sizes["weights/zimage-turbo-transformer-fp8.safetensors"] == 1
 
 
-def test_queue_drops_the_turbo_base_when_d2_holds_nothing(tmp_path: Path) -> None:
+def test_queue_drops_the_turbo_base_after_its_last_user(tmp_path: Path) -> None:
     plan = load_compare_plan(PLAN)
-    assert plan.queue == ("D1", "D3", "D2", "D4")
+    assert plan.queue == ("D1", "D3", "D2", "D4", "D3-LITE")
     cache = tmp_path / "compare-cache"
     name = cache_name(TURBO, TURBO_REV, None)
     entry = cache / name
     entry.mkdir(parents=True)
     (entry / "source.txt").write_text(f"{TURBO}\n{TURBO_REV}\n*\n", encoding="utf-8")
     assert release_cache(plan, "D1", cache, (9, 0)) == []
+    assert release_cache(plan, "D3", cache, (9, 0)) == []
+    assert release_cache(plan, "D2", cache, (9, 0)) == []
     assert entry.is_dir()
-    assert release_cache(plan, "D3", cache, (9, 0)) == [name]
+    assert release_cache(plan, "D3-LITE", cache, (9, 0)) == [name]
     assert not entry.exists()
-    entry.mkdir(parents=True)
-    (entry / "source.txt").write_text(f"{TURBO}\n{TURBO_REV}\n*\n", encoding="utf-8")
-    assert release_cache(plan, "D3", cache, (8, 0)) == []
-    assert release_cache(plan, "D2", cache, (8, 0)) == [name]
 
 
 def test_reclaim_cache_deletes_every_snapshot(tmp_path: Path) -> None:
