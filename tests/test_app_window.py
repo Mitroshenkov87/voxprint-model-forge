@@ -91,6 +91,23 @@ def test_shell_parts_this_app_extends_exist(make_app) -> None:
     for name, part in app.widget._parts().items():
         assert part is not None, name
     assert app.surface.app_id == "model-forge"
+    assert hasattr(app.widget, "_centre_split")
+    assert callable(getattr(super(type(app.widget), app.widget), "_fit_expert_panel", None))
+
+
+@pytest.mark.parametrize(("lang", "count", "reset"), [
+    ("en", "Step 1 of 5", "Reset to the “Balanced” preset"),
+    ("ru", "Шаг 1 из 5", "Сбросить к пресету «Сбалансированно»"),
+])
+def test_review_wording(make_app, lang, count, reset) -> None:
+    make_app()
+    set_language(lang)
+    try:
+        assert tr("wizard.step_count", current=1, total=5) == count
+        name = "Balanced" if lang == "en" else "Сбалансированно"
+        assert tr("simple.preset.reset", name=name) == reset
+    finally:
+        set_language("en")
 
 
 def test_next_is_gated_with_a_plain_reason(make_app, tmp_path) -> None:

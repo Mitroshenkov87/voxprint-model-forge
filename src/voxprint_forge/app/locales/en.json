@@ -109,6 +109,7 @@
   "forge.app.prepare.crop": "Crop",
   "forge.app.prepare.crop.subject": "Focus on subject",
   "forge.app.prepare.crop.whole": "Keep whole photo",
+  "forge.app.prepare.done": "Check finished: {kept} ready for training, {drops} set aside.",
   "forge.app.prepare.dropped": "Set aside: {count}",
   "forge.app.prepare.kept": "Ready for training: {count}",
   "forge.app.prepare.run": "Check photos",
@@ -155,5 +156,7 @@
   "forge.app.train.pause": "Pause",
   "forge.app.train.start": "Start training",
   "forge.app.train.stop": "Stop",
-  "forge.app.wizard.title": "New model from your photos"
+  "forge.app.wizard.title": "New model from your photos",
+  "simple.preset.reset": "Reset to the “{name}” preset",
+  "wizard.step_count": "Step {current} of {total}"
 }
