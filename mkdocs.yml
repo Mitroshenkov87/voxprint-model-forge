@@ -19,6 +19,7 @@ nav:
   - Compare: COMPARE.md
   - KL: KL.md
   - Model manifest: MODEL-MANIFEST.md
+  - Index key rotation: KEY-ROTATION.md
   - API: api.md
 markdown_extensions:
   - pymdownx.snippets:

@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 license = "Apache-2.0"
 authors = [{name = "Aleksandr Mitroshenkov"}]
 dependencies = [
+  "cryptography>=42",
   "huggingface_hub>=0.26",
   "jinja2>=3.1",
   "torch>=2.5",

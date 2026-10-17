@@ -6,7 +6,9 @@ The Plotweaver run export in ``manifest.py`` is a different file and stays.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -29,6 +31,13 @@ SCHEMA_ID = "voxprint-model/1"
 MANIFEST_NAME = "voxprint-model.json"
 INDEX_REPO = "Mitroshenkov87/voxprint-model-index"
 INDEX_FILE = "index.json"
+INDEX_SIG_FILE = "index.json.sig"
+INDEX_KEY_ENV = "VOXPRINT_MDL_INDEX_KEY_FILE"
+# Serial and head of the index bundled in voxprint-common 0.2.5. A published
+# index must be newer, so the first signed one is serial 2.
+BUNDLED_INDEX_SERIAL = 1
+BUNDLED_INDEX_HEAD = "d2325ed8de2eec808b22a88381bfb35055f84203"
+INDEX_MIN_GENERATED_AT = "2026-10-17T10:42:07Z"
 HF_AUTHOR = "Mitroshenkov87"
 DIFFUSERS_VERSION_REQ = ">=0.37.1,<0.38"
 NUNCHAKU_VERSION_REQ = ">=1.0"
@@ -36,7 +45,7 @@ WAN_LLAMA_TAG = "b3962"
 LLAMA_CC = 6.0
 CUDA_CC = 8.0
 
-Engine = Literal["llama.cpp", "diffusers", "nunchaku"]
+Engine = Literal["llama.cpp", "diffusers", "nunchaku", "onnxruntime"]
 
 _TOP = (
     "schema",
@@ -55,7 +64,16 @@ _TOP = (
     "on_demand",
     "build",
 )
+# Optional voxprint-model/1 fields. mirror_policy, file_groups and per-file
+# sources come from voxprint-common MDL PR #15. prebuilt, post_install and
+# built_for are the 0.3.0 additions; they are accepted, not interpreted.
+_TOP_OPTIONAL = ("mirror_policy", "file_groups", "prebuilt", "post_install")
 _FILE_KEYS = ("path", "size", "sha256")
+_FILE_OPTIONAL = ("mirror_policy", "sources", "built_for")
+_GROUP_OPTIONAL = ("mirror_policy", "sources")
+_POLICIES = frozenset({"race", "strict-priority"})
+_INDEX_KEYS = ("head", "serial", "generated_at", "models")
+_HEAD = re.compile(r"^[0-9a-f]{7,64}$")
 _MIRROR_KEYS = ("kind", "ref", "revision")
 _TIER_KEYS = ("min_vram_gib", "recommended_vram_gib", "gpu_min_cc")
 _RUNTIME_KEYS = ("engine", "version_req")
@@ -170,7 +188,7 @@ def check_document(document: object) -> None:
     """Raise ``StageError`` when ``document`` is not a ``voxprint-model/1`` object."""
     if not isinstance(document, dict):
         raise StageError("voxprint-model document is not an object", code="mdl")
-    _exact_keys(document, _TOP, "document")
+    _keys(document, _TOP, _TOP_OPTIONAL, "document")
     if document["schema"] != SCHEMA_ID:
         raise StageError(f"schema must be {SCHEMA_ID}", code="mdl")
     _ident(document["id"])
@@ -189,6 +207,14 @@ def check_document(document: object) -> None:
     if not isinstance(document["on_demand"], bool):
         raise StageError("on_demand must be a boolean", code="mdl")
     _build(document["build"])
+    if "mirror_policy" in document:
+        _policy(document["mirror_policy"])
+    if "file_groups" in document:
+        _file_groups(document["file_groups"])
+    if "prebuilt" in document:
+        _prebuilt(document["prebuilt"])
+    if "post_install" in document and not isinstance(document["post_install"], (dict, list)):
+        raise StageError("post_install must be an object or a list", code="mdl")
 
 
 def hash_tree(root: Path) -> list[dict[str, object]]:
@@ -459,8 +485,15 @@ def write_index(
     *,
     revisions: Mapping[str, str] | None = None,
     commits: Callable[[str], str] | None = None,
+    serial: int | None = None,
+    head: str | None = None,
+    generated_at: str | None = None,
 ) -> list[dict[str, str]]:
-    """Write ``index.json`` rows. This does not upload.
+    """Write ``index.json`` and return its rows. This does not upload.
+
+    The file is the signed-index object ``{head, serial, generated_at,
+    models}``. ``serial`` defaults to the published serial plus one (at
+    least 2), and ``head`` to the dataset commit this index replaces.
 
     ``revisions`` pins the descriptor commit for a repo. Every other repo is
     resolved with ``commits`` (the Hugging Face commit of ``voxprint-model.json``
@@ -473,9 +506,138 @@ def write_index(
     ids = [item["id"] for item in rows]
     if len(ids) != len(set(ids)):
         raise StageError("index ids are not unique", code="mdl")
+    if serial is None or head is None:
+        published_serial, published_head = published_index_state()
+        serial = next_serial(published_serial) if serial is None else serial
+        head = published_head if head is None else head
+    document = index_document(rows, serial=serial, head=head, generated_at=generated_at)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    dest.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return rows
+
+
+def index_document(
+    rows: Sequence[Mapping[str, str]],
+    *,
+    serial: int,
+    head: str,
+    generated_at: str | None = None,
+) -> dict[str, object]:
+    """The signed-index object. ``generated_at`` defaults to now, in UTC."""
+    stamp = generated_at or datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    document: dict[str, object] = {"head": head, "serial": serial, "generated_at": stamp, "models": list(rows)}
+    check_index(document)
+    return document
+
+
+def next_serial(published: int | None) -> int:
+    """One more than the published serial, never below the bundled pin plus one."""
+    return max(published or 0, BUNDLED_INDEX_SERIAL) + 1
+
+
+def check_index(document: object) -> None:
+    """Raise ``StageError`` unless ``document`` is a signable index object."""
+    if not isinstance(document, dict):
+        raise StageError("index.json must be an object with head, serial, generated_at and models", code="mdl")
+    _exact_keys(document, _INDEX_KEYS, "index")
+    head = document["head"]
+    if not isinstance(head, str) or _HEAD.fullmatch(head) is None:
+        raise StageError("index head must be a lowercase commit sha", code="mdl")
+    serial = document["serial"]
+    if isinstance(serial, bool) or not isinstance(serial, int) or serial <= BUNDLED_INDEX_SERIAL:
+        raise StageError(f"index serial must be an integer above {BUNDLED_INDEX_SERIAL}", code="mdl")
+    stamp = document["generated_at"]
+    if not isinstance(stamp, str) or _utc(stamp) < _utc(INDEX_MIN_GENERATED_AT):
+        raise StageError(f"index generated_at must be UTC ISO-8601 and not before {INDEX_MIN_GENERATED_AT}", code="mdl")
+    models = document["models"]
+    if not isinstance(models, list) or not models:
+        raise StageError("index models must be a non-empty list", code="mdl")
+    for row in models:
+        if not isinstance(row, dict):
+            raise StageError("index row is not an object", code="mdl")
+        _exact_keys(row, ("id", "repo", "revision", "sha256"), "index row")
+        if not isinstance(row["revision"], str) or _COMMIT.fullmatch(row["revision"]) is None:
+            raise StageError("index row revision must be a 40-hex commit", code="mdl")
+        if not isinstance(row["sha256"], str) or _SHA.fullmatch(row["sha256"]) is None:
+            raise StageError("index row sha256 must be 64 lowercase hex characters", code="mdl")
+
+
+def per_file_sources(
+    document: Mapping[str, object],
+    upstream_paths: Sequence[str],
+    *,
+    policy: Literal["race", "strict-priority"] = "strict-priority",
+) -> dict[str, object]:
+    """Return a copy of ``document`` with ``mirror_policy`` and per-file ``sources``.
+
+    Each file gets our forge mirror as its source. A path in
+    ``upstream_paths`` (same bytes upstream) lists the author's mirror first.
+    Paths, sizes, hashes and mirror revisions are unchanged.
+    """
+    mirrors = [dict(item) for item in document["mirrors"]]  # type: ignore[union-attr]
+    ours = dict(_descriptor_mirror(mirrors, label=str(document.get("id"))))
+    upstream = [item for item in mirrors if item.get("kind") == "hf" and item.get("ref") != ours.get("ref")]
+    known = {str(item["path"]) for item in document["files"]}  # type: ignore[union-attr,index]
+    unknown = sorted(set(upstream_paths) - known)
+    if unknown:
+        raise StageError(f"upstream paths not in files: {unknown}", code="mdl")
+    if upstream_paths and len(upstream) != 1:
+        raise StageError("per-file upstream sources need exactly one upstream hf mirror", code="mdl")
+    files = []
+    for item in document["files"]:  # type: ignore[union-attr]
+        entry = {key: item[key] for key in _FILE_KEYS}  # type: ignore[index]
+        entry["sources"] = ([upstream[0]] if entry["path"] in upstream_paths else []) + [ours]
+        files.append(entry)
+    result = dict(document)
+    result["files"] = files
+    result["mirror_policy"] = policy
+    check_document(result)
+    return result
+
+
+def published_index_state() -> tuple[int | None, str]:
+    """Serial and dataset commit of the published index. No token is passed.
+
+    A bare-list index (before signing) has no serial and returns ``None``.
+    """
+    api = HfApi()
+    try:
+        info = api.dataset_info(INDEX_REPO, token=False)
+        commit = str(info.sha)
+        local = hf_hub_download(INDEX_REPO, INDEX_FILE, repo_type="dataset", revision=commit, token=False)
+        payload = json.loads(Path(local).read_text(encoding="utf-8"))
+    except Exception as exc:
+        message = scrub(str(exc), active_secrets())
+        raise StageError(f"published index could not be read: {message}", code="mdl") from exc
+    serial = payload.get("serial") if isinstance(payload, dict) else None
+    if isinstance(serial, bool) or not isinstance(serial, int):
+        serial = None
+    return serial, commit
+
+
+def sign_index(path: Path, *, key_file: Path | None = None) -> Path:
+    """Write ``index.json.sig`` beside ``path``: base64 Ed25519 over the exact bytes.
+
+    The format matches ``voxprint-mdl index sign``. The key is a PEM private
+    key read from ``key_file`` or ``VOXPRINT_MDL_INDEX_KEY_FILE``; it is
+    never printed. The signature is checked against the derived public key
+    before the file is written.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    source = key_file or (Path(os.environ[INDEX_KEY_ENV]) if os.environ.get(INDEX_KEY_ENV) else None)
+    if source is None or not source.is_file():
+        raise UsageError(f"set {INDEX_KEY_ENV} to the Ed25519 private key file", code="usage")
+    key = load_pem_private_key(source.read_bytes(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        raise UsageError("index signing key is not Ed25519", code="usage")
+    payload = path.read_bytes()
+    signature = key.sign(payload)
+    key.public_key().verify(signature, payload)
+    target = path.with_name(path.name + ".sig")
+    target.write_bytes(base64.b64encode(signature) + b"\n")
+    return target
 
 
 def run_build(
@@ -484,10 +646,19 @@ def run_build(
     *,
     revisions: Mapping[str, str] | None = None,
     commits: Callable[[str], str] | None = None,
+    serial: int | None = None,
 ) -> dict[str, object]:
     """Build ``index.json`` from local manifests. Does not upload."""
-    rows = write_index(find_manifests(source), dest, revisions=revisions, commits=commits)
-    return {"index": str(dest), "count": len(rows), "pushed": False}
+    rows = write_index(find_manifests(source), dest, revisions=revisions, commits=commits, serial=serial)
+    document = json.loads(dest.read_text(encoding="utf-8"))
+    return {
+        "index": str(dest),
+        "count": len(rows),
+        "serial": document["serial"],
+        "head": document["head"],
+        "generated_at": document["generated_at"],
+        "pushed": False,
+    }
 
 
 def revision_map(items: Sequence[str]) -> dict[str, str]:
@@ -518,17 +689,37 @@ def descriptor_commit(repo: str) -> str:
     return _commit_oid(repo, infos)
 
 
-def push_index(path: Path, *, upload: Callable[[str, Path], None] | None = None) -> dict[str, object]:
-    """Upload ``index.json`` to the model-index dataset.
+def push_index(
+    path: Path,
+    *,
+    upload: Callable[[str, Path, Path], None] | None = None,
+    key_file: Path | None = None,
+    published_serial: int | None | Literal["fetch"] = "fetch",
+) -> dict[str, object]:
+    """Sign ``index.json`` and upload it with ``index.json.sig`` in one commit.
 
     The CLI calls this only after ``--push``. There is no upload on the
-    default path.
+    default path. A bare list, or a serial that is not above the published
+    one, is refused before anything is signed.
     """
     if not path.is_file():
         raise UsageError(f"missing {path}", code="usage")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    check_index(document)
+    current = published_index_state()[0] if published_serial == "fetch" else published_serial
+    if current is not None and document["serial"] <= current:
+        raise StageError(f"index serial {document['serial']} is not above published serial {current}", code="mdl")
+    signature = sign_index(path, key_file=key_file)
     sender = _upload_index if upload is None else upload
-    sender(INDEX_REPO, path)
-    return {"repo": INDEX_REPO, "path": INDEX_FILE, "pushed": True}
+    sender(INDEX_REPO, path, signature)
+    return {
+        "repo": INDEX_REPO,
+        "path": INDEX_FILE,
+        "signature": INDEX_SIG_FILE,
+        "serial": document["serial"],
+        "generated_at": document["generated_at"],
+        "pushed": True,
+    }
 
 
 def run_backfill(dest: Path, user: str = HF_AUTHOR) -> dict[str, object]:
@@ -542,15 +733,32 @@ def run_backfill(dest: Path, user: str = HF_AUTHOR) -> dict[str, object]:
     }
 
 
-def _upload_index(repo_id: str, path: Path) -> None:
+def _upload_index(repo_id: str, path: Path, signature: Path) -> None:
+    from huggingface_hub import CommitOperationAdd
+
     api = HfApi()
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
-    api.upload_file(
-        path_or_fileobj=path,
-        path_in_repo=INDEX_FILE,
+    serial = json.loads(path.read_text(encoding="utf-8"))["serial"]
+    api.create_commit(
         repo_id=repo_id,
         repo_type="dataset",
+        operations=[
+            CommitOperationAdd(path_in_repo=INDEX_FILE, path_or_fileobj=str(path)),
+            CommitOperationAdd(path_in_repo=INDEX_SIG_FILE, path_or_fileobj=str(signature)),
+        ],
+        commit_message=f"Signed model index, serial {serial}",
     )
+
+
+def _utc(value: str) -> datetime:
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise StageError(f"{value!r} is not an ISO-8601 timestamp", code="mdl") from exc
+    if parsed.tzinfo is None:
+        raise StageError(f"{value!r} has no timezone", code="mdl")
+    return parsed.astimezone(timezone.utc)
 
 
 def _index_row(
@@ -743,6 +951,52 @@ def _exact_keys(value: dict[str, object], keys: tuple[str, ...], label: str) -> 
         raise StageError(f"{label} keys mismatch missing={missing} extra={extra}", code="mdl")
 
 
+def _keys(value: dict[str, object], required: tuple[str, ...], optional: tuple[str, ...], label: str) -> None:
+    missing = sorted(set(required) - set(value))
+    extra = sorted(set(value) - set(required) - set(optional))
+    if missing or extra:
+        raise StageError(f"{label} keys mismatch missing={missing} extra={extra}", code="mdl")
+
+
+def _policy(value: object) -> None:
+    if value not in _POLICIES:
+        raise StageError(f"mirror_policy {value!r} must be race or strict-priority", code="mdl")
+
+
+def _file_groups(value: object) -> None:
+    if not isinstance(value, list):
+        raise StageError("file_groups must be a list", code="mdl")
+    for group in value:
+        if not isinstance(group, dict):
+            raise StageError("file group is not an object", code="mdl")
+        _keys(group, ("paths",), _GROUP_OPTIONAL, "file group")
+        _str_list(group["paths"], "file group paths", minimum=1)
+        if "mirror_policy" in group:
+            _policy(group["mirror_policy"])
+        if "sources" in group:
+            _mirrors(group["sources"])
+
+
+def _prebuilt(value: object) -> None:
+    if not isinstance(value, list):
+        raise StageError("prebuilt must be a list", code="mdl")
+    for item in value:
+        if not isinstance(item, dict):
+            raise StageError("prebuilt entry is not an object", code="mdl")
+        if "built_for" in item:
+            _built_for(item["built_for"])
+
+
+def _built_for(value: object) -> None:
+    if not isinstance(value, dict):
+        raise StageError("built_for must be an object", code="mdl")
+    if "onnxruntime" in value and not isinstance(value["onnxruntime"], str):
+        raise StageError("built_for.onnxruntime must be a string", code="mdl")
+    opset = value.get("opset")
+    if opset is not None and (isinstance(opset, bool) or not isinstance(opset, int)):
+        raise StageError("built_for.opset must be an integer", code="mdl")
+
+
 def _text(value: object, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise StageError(f"{label} must be a non-empty string", code="mdl")
@@ -779,7 +1033,13 @@ def _files(value: object) -> None:
     for item in value:
         if not isinstance(item, dict):
             raise StageError("file entry is not an object", code="mdl")
-        _exact_keys(item, _FILE_KEYS, "file")
+        _keys(item, _FILE_KEYS, _FILE_OPTIONAL, "file")
+        if "mirror_policy" in item:
+            _policy(item["mirror_policy"])
+        if "sources" in item:
+            _mirrors(item["sources"])
+        if "built_for" in item:
+            _built_for(item["built_for"])
         path = item["path"]
         if not isinstance(path, str) or not _repo_path(path):
             raise StageError(f"path {path!r} is not relative to the repo root", code="mdl")
@@ -859,6 +1119,8 @@ def _as_engine(engine: str) -> Engine:
         return "diffusers"
     if engine == "nunchaku":
         return "nunchaku"
+    if engine == "onnxruntime":
+        return "onnxruntime"
     raise StageError(f"unknown engine {engine}", code="mdl")
 
 
