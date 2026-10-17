@@ -36,7 +36,7 @@ from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
 from voxprint_forge.lora.cli import add_command as add_lora_command
 from voxprint_forge.lora.cli import execute as execute_lora
-from voxprint_forge.mdl import push_index, revision_map, run_backfill, run_build
+from voxprint_forge.mdl import host_descriptors, push_index, revision_map, run_backfill, run_build
 from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
 from voxprint_forge.preflight import run_preflight
@@ -166,6 +166,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Ed25519 private key PEM. Default: VOXPRINT_MDL_INDEX_KEY_FILE. Never printed.",
     )
+    index_host = index_sub.add_parser(
+        "host",
+        help="Upload official-source voxprint-model.json files into the index dataset. Needs --push.",
+    )
+    index_host.add_argument("--from", dest="manifest_from", type=Path, required=True, help="Directory to scan.")
+    index_host.add_argument(
+        "--push",
+        action="store_true",
+        help="Upload to Mitroshenkov87/voxprint-model-index under descriptors/<id>/. Required.",
+    )
     index_backfill = index_sub.add_parser(
         "backfill",
         help="Write voxprint-model.json for published voxprint-* repos. Does not upload.",
@@ -277,6 +287,10 @@ def _index(args: argparse.Namespace) -> dict[str, object]:
         if not args.push:
             raise UsageError("index push does not upload unless --push is set", code="usage")
         return push_index(args.index, key_file=args.key_file)
+    if args.index_command == "host":
+        if not args.push:
+            raise UsageError("index host does not upload unless --push is set", code="usage")
+        return host_descriptors(args.manifest_from)
     if args.index_command == "backfill":
         return run_backfill(args.out, str(args.user))
     raise UsageError(f"unknown index command {args.index_command}", code="usage")
