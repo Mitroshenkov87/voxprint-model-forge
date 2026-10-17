@@ -53,11 +53,12 @@ gui = [
 
 [project.scripts]
 forge = "voxprint_forge.cli:main"
+# Internal operator window (VM runs, uploads). Not shipped; the user app is voxprint-model-forge.
 forge-gui = "voxprint_forge.gui.__main__:main"
 voxprint-forge-cli = "voxprint_forge.cli:main"
 
 [project.gui-scripts]
-voxprint-model-forge = "voxprint_forge.gui.__main__:main"
+voxprint-model-forge = "voxprint_forge.app.__main__:main"
 
 # Display names and install paths. There is no installer in this repo.
 # An upgrade moves an older program folder here, updates shortcuts and PATH,
@@ -81,7 +82,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voxprint_forge = ["data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json"]
+voxprint_forge = ["data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "app/locales/*.json"]
 
 [tool.ruff]
 line-length = 120

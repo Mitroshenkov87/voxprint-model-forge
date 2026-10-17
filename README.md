@@ -8,7 +8,7 @@ VOXPrint AI Model Forge (Aleksandr, 2026-10-10) is a standalone desktop applicat
 
 ## Install names
 
-The display name is VOXPrint AI Model Forge. Shortcuts use that name inside the Start menu folder VOXPrint AI Suite. Windows installs under `C:\Program Files\VOXPrint AI Suite\Model Forge\`. The GUI binary is `voxprint-model-forge.exe` and the CLI binary is `voxprint-forge-cli.exe`. Linux installs under `/opt/voxprint-ai-suite/model-forge/`. Per-user data stays in `%LOCALAPPDATA%\Voxprint` and `~/.local/share/voxprint`. An upgrade moves an older program folder into this install location, updates shortcuts and PATH, and leaves that user data where it is. The package name stays `voxprint-forge`. Repo slugs and URLs stay lower-case. The in-tree commands remain `forge` and `forge-gui`.
+The display name is VOXPrint AI Model Forge. Shortcuts use that name inside the Start menu folder VOXPrint AI Suite. Windows installs under `C:\Program Files\VOXPrint AI Suite\Model Forge\`. The GUI binary is `voxprint-model-forge.exe` and the CLI binary is `voxprint-forge-cli.exe`. Linux installs under `/opt/voxprint-ai-suite/model-forge/`. Per-user data stays in `%LOCALAPPDATA%\Voxprint` and `~/.local/share/voxprint`. An upgrade moves an older program folder into this install location, updates shortcuts and PATH, and leaves that user data where it is. The package name stays `voxprint-forge`. Repo slugs and URLs stay lower-case. The in-tree commands remain `forge` and `forge-gui` (the internal operator window, not shipped). The GUI binary runs `voxprint_forge.app`, the LoRA trainer on the shared Yitro shell (voxprint-common v0.2.5).
 
 ## Roadmap
 
