@@ -131,7 +131,7 @@
 <p><img alt="Expert mode" src="img/en-expert-4-train-running.png" /></p>
 <p>The safety check (section 5.3) works the same in both modes. Expert mode has no safety settings.</p>
 <h2>5. Training a LoRA: person, object, style</h2>
-<p>Start with <strong>More → New model</strong>. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6). Each step shows one short line. <strong>Details ▸</strong> under it opens the full explanation; it starts closed. The subject and base-model choices have their own <strong>Details ▸</strong>.</p>
+<p>Start with <strong>More → New model</strong>. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Step 3 is used only when you build the set from references (section 5.7); with your own photos it is passed on its own. Each step shows one short line. <strong>Details ▸</strong> under it opens the full explanation; it starts closed. The subject and base-model choices have their own <strong>Details ▸</strong>.</p>
 <h3>5.1 Photos</h3>
 <p><img alt="Step 1, Photos" src="img/en-simple-1-photos.png" /></p>
 <ol>
@@ -165,11 +165,11 @@
 <p>This check is always on. The checkboxes in step 2 do not change it, and there is no setting to turn it off. Some photos of adults are set aside too, for example a young-looking face, a face that is small or turned away, or poor light. This is on purpose: the check would rather drop a good photo than let a doubtful one through. Replace dropped photos with clearer ones of the same person.</p>
 <p>Photos can also be set aside because they are unreadable, too small, too blurry or almost the same as another photo.</p>
 <h3>5.4 Captions and trigger word</h3>
-<p><img alt="Step 3, Check and prepare" src="img/en-simple-3-prepare.png" /></p>
+<p><img alt="Step 4, Check and prepare" src="img/en-simple-3-prepare.png" /></p>
 <p>Press <strong>Check photos</strong>. The app checks each photo, crops it (<strong>Focus on subject</strong> or <strong>Keep whole photo</strong>) and writes a short description of it. The trigger word is added to every description, so the model links the word to your subject.</p>
 <p>You can read the crops, the descriptions and the reasons for set-aside photos, and remove any photo before training.</p>
 <h3>5.5 Settings and progress</h3>
-<p><img alt="Step 4, Train" src="img/en-simple-4-train-running.png" /></p>
+<p><img alt="Step 5, Train" src="img/en-simple-4-train-running.png" /></p>
 <ul>
 <li><strong>Preset:</strong> <strong>Quick test</strong> (a fast first look), <strong>Balanced</strong> (recommended) or <strong>Best quality</strong> (slower).</li>
 <li><strong>Likeness:</strong> <strong>Flexible</strong> (easier to put in new scenes), <strong>Balanced</strong> or <strong>Close</strong> (looks more like the photos).</li>
@@ -177,7 +177,7 @@
 <li><strong>Base model:</strong> the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is <strong>Z-Image</strong> (best for maximum quality; slower; 16 GB+). The list opens below the field. The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option, or open <strong>Details ▸</strong>, for more. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.</li>
 </ul>
 <p><img alt="Base model list open" src="img/en-simple-4-train-base-open.png" /></p>
-<p><img alt="Step 4 with Details open" src="img/en-simple-4-train-details-open.png" />
+<p><img alt="Step 5 with Details open" src="img/en-simple-4-train-details-open.png" />
 - <strong>Show test pictures:</strong> draws a few pictures during training so you can see progress.</p>
 <p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. The bar shows the step, what is happening and the time left (after the first few steps).</p>
 <ul>
@@ -185,7 +185,7 @@
 <li><strong>Stop</strong> ends the run. The versions saved so far are kept.</li>
 </ul>
 <h3>5.6 Result and use in Canvas</h3>
-<p><img alt="Step 5, Result" src="img/en-simple-5-result.png" /></p>
+<p><img alt="Step 6, Result" src="img/en-simple-5-result.png" /></p>
 <ol>
 <li>Look at the test pictures and choose a <strong>Version</strong>. A later version is not always better; pick the one you like.</li>
 <li><strong>Save</strong> writes one <code>.safetensors</code> file with its description file (<code>voxprint-model.json</code>), licence and notice. You can keep it or share it under the base model's licence.</li>
@@ -203,7 +203,7 @@
 <li>On step 3, <strong>Build a set</strong>, press <strong>Make pictures</strong>. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.</li>
 <li>Press <strong>Keep</strong> under each picture that looks right and <strong>Reject</strong> under the rest.</li>
 <li>Press <strong>Next round</strong>. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.</li>
-<li>Press <strong>This is it</strong>. The references and the kept pictures become the training set, and the usual steps follow: <strong>Check photos</strong>, training and the result.</li>
+<li>Press <strong>This is it</strong>. The references and the kept pictures become the training set, and the usual steps follow: step 4 <strong>Check photos</strong>, step 5 training and step 6 the result.</li>
 </ol>
 <p>Good to know:</p>
 <ul>
@@ -211,7 +211,7 @@
 <li>The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.</li>
 <li>Pictures marked <strong>≈ similar</strong> look almost the same as another one; keep only one of them.</li>
 <li>The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. <strong>Kept … · set … of …</strong> shows where you are.</li>
-<li>Each model is unloaded before the next one starts, so a 16 GB graphics card is enough. A round of 24 pictures takes a few minutes.</li>
+<li>Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.</li>
 <li>The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.</li>
 <li><strong>Start over</strong> forgets the rounds and keeps the references.</li>
 </ul>

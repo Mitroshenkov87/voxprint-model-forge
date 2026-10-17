@@ -70,7 +70,7 @@ The safety check (section 5.3) works the same in both modes. Expert mode has no 
 
 ## 5. Training a LoRA: person, object, style
 
-Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6). Each step shows one short line. **Details ▸** under it opens the full explanation; it starts closed. The subject and base-model choices have their own **Details ▸**.
+Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Step 3 is used only when you build the set from references (section 5.7); with your own photos it is passed on its own. Each step shows one short line. **Details ▸** under it opens the full explanation; it starts closed. The subject and base-model choices have their own **Details ▸**.
 
 ### 5.1 Photos
 
@@ -114,7 +114,7 @@ Photos can also be set aside because they are unreadable, too small, too blurry 
 
 ### 5.4 Captions and trigger word
 
-![Step 3, Check and prepare](img/en-simple-3-prepare.png)
+![Step 4, Check and prepare](img/en-simple-3-prepare.png)
 
 Press **Check photos**. The app checks each photo, crops it (**Focus on subject** or **Keep whole photo**) and writes a short description of it. The trigger word is added to every description, so the model links the word to your subject.
 
@@ -122,7 +122,7 @@ You can read the crops, the descriptions and the reasons for set-aside photos, a
 
 ### 5.5 Settings and progress
 
-![Step 4, Train](img/en-simple-4-train-running.png)
+![Step 5, Train](img/en-simple-4-train-running.png)
 
 - **Preset:** **Quick test** (a fast first look), **Balanced** (recommended) or **Best quality** (slower).
 - **Likeness:** **Flexible** (easier to put in new scenes), **Balanced** or **Close** (looks more like the photos).
@@ -131,7 +131,7 @@ You can read the crops, the descriptions and the reasons for set-aside photos, a
 
   ![Base model list open](img/en-simple-4-train-base-open.png)
 
-  ![Step 4 with Details open](img/en-simple-4-train-details-open.png)
+  ![Step 5 with Details open](img/en-simple-4-train-details-open.png)
 - **Show test pictures:** draws a few pictures during training so you can see progress.
 
 Press **Estimate time** for a forecast, then **Start training**. The bar shows the step, what is happening and the time left (after the first few steps).
@@ -141,7 +141,7 @@ Press **Estimate time** for a forecast, then **Start training**. The bar shows t
 
 ### 5.6 Result and use in Canvas
 
-![Step 5, Result](img/en-simple-5-result.png)
+![Step 6, Result](img/en-simple-5-result.png)
 
 1. Look at the test pictures and choose a **Version**. A later version is not always better; pick the one you like.
 2. **Save** writes one `.safetensors` file with its description file (`voxprint-model.json`), licence and notice. You can keep it or share it under the base model's licence.
@@ -160,7 +160,7 @@ Have only a few good pictures? Model Forge can build the training set with you.
 3. On step 3, **Build a set**, press **Make pictures**. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.
 4. Press **Keep** under each picture that looks right and **Reject** under the rest.
 5. Press **Next round**. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.
-6. Press **This is it**. The references and the kept pictures become the training set, and the usual steps follow: **Check photos**, training and the result.
+6. Press **This is it**. The references and the kept pictures become the training set, and the usual steps follow: step 4 **Check photos**, step 5 training and step 6 the result.
 
 Good to know:
 
@@ -168,7 +168,7 @@ Good to know:
 - The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.
 - Pictures marked **≈ similar** look almost the same as another one; keep only one of them.
 - The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. **Kept … · set … of …** shows where you are.
-- Each model is unloaded before the next one starts, so a 16 GB graphics card is enough. A round of 24 pictures takes a few minutes.
+- Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.
 - The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.
 - **Start over** forgets the rounds and keeps the references.
 
