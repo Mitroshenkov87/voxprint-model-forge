@@ -72,10 +72,12 @@ options:
   -h, --help            show this help message and exit
   --vm                  Check a fresh VM image before a paid GPU job: Python,
                         torch/CUDA, [compare] versions, build tools,
-                        llama.cpp, the voxprint_common wheel, HF_TOKEN and
-                        disk. Exit 6 on any FAIL.
+                        llama.cpp, the convert_hf_to_gguf.py imports, the
+                        voxprint_common wheel, HF_TOKEN and disk. Exit 6 on
+                        any FAIL.
   --for {all,lora}      With --vm: what the VM is for. 'lora' skips cmake,
-                        ninja, nvcc, c++ and llama.cpp. Default: all.
+                        ninja, nvcc, c++, llama.cpp and the converter imports.
+                        Default: all.
   --min-free-gb MIN_FREE_GB
                         Disk needed for --vm. Default: 150.
 ```

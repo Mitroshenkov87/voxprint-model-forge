@@ -21,6 +21,21 @@ from pathlib import Path
 MIN_PYTHON = (3, 12)
 MIN_FREE_GB = 150.0
 SCOPES = ("all", "lora")
+# Modules convert_hf_to_gguf.py and its bundled gguf-py import at the llama.cpp pin
+# (scripts/llama.rev). Some are imported lazily inside set_vocab, so a missing one
+# only shows after the BF16 download. Importing them here catches that up front.
+CONVERT_IMPORTS = (
+    "numpy",
+    "torch",
+    "safetensors",
+    "transformers",
+    "sentencepiece",
+    "sentencepiece.sentencepiece_model_pb2",
+    "google.protobuf",
+    "yaml",
+    "tqdm",
+    "requests",
+)
 
 
 def pinned_common(root: Path) -> str:
@@ -51,12 +66,14 @@ class Probe:
     free_gb: Callable[[Path], float] = None  # type: ignore[assignment]
     python: tuple[int, int] = (sys.version_info.major, sys.version_info.minor)
     executable: Callable[[str], bool] = lambda path: os.path.isfile(path) and os.access(path, os.X_OK)
+    import_error: Callable[[str], str | None] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         self.version = self.version or _dist_version
         self.run = self.run or _run
         self.torch_info = self.torch_info or _torch_info
         self.free_gb = self.free_gb or (lambda path: shutil.disk_usage(path).free / 1e9)
+        self.import_error = self.import_error or _import_error
 
 
 def _dist_version(name: str) -> str | None:
@@ -64,6 +81,17 @@ def _dist_version(name: str) -> str | None:
         return metadata.version(name)
     except metadata.PackageNotFoundError:
         return None
+
+
+def _import_error(name: str) -> str | None:
+    """None when ``name`` imports, else the exception type and message."""
+    import importlib
+
+    try:
+        importlib.import_module(name)
+    except Exception as exc:  # noqa: BLE001 - reported as a failed check
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
 def _run(argv: list[str]) -> str:
@@ -188,6 +216,22 @@ def check_llama(root: Path) -> dict[str, object]:
     )
 
 
+def check_convert_imports(probe: Probe) -> dict[str, object]:
+    """Every module convert_hf_to_gguf.py needs imports in this interpreter (the one FORGE_PYTHON runs)."""
+    bad = []
+    for name in CONVERT_IMPORTS:
+        error = probe.import_error(name)
+        if error is not None:
+            bad.append(f"{name} ({error})")
+    detail = f"{len(CONVERT_IMPORTS)} modules import" if not bad else "; ".join(bad)
+    return _line(
+        "convert_imports",
+        not bad,
+        detail,
+        'uv pip install -e "." from PyPI (sentencepiece==0.2.2, protobuf>=4.21 are base dependencies)',
+    )
+
+
 def check_wheel(root: Path, probe: Probe) -> dict[str, object]:
     """The vendored wheel for the pinned voxprint_common exists and is the installed version."""
     want = pinned_common(root)
@@ -225,7 +269,8 @@ def run_vm_checks(
     min_free_gb: float = MIN_FREE_GB,
     scope: str = "all",
 ) -> dict:
-    """Checks for ``scope``. ``lora`` skips the build tools and llama.cpp (LoRA training builds nothing).
+    """Checks for ``scope``. ``lora`` skips the build tools, llama.cpp and the converter imports
+    (LoRA training builds and converts nothing).
 
     ``ok`` is False when any check fails.
     """
@@ -236,6 +281,7 @@ def run_vm_checks(
     if scope == "all":
         checks += check_tools(probe)
         checks.append(check_llama(root))
+        checks.append(check_convert_imports(probe))
     checks += [
         check_wheel(root, probe),
         check_token(probe),

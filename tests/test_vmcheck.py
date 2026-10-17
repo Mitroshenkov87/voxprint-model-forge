@@ -46,6 +46,7 @@ def probe(**overrides) -> Probe:
         free_gb=lambda path: 500.0,
         python=(3, 14),
         executable=lambda path: True,
+        import_error=lambda name: None,
     )
     values.update(overrides)
     return Probe(**values)
@@ -148,3 +149,44 @@ def test_checkout_pins_a_vendored_wheel() -> None:
     assert (root / vmcheck.wheel_path(root)).is_file()
     vendored = sorted(p.name for p in (root / "vendor").glob("voxprint_common-*.whl"))
     assert vendored == [Path(vmcheck.wheel_path(root)).name]
+
+
+def test_missing_sentencepiece_fails_default_scope(tmp_path) -> None:
+    """synth4 L1: convert_hf_to_gguf.py died in set_vocab on ModuleNotFoundError: sentencepiece."""
+    def missing(name: str) -> str | None:
+        if name.startswith("sentencepiece"):
+            return f"ModuleNotFoundError: No module named '{name}'"
+        return None
+
+    report = run_vm_checks(fake_root(tmp_path), tmp_path, probe(import_error=missing))
+    line = by_name(report)["convert_imports"]
+    assert not report["ok"]
+    assert not line["ok"]
+    assert "sentencepiece (ModuleNotFoundError" in line["detail"]
+    assert "sentencepiece==0.2.2" in line["fix"]
+    assert "FAIL convert_imports" in report["text"]
+
+
+def test_convert_imports_pass_and_lora_skips_them(tmp_path) -> None:
+    root = fake_root(tmp_path)
+    assert by_name(run_vm_checks(root, tmp_path, probe()))["convert_imports"]["ok"]
+    lora = run_vm_checks(root, tmp_path, probe(import_error=lambda name: "ModuleNotFoundError: x"), scope="lora")
+    assert "convert_imports" not in by_name(lora)
+    assert lora["ok"], lora["text"]
+
+
+def test_convert_import_list_covers_the_converter() -> None:
+    for name in ("sentencepiece", "sentencepiece.sentencepiece_model_pb2", "google.protobuf", "transformers"):
+        assert name in vmcheck.CONVERT_IMPORTS
+
+
+def test_real_import_probe() -> None:
+    assert vmcheck._import_error("json") is None
+    error = vmcheck._import_error("voxprint_no_such_module_xyz")
+    assert error is not None and error.startswith("ModuleNotFoundError")
+
+
+def test_base_dependencies_carry_the_converter_modules() -> None:
+    names = " ".join(vmcheck.requirements(Path(__file__).resolve().parents[1]))
+    assert "sentencepiece==0.2.2" in names
+    assert "protobuf>=4.21" in names
