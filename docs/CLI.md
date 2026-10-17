@@ -121,43 +121,19 @@ Each published model also gets `voxprint-model.json` (schema `voxprint-model/1`)
 
 ## Canvas
 
-`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. Parts D and E (Qwen-Image-2512) are retired. `scripts/canvas_job_d.sh` (`python -m voxprint_forge.diffusion.qwen_main run plans/canvas-qwen-image-2512-v1.toml`) exits 2 unless `--parts` omits D and E or you pass `--force`. See `docs/CANVAS.md`.
+`forge canvas run plans/canvas-zimage-tiers-v1.toml` prepares image tiers for Voxprint AI Canvas. On the A100 that is already running the LLM bootstrap, start it from `scripts/canvas_job.sh` (`python -m voxprint_forge.diffusion`) so the running `scripts/bootstrap.sh` is not replaced. Qwen-Image-Edit and Qwen-Image-2512 are removed. `scripts/canvas_job_d.sh` exits 2. See `docs/CANVAS.md`.
 
-Parts, in order: base (55 min), controlnet (25 min), edit (55 min). Total 135 min. Part C converts the shared Qwen2.5-VL-7B encoder. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running, and the only way to run retired parts D and E. `FORGE_DEFER_UPLOAD=1` or `--defer-upload` prepares tier files and writes `<part>-upload-deferred` without tokens. `forge canvas upload PLAN --parts A,B,C` (and `bash scripts/canvas_upload.sh --parts A,B,C`) uploads those parts later and is idempotent.
+Parts, in order: base (55 min), controlnet (25 min). Total 80 min. `--deadline <ISO time>` or `FORGE_DEADLINE` skips a part whose estimate exceeds the time remaining and records `deferred to next rental`. `--force` is the only way to start while `scripts/bootstrap.sh` is still running. `FORGE_DEFER_UPLOAD=1` or `--defer-upload` prepares tier files and writes `<part>-upload-deferred` without tokens. `forge canvas upload PLAN --parts A,B` (and `bash scripts/canvas_upload.sh --parts A,B`) uploads those parts later and is idempotent.
 
-Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Edit goes to `Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
-
-## Nunchaku edit matrix
-
-`scripts/nunchaku_edit_test.sh` and `scripts/nunchaku_edit_test.ps1` run `python -m voxprint_forge.diffusion.nunchaku_edit`. This is not a `forge` subcommand. The tag is `nunchaku-test-2`. `--json` prints one result object on stdout. Logs stay on stderr. The scripts do not prompt.
-
-```bash
-bash scripts/nunchaku_edit_test.sh --json --smoke
-pwsh scripts/nunchaku_edit_test.ps1 --arms qwen-r128,qwen-r32,zimage-r128 --caps unconstrained,cap16
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--arms` | `qwen-r128`, `qwen-r32`, `zimage-r128`, `zimage-r256`. Default omits r256 |
-| `--cases` | `c1,c2,c3` for Qwen and `z1,z2,z3` for Z-Image |
-| `--out` | Default `results/nunchaku-edit/nunchaku-test-2/` |
-| `--mode` | `auto`, `model-offload`, or `block-offload` |
-| `--caps` | `unconstrained` and/or `cap16` (16 GiB / `memory.total`). Default is both |
-| `--smoke` | One case per arm. Qwen uses 20 steps instead of 40 |
-| `--cleanup` | Delete the INT4 safetensors after the run. Bases stay |
-| `--budget-min` | Default 90. r256 is dropped first when the budget is exceeded |
-
-`cap16` calls `torch.cuda.set_per_process_memory_fraction(16/total)` using the nvidia-smi total, so an 80 GB A100 is 16/80. `auto` tries model CPU offload and then block offload (`set_offload` with one pinned block, then sequential offload). Unconstrained Z-Image tries a resident GPU load first. A warm-up image is not included in `seconds_per_image`. `fits_16gb` is true when the nvidia-smi peak, sampled every 0.5 s, is at most 15.0 GiB. On compute capability below 8.9, FP8 timings are marked `not representative of RTX 40/50` because the baseline is weight-only dequant.
-
-Exit codes for this script are separate from the `forge` table above: 0 pass, 1 a case failed or cap16 did not fit, 2 setup (wheel, sha256, disk, download), 3 no CUDA GPU, under 16 GB, compute capability below 8.0, or a Linux driver below 525.60.13. The wheel is the pinned vitoom-nunchaku build, checked by sha256. INT4 covers sm_80, sm_86, and sm_89. NVFP4 stays out. Upstream `nunchaku` is refused because it has no `zero_cond_t`. Linux runs `uv python install 3.11` before the venv. Resume markers are `~/.done/nunchaku-edit/<step>`. `result.json` uses schema `voxprint-forge-nunchaku-edit/1` and records the GPU, driver, torch, diffusers, nunchaku, wheel hash, and weight hash. See `docs/VM.md`.
+Exit codes are the same table as the rest of the CLI. Hugging Face repos are public. Base goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo`. ControlNet goes to `Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1`. Each part also creates a private Kaggle model. The manifest is `~/forge-out/manifests/<date>-canvas-zimage.json`.
 
 ## Diffusion INT4
 
-`forge diffusion-int4 run` quantizes Qwen-Image-Edit-2511 to SVDQuant INT4, compares it with QuantFunc r128, QuantFunc r256, and FP8, then does the same card and upload flow for Wan 2.2 T2V-A14B GGUF and FP8. `--own-edit` defaults to `on`, so that own r256 quant always runs. `--own-edit auto` is opt-in and skips it only when Phase 0 QuantFunc r128 passes every hard case with `fits_16gb`. `--own-edit off` mirrors QuantFunc r128 and r32 and skips the quant. `--phase0-result` is an optional comparison baseline on the eval and the card. A missing file is ignored and does not choose the winner. Invalid JSON exits 6 (`phase0`). `--qwen-image` adds an optional Qwen-Image INT4 r256 after Wan. `--svd-rank` defaults to 256. `--dry-run` is the CPU smoke: tiny files, no CUDA, no downloads. `forge diffusion-int4 smoke-tiny` is the one-block Qwen proof: calibration, fast INT4 rank 8, convert, and one transformer latent. `--device cpu` forces that path. On CUDA, with the vitoom wheel importable, it loads the tiny checkpoint and runs one forward. `scripts/vm_run_diffusion_int4.sh --smoke-tiny` exits before the token prompt and the clone.
+`forge diffusion-int4 run` converts Wan 2.2 T2V-A14B to GGUF (Q4_K_M and Q5_K_M for both experts) and FP8, runs a short smoke, then cards and uploads. `--svd-rank` defaults to 256 and is stored on the run. `--dry-run` is the CPU smoke: tiny files, no CUDA, no downloads. `FORGE_SKIP_WAN=1` omits the Wan steps.
 
-`forge diffusion-int4 estimates` prints the A100 and H100 planning minutes. The H100 quant step is 1.8× faster (500 minutes). The rental is an A100 or H100 80GB. `forge diffusion-int4 disk-floor` exits 2 when free space stays under 15 percent after verified sources are deleted. JSON `error.code` is `disk_floor`. Exit 7 stays the general "next stage does not fit its byte budget" code. `forge diffusion-int4 fetch --dest DIR` downloads the Apache-2.0 QuantFunc files (sha256 checked), the Qwen-Image-Edit-2511 snapshot, the Wan experts, and the FP8 reference. A refused licence exits 3 and does not fall through to Drive.
+`forge diffusion-int4 estimates` prints the A100 and H100 planning minutes. Wan minutes are the same on both (190). `forge diffusion-int4 disk-floor` exits 2 when free space stays under 15 percent after verified sources are deleted. JSON `error.code` is `disk_floor`. Exit 7 stays the general "next stage does not fit its byte budget" code. `forge diffusion-int4 fetch --dest DIR` downloads the Wan experts. A refused licence exits 3 and does not fall through to Drive.
 
-Markers are `~/.done/diffusion-int4/<step>` (`FORGE_DONE_DIR`). `~/watch.json` (`FORGE_WATCH`) lists the jobs, which are done, and the expected minutes. Heartbeats stay in `~/forge-out/status.json`. The rental script is `scripts/vm_run_diffusion_int4.sh`. Pins, the winner rule, and the minute table are in `docs/DIFFUSION-INT4.md`.
+Markers are `~/.done/diffusion-int4/<step>` (`FORGE_DONE_DIR`). `~/watch.json` (`FORGE_WATCH`) lists the jobs, which are done, and the expected minutes. Heartbeats stay in `~/forge-out/status.json`.
 
 ## Fit
 

@@ -1,5 +1,5 @@
-# Canvas add-on. Three resumable parts, each with its own private upload.
-# Minutes are the A100 estimates: base 55, ControlNet 25, Edit 55.
+# Canvas add-on. Two resumable parts, each with its own private upload.
+# Minutes are the A100 estimates: base 55, ControlNet 25.
 
 [run]
 id = "canvas-zimage-tiers-v1"
@@ -60,18 +60,3 @@ repo = "Tongyi-MAI/Z-Image-Turbo"
 revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 licence = "apache-2.0"
 consumers = ["base", "controlnet", "qwen", "bake-off"]
-
-[[parts]]
-id = "edit"
-estimate_min = 55
-output_name = "Qwen--Qwen-Image-Edit-2511-voxprint"
-hf_repo = "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
-kaggle_slug = "voxprint-mirror-qwen-image-edit-2511"
-min_free_gb = 100
-
-[[parts.sources]]
-id = "edit"
-repo = "Qwen/Qwen-Image-Edit-2511"
-revision = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
-licence = "apache-2.0"
-consumers = ["edit", "qwen", "bake-off"]

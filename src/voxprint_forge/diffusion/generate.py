@@ -13,7 +13,6 @@ import numpy as np
 import pillow_avif  # noqa: F401
 import torch
 from diffusers import (
-    QwenImageEditPlusPipeline,
     ZImageControlNetInpaintPipeline,
     ZImageControlNetModel,
     ZImageControlNetPipeline,
@@ -29,13 +28,10 @@ from voxprint_forge.diffusion.controlnet_union import places_for_count, union_co
 from voxprint_forge.diffusion.fp8 import dequant_state
 from voxprint_forge.diffusion.policy import (
     CLIP_DROP_MAX,
-    CLIP_I_MIN,
-    LPIPS_EDIT_MAX,
     LPIPS_MAX,
     clip_drop,
     decide_base,
     decide_control,
-    decide_edit,
 )
 from voxprint_forge.diffusion.prompts import (
     CONTROL_PROMPTS,
@@ -43,12 +39,9 @@ from voxprint_forge.diffusion.prompts import (
     LEAN_BASE_SEEDS,
     LEAN_CONTROL,
     LEAN_CONTROL_MINIMUM,
-    LEAN_EDIT,
-    LEAN_EDIT_MINIMUM,
     LEAN_INPAINT,
     LEAN_INPAINT_MINIMUM,
     LEAN_MINIMUM,
-    edit_budget,
 )
 from voxprint_forge.diffusion.scenes import canny_map, depth_map, inpaint_mask, pose_map, render_scene
 from voxprint_forge.diffusion.spec import (
@@ -57,13 +50,10 @@ from voxprint_forge.diffusion.spec import (
     CONTROL_STEPS,
     CREATIVE_GUIDANCE,
     CREATIVE_STEPS,
-    EDIT_STEPS,
-    EDIT_TRUE_CFG,
     IMAGE_SIZE,
     TURBO_GUIDANCE,
     TURBO_STEPS,
 )
-from voxprint_forge.diffusion.stage_free import free_eval_stage
 from voxprint_forge.diffusion.weights import load_tensors, materialise_bf16
 from voxprint_forge.errors import StageError, ToolMissingError
 from voxprint_forge.lean import REVIEW_LIMIT, metrics_decided, review_document, wave_size
@@ -698,117 +688,3 @@ def _inpaint(
     torch.cuda.empty_cache()
     return refs, cands, prompts, seeds
 
-
-def evaluate_edit(
-    *,
-    edit_dir: Path,
-    transformer_fp8: list[Path],
-    encoder_fp8: Path,
-    grid_path: Path,
-    progress: Progress | None = None,
-) -> dict[str, object]:
-    """Score a few hard edit pairs and write a full-resolution review pack."""
-    device = _cuda()
-    metric = _lpips_net(device)
-    clip = ClipScorer(device)
-    pipe = QwenImageEditPlusPipeline.from_pretrained(str(edit_dir), torch_dtype=torch.bfloat16)
-    pipe.to(device)
-    _quiet(pipe)
-    allowed, budget_seeds = edit_budget()
-    allowed_set = set(allowed)
-    seed = budget_seeds[0] if budget_seeds else 0
-    prepared = [
-        (instruction, seed, _pil(render_scene(scene_seed, IMAGE_SIZE)))
-        for instruction, scene_seed in LEAN_EDIT
-        if (instruction, scene_seed) in allowed_set
-    ]
-    total = len(prepared)
-
-    def _edit(instruction: str, edit_seed: int, image: Image.Image) -> Image.Image:
-        return pipe(
-            image=image,
-            prompt=instruction,
-            negative_prompt=" ",
-            true_cfg_scale=EDIT_TRUE_CFG,
-            num_inference_steps=EDIT_STEPS,
-            height=IMAGE_SIZE,
-            width=IMAGE_SIZE,
-            generator=torch.Generator(device=device).manual_seed(edit_seed),
-            output_type="pil",
-        ).images[0]
-
-    def _edit_decided(lpips_scores: list[float], clip_i: list[float]) -> bool:
-        return metrics_decided(
-            [(lpips_scores, LPIPS_EDIT_MAX, True), (clip_i, CLIP_I_MIN, False)],
-            minimum=LEAN_EDIT_MINIMUM,
-        )
-
-    transformer_state = _cpu_state(pipe.transformer)
-    encoder_state = _cpu_state(pipe.text_encoder)
-    transformer_fp8_state = _dequant(transformer_fp8)
-    encoder_fp8_state = _dequant([encoder_fp8])
-    refs: list[Image.Image] = []
-    transformer_cands: list[Image.Image] = []
-    encoder_cands: list[Image.Image] = []
-    prompts: list[str] = []
-    seeds: list[int] = []
-    transformer_lpips: list[float] = []
-    transformer_clip: list[float] = []
-    encoder_lpips: list[float] = []
-    encoder_clip: list[float] = []
-    while True:
-        decided = _edit_decided(transformer_lpips, transformer_clip) and _edit_decided(encoder_lpips, encoder_clip)
-        chunk = _next_chunk(prepared, len(prompts), decided=decided, minimum=LEAN_EDIT_MINIMUM)
-        if not chunk:
-            break
-        _apply(pipe.transformer, transformer_state)
-        _apply(pipe.text_encoder, encoder_state)
-        for instruction, edit_seed, image in chunk:
-            refs.append(_edit(instruction, edit_seed, image))
-            prompts.append(instruction)
-            seeds.append(edit_seed)
-            _tick(progress, "edit-bf16", len(prompts), total)
-        free_eval_stage()
-        _apply(pipe.transformer, transformer_fp8_state)
-        fresh: list[Image.Image] = []
-        for instruction, edit_seed, image in chunk:
-            fresh.append(_edit(instruction, edit_seed, image))
-            _tick(progress, "edit-transformer-fp8", len(transformer_cands) + len(fresh), total)
-        transformer_cands.extend(fresh)
-        free_eval_stage()
-        _apply(pipe.transformer, transformer_state)
-        _apply(pipe.text_encoder, encoder_fp8_state)
-        enc_fresh: list[Image.Image] = []
-        for instruction, edit_seed, image in chunk:
-            enc_fresh.append(_edit(instruction, edit_seed, image))
-            _tick(progress, "edit-encoder-fp8", len(encoder_cands) + len(enc_fresh), total)
-        encoder_cands.extend(enc_fresh)
-        start = len(prompts) - len(chunk)
-        scores, clip_i = _score_series(
-            refs[start:], transformer_cands[start:], prompts[start:], metric, clip, device, image_score=True
-        )
-        transformer_lpips.extend(scores)
-        transformer_clip.extend(clip_i)
-        scores, clip_i = _score_series(
-            refs[start:], encoder_cands[start:], prompts[start:], metric, clip, device, image_score=True
-        )
-        encoder_lpips.extend(scores)
-        encoder_clip.extend(clip_i)
-    transformer_summary = _pair_stats(refs, transformer_cands, prompts, metric, clip, device, image_score=True)
-    encoder_summary = _pair_stats(refs, encoder_cands, prompts, metric, clip, device, image_score=True)
-    pipe = free_eval_stage(pipe)
-    if pipe is not None:
-        raise StageError("edit pipeline was not released", code="quality")
-    _write_review(grid_path, refs, transformer_cands, prompts, seeds)
-    return {
-        "components": {
-            "edit-transformer": _component(
-                transformer_summary,
-                decide_edit(transformer_summary["lpips_mean"], transformer_summary["clip_i"]),
-            ),
-            "qwen2.5-vl-encoder": _component(
-                encoder_summary,
-                decide_edit(encoder_summary["lpips_mean"], encoder_summary["clip_i"]),
-            ),
-        }
-    }

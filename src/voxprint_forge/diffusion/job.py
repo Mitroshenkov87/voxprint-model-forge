@@ -1,4 +1,4 @@
-"""Run the three canvas parts in order. A short deadline defers the rest."""
+"""Run the canvas parts in order. A short deadline defers the rest."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from voxprint_forge.diffusion.common import Ctx
 from voxprint_forge.diffusion.deadline import DEFERRED, defer_part
 from voxprint_forge.diffusion.part_base import run_base
 from voxprint_forge.diffusion.part_control import run_control
-from voxprint_forge.diffusion.part_edit import run_edit
 from voxprint_forge.diffusion.planload import CanvasPlan
 from voxprint_forge.errors import ForgeError, PlanError
 from voxprint_forge.layout import Layout, read_marker
@@ -32,8 +31,6 @@ def _dispatch(ctx: Ctx) -> dict[str, object]:
         return run_base(ctx)
     if part_id == "controlnet":
         return run_control(ctx)
-    if part_id == "edit":
-        return run_edit(ctx)
     return _unexpected_part(part_id)
 
 
@@ -51,7 +48,7 @@ def _already_uploaded(layout: Layout, plan: CanvasPlan, part_id: str) -> dict[st
     marker = read_marker(layout.stage(plan.id, f"{part_id}-upload"))
     if marker is None:
         return None
-    part = plan.part(part_id) if part_id in ("base", "controlnet", "edit") else None
+    part = plan.part(part_id) if part_id in ("base", "controlnet") else None
     if part is None:
         return None
     return {
@@ -79,9 +76,6 @@ def _write_manifest(forge_out: Path, plan: CanvasPlan, parts: list[dict[str, obj
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     lines = [
         "# Canvas MODELS",
-        "",
-        "Part C (edit, Qwen-Image-Edit-2511) converts the shared Qwen2.5-VL-7B encoder "
-        "(qwen2.5-vl-7b-text-encoder-fp8.safetensors). It does not read Qwen-Image-2512 files.",
         "",
     ]
     for part in parts:

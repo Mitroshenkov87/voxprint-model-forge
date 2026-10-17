@@ -39,17 +39,9 @@ INT4_METHOD = (
     "run by MIT HAN Lab deepcompressor at the pinned commit. The fast_int4 "
     "overlay uses the upstream fast calibration budget and the SVD rank on "
     "this card. The checkpoint is exported to the Nunchaku svdquant safetensors "
-    "layout. Qwen-Image-Edit-2511 keeps zero_cond_t from the base transformer "
-    "config. Inference for that edit model uses the pinned tonera vitoom-nunchaku "
-    "wheel, because upstream Nunchaku does not apply zero_cond_t."
+    "layout."
 )
-INT4_CALIBRATION = (
-    "Calibration prompts and image refs live in data/diffusion_calib. "
-    "The prompts are original Russian and English edit instructions covering "
-    "people, text, and hands. The image refs are original synthetic swatches, "
-    "not photographs of real people. Both are Apache-2.0 and written for this "
-    "repository. This is not the COCO or MJHQ calibration set."
-)
+INT4_CALIBRATION = "This card is not a calibration set. Dry-run numbers are synthetic and are not a quality claim."
 INT4_LIMITS = (
     "A 16 GB fit means the sampled nvidia-smi peak is at most 15.0 GiB. "
     "A 24 GB fit means that peak is at most 23.0 GiB. Seconds per image are "

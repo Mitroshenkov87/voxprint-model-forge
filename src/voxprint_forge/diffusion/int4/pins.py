@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-TargetName = Literal["qwen-image-edit-2511", "qwen-image", "wan-2.2-a14b"]
+TargetName = Literal["wan-2.2-a14b"]
 
 # nunchaku-ai/deepcompressor issue 104 is open: the nunchaku team has not
 # published Qwen-Image quant code. That repo redirects to nunchux-ai/deepcompressor.
@@ -48,24 +48,6 @@ NUNCHAKU_WHEEL = (
 NUNCHAKU_WHEEL_SHA256 = "bcdfe6fcc36cd37da34c1d0f1e0fa7c9b4201b2a70a89a3274d22420221afd2f"
 NUNCHAKU_LICENCE = "Apache-2.0"
 
-QWEN_EDIT_REPO = "Qwen/Qwen-Image-Edit-2511"
-QWEN_EDIT_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
-QWEN_IMAGE_REPO = "Qwen/Qwen-Image"
-QWEN_IMAGE_REVISION = "75e0b4be04f60ec59a75f475837eced720f823b6"
-QWEN_LICENCE = "Apache-2.0"
-
-QUANTFUNC_REPO = "QuantFunc/Nunchaku-Qwen-Image-EDIT-2511"
-QUANTFUNC_REVISION = "4ca543a1e91db4183ee16fd5aa5950e0b02803e5"
-QUANTFUNC_LICENCE = "Apache-2.0"
-QUANTFUNC_R128 = "nunchaku_qwen_image_edit_2511_balance_int4.safetensors"
-QUANTFUNC_R128_SHA256 = "ec36d349309057f245e77255c008fc97330f2bc280dc8d704de715bcbaf6841b"
-QUANTFUNC_R32 = "nunchaku_qwen_image_edit_2511_ultimate_speed_int4.safetensors"
-QUANTFUNC_R32_SHA256 = "432d5b807f4345de4ec3d0b7ac1a6143930a81a3d35b582b1f603c18d07d56ec"
-QUANTFUNC_R256 = "nunchaku_qwen_image_edit_2511_best_quality_int4.safetensors"
-QUANTFUNC_R256_SHA256 = "d47054ff853d8d9cd6812386d4611cfe36fa9d1a5447549c8f0aa37c8aa79302"
-PHASE0_RESULT = "/workspace/vm-results/model-forge/nunchaku-test-1/result.json"
-HARD_CASES = ("c1", "c2", "c3")
-
 WAN_WEIGHT_REPO = "Wan-AI/Wan2.2-T2V-A14B"
 WAN_WEIGHT_REVISION = "c8c270b13ee05bfa474194ac9fb07a5868a97cea"
 WAN_LICENCE = "Apache-2.0"
@@ -84,9 +66,6 @@ FITS_24_MIB = 23.0 * 1024
 IDENTITY_DELTA = 0.05
 
 HF_USER_DEFAULT = "Mitroshenkov87"
-FP8_EDIT_MIRROR = "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
-EDIT_STEPS = 40
-EDIT_TRUE_CFG = 4.0
 WAN_SMOKE_SIZE = "832*480"
 WAN_SMOKE_FRAMES = 5
 WAN_SMOKE_STEPS = 4
@@ -103,39 +82,6 @@ class StepEstimate:
     expected_min: int
     note: str
 
-
-QWEN_EDIT_STEPS: tuple[StepEstimate, ...] = (
-    StepEstimate(
-        "qwen-edit-2511-calib",
-        30,
-        "Build the deepcompressor prompt file from data/diffusion_calib.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-quant",
-        900,
-        "fast_int4, SVD rank 256. 15 h on an A100 80GB (12-18 h). 500 min on an H100 80GB.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-export",
-        20,
-        "Nunchaku svdquant safetensors export.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-eval",
-        90,
-        "Identity, hands, text, and edit fidelity against QuantFunc r128, r256, and FP8.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-publish",
-        25,
-        "Card, sha256, public Hugging Face, Drive fallback.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-reclaim",
-        5,
-        "Delete sources after a mirror sha256 matches.",
-    ),
-)
 
 WAN_STEPS: tuple[StepEstimate, ...] = (
     StepEstimate(
@@ -165,64 +111,18 @@ WAN_STEPS: tuple[StepEstimate, ...] = (
     ),
 )
 
-QWEN_IMAGE_STEPS: tuple[StepEstimate, ...] = (
-    StepEstimate(
-        "qwen-image-quant",
-        900,
-        "Optional fast_int4, SVD rank 256. 900 min on A100, 500 min on H100.",
-    ),
-    StepEstimate(
-        "qwen-image-export",
-        20,
-        "Optional Nunchaku export. zero_cond_t stays false.",
-    ),
-    StepEstimate(
-        "qwen-image-eval",
-        60,
-        "Optional text-to-image smoke against FP8.",
-    ),
-    StepEstimate(
-        "qwen-image-publish",
-        25,
-        "Optional card, sha256, and upload.",
-    ),
-    StepEstimate(
-        "qwen-image-reclaim",
-        5,
-        "Optional source delete after the mirror matches.",
-    ),
-)
-
-
-MIRROR_STEPS: tuple[StepEstimate, ...] = (
-    StepEstimate(
-        "qwen-edit-2511-mirror",
-        25,
-        "Publish QuantFunc r128 and r32. The own 12-18 h quant is skipped.",
-    ),
-    StepEstimate(
-        "qwen-edit-2511-reclaim",
-        5,
-        "Delete the mirrored QuantFunc files after the sha256 matches.",
-    ),
-)
-
-
 def skip_wan() -> bool:
     """True when ``FORGE_SKIP_WAN=1`` omits the Wan 2.2 steps."""
     return os.environ.get("FORGE_SKIP_WAN", "").strip() == "1"
 
 
-def planned_steps(*, qwen_image: bool, mirror: bool = False) -> tuple[StepEstimate, ...]:
+def planned_steps() -> tuple[StepEstimate, ...]:
     """Steps that run for this invocation, in order."""
-    steps = MIRROR_STEPS if mirror else QWEN_EDIT_STEPS
-    if not skip_wan():
-        steps = steps + WAN_STEPS
-    if qwen_image:
-        return steps + QWEN_IMAGE_STEPS
-    return steps
+    if skip_wan():
+        return ()
+    return WAN_STEPS
 
 
-def expected_minutes(*, qwen_image: bool) -> int:
-    """A100 planning total. H100 totals are ``gpu.total_minutes``."""
-    return sum(step.expected_min for step in planned_steps(qwen_image=qwen_image))
+def expected_minutes() -> int:
+    """A100 planning total. Wan minutes are the same on an H100."""
+    return sum(step.expected_min for step in planned_steps())

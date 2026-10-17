@@ -28,8 +28,6 @@ from voxprint_forge.diffusion.guard import llm_job_running
 from voxprint_forge.diffusion.names import (
     CONTROL_FULL_BF16,
     CONTROL_LITE_FP8,
-    EDIT_ENCODER_FP8,
-    EDIT_FP8_PREFIX,
     QWEN3_FP8_NAME,
     TURBO_BF16_PREFIX,
     TURBO_FP8_NAME,
@@ -141,9 +139,9 @@ def test_prompt_sets_are_fixed_and_safe() -> None:
 def test_plan_estimates_and_pins() -> None:
     plan = load_canvas_plan(ROOT / "plans" / "canvas-zimage-tiers-v1.toml")
     assert plan.id == "canvas-zimage-tiers-v1"
-    assert [part.id for part in plan.parts] == ["base", "controlnet", "edit"]
-    assert [part.estimate_min for part in plan.parts] == [55, 25, 55]
-    assert plan.total_min() == 135
+    assert [part.id for part in plan.parts] == ["base", "controlnet"]
+    assert [part.estimate_min for part in plan.parts] == [55, 25]
+    assert plan.total_min() == 80
     assert {part.id: part.estimate_min for part in plan.parts} == PART_MINUTES
     base = plan.part("base")
     assert base.hf_repo == "Mitroshenkov87/voxprint-mirror-z-image-turbo"
@@ -153,17 +151,11 @@ def test_plan_estimates_and_pins() -> None:
     assert control.estimate_min == 25
     assert control.hf_repo == "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
     assert control.sources[0].revision == "5155fc56d17821007d6f62ac192c09e0f0e72016"
-    edit = plan.part("edit")
-    assert edit.estimate_min == 55
-    assert edit.hf_repo == "Mitroshenkov87/voxprint-mirror-qwen-image-edit-2511"
-    assert edit.sources[0].revision == "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
     assert TURBO_FP8_NAME == "zimage-turbo-transformer-fp8.safetensors"
     assert QWEN3_FP8_NAME == "qwen3-4b-text-encoder-fp8.safetensors"
     assert CONTROL_LITE_FP8 == "zimage-turbo-controlnet-union-2.1-lite-fp8.safetensors"
     assert CONTROL_FULL_BF16 == "zimage-turbo-controlnet-union-2.1-bf16.safetensors"
-    assert EDIT_ENCODER_FP8 == "qwen2.5-vl-7b-text-encoder-fp8.safetensors"
     assert shard_name(TURBO_BF16_PREFIX, 1, 3) == "zimage-turbo-transformer-bf16-00001-of-00003.safetensors"
-    assert shard_name(EDIT_FP8_PREFIX, 2, 4) == "qwen-image-edit-2511-transformer-fp8-00002-of-00004.safetensors"
 
 
 def test_deadline_defers_only_when_the_estimate_exceeds_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -304,7 +296,6 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
         "scripts/vm_logins.sh",
         "src/voxprint_forge/diffusion",
         "plans/canvas-zimage-tiers-v1.toml",
-        "plans/canvas-qwen-image-2512-v1.toml",
         "templates/canvas_model_card.md.jinja",
         "docs/CANVAS.md",
     ]
@@ -342,7 +333,7 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert '"$VENV/bin/python" -m voxprint_forge.diffusion' in job
     assert "estimate part base 55 min" in job
     assert "estimate part controlnet 25 min" in job
-    assert "estimate part edit 55 min" in job
+    assert "estimate total 80 min" in job
     assert "huggingface-cli login" not in job
     assert "hf auth login" not in job
     assert "cleanup_secrets" not in job
@@ -356,7 +347,7 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert "preflight nvcc ok" in job
     assert "cmake and ninja are not required" in job
     docs = (ROOT / "docs" / "CANVAS.md").read_text(encoding="utf-8")
-    assert "55" in docs and "25" in docs and "135" in docs
+    assert "55" in docs and "25" in docs and "80" in docs
     assert "deferred to next rental" in docs
     assert "FORGE_DEADLINE=2026-10-10T18:00:00Z" in docs
     assert "tmux new -s canvas 'bash scripts/canvas_job.sh'" in docs

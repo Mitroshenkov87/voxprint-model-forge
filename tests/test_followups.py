@@ -64,7 +64,6 @@ def test_canvas_base_and_controlnet_min_free() -> None:
     plan = load_canvas_plan(ROOT / "plans" / "canvas-zimage-tiers-v1.toml")
     assert plan.part("base").min_free_gb == 40
     assert plan.part("controlnet").min_free_gb == 40
-    assert plan.part("edit").min_free_gb == 100
     assert plan.min_free_gb == 120
 
 
