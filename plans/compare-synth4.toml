@@ -1,0 +1,187 @@
+# Synth4 original-versus-compressed arms. Prompt text is not stored here.
+# Private prompts load at runtime from FORGE_PRIVATE_PROMPTS (a directory).
+# FP8 transformer arms and the upstream INT4 arms stay disabled until their loaders land.
+# Steps and CFG are the model under test. Manifest steps and CFG are ignored.
+
+[defaults]
+lpips_max = 0.10
+clip_drop_max = 0.01
+width = 1024
+height = 1024
+public_seeds = [0, 1]
+private_limit = 50
+control_scale = 0.75
+
+[[jobs]]
+id = "D1"
+kind = "turbo"
+steps = 8
+guidance = 0.0
+prompts = "base"
+private_sets = ["vxp_yuna", "vxp_mei"]
+reference = "a"
+note = "Z-Image-Turbo tiers. Arms c and d wait on the FP8 encoder path."
+
+[[jobs.arms]]
+id = "a"
+role = "reference"
+repo = "Tongyi-MAI/Z-Image-Turbo"
+revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "fp32"
+compute = "bf16"
+offload = false
+
+[[jobs.arms]]
+id = "b"
+role = "candidate"
+repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo"
+revision = "6e19fdd9"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "bf16"
+compute = "bf16"
+offload = false
+files = [
+  "zimage-turbo-transformer-bf16*",
+  "text_encoder/**",
+  "vae/**",
+  "tokenizer/**",
+  "scheduler/**",
+  "model_index.json",
+]
+
+[[jobs.arms]]
+id = "c"
+role = "candidate"
+quant = "fp8"
+compute = "bf16-dequant"
+offload = false
+enabled = false
+skip_reason = "Forge FP8 transformer is produced on the VM and is not published yet"
+
+[[jobs.arms]]
+id = "d"
+role = "candidate"
+quant = "fp8"
+compute = "bf16-dequant"
+offload = false
+enabled = false
+skip_reason = "FP8 transformer plus FP8 Qwen3-4B encoder waits on the encoder path"
+
+[[jobs]]
+id = "D2"
+kind = "turbo"
+steps = 8
+guidance = 0.0
+prompts = "base"
+private_sets = ["vxp_yuna", "vxp_mei"]
+reference = "a"
+note = "Upstream nunchaku-ai INT4 is a measurement-only baseline, not a Voxprint quant."
+
+[[jobs.arms]]
+id = "a"
+role = "reference"
+repo = "Tongyi-MAI/Z-Image-Turbo"
+revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "bf16"
+compute = "bf16"
+offload = false
+reuse_job = "D1"
+reuse_arm = "a"
+
+[[jobs.arms]]
+id = "r128"
+role = "candidate"
+repo = "nunchaku-ai/nunchaku-z-image-turbo"
+revision = "ca6bac69c3b0b2bdd31ca5196bf87c5f2a9eaedf"
+quant = "int4"
+compute = "int4"
+offload = false
+enabled = false
+skip_reason = "INT4 arm waits on a load check that proves the nunchaku kernels are present"
+
+[[jobs.arms]]
+id = "r256"
+role = "candidate"
+repo = "nunchaku-ai/nunchaku-z-image-turbo"
+revision = "ca6bac69c3b0b2bdd31ca5196bf87c5f2a9eaedf"
+quant = "int4"
+compute = "int4"
+offload = false
+enabled = false
+skip_reason = "INT4 arm waits on a load check that proves the nunchaku kernels are present"
+
+[[jobs]]
+id = "D3"
+kind = "control"
+steps = 8
+guidance = 0.0
+prompts = "control"
+controls = ["canny", "depth", "pose"]
+private_sets = []
+reference = "upstream-bf16"
+note = "ControlNet Union 2.1. Synthetic sets are not used."
+
+[[jobs.arms]]
+id = "upstream-bf16"
+role = "reference"
+repo = "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+revision = "5155fc56d17821007d6f62ac192c09e0f0e72016"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "bf16"
+compute = "bf16"
+offload = false
+files = ["Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors"]
+
+[[jobs.arms]]
+id = "mirror-bf16"
+role = "candidate"
+repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
+revision = "cc9fddea"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "bf16"
+compute = "bf16"
+offload = false
+files = ["zimage-turbo-controlnet-union-2.1-bf16.safetensors"]
+
+[[jobs.arms]]
+id = "mirror-lite-fp8"
+role = "candidate"
+repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
+revision = "cc9fddea"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "fp8"
+compute = "bf16-dequant"
+offload = false
+files = ["zimage-turbo-controlnet-union-2.1-lite-fp8.safetensors"]
+
+[[jobs]]
+id = "D4"
+kind = "creative"
+steps = 50
+guidance = 4.0
+prompts = "base"
+private_sets = []
+reference = "bf16"
+note = "Z-Image Creative. Public prompts only, 32 prompts times 2 seeds."
+
+[[jobs.arms]]
+id = "bf16"
+role = "reference"
+repo = "Tongyi-MAI/Z-Image"
+revision = "04cc4abb7c5069926f75c9bfde9ef43d49423021"
+quant = "bf16"
+compute = "bf16"
+offload = false
+
+[[jobs.arms]]
+id = "fp8"
+role = "candidate"
+quant = "fp8"
+compute = "bf16-dequant"
+offload = false
+enabled = false
+skip_reason = "Forge FP8 transformer is produced on the VM and is not published yet"

@@ -10,4 +10,5 @@ code.
 - [Roadmap](roadmap.md)
 - [Testing](TESTING.md)
 - [CLI reference](cli-reference.md), generated from `forge`
+- [Compare harness](COMPARE.md)
 - [API](api.md), generated from docstrings
