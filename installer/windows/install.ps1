@@ -50,9 +50,16 @@ try {
     $Mivolo = Join-Path $App "venv-mivolo"
     $MPy = Join-Path $Mivolo "Scripts\python.exe"
     Invoke-Uv @("venv", "--python", "3.12", "--allow-existing", $Mivolo)
+    # Two steps, one index each: torch from the PyTorch CPU index only, then the rest
+    # from PyPI only with torch held at the installed pins.
+    Invoke-Uv @("pip", "install", "--python", $MPy, "--index-url", "https://download.pytorch.org/whl/cpu",
+        "torch==2.5.1", "torchvision==0.20.1")
+    $mpins = Join-Path $Work "mivolo-torch-pins.txt"
+    & $script:Uv pip freeze --python $MPy | Select-String -Pattern '^(torch|torchvision)==' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii $mpins
+    $mreq = Join-Path $Work "mivolo-rest.txt"
+    Get-Content (Join-Path $App "requirements-mivolo.txt") | Where-Object { $_ -notmatch '^torch(vision)?\b' } | Set-Content -Encoding ascii $mreq
     Invoke-Uv @("pip", "install", "--python", $MPy, "--index-url", "https://pypi.org/simple",
-        "--extra-index-url", "https://download.pytorch.org/whl/cpu", "--index-strategy", "unsafe-best-match",
-        "-r", (Join-Path $App "requirements-mivolo.txt"))
+        "--constraint", $mpins, "-r", $mreq)
     Invoke-Uv @("pip", "install", "--python", $MPy, "setuptools<80", "wheel")
     Invoke-Uv @("pip", "install", "--python", $MPy, "--no-deps", "--no-build-isolation",
         "mivolo @ https://github.com/WildChlamydia/MiVOLO/archive/37475e3f8818b5f22448003feec3e64b01bfb188.zip")

@@ -9,4 +9,5 @@ numpy<2.3
 opencv-python-headless==4.10.0.84
 pillow
 huggingface_hub
+# torch and torchvision install first from the PyTorch index only; the rest from PyPI only, constrained to them.
 # then: pip install "setuptools<80" wheel && pip install --no-deps --no-build-isolation "mivolo @ git+https://github.com/WildChlamydia/MiVOLO.git@37475e3f8818b5f22448003feec3e64b01bfb188"
