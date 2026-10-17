@@ -20,7 +20,7 @@ guidance = 0.0
 prompts = "base"
 private_sets = ["vxp_yuna", "vxp_mei"]
 reference = "a"
-note = "Z-Image-Turbo tiers. Arms c and d wait on the FP8 encoder path."
+note = "Z-Image-Turbo tiers. Arms c and d read FP8 files from FORGE_FP8_DIR and are skipped when that directory is unset."
 
 [[jobs.arms]]
 id = "a"
@@ -53,20 +53,24 @@ files = [
 [[jobs.arms]]
 id = "c"
 role = "candidate"
+local = true
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
 compute = "bf16-dequant"
 offload = false
-enabled = false
-skip_reason = "Forge FP8 transformer is produced on the VM and is not published yet"
+files = ["zimage-turbo-transformer-fp8.safetensors"]
 
 [[jobs.arms]]
 id = "d"
 role = "candidate"
+local = true
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "fp8"
 compute = "bf16-dequant"
 offload = false
-enabled = false
-skip_reason = "FP8 transformer plus FP8 Qwen3-4B encoder waits on the encoder path"
+files = ["zimage-turbo-transformer-fp8.safetensors", "qwen3-4b-text-encoder-fp8.safetensors"]
 
 [[jobs]]
 id = "D2"
@@ -94,22 +98,24 @@ id = "r128"
 role = "candidate"
 repo = "nunchaku-ai/nunchaku-z-image-turbo"
 revision = "ca6bac69c3b0b2bdd31ca5196bf87c5f2a9eaedf"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "int4"
 compute = "int4"
 offload = false
-enabled = false
-skip_reason = "INT4 arm waits on a load check that proves the nunchaku kernels are present"
+files = ["svdq-int4_r128-z-image-turbo.safetensors"]
 
 [[jobs.arms]]
 id = "r256"
 role = "candidate"
 repo = "nunchaku-ai/nunchaku-z-image-turbo"
 revision = "ca6bac69c3b0b2bdd31ca5196bf87c5f2a9eaedf"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 quant = "int4"
 compute = "int4"
 offload = false
-enabled = false
-skip_reason = "INT4 arm waits on a load check that proves the nunchaku kernels are present"
+files = ["svdq-int4_r256-z-image-turbo.safetensors"]
 
 [[jobs]]
 id = "D3"
@@ -180,8 +186,10 @@ offload = false
 [[jobs.arms]]
 id = "fp8"
 role = "candidate"
+local = true
+base_repo = "Tongyi-MAI/Z-Image"
+base_revision = "04cc4abb7c5069926f75c9bfde9ef43d49423021"
 quant = "fp8"
 compute = "bf16-dequant"
 offload = false
-enabled = false
-skip_reason = "Forge FP8 transformer is produced on the VM and is not published yet"
+files = ["zimage-transformer-fp8.safetensors"]

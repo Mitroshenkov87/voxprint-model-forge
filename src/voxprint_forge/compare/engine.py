@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import gc
 import json
+import os
+import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +19,7 @@ from PIL import Image
 
 from voxprint_forge.compare.cases import Case
 from voxprint_forge.compare.codes import CompareSetup
+from voxprint_forge.compare.int4 import load_zimage_int4
 from voxprint_forge.compare.plan import Arm, Job, Kind
 from voxprint_forge.diffusion.scenes import canny_map, depth_map, pose_map, render_scene
 from voxprint_forge.scrub import active_secrets, scrub
@@ -42,13 +45,18 @@ def seeded_generator(seed: int, factory: GeneratorFactory | None = None) -> Seed
 
 
 def fetch_arm(arm: Arm, dest: Path) -> None:
-    """Download one public arm. No token is printed. Private data is not fetched."""
+    """Download one public arm. No token is printed. Private data is not fetched.
+
+    ``local`` arms copy named files from ``FORGE_FP8_DIR`` and do not publish them.
+    """
     from huggingface_hub import snapshot_download
 
     dest.mkdir(parents=True, exist_ok=True)
     if arm.base_repo:
         _snapshot(snapshot_download, arm.base_repo, arm.base_revision, dest / "base", None)
-    if arm.repo:
+    if arm.local:
+        _copy_local(arm, dest / "weights")
+    elif arm.repo:
         patterns = list(arm.files) or None
         _snapshot(snapshot_download, arm.repo, arm.revision, dest / "weights", patterns)
     elif not arm.base_repo:
@@ -115,7 +123,14 @@ def load_pipe(job: Job, arm: Arm, folder: Path) -> object:
         net = load_controlnet(control_file)
         pipe = ZImageControlNetPipeline.from_pretrained(str(base), controlnet=net, torch_dtype=dtype)
     elif kind == "turbo" or kind == "creative":
-        pipe = _text_pipe(ZImagePipeline, arm, folder, dtype)
+        if arm.quant == "int4" or arm.compute == "int4":
+            pipe = _base_pipe(ZImagePipeline, arm, folder, dtype)
+            weight = _int4_file(arm, folder)
+            model, info = load_zimage_int4(weight)
+            pipe.transformer = model
+            pipe.forge_int4 = {"arm": arm.id, **info}
+        else:
+            pipe = _text_pipe(ZImagePipeline, arm, folder, dtype)
     else:
         return _unexpected_kind(kind)
     _place(pipe, arm)
@@ -183,6 +198,39 @@ def load_controlnet(path: Path) -> object:
         encoding="utf-8",
     )
     return ZImageControlNetModel.from_single_file(str(path), config=str(folder), torch_dtype=torch.bfloat16)
+
+
+def _base_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
+    base = folder / "base"
+    if not base.is_dir():
+        weights = folder / "weights"
+        if (weights / "model_index.json").is_file():
+            return pipeline_cls.from_pretrained(str(weights), torch_dtype=dtype)
+        raise CompareSetup(f"arm {arm.id} is missing a base snapshot", code="compare_weights")
+    return pipeline_cls.from_pretrained(str(base), torch_dtype=dtype)
+
+
+def _int4_file(arm: Arm, folder: Path) -> Path:
+    weights = folder / "weights"
+    files = sorted(weights.rglob("*.safetensors")) if weights.is_dir() else []
+    if len(files) != 1:
+        raise CompareSetup(f"arm {arm.id} expected one INT4 file", code="compare_weights")
+    return files[0]
+
+
+def _copy_local(arm: Arm, dest: Path) -> None:
+    raw = os.environ.get("FORGE_FP8_DIR", "").strip()
+    if not raw or not Path(raw).is_dir():
+        raise CompareSetup("FORGE_FP8_DIR is not a directory", code="compare_weights")
+    root = Path(raw)
+    dest.mkdir(parents=True, exist_ok=True)
+    if not arm.files:
+        raise CompareSetup(f"arm {arm.id} has no local files", code="compare_weights")
+    for pattern in arm.files:
+        matches = [path for path in sorted(root.glob(pattern)) if path.is_file()]
+        if len(matches) != 1:
+            raise CompareSetup(f"arm {arm.id} expected one local file named {pattern}", code="compare_weights")
+        shutil.copyfile(matches[0], dest / matches[0].name)
 
 
 def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:

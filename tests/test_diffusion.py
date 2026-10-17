@@ -94,6 +94,21 @@ def test_keep_rules() -> None:
     assert keep_bf16("visual.blocks.0.attn.qkv.weight", "edit_encoder")
     assert keep_bf16("model.embed_tokens.weight", "edit_encoder")
     assert not keep_bf16("model.layers.0.mlp.down_proj.weight", "edit_encoder")
+    assert keep_bf16("model.embed_tokens.weight", "qwen3_encoder")
+    assert keep_bf16("model.norm.weight", "qwen3_encoder")
+    assert keep_bf16("lm_head.weight", "qwen3_encoder")
+    assert not keep_bf16("model.layers.0.mlp.down_proj.weight", "qwen3_encoder")
+    state = quantize_state(
+        {
+            "model.embed_tokens.weight": torch.randn(4, 4),
+            "model.layers.0.mlp.down_proj.weight": torch.randn(4, 4),
+            "lm_head.weight": torch.randn(4, 4),
+        },
+        "qwen3_encoder",
+    )
+    assert state["model.embed_tokens.weight"].dtype == torch.bfloat16
+    assert state["lm_head.weight"].dtype == torch.bfloat16
+    assert state["model.layers.0.mlp.down_proj.weight"].dtype == torch.float8_e4m3fn
 
 
 def test_quality_gates() -> None:
