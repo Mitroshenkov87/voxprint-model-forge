@@ -10,11 +10,13 @@ from pathlib import Path
 
 import torch
 from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, ZImagePipeline, ZImageTransformer2DModel
+from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from torch import nn
 from transformers import PreTrainedTokenizerFast, Qwen2Config, Qwen2Model
 
+from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.compare.engine import _native_text, _text_pipe
 from voxprint_forge.compare.plan import load_compare_plan
 from voxprint_forge.diffusion.fp8 import quantize_weight, save_quantized
@@ -24,8 +26,18 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / "plans" / "compare-synth4.toml"
 
 
-def main(root: Path) -> None:
-    """Build the fixture, prove the weight file is required, then overlay FP8."""
+def main(root: Path, mode: str) -> None:
+    """Build the fixture, then require a complete FP8 overlay on the config shell."""
+    if mode == "complete":
+        _assert_complete(root)
+        return
+    if mode in {"missing", "mismatch"}:
+        _assert_gap(root, mode)
+        return
+    raise SystemExit("usage: compare_fp8_shell.py DIR {complete,missing,mismatch}")
+
+
+def _assert_complete(root: Path) -> None:
     folder = _tiny_fp8_arm(root)
     base = folder / "base"
     if any((base / "transformer").glob("*.safetensors")):
@@ -53,6 +65,55 @@ def main(root: Path) -> None:
     if any((base / "transformer").glob("*.safetensors")):
         raise SystemExit("load linked transformer weights back into the base")
     print(f"layers_swapped {note['layers_swapped']}")
+
+
+def _assert_gap(root: Path, mode: str) -> None:
+    folder = _tiny_fp8_arm(root)
+    key = _mutate_overlay(folder / "weights" / "transformer-fp8.safetensors", mode)
+    for arm_id in ("c", "c-dq"):
+        _expect_coverage_error(folder, arm_id, key)
+    print(f"{mode} {key}")
+
+
+def _expect_coverage_error(folder: Path, arm_id: str, needle: str) -> None:
+    job = load_compare_plan(PLAN).job("D1")
+    arm = job.arm(arm_id)
+    try:
+        if arm.compute == "fp8-native":
+            _native_text(ZImagePipeline, arm, folder, torch.bfloat16)
+        else:
+            _text_pipe(ZImagePipeline, arm, folder, torch.bfloat16)
+    except CompareSetup as exc:
+        text = str(exc)
+        if exc.code != "compare_weights" or needle not in text or "fp8 shell did not cover" not in text:
+            raise SystemExit(f"{arm_id} bad error {exc.code}: {text}") from exc
+        return
+    raise SystemExit(f"{arm_id} accepted an incomplete fp8 shell")
+
+
+def _mutate_overlay(path: Path, mode: str) -> str:
+    tensors = load_file(path)
+    key = _coverage_key(tensors)
+    if mode == "missing":
+        del tensors[key]
+        tensors.pop(f"{key}.scale_weight", None)
+    elif mode == "mismatch":
+        value = tensors[key]
+        shape = (value.shape[0] + 1,) if value.ndim == 1 else (*value.shape[:-1], value.shape[-1] + 1)
+        tensors[key] = torch.zeros(shape, dtype=value.dtype)
+    else:
+        raise SystemExit(f"unknown mutation {mode}")
+    save_quantized(tensors, path)
+    return key
+
+
+def _coverage_key(tensors: dict[str, torch.Tensor]) -> str:
+    for key in sorted(tensors):
+        if key.endswith(".scale_weight"):
+            continue
+        if "norm" in key and key.endswith(".weight"):
+            return key
+    raise SystemExit("fixture has no norm weight")
 
 
 def _tiny_fp8_arm(root: Path) -> Path:
@@ -126,6 +187,6 @@ def _quantize_transformer(module: nn.Module) -> dict[str, torch.Tensor]:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: compare_fp8_shell.py DIR")
-    main(Path(sys.argv[1]))
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: compare_fp8_shell.py DIR {complete,missing,mismatch}")
+    main(Path(sys.argv[1]), sys.argv[2])

@@ -114,17 +114,21 @@ def test_fp8_note_skips_disabled_arms() -> None:
     assert "c-dq: FP8 weights expanded to BF16" in text
 
 
-def test_local_fp8_loads_without_base_transformer_weights(tmp_path: Path) -> None:
-    """A child process loads a tiny on-disk pipeline that has no transformer weights."""
+@pytest.mark.parametrize("mode", ["complete", "missing", "mismatch"])
+def test_from_config_fp8_coverage(tmp_path: Path, mode: str) -> None:
+    """A from-config shell accepts only a complete FP8 file. No download."""
     script = ROOT / "tests" / "compare_fp8_shell.py"
     done = subprocess.run(
-        [sys.executable, str(script), str(tmp_path)],
+        [sys.executable, str(script), str(tmp_path), mode],
         check=False,
         capture_output=True,
         text=True,
     )
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "layers_swapped" in done.stdout
+    if mode == "complete":
+        assert "layers_swapped" in done.stdout
+    else:
+        assert mode in done.stdout
     assert "diffusers" not in sys.modules
 
 

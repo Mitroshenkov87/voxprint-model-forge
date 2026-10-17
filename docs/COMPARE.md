@@ -116,7 +116,7 @@ Every arm of a job uses one attention setting from the plan (`sdpa` by
 default: flash, cuDNN, and efficient kernels, never MATH). `sdpa-math` is
 MATH only. Any other value is passed to `pipe.transformer.set_attention_backend`
 and is opt-in, including Hopper FlashAttention-3. cuDNN benchmark and TF32
-stay off. `summary.json` records the GPU. `fp8_note` is one sentence per arm:
+stay off. `summary.json` records the GPU. `fp8_note` is one sentence per enabled FP8 arm:
 dequant says the seconds and VRAM are BF16 numbers, and native names the
 detected GPU and its compute capability.
 
@@ -125,8 +125,11 @@ detected GPU and its compute capability.
 Each `repo@revision` is downloaded once per run into `$FORGE_OUT/compare-cache/`.
 Arm folders hardlink the files they load. A local FP8 arm does not link
 `transformer/*.safetensors` from the base snapshot; the config stays, and the
-FP8 file replaces the weights. `component_bytes` counts only the files in the
-arm folder.
+FP8 file replaces the weights. That transformer is built from `config.json`,
+so it starts random: the overlay must fill every parameter and persistent
+buffer, with no shape mismatches, or the job stops with `compare_weights`.
+An overlay onto real base weights still accepts a match of half the weight
+keys. `component_bytes` counts only the files in the arm folder.
 
 `[defaults] queue` is `D1`, `D3`, `D2`, `D4`. A cache entry is deleted when
 the last job in that queue which would download it finishes. A job the GPU

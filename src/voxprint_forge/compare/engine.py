@@ -22,7 +22,7 @@ from voxprint_forge.compare.cases import Case
 from voxprint_forge.compare.codes import CompareSetup
 from voxprint_forge.compare.int4 import load_zimage_int4
 from voxprint_forge.compare.plan import Arm, Job, Kind
-from voxprint_forge.diffusion.fp8_native import Fp8Linear, apply_fp8_native, self_check
+from voxprint_forge.diffusion.fp8_native import Fp8Linear, _shell_coverage_error, apply_fp8_native, self_check
 from voxprint_forge.diffusion.scenes import canny_map, depth_map, pose_map, render_scene
 from voxprint_forge.scrub import active_secrets, scrub
 
@@ -279,9 +279,9 @@ def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> o
         _stamp_dequant(pipe, arm)
         return pipe
     base = _require_dir(folder / "base", arm.id)
-    pipe = _load_base(pipeline_cls, base, dtype)
+    pipe, shell = _load_base(pipeline_cls, base, dtype)
     overlay_root = weights if weights.is_dir() else folder
-    _overlay(pipe, overlay_root)
+    _overlay(pipe, overlay_root, shell=shell)
     _stamp_dequant(pipe, arm)
     return pipe
 
@@ -289,10 +289,10 @@ def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> o
 def _native_text(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
     """Load the base on CPU in BF16, swap FP8 linears, then drop the replaced weights."""
     base = _require_dir(folder / "base", arm.id)
-    pipe = _load_base(pipeline_cls, base, dtype)
+    pipe, shell = _load_base(pipeline_cls, base, dtype)
     weights = folder / "weights"
     overlay_root = weights if weights.is_dir() else folder
-    stats = _overlay(pipe, overlay_root, native=True, act_scale=arm.fp8_act_scale)
+    stats = _overlay(pipe, overlay_root, native=True, act_scale=arm.fp8_act_scale, shell=shell)
     _remember_native(pipe, arm, stats or {})
     gc.collect()
     return pipe
@@ -369,13 +369,15 @@ def _overlay(
     *,
     native: bool = False,
     act_scale: str = "dynamic",
+    shell: bool = False,
 ) -> dict[str, object] | None:
     """Merge every shard of a module, then apply that module once.
 
     A Hugging Face ``*.safetensors.index.json`` names the files when it is
     present. Coverage is checked on the merged module, not on each shard.
     ``native`` keeps float8 bytes and returns swap counts. The default path
-    still dequantises ``voxprint-fp8-v1`` to BF16.
+    still dequantises ``voxprint-fp8-v1`` to BF16. ``shell`` means the
+    transformer was built from config, so that module must be fully covered.
     """
     files = [path for path in sorted(folder.rglob("*.safetensors")) if "base" not in path.parts]
     if not files:
@@ -384,6 +386,8 @@ def _overlay(
     swapped = 0
     fallback = 0
     first: Fp8Linear | None = None
+    saw_transformer = False
+    transformer = getattr(pipe, "transformer", None)
     for label, states in _shard_groups(pipe, folder, loaded):
         merged: dict[str, object] = {}
         for state in states:
@@ -391,8 +395,11 @@ def _overlay(
         module = _best_module(pipe, merged)
         if module is None:
             raise CompareSetup(f"{label} matched no pipeline module", code="compare_weights")
+        require_full = shell and module is transformer
+        if require_full:
+            saw_transformer = True
         if native:
-            stats = apply_fp8_native(module, merged, act_scale=act_scale)
+            stats = apply_fp8_native(module, merged, act_scale=act_scale, require_full=require_full)
             swapped += int(stats["layers_swapped"])
             fallback += int(stats["layers_fallback"])
             layer = stats.get("first_layer")
@@ -400,7 +407,12 @@ def _overlay(
                 first = layer
             del merged
         else:
-            _apply(module, merged, label)
+            _apply(module, merged, label, require_full=require_full)
+    if shell and not saw_transformer:
+        raise CompareSetup(
+            "fp8 shell did not cover the transformer: no overlay matched the transformer",
+            code="compare_weights",
+        )
     if not native:
         return None
     del loaded
@@ -548,13 +560,14 @@ def _best_module(pipe: object, state: dict[str, object]) -> object | None:
     return best
 
 
-def _apply(module: object, state: dict[str, object], label: str) -> None:
+def _apply(module: object, state: dict[str, object], label: str, *, require_full: bool = False) -> None:
     import torch
 
     from voxprint_forge.diffusion.alias import alias_key
 
     current = module.state_dict()
     mapped: dict[str, torch.Tensor] = {}
+    mismatched: list[str] = []
     for raw_key, value in state.items():
         if not isinstance(raw_key, str) or raw_key.endswith(".scale_weight"):
             continue
@@ -566,10 +579,19 @@ def _apply(module: object, state: dict[str, object], label: str) -> None:
         target = current[key]
         tensor = value.detach()
         if tensor.shape != target.shape:
+            if require_full:
+                mismatched.append(key)
             continue
         if tensor.is_floating_point() and tensor.dtype != target.dtype:
             tensor = tensor.to(dtype=target.dtype)
         mapped[key] = tensor
+    if require_full:
+        bad = set(mismatched)
+        missing = [key for key in current if key not in mapped and key not in bad]
+        if missing or mismatched:
+            _shell_coverage_error(missing, mismatched)
+        module.load_state_dict(mapped, strict=True)
+        return
     weight_keys = [key for key in current if key.endswith(".weight")]
     if len(mapped) < max(1, len(weight_keys) // 2):
         raise CompareSetup(f"{label} matched {len(mapped)} tensors", code="compare_weights")
@@ -599,25 +621,27 @@ def _place(pipe: object, arm: Arm) -> None:
         setter(disable=True)
 
 
-def _load_base(pipeline_cls: object, base: Path, dtype: object, **extra: object) -> object:
+def _load_base(pipeline_cls: object, base: Path, dtype: object, **extra: object) -> tuple[object, bool]:
     """Load a base snapshot.
 
     The shared cache leaves ``transformer/config.json`` in place and does not
     link ``transformer/*.safetensors`` for a local FP8 arm. Build that module
-    from the config so diffusers does not ask for the base BF16 file.
+    from the config so diffusers does not ask for the base BF16 file. The
+    second value is true when that shell started from random weights.
     """
     transformer = base / "transformer"
     config_path = transformer / "config.json"
     has_weights = transformer.is_dir() and any(transformer.rglob("*.safetensors"))
     if has_weights or not config_path.is_file():
-        return pipeline_cls.from_pretrained(str(base), torch_dtype=dtype, **extra)
+        return pipeline_cls.from_pretrained(str(base), torch_dtype=dtype, **extra), False
     from diffusers import ZImageTransformer2DModel
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
     shell = ZImageTransformer2DModel.from_config(config)
     if dtype is not None:
         shell = shell.to(dtype=dtype)
-    return pipeline_cls.from_pretrained(str(base), transformer=shell, torch_dtype=dtype, **extra)
+    loaded = pipeline_cls.from_pretrained(str(base), transformer=shell, torch_dtype=dtype, **extra)
+    return loaded, True
 
 
 def _require_dir(path: Path, arm_id: str) -> Path:
