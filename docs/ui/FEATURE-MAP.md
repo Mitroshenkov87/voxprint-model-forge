@@ -14,7 +14,8 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Photo limits | Simple 10-30; `--allow-count-outside-range` (floor 5) | Photos: Next gate; Expert mode warns outside 10-30 | mapped |
 | What it is | `--kind person\|object\|style` | Photos: chips | mapped |
 | Name, Stage name, Trigger | `--name`, `--stage-name`, `--trigger` | Subject and consent | mapped |
-| Consent and 18+ (person) | `--consent-obtained`, `--subject-adult` | Subject and consent: two required boxes | mapped |
+| Consent and 18+ (person) | `--consent-obtained`, `--consent-method verbal\|file`, `--subject-adult` | Subject and consent: Consent obtained with Verbal on its right (or attach a release), 18+ | mapped |
+| Adult content (person, 18+) | `--adult-content` | Subject and consent: right of 18+, shown only while 18+ is ticked | mapped |
 | Rights (object, style) | `--rights-confirmed` | Subject and consent: one required box per kind | mapped |
 | Model release, provenance note | `--release`, `--provenance-note` | Subject and consent | mapped |
 | Crop | `--crop subject\|whole` | Check and prepare: chips | mapped |

@@ -31,6 +31,7 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import engine
 from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
+from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 
 APP_ID = "model-forge"
@@ -479,46 +480,79 @@ class ForgeApp:
         column.addLayout(form)
         kind = self.draft.kind
         if kind == "person":
-            boxes = (
-                ("forge.app.subject.consent", "lora.subject.consent.tip", "consent"),
-                ("forge.app.subject.adult", "lora.subject.adult.tip", "adult"),
+            consent = self._box("forge.app.subject.consent", "lora.subject.consent.tip", "consent")
+            verbal = self._box("forge.app.subject.verbal", "lora.subject.verbal.tip", "verbal", self._set_verbal)
+            content = self._box("forge.app.subject.adult_content", "lora.subject.adult_content.tip", "adult_content")
+            content.setVisible(self.draft.adult)
+            adult = self._box(
+                "forge.app.subject.adult", "lora.subject.adult.tip", "adult",
+                lambda checked: self._set_adult(checked, content),
             )
+            column.addWidget(_flow_row("forge.subject.consent_row", consent, verbal))
+            column.addWidget(_flow_row("forge.subject.adult_row", adult, content))
         elif kind == "object":
-            boxes = (("lora.subject.rights_object", "lora.subject.rights_object.tip", "rights"),)
+            column.addWidget(self._box("lora.subject.rights_object", "lora.subject.rights_object.tip", "rights"))
         elif kind == "style":
-            boxes = (("lora.subject.rights_style", "lora.subject.rights_style.tip", "rights"),)
+            column.addWidget(self._box("lora.subject.rights_style", "lora.subject.rights_style.tip", "rights"))
         else:
-            boxes = ()
             hint = QtWidgets.QLabel(tr("forge.app.subject.choose_kind"))
             hint.setObjectName("warn")
             column.addWidget(hint)
-        for label, tip, field in boxes:
-            box = QtWidgets.QCheckBox(tr(label))
-            box.setObjectName(f"forge.subject.{field}")
-            box.setToolTip(tr(tip))
-            box.setChecked(bool(getattr(self.draft, field)))
-            box.toggled.connect(lambda checked, f=field: (setattr(self.draft, f, checked), self._gate()))
-            column.addWidget(box)
+        verbal_only = kind == "person" and self.draft.verbal
         release_row = QtWidgets.QHBoxLayout()
         attach = _button("forge.app.subject.release", "lora.subject.release.tip", self.choose_release)
+        attach.setObjectName("forge.subject.release")
+        attach.setEnabled(not verbal_only)
         release_row.addWidget(attach)
         shown = self.draft.release
-        state = QtWidgets.QLabel(
-            tr("forge.app.subject.release_set", name=shown.name) if shown else tr("forge.app.subject.release_none")
-        )
+        if verbal_only:
+            text = tr("forge.app.subject.release_verbal")
+        elif shown:
+            text = tr("forge.app.subject.release_set", name=shown.name)
+        else:
+            text = tr("forge.app.subject.release_none")
+        state = QtWidgets.QLabel(text)
         state.setObjectName("panel")
-        release_row.addWidget(state)
-        if shown is not None:
+        state.setWordWrap(True)
+        release_row.addWidget(state, 1)
+        if shown is not None and not verbal_only:
             release_row.addWidget(
                 _button("forge.app.subject.release_clear", "forge.app.subject.release_clear.tip", self.clear_release)
             )
-        release_row.addStretch(1)
         column.addLayout(release_row)
         note = _edit(self.draft.note, "lora.subject.note.tip", "forge.app.subject.note.field")
         note.textChanged.connect(lambda text: setattr(self.draft, "note", text))
         notes = QtWidgets.QFormLayout()
         notes.addRow(tr("forge.app.subject.note"), note)
         column.addLayout(notes)
+
+    def _box(
+        self, label: str, tip: str, field: str, on_toggle: Callable[[bool], None] | None = None
+    ) -> QtWidgets.QCheckBox:
+        box = QtWidgets.QCheckBox(tr(label))
+        box.setObjectName(f"forge.subject.{field}")
+        box.setToolTip(tr(tip))
+        box.setChecked(bool(getattr(self.draft, field)))
+        if on_toggle is not None:
+            box.toggled.connect(on_toggle)
+        else:
+            box.toggled.connect(lambda checked, f=field: (setattr(self.draft, f, checked), self._gate()))
+        return box
+
+    def _set_verbal(self, checked: bool) -> None:
+        self.draft.set_verbal(checked)
+        QtCore.QTimer.singleShot(0, self.repaint)  # the release row changes; rebuild after this signal
+
+    def _set_adult(self, checked: bool, content: QtWidgets.QCheckBox) -> None:
+        """The adult-content box sits right of 18 or older and shows only while that is ticked."""
+        self.draft.set_adult(checked)
+        if not checked:
+            content.setChecked(False)
+        content.setVisible(checked)
+        row = content.parentWidget()
+        if isinstance(row, FlowRow):
+            row.relayout()
+        self._gate()
 
     def _prepare(self, column: QtWidgets.QVBoxLayout) -> None:
         crop_label = QtWidgets.QLabel(tr("forge.app.prepare.crop"))
@@ -743,6 +777,7 @@ class ForgeApp:
         if kind != self.draft.kind:
             self.draft.kind = kind
             self.draft.consent = self.draft.adult = self.draft.rights = False
+            self.draft.verbal = self.draft.adult_content = False
             self.draft.prepared = None
         self._gate()
 
@@ -1118,6 +1153,11 @@ def _button(label: str, tip: str, slot: Callable[[], None], *, primary: bool = F
     button.setAutoDefault(False)
     button.clicked.connect(lambda _checked=False: slot())
     return button
+
+
+def _flow_row(name: str, *widgets: QtWidgets.QWidget) -> FlowRow:
+    """Widgets side by side that wrap onto the next line in a narrow window."""
+    return FlowRow(name, widgets)
 
 
 def _edit(text: str, tip: str, name: str) -> QtWidgets.QLineEdit:

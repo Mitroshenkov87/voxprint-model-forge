@@ -26,10 +26,10 @@ def tiny_base():
     bases.unregister("tiny-test")
 
 
-def trained(tmp_path, *, preview=False):
+def trained(tmp_path, *, preview=False, subject=None):
     project = make_project(tmp_path / "proj")
     data = project.read()
-    data["subject"] = {
+    data["subject"] = subject or {
         "kind": "object",
         "name": "Test cube",
         "stage_name": "",
@@ -77,6 +77,44 @@ def test_export_writes_typed_metadata_and_sidecar(tmp_path) -> None:
     assert Image.open(target.parent / "preview.webp").format == "WEBP"
     assert (target.parent / "LICENSE").is_file() and (target.parent / "NOTICE").is_file()
     assert not any(gate_like(key) for key in sidecar)
+    assert meta["voxprint.lora.adult_content"] == "false" and sidecar["voxprint.lora.adult_content"] is False
+    assert "voxprint.subject.consent_method" not in meta and "voxprint.subject.consent_method" not in sidecar
+
+
+PERSON = {
+    "kind": "person",
+    "name": "Demo Person",
+    "stage_name": "",
+    "trigger": "demo_person",
+    "consent_obtained": True,
+    "adult_confirmed": True,
+    "rights_confirmed": False,
+    "provenance_note": "",
+}
+
+
+@pytest.mark.parametrize(
+    ("extra", "method", "digest", "adult"),
+    [
+        ({"release_attached": False, "release_sha256": "", "consent_method": "verbal", "adult_content": True},
+         "verbal", "", "true"),
+        ({"release_attached": True, "release_sha256": "cd" * 32, "consent_method": "file", "adult_content": False},
+         "file", "cd" * 32, "false"),
+        ({"release_attached": False, "release_sha256": ""}, "verbal", "", "false"),  # project from before the field
+    ],
+)
+def test_person_export_records_consent_method_and_adult_content(tmp_path, extra, method, digest, adult) -> None:
+    project = trained(tmp_path, subject={**PERSON, **extra})
+    result = export(project, Progress())
+    meta = header(result["file"])
+    assert meta["voxprint.subject.consent_method"] == method
+    assert meta["voxprint.subject.release_sha256"] == digest
+    assert meta["voxprint.lora.adult_content"] == adult
+    assert all(key.startswith(("voxprint.subject.", "voxprint.lora.")) for key in meta)
+    assert not any(gate_like(key) for key in meta)
+    sidecar = json.loads((project.root / "export" / "voxprint-model.json").read_text())
+    assert sidecar["voxprint.subject.consent_method"] == method
+    assert sidecar["voxprint.lora.adult_content"] is (adult == "true")
 
 
 def test_install_goes_to_user_models_lora_id(tmp_path, monkeypatch) -> None:

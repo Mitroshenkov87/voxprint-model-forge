@@ -433,6 +433,7 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--stage-name STAGE_NAME] [--trigger TRIGGER]
                           [--consent-obtained] [--subject-adult]
                           [--rights-confirmed] [--release RELEASE]
+                          [--consent-method {verbal,file}] [--adult-content]
                           [--provenance-note PROVENANCE_NOTE]
                           [--mode {simple,expert}]
                           [--allow-count-outside-range]
@@ -458,6 +459,11 @@ options:
   --subject-adult       Person: the subject is 18 or older.
   --rights-confirmed    Object or style: you have the rights.
   --release RELEASE     Optional model release file.
+  --consent-method {verbal,file}
+                        Person: verbal (no file) or file (needs --release).
+                        Default: file with --release, else verbal.
+  --adult-content       Person, 18+ only: the photos contain adult content (a
+                        label).
   --provenance-note PROVENANCE_NOTE
                         Optional note on where the photos come from.
   --mode {simple,expert}

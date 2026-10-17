@@ -14,6 +14,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+# Narrow window widths in px (Simple, Expert); the subject rows wrap there without cutting a label.
+# Expert mode is wider because the Expert panel takes the right-hand side.
+NARROW = {False: 420, True: 900}
+
+
 def main(out: Path) -> None:
     home = Path(tempfile.mkdtemp(prefix="forge-shots-"))
     os.environ["VOXPRINT_HOME"] = str(home)
@@ -58,8 +63,14 @@ def main(out: Path) -> None:
             next_button.click()
             forge.draft.set_names("Mira Demo", "")
             forge.draft.consent = forge.draft.adult = True
+            forge.draft.set_verbal(True)
+            forge.draft.adult_content = True
             forge.repaint()
             shot("2-subject")
+            wide = forge.window.size()
+            forge.window.resize(NARROW[expert], wide.height())
+            shot("2-subject-narrow")
+            forge.window.resize(wide)
             next_button.click()
             forge.prepare()
             shot("3-prepare")

@@ -61,13 +61,24 @@ def header_metadata(data: dict[str, object]) -> dict[str, str]:
         "voxprint.lora.steps": str(train.get("step", "")),
         "voxprint.lora.kind": kind,
         "voxprint.lora.trained_on": str(train.get("trained_on", "")),
+        "voxprint.lora.adult_content": _flag(subject.get("adult_content")),
     }
+    if kind == "person":
+        meta["voxprint.subject.consent_method"] = consent_method(subject)
     if kind in ("object", "style"):
         meta["voxprint.subject.rights_confirmed"] = _flag(subject.get("rights_confirmed"))
     for key in meta:
         if gate_like(key):
             raise AssertionError(f"gate-like key {key}")
     return meta
+
+
+def consent_method(subject: dict[str, object]) -> str:
+    """``verbal`` or ``file`` for a person. Projects from before the field read ``file`` only with a release."""
+    method = str(subject.get("consent_method") or "")
+    if method in ("verbal", "file"):
+        return method
+    return "file" if subject.get("release_attached") is True else "verbal"
 
 
 def user_models_dir() -> Path:
@@ -150,7 +161,8 @@ def export(
 def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) -> dict[str, object]:
     """The ``voxprint-model/1`` descriptor agreed with Canvas."""
     raw = target.read_bytes()
-    kind = str(dict(data.get("subject") or {}).get("kind") or data.get("kind") or "")
+    subject = dict(data.get("subject") or {})  # type: ignore[call-overload]
+    kind = str(subject.get("kind") or data.get("kind") or "")
     doc: dict[str, object] = {
         "schema": SCHEMA,
         "min_schema": MIN_SCHEMA,
@@ -166,7 +178,10 @@ def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) 
         "default_strength": DEFAULT_STRENGTH,
         "strength_range": list(STRENGTH_RANGE),
         "tags": [str(tag) for tag in tags if str(tag).strip()],
+        "voxprint.lora.adult_content": subject.get("adult_content") is True,
     }
+    if kind == "person":
+        doc["voxprint.subject.consent_method"] = consent_method(subject)
     if preview is not None:
         doc["preview"] = preview.name
         doc["preview_sha256"] = hashlib.sha256(preview.read_bytes()).hexdigest()

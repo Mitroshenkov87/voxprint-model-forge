@@ -79,6 +79,7 @@ def test_adding_a_folder_skips_other_files_and_duplicates(tmp_path: Path) -> Non
     [
         ("person", {"consent": True}, "lora.err.no_consent"),
         ("person", {"adult": True}, "lora.err.no_consent"),
+        ("person", {"consent": True, "adult": True}, "lora.err.no_release"),
         ("object", {}, "lora.err.no_rights"),
         ("style", {}, "lora.err.no_rights"),
     ],
@@ -94,9 +95,29 @@ def test_consent_per_kind(tmp_path: Path, kind: str, fields: dict[str, bool], mi
     assert draft.check("subject").key == missing
     if kind == "person":
         draft.consent = draft.adult = True
+        draft.set_verbal(True)
     else:
         draft.rights = True
     assert draft.check("subject").ok
+
+
+def test_consent_is_verbal_or_a_file_and_adult_content_needs_18(tmp_path: Path) -> None:
+    draft = Draft(kind="person", consent=True, adult=True)
+    draft.add_photos(_photos(tmp_path, 12))
+    draft.set_names("Demo Person", "")
+    assert draft.check("subject").key == "lora.err.no_release"
+    draft.release = tmp_path / "release.pdf"
+    assert draft.check("subject").ok and draft.consent_method() == "file"
+    draft.set_verbal(True)
+    assert draft.release is None and draft.consent_method() == "verbal" and draft.check("subject").ok
+    draft.adult_content = True
+    assert draft.check("subject").ok
+    draft.set_adult(False)
+    assert draft.adult_content is False and draft.check("subject").key == "lora.err.no_consent"
+    draft.adult = True
+    draft.adult_content, draft.kind = True, "object"
+    draft.rights = True
+    assert draft.check("subject").key == "lora.err.adult_content"
 
 
 def test_a_safety_block_is_final(tmp_path: Path) -> None:
@@ -157,6 +178,35 @@ def test_every_builder_parses_with_the_real_cli(tmp_path: Path) -> None:
     ]
     for args in built:
         assert build_parser().parse_args(args).json is True, args
+
+
+@pytest.mark.parametrize("verbal", [False, True])
+@pytest.mark.parametrize("adult_content", [False, True])
+def test_gui_subject_flags_mean_the_same_to_the_cli(tmp_path: Path, verbal: bool, adult_content: bool) -> None:
+    from voxprint_forge.cli import build_parser
+    from voxprint_forge.lora.cli import subject_from
+
+    draft = _ready_draft(tmp_path)
+    (tmp_path / "release.pdf").write_bytes(b"signed")
+    draft.set_verbal(verbal)
+    draft.adult_content = adult_content
+    assert draft.check("subject").ok
+    args = engine.prepare_args(draft, tmp_path / "proj")
+    assert args[args.index("--consent-method") + 1] == ("verbal" if verbal else "file")
+    assert ("--release" in args) is (not verbal)
+    assert ("--adult-content" in args) is adult_content
+    subject = subject_from(build_parser().parse_args(args))
+    assert subject.consent_method == draft.consent_method()
+    assert subject.adult_content is adult_content and subject.adult_confirmed and subject.consent_obtained
+    assert subject.release_attached is (not verbal) and (subject.release_sha256 == "") is verbal
+
+
+def test_adult_content_is_not_sent_without_18(tmp_path: Path) -> None:
+    draft = _ready_draft(tmp_path)
+    draft.adult_content = True
+    draft.set_adult(False)
+    args = engine.prepare_args(draft, tmp_path / "proj")
+    assert "--adult-content" not in args and "--subject-adult" not in args
 
 
 def test_export_args(tmp_path: Path) -> None:
