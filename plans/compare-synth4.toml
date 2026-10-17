@@ -18,7 +18,7 @@ public_seeds = [0, 1]
 private_limit = 50
 control_scale = 0.75
 attention = "sdpa"
-queue = ["D1", "D3", "D2", "D4"]
+queue = ["D1", "D3", "D2", "D4", "D3-LITE"]
 
 [[jobs]]
 id = "D1"
@@ -179,6 +179,8 @@ files = ["zimage-turbo-controlnet-union-2.1-bf16.safetensors"]
 [[jobs.arms]]
 id = "mirror-lite-fp8"
 role = "candidate"
+enabled = false
+skip_reason = "moved to D3-LITE: the lite file has 3 control blocks, so its reference is the upstream Lite BF16, not the full model"
 repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
 revision = "cc9fddea"
 base_repo = "Tongyi-MAI/Z-Image-Turbo"
@@ -187,6 +189,43 @@ quant = "fp8"
 compute = "fp8-native"
 offload = false
 files = ["zimage-turbo-controlnet-union-2.1-lite-fp8.safetensors"]
+
+[[jobs]]
+id = "D3-LITE"
+kind = "control"
+steps = 8
+guidance = 0.0
+prompts = "control"
+controls = ["canny", "depth", "pose"]
+private_sets = []
+reference = "upstream-lite-bf16"
+note = "ControlNet Union 2.1 Lite: our lite-fp8 against the upstream Lite 2602 BF16 it was made from (same 3 control blocks). Same cases and seeds as D3. Synthetic sets are not used."
+
+[[jobs.arms]]
+id = "upstream-lite-bf16"
+role = "reference"
+repo = "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+revision = "5155fc56d17821007d6f62ac192c09e0f0e72016"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "bf16"
+compute = "bf16"
+offload = false
+files = ["Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors"]
+sha256 = "3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35"
+
+[[jobs.arms]]
+id = "mirror-lite-fp8"
+role = "candidate"
+repo = "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1"
+revision = "cc9fddea"
+base_repo = "Tongyi-MAI/Z-Image-Turbo"
+base_revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
+quant = "fp8"
+compute = "fp8-native"
+offload = false
+files = ["zimage-turbo-controlnet-union-2.1-lite-fp8.safetensors"]
+sha256 = "771bff3bd1fa6ae219fc3c69d87bc511c8ea2a1fa2ef8ebc0129dfde811d8f60"
 
 [[jobs]]
 id = "D4"

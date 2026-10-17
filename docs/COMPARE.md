@@ -143,11 +143,32 @@ a direct measurement**. No `c-dq` GPU arm is run for identity.
   for `c`.
 - If a later Windows or laptop check shows identity drift on `c-dq`, it is
   measured directly then.
-- Still open for the D-row bar: the aesthetic score or KID, and the 20-pair
-  blind side-by-side.
+- Blind side-by-side (Suite Lead, 2026-10-17): 20 D1 pairs of `c-dq`
+  against BF16 arm `a`, public prompts only, same prompt and seed per pair,
+  A/B order randomised and the key held apart from the sheets. 19/20 were
+  judged the same. 1/20 (pair 12, prompt id `7e835ce69631`, seed 1) preferred
+  A, which the key maps to BF16; the note was a slightly cleaner detail in A
+  and an extra small element in B. No pair preferred `c-dq`. This closes the
+  blind-review item for Turbo `c-dq`.
+- Still open for the D-row bar: the aesthetic score or KID.
 
 Native FP8 compute (D1 arms `c` and `d`) is dropped. Those arms stay in the
 plan with `enabled = false` so the earlier results can still be read.
+
+## D3 and D3-LITE (2026-10-17)
+
+`mirror-lite-fp8` is made from the upstream Lite checkpoint
+`Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors` (3 control
+blocks at 0, 10, 20; its BF16 tensors match that file byte for byte). D3 scored
+it against the full 15-block Union 2.1 model, so its LPIPS 0.559 measured Lite
+against full, not FP8. D3 now keeps only `mirror-bf16` against `upstream-bf16`;
+the lite arm stays in D3 with `enabled = false` so the earlier result can be read.
+
+D3-LITE scores `mirror-lite-fp8` against `upstream-lite-bf16` (the 2602 Lite
+file, `alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1` at `5155fc56`, sha256
+pinned). Cases, seeds, steps and control scale are D3's: 32 control prompts x
+canny/depth/pose x seeds 0 and 1. Pass: set-mean CLIP-T drop <= 1%. LPIPS is
+informational, plus a short visual check of a few canny, depth and pose pairs.
 
 ## FP8 modes
 
@@ -180,10 +201,10 @@ buffer, with no shape mismatches, or the job stops with `compare_weights`.
 An overlay onto real base weights still accepts a match of half the weight
 keys. `component_bytes` counts only the files in the arm folder.
 
-`[defaults] queue` is `D1`, `D3`, `D2`, `D4`. A cache entry is deleted when
+`[defaults] queue` is `D1`, `D3`, `D2`, `D4`, `D3-LITE`. A cache entry is deleted when
 the last job in that queue which would download it finishes. A job the GPU
 gate skips holds nothing, so on sm_90 the Turbo base is released at the end
-of D3. `forge compare --reclaim-cache` deletes the whole cache. Job weights
+of D3-LITE. `forge compare --reclaim-cache` deletes the whole cache. Job weights
 under `results/<job>/weights` are still deleted at the end of that job.
 
 ```bash
