@@ -266,4 +266,7 @@ def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_
         "extended": from_lora is not None,
     }
     project.write({**data, "train": record})
-    return {"state": state, "step": step, "steps": config.steps, "checkpoint": record["checkpoint"], "loss": loss}
+    result = {"state": state, "step": step, "steps": config.steps, "checkpoint": record["checkpoint"], "loss": loss}
+    if torch.cuda.is_available():
+        result["peak_vram_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+    return result
