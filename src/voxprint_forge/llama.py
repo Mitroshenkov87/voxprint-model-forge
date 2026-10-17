@@ -245,6 +245,46 @@ def perplexity_argv(binary: str, model: Path, corpus: Path, *, chunks: int, ctx:
     ]
 
 
+def kl_argv(
+    binary: str,
+    model: Path,
+    corpus: Path,
+    logits: Path,
+    *,
+    chunks: int,
+    ctx: int,
+    compare: bool,
+) -> list[str]:
+    """Argv for one llama-perplexity KL step. ``--fit`` stays off.
+
+    On llama.cpp b11476, ``--kl-divergence-base`` is an alias of
+    ``--save-all-logits``. A run without ``--kl-divergence`` writes that file.
+    A run with ``--kl-divergence`` reads it and prints KL, top-1, and delta-p.
+    """
+    argv = [
+        binary,
+        "-m",
+        str(model),
+        "-f",
+        str(corpus),
+        "--chunks",
+        str(chunks),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "--fit",
+        "off",
+        "--kl-divergence-base",
+        str(logits),
+    ]
+    if compare:
+        argv.append("--kl-divergence")
+    return argv
+
+
 def server_argv(
     binary: str,
     model: Path,

@@ -11,4 +11,5 @@ code.
 - [Testing](TESTING.md)
 - [CLI reference](cli-reference.md), generated from `forge`
 - [Compare harness](COMPARE.md)
+- [KL stage](KL.md)
 - [API](api.md), generated from docstrings

@@ -30,6 +30,8 @@ from voxprint_forge.errors import (
 )
 from voxprint_forge.fetch import HfDownloader
 from voxprint_forge.jsonio import emit
+from voxprint_forge.kl.cli import add_command as add_kl_command
+from voxprint_forge.kl.cli import execute as execute_kl
 from voxprint_forge.layout import Layout
 from voxprint_forge.llama import Runner
 from voxprint_forge.mdl import push_index, run_backfill, run_build
@@ -116,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     int4 = sub.add_parser("diffusion-int4", help="SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.")
     add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
     add_compare_command(sub)
+    add_kl_command(sub)
     index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
     index_sub = index.add_subparsers(dest="index_command", required=True)
     index_build = index_sub.add_parser(
@@ -322,6 +325,18 @@ def _dispatch(args: argparse.Namespace) -> object:
     if args.command == "compare":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
         return execute_compare(root, forge_out, str(args.job), args.plan)
+    if args.command == "kl":
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        return execute_kl(
+            root,
+            forge_out,
+            job_id=args.job,
+            plan_path=args.plan,
+            bf16=args.bf16,
+            quants=args.quant,
+            chunks=args.chunks,
+            ctx=args.ctx,
+        )
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
