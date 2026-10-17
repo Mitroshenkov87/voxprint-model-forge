@@ -1,0 +1,85 @@
+{
+ "_source": "ComfyUI a639f187 /object_info, input names only (CPU, 2026-10-17)",
+ "UNETLoader": {
+  "input": {
+   "required": {
+    "unet_name": null,
+    "weight_dtype": null
+   },
+   "optional": {}
+  }
+ },
+ "CLIPLoader": {
+  "input": {
+   "required": {
+    "clip_name": null,
+    "type": null
+   },
+   "optional": {
+    "device": null
+   }
+  }
+ },
+ "VAELoader": {
+  "input": {
+   "required": {
+    "vae_name": null
+   },
+   "optional": {}
+  }
+ },
+ "CLIPTextEncode": {
+  "input": {
+   "required": {
+    "text": null,
+    "clip": null
+   },
+   "optional": {}
+  }
+ },
+ "EmptyFlux2LatentImage": {
+  "input": {
+   "required": {
+    "width": null,
+    "height": null,
+    "batch_size": null
+   },
+   "optional": {}
+  }
+ },
+ "KSampler": {
+  "input": {
+   "required": {
+    "model": null,
+    "seed": null,
+    "steps": null,
+    "cfg": null,
+    "sampler_name": null,
+    "scheduler": null,
+    "positive": null,
+    "negative": null,
+    "latent_image": null,
+    "denoise": null
+   },
+   "optional": {}
+  }
+ },
+ "VAEDecode": {
+  "input": {
+   "required": {
+    "samples": null,
+    "vae": null
+   },
+   "optional": {}
+  }
+ },
+ "SaveImage": {
+  "input": {
+   "required": {
+    "images": null,
+    "filename_prefix": null
+   },
+   "optional": {}
+  }
+ }
+}

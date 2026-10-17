@@ -50,6 +50,16 @@ compare = [
   "torchvision",
   "nvidia-ml-py",
 ]
+# MOSS-Image fit job only (separate VM venv): the vendored pipeline needs newer diffusers/transformers
+# than the compare extra pins. scripts/vm_run_moss_fit.sh installs these exact versions.
+moss = [
+  "torch>=2.9",
+  "diffusers==0.41.0",
+  "transformers==5.20.1",
+  "accelerate>=1.0",
+  "safetensors>=0.4",
+  "Pillow",
+]
 gui = [
   "voxprint-common[ui]==0.2.5",
   "PySide6>=6.8",
@@ -88,10 +98,12 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/licences/*.txt", "app/locales/*.json", "app/guide/*.html", "app/guide/img/*.png"]
+voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/licences/*.txt", "app/locales/*.json", "app/guide/*.html", "app/guide/img/*.png", "vendored/**/LICENSE", "vendored/**/VENDOR.md"]
 
 [tool.ruff]
 line-length = 120
+# Vendored verbatim; see src/voxprint_forge/vendored/moss_image/VENDOR.md.
+extend-exclude = ["src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py"]
 target-version = "py312"
 src = ["src", "tests"]
 
@@ -111,6 +123,7 @@ ignore-semiprivate = true
 ignore-nested-functions = true
 fail-under = 65
 exclude = [
+  "src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py",
   "src/voxprint_forge/diffusion/probe_ablate.py",
   "src/voxprint_forge/diffusion/probe_decide.py",
   "src/voxprint_forge/diffusion/probe_gate.py",
