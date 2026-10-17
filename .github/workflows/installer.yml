@@ -41,7 +41,7 @@ jobs:
           $want = (Get-Content "$common.sha256").Split(" ")[0].Trim().ToLower()
           if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
           Copy-Item $common "$stage\wheels\"
-          foreach ($name in @("BUILD.json", "LICENSE", "NOTICE", "README.md")) { Copy-Item $name "$stage\$name" }
+          foreach ($name in @("BUILD.json", "LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
           Copy-Item installer\requirements-mivolo.txt "$stage\requirements-mivolo.txt"
           Copy-Item installer\windows\install.ps1 "$stage\install.ps1"
           $zip = Join-Path $env:RUNNER_TEMP "uv.zip"
@@ -73,7 +73,7 @@ jobs:
             if (Test-Path "$dir\setup-work\install.log") { Get-Content "$dir\setup-work\install.log" -Tail 80 }
             throw "install failed ($($p.ExitCode))"
           }
-          foreach ($f in @("venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe", "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE")) {
+          foreach ($f in @("venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe", "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md")) {
             if (-not (Test-Path "$dir\$f")) { throw "missing $f" }
           }
           & "$dir\venv\Scripts\voxprint-forge-cli.exe" --help | Out-Null
