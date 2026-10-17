@@ -99,12 +99,12 @@ _LOADERS: dict[str, Callable[[Path], Captioner]] = {DEFAULT: QwenCaptioner, FALL
 
 def load_captioner(choice: str = DEFAULT) -> Captioner | None:
     """The chosen captioner, else the other one, else ``None`` (``lora.err.captioner_missing``)."""
-    from voxprint_forge.lora.backends import model_dir
+    from voxprint_forge.lora.backends import installed_dir
 
     order = [choice] + [name for name in (DEFAULT, FALLBACK) if name != choice]
     for name in order:
-        folder = model_dir(name)
-        if not folder.is_dir():
+        folder = installed_dir(name)
+        if folder is None:
             continue
         try:
             return _LOADERS[name](folder)
