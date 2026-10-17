@@ -212,9 +212,16 @@ class ZImageAdapter(BaseAdapter):
             self._prompts[""] = self._embed("").to("cpu")
 
     def release_encoders(self) -> None:
-        """Move the VAE and text encoder to the CPU, then the transformer to the card."""
+        """Move the VAE and text encoder to the CPU, free their cache, then the transformer to the card.
+
+        Embeddings were cached on the card during :meth:`encode`; they stay (a few MB). Every
+        cached preview prompt is on the CPU already, so the text encoder never returns.
+        """
+        import gc
+
         self.pipe.vae.to("cpu")
         self.pipe.text_encoder.to("cpu")
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         self.pipe.transformer.to(self.device)
@@ -241,7 +248,12 @@ class ZImageAdapter(BaseAdapter):
                 self.prepare_previews([prompt])
             finally:
                 self.pipe.text_encoder.to("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.pipe.vae.to(self.device)
+        # Tiled decode: a full 1024 px decode is the largest single buffer of a preview.
+        if hasattr(self.pipe.vae, "enable_tiling"):
+            self.pipe.vae.enable_tiling()
         try:
             generator = torch.Generator(self.device).manual_seed(seed)
             return self.pipe(
