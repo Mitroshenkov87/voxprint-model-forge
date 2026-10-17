@@ -1,8 +1,10 @@
 # Compare harness
 
 `forge compare --job ID` scores an original arm against one or more compressed
-arms for the synth4 A100 queue. The plan is `plans/compare-synth4.toml`.
+arms for the synth4 queue. The plan is `plans/compare-synth4.toml`.
 `scripts/vm_run_compare.sh --job D1 --json` calls the same command.
+`scripts/vm_setup_synth4.sh` installs the `compare` extra and builds llama.cpp.
+It does not run a job. `--dry-run` prints the torch index and CUDA arch list.
 
 Exit codes for this command are separate from the rest of `forge`:
 
@@ -101,20 +103,38 @@ coverage check. A `*.safetensors.index.json` weight map selects the shard
 files when it is present. One shard of the text encoder or the transformer is
 not required to hold half of that module on its own.
 
-## A100 FP8 caveat
+## FP8 modes
 
-sm_80 has no FP8 tensor cores. An FP8 arm is dequantised to BF16 before the
-forward pass (`voxprint-fp8-v1` scales). Seconds per image and VRAM measured
-on the A100 are not RTX 40/50 numbers. Quality metrics and file sizes still
-apply. INT4 W4A4 is native on sm_80.
+`compute = "fp8-native"` keeps the `float8_e4m3fn` file bytes and runs them
+with dynamic per-tensor FP8 activations. It needs compute capability 8.9 or
+newer. On an older GPU those arms are skipped with `fp8-native needs sm_89+`
+and the rest of the job still runs. `compute = "bf16-dequant"` expands the
+same file to BF16 (`load_dequant_bf16`). D1 arm `c-dq` is that weight-only
+path. Native arms are valid only with `quant = "fp8"`.
 
-Arms (c) and (d) on D1, and the D4 FP8 arm, read files from `FORGE_FP8_DIR`.
-Those files are produced on the VM by `diffusion/fp8.py` (the Qwen3-4B encoder
-uses the `qwen3_encoder` profile) and are not published. When the variable is
-unset those arms are skipped and the other arms still run. On the A100 the
-loader is `load_dequant_bf16`: the FP8 tensors are expanded to BF16 before the
-forward.
+Every arm of a job uses one attention setting from the plan (`sdpa` by
+default: flash, cuDNN, and efficient kernels, never MATH). `sdpa-math` is
+MATH only. Any other value is passed to `pipe.transformer.set_attention_backend`
+and is opt-in, including Hopper FlashAttention-3. cuDNN benchmark and TF32
+stay off. `summary.json` records the GPU and the FP8 mode of each arm.
 
-D2 loads `NunchakuZImageTransformer2DModel` and records `nunchaku.__version__`.
-If the package, the class, or the load fails, the job exits 2. The upstream
-INT4 weights are a measurement-only baseline.
+```bash
+forge compare --make-fp8 --job D1 --out "$FORGE_FP8_DIR"
+forge compare --make-fp8 --job D4 --out "$FORGE_FP8_DIR"
+```
+
+`--make-fp8` writes `zimage-turbo-transformer-fp8.safetensors` and
+`qwen3-4b-text-encoder-fp8.safetensors` for D1 (encoder profile
+`qwen3_encoder`), and `zimage-transformer-fp8.safetensors` for D4. An existing
+`voxprint-fp8-v1` file is left in place. The files stay local.
+
+Arms `c`, `c-dq`, and `d` on D1, and the D4 FP8 arm, read those files from
+`FORGE_FP8_DIR`. When the variable is unset those arms are skipped and the
+other arms still run.
+
+D2 lists `requires_cc` for the INT4 arms. On sm_90 they are skipped with
+`nunchaku INT4 has no sm_90 kernels (Hopper lacks 4-bit tensor cores)` and the
+job exits 2 before nunchaku is imported. Do not build nunchaku for sm_90.
+Where the kernels exist, D2 loads `NunchakuZImageTransformer2DModel` and
+records `nunchaku.__version__`. If the package, the class, or the load fails,
+the job exits 2. The upstream INT4 weights are a measurement-only baseline.

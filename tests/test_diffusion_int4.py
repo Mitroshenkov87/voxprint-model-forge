@@ -269,7 +269,7 @@ def test_script_dry_run(tmp_path: Path) -> None:
     assert "6ea2651e7df66d7585f6ffee804b20e92fb38b8a" in text
     assert "c8c07d658a6cefc5a50cfdf6be7d726503612303" in text
     assert "lcpp.patch" in text
-    assert 'CMAKE_CUDA_ARCHITECTURES="80;90"' in text
+    assert 'CMAKE_CUDA_ARCHITECTURES="${FORGE_CUDA_ARCHS:-80;89;90;120}"' in text
     assert "venv-wan" in text
     for name in ("FORGE_WAN_REPO", "FORGE_WAN_PYTHON", "FORGE_COMFY_GGUF", "FORGE_LLAMA_SRC", "FORGE_LLAMA_BIN"):
         assert name in text

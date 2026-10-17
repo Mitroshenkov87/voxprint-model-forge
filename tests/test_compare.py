@@ -113,9 +113,14 @@ def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     turbo = plan.job("D1")
     assert turbo.steps == TURBO_STEPS
     assert turbo.guidance == TURBO_GUIDANCE
-    assert [item.id for item in turbo.enabled_arms()] == ["a", "b", "c", "d"]
+    assert [item.id for item in turbo.enabled_arms()] == ["a", "b", "c", "c-dq", "d"]
     assert turbo.arm("a").quant == "fp32"
     assert turbo.arm("a").compute == "bf16"
+    assert turbo.arm("c").compute == "fp8-native"
+    assert turbo.arm("c-dq").compute == "bf16-dequant"
+    assert turbo.arm("c-dq").files == turbo.arm("c").files
+    assert turbo.arm("d").compute == "fp8-native"
+    assert turbo.attention == "sdpa"
     assert turbo.arm("c").local is True
     assert turbo.arm("d").files == (
         "zimage-turbo-transformer-fp8.safetensors",
@@ -127,14 +132,16 @@ def test_plan_covers_the_synth4_diffusion_jobs() -> None:
     assert creative.private_sets == ()
     assert creative.arm("fp8").local is True
     assert creative.arm("fp8").enabled is True
+    assert creative.arm("fp8").compute == "fp8-native"
     ranked = plan.job("D2")
     assert [item.id for item in ranked.candidates()] == ["r128", "r256"]
     assert ranked.arm("r128").files == ("svdq-int4_r128-z-image-turbo.safetensors",)
+    assert ranked.requires_cc == ("7.5", "8.0", "8.6", "8.9", "12.0")
     control = plan.job("D3")
     assert control.prompts == "control"
     assert control.private_sets == ()
     assert [item.id for item in control.candidates()] == ["mirror-bf16", "mirror-lite-fp8"]
-    assert control.arm("mirror-lite-fp8").compute == "bf16-dequant"
+    assert control.arm("mirror-lite-fp8").compute == "fp8-native"
     text = PLAN.read_text(encoding="utf-8")
     assert "HF_TOKEN" not in text
     assert "BEGIN OPENSSH" not in text
@@ -204,7 +211,7 @@ def test_local_fp8_arms_wait_for_the_directory(tmp_path: Path, monkeypatch: pyte
     (folder / "qwen3-4b-text-encoder-fp8.safetensors").write_bytes(b"e")
     monkeypatch.setenv("FORGE_FP8_DIR", str(folder))
     opened = gate_local_arms(job)
-    assert [item.id for item in opened.enabled_arms()] == ["a", "b", "c", "d"]
+    assert [item.id for item in opened.enabled_arms()] == ["a", "b", "c", "c-dq", "d"]
 
 
 def test_disabled_candidate_is_a_setup_error(tmp_path: Path) -> None:

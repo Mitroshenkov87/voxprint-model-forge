@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from voxprint_forge.compare.attention import attention_scope, gpu_record
 from voxprint_forge.compare.cases import Case, Schedule, build_schedule
 from voxprint_forge.compare.codes import EXIT_FAIL, EXIT_PASS, CompareNoGpu, CompareSetup
 from voxprint_forge.compare.engine import fetch_arm, make_generator
@@ -38,6 +39,7 @@ GenerateFn = Callable[[Arm, Case, Job], Image.Image]
 ScoreFn = Callable[[Image.Image, Image.Image, Case], PairScore]
 FetchFn = Callable[[Arm, Path], None]
 SmiFn = Callable[[], int | None]
+HOPPER_INT4 = "nunchaku INT4 has no sm_90 kernels (Hopper lacks 4-bit tensor cores)"
 
 
 def cuda_available() -> bool:
@@ -57,6 +59,7 @@ def run_compare(
     fetch: FetchFn | None = None,
     smi: SmiFn | None = None,
     cuda: bool | None = None,
+    capability: tuple[int, int] | None = None,
 ) -> dict[str, object]:
     """Score every enabled candidate against the reference.
 
@@ -66,11 +69,12 @@ def run_compare(
     previous pipeline is released. Scorers load after that release. Weights
     under ``results/weights`` are deleted at the end. Review images stay.
     """
-    job = gate_local_arms(job)
+    seen = _capability(capability)
+    job = gate_requires_cc(gate_fp8_native(gate_local_arms(job), seen), seen)
     reference = job.reference_arm()
     candidates = job.candidates()
     if not candidates:
-        skipped = ", ".join(item.id for item in job.arms if not item.enabled) or "none"
+        skipped = ", ".join(_skip_label(item) for item in job.arms if not item.enabled) or "none"
         raise CompareSetup(f"{job.id} has no runnable candidate arm (skipped: {skipped})", code="compare_plan")
     schedule = build_schedule(job, private_root)
     if not schedule.cases:
@@ -115,6 +119,8 @@ def run_compare(
             score,
             smi,
         )
+        gpu = gpu_record(job.attention)
+        gpu["fp8"] = [dict(item) for item in getattr(generate, "fp8_notes", ())]
         payload = summarise(
             job,
             list(done.values()),
@@ -124,6 +130,7 @@ def run_compare(
             timings=list(timings.values()),
             secrets=secrets,
             int4_loads=list(getattr(generate, "int4_notes", ())),
+            gpu=gpu,
         )
         write_summary(results, payload, secrets)
     finally:
@@ -153,6 +160,59 @@ def gate_local_arms(job: Job) -> Job:
         for item in job.arms
     )
     return replace(job, arms=arms)
+
+
+def gate_fp8_native(job: Job, capability: tuple[int, int] | None) -> Job:
+    """Skip ``fp8-native`` arms below compute capability 8.9. Dequant arms stay."""
+    if capability is None or capability >= (8, 9):
+        return job
+    arms = tuple(
+        replace(item, enabled=False, skip_reason="fp8-native needs sm_89+")
+        if item.enabled and item.compute == "fp8-native"
+        else item
+        for item in job.arms
+    )
+    return replace(job, arms=arms)
+
+
+def gate_requires_cc(job: Job, capability: tuple[int, int] | None) -> Job:
+    """Skip INT4 arms whose compute capability is not in ``requires_cc``.
+
+    On sm_90 that reason is the Hopper kernel message, and the job exits 2
+    before nunchaku is imported.
+    """
+    if capability is None:
+        return job
+    label = f"{capability[0]}.{capability[1]}"
+    arms = tuple(
+        replace(item, enabled=False, skip_reason=HOPPER_INT4) if _cc_blocks(item, job, label) else item
+        for item in job.arms
+    )
+    return replace(job, arms=arms)
+
+
+def _capability(explicit: tuple[int, int] | None) -> tuple[int, int] | None:
+    if explicit is not None:
+        return explicit
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+    major, minor = torch.cuda.get_device_capability()
+    return (int(major), int(minor))
+
+
+def _cc_blocks(arm: Arm, job: Job, label: str) -> bool:
+    if not arm.enabled:
+        return False
+    needed = arm.requires_cc or (job.requires_cc if arm.compute == "int4" else ())
+    return bool(needed) and label not in needed
+
+
+def _skip_label(arm: Arm) -> str:
+    if arm.skip_reason:
+        return f"{arm.id} ({arm.skip_reason})"
+    return arm.id
 
 
 def _live_hooks(job: Job, weights: Path) -> tuple[GenerateFn, None]:
@@ -200,20 +260,21 @@ def _generate_pairs(
     """Render the reference, then each candidate, then score from the PNGs."""
     cache: dict[tuple[str, int], Image.Image] = {}
     shots: dict[tuple[str, int], tuple[Image.Image, float | None, int | None, int | None]] = {}
-    for arm in (reference, *candidates):
-        try:
-            contaminated = _open_arm(generate, arm, job, schedule, images)
-            for case in schedule.cases:
-                image, seconds, torch_bytes, smi_bytes = _image_for(
-                    arm, case, job, images, cache, generate, smi, secrets
-                )
-                if contaminated and seconds is not None:
-                    seconds = None
-                    contaminated = False
-                shots[(arm.id, case.ordinal)] = (image, seconds, torch_bytes, smi_bytes)
-                _store_timing(timings, timings_path, arm, case, seconds, torch_bytes, smi_bytes, secrets)
-        finally:
-            _release_generator(generate)
+    with attention_scope(job.attention):
+        for arm in (reference, *candidates):
+            try:
+                contaminated = _open_arm(generate, arm, job, schedule, images)
+                for case in schedule.cases:
+                    image, seconds, torch_bytes, smi_bytes = _image_for(
+                        arm, case, job, images, cache, generate, smi, secrets
+                    )
+                    if contaminated and seconds is not None:
+                        seconds = None
+                        contaminated = False
+                    shots[(arm.id, case.ordinal)] = (image, seconds, torch_bytes, smi_bytes)
+                    _store_timing(timings, timings_path, arm, case, seconds, torch_bytes, smi_bytes, secrets)
+            finally:
+                _release_generator(generate)
     scorer = score if score is not None else make_scorer()
     for case in schedule.cases:
         reference_image = shots[(reference.id, case.ordinal)][0]

@@ -181,7 +181,7 @@ def test_script_is_unattended_and_pins_the_windows_wheel() -> None:
     assert "FORGE_WAN_REPO" in bash
     assert "FORGE_WAN_PYTHON" in bash
     assert "lcpp.patch" in bash
-    assert 'CMAKE_CUDA_ARCHITECTURES="80;90"' in bash
+    assert 'CMAKE_CUDA_ARCHITECTURES="${FORGE_CUDA_ARCHS:-80;89;90;120}"' in bash
     assert "deepcompressor" not in bash
     assert "--own-edit" not in bash
     assert "smoke_laptop" not in bash

@@ -213,13 +213,16 @@ export FORGE_PYTHON="${FORGE_PYTHON:-$VENV/bin/python}"
 # T-lite-it-2.1 Qwen2 pre-tokenizer. Idempotent. See docs/VM.md.
 "$FORGE_PYTHON" -m voxprint_forge.llama_patch "$LLAMA_SRC/conversion/base.py"
 
-if [[ ! -f "$FORGE_OUT/stages/llama-cpp.done" ]]; then
+ARCHS="${FORGE_CUDA_ARCHS:-80;89;90;120}"
+WANT="${LLAMA_COMMIT} ${ARCHS}"
+STAMP="$FORGE_OUT/stages/llama-cpp.done"
+if [[ ! -f "$STAMP" || "$(tr -d '\n' < "$STAMP")" != "$WANT" ]]; then
   cmake -S "$LLAMA_SRC" -B "$FORGE_OUT/llama-build" \
     -DGGML_CUDA=ON \
     -DGGML_NATIVE=OFF \
-    -DCMAKE_CUDA_ARCHITECTURES="80;89;120"
+    -DCMAKE_CUDA_ARCHITECTURES="$ARCHS"
   cmake --build "$FORGE_OUT/llama-build" --parallel "$(nproc)"
-  printf '%s\n' "$LLAMA_COMMIT" > "$FORGE_OUT/stages/llama-cpp.done"
+  printf '%s\n' "$WANT" > "$STAMP"
 fi
 progress_line bootstrap llama "$(( FORGE_BUILD_MIN * 100 / FORGE_TOTAL_MIN ))" "$(( FORGE_TOTAL_MIN - FORGE_BUILD_MIN ))"
 

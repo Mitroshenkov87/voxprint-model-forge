@@ -108,6 +108,8 @@ def test_kl_argv_writes_then_compares() -> None:
     )
     assert compared[-1] == "--kl-divergence"
     assert "--kl-divergence-base" in compared
+    for flag in ("-fa", "-ngl", "-c", "--chunks"):
+        assert base[base.index(flag) + 1] == compared[compared.index(flag) + 1]
 
 
 def test_parse_kl_lines() -> None:

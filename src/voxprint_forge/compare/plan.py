@@ -12,13 +12,14 @@ from voxprint_forge.diffusion.policy import CLIP_DROP_MAX, LPIPS_MAX
 
 Kind = Literal["turbo", "creative", "control"]
 Quant = Literal["fp32", "bf16", "fp8", "int4"]
-Compute = Literal["bf16", "bf16-dequant", "int4"]
+Compute = Literal["bf16", "bf16-dequant", "int4", "fp8-native"]
 PromptSet = Literal["base", "control"]
 Role = Literal["reference", "candidate"]
 
 _KINDS = ("turbo", "creative", "control")
 _QUANTS = ("fp32", "bf16", "fp8", "int4")
-_COMPUTES = ("bf16", "bf16-dequant", "int4")
+_COMPUTES = ("bf16", "bf16-dequant", "int4", "fp8-native")
+_ACT_SCALES = ("dynamic", "unit")
 _PROMPTS = ("base", "control")
 _ROLES = ("reference", "candidate")
 
@@ -46,6 +47,8 @@ class Arm:
     reuse_job: str
     reuse_arm: str
     local: bool = False
+    fp8_act_scale: str = "dynamic"
+    requires_cc: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,8 @@ class Job:
     lpips_max: float
     clip_drop_max: float
     note: str
+    attention: str = "sdpa"
+    requires_cc: tuple[str, ...] = ()
 
     def arm(self, arm_id: str) -> Arm:
         """Return one arm by id."""
@@ -169,6 +174,8 @@ def _job(raw: object, defaults: dict[str, object]) -> Job:
             f"{job_id} clip_drop_max",
         ),
         note=str(raw.get("note", "")),
+        attention=_attention(raw.get("attention", defaults.get("attention", "sdpa")), job_id),
+        requires_cc=_cc_list(raw.get("requires_cc"), f"{job_id} requires_cc"),
     )
 
 
@@ -179,6 +186,9 @@ def _arm(raw: object, job_id: str) -> Arm:
     role = _choice(str(raw.get("role", "")), _ROLES, f"{job_id} arm {arm_id} role")
     quant = _choice(str(raw.get("quant", "bf16")), _QUANTS, f"{job_id} arm {arm_id} quant")
     compute = _choice(str(raw.get("compute", "bf16")), _COMPUTES, f"{job_id} arm {arm_id} compute")
+    act_scale = _choice(str(raw.get("fp8_act_scale", "dynamic")), _ACT_SCALES, f"{job_id} arm {arm_id} fp8_act_scale")
+    if compute == "fp8-native" and quant != "fp8":
+        raise CompareSetup(f"{job_id} arm {arm_id} fp8-native requires quant fp8", code="compare_plan")
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise CompareSetup(f"{job_id} arm {arm_id} enabled is not a boolean", code="compare_plan")
@@ -198,7 +208,22 @@ def _arm(raw: object, job_id: str) -> Arm:
         reuse_job=str(raw.get("reuse_job", "")),
         reuse_arm=str(raw.get("reuse_arm", "")),
         local=_bool(raw.get("local", False), f"{job_id} arm {arm_id} local"),
+        fp8_act_scale=act_scale,
+        requires_cc=_cc_list(raw.get("requires_cc"), f"{job_id} arm {arm_id} requires_cc"),
     )
+
+
+def _attention(value: object, job_id: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CompareSetup(f"{job_id} attention is empty", code="compare_plan")
+    return value.strip()
+
+
+def _cc_list(value: object, label: str) -> tuple[str, ...]:
+    cleaned = tuple(item.strip() for item in _strs(value))
+    if any(not item for item in cleaned):
+        raise CompareSetup(f"{label} has an empty capability", code="compare_plan")
+    return cleaned
 
 
 def _bool(value: object, label: str) -> bool:

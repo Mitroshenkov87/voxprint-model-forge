@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One resumable Wan 2.2 diffusion-int4 run for a fresh Ubuntu A100 or H100 80GB.
-# sm_80 is an A100. sm_90 is an H100. llama.cpp is built for 80;90.
+# sm_80 is an A100. sm_90 is an H100. llama.cpp uses FORGE_CUDA_ARCHS (default 80;89;90;120).
 # The forge interpreter is FORGE_PYTHON. When that is unset, the live path
 # creates $FORGE_OUT/venv-forge (Python 3.14) before the first disk-floor check.
 # Torch comes from the cu130 index when the driver is 580 or newer, else cu128.
@@ -266,7 +266,7 @@ if [[ "${FORGE_SKIP_WAN:-0}" != "1" ]]; then
       printf 'lcpp.patch does not apply to llama.cpp %s\n' "$LLAMA_REV" >&2
       exit 6
     fi
-    cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="80;90"
+    cmake -S "$SRC/llama.cpp" -B "$SRC/llama.cpp/build" -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="${FORGE_CUDA_ARCHS:-80;89;90;120}"
     cmake --build "$SRC/llama.cpp/build" --target llama-quantize -j "$(nproc)"
   fi
 fi

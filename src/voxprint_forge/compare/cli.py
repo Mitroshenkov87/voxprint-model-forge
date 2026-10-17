@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from voxprint_forge.compare.codes import CompareSetup
+from voxprint_forge.compare.fp8_make import export_fp8
 from voxprint_forge.compare.plan import load_compare_plan
 from voxprint_forge.compare.privacy import private_root_from_env
 from voxprint_forge.compare.run import run_compare
@@ -23,12 +25,38 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         default=None,
         help="Compare plan. Default: plans/compare-synth4.toml.",
     )
+    command.add_argument(
+        "--make-fp8",
+        action="store_true",
+        help="Write local FP8 files for D1 or D4 from the reference snapshot and exit.",
+    )
+    command.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Directory for --make-fp8. Files stay local and are not uploaded.",
+    )
 
 
-def execute(root: Path, forge_out: Path, job_id: str, plan_path: Path | None) -> dict[str, object]:
-    """Load the plan and run one job. Exit codes are 0, 1, 2, and 3."""
+def execute(
+    root: Path,
+    forge_out: Path,
+    job_id: str,
+    plan_path: Path | None,
+    *,
+    make_fp8: bool = False,
+    out: Path | None = None,
+) -> dict[str, object]:
+    """Load the plan and run one job. Exit codes are 0, 1, 2, and 3.
+
+    ``--make-fp8`` writes the local FP8 files and does not need a GPU.
+    """
     path = plan_path or (root / "plans" / "compare-synth4.toml")
     plan = load_compare_plan(path)
     job = plan.job(job_id)
+    if make_fp8:
+        if out is None:
+            raise CompareSetup("compare --make-fp8 needs --out", code="compare_plan")
+        return export_fp8(job, out, forge_out)
     results = forge_out / "results" / job.id
     return run_compare(job, results, private_root=private_root_from_env())
