@@ -12,7 +12,7 @@ import pytest
 from voxprint_forge.cli import main
 from voxprint_forge.errors import StageError
 from voxprint_forge.fitmath import fits_budget
-from voxprint_forge.kl.arch import mtp_status, read_model_arch, require_mtp
+from voxprint_forge.kl.arch import gguf_reference_mtp, mtp_status, read_model_arch, require_mtp
 from voxprint_forge.kl.parse import parse_kl
 from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan
 from voxprint_forge.kl.run import run_kl, select_quant_file
@@ -153,9 +153,28 @@ def test_plan_names_l1_through_l4() -> None:
     l2 = plan.job("L2")
     assert l2.source_format == "gguf"
     assert l2.f16_file == "gemma-4-31b-abliterated-f16.gguf"
+    iq3, q4 = l2.quants
+    assert iq3.quant == "IQ3_XXS"
+    assert iq3.ours is True
+    assert q4.quant == "Q4_K_M"
+    assert q4.ours is False
+    assert q4.repo == "paperscarecrow/Gemma-4-31B-it-abliterated"
+    assert q4.revision == "2491ee58472b82a2372d288f982943b9d5e6a82c"
+    assert q4.pattern == "gemma-4-31b-abliterated-Q4_K_M.gguf"
     l3 = plan.job("L3")
     assert l3.expect_mtp is True
-    assert l3.bf16_revision.startswith("27502c87")
+    assert l3.source_format == "gguf"
+    assert l3.bf16_repo == "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+    assert l3.bf16_revision == "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3"
+    assert l3.f16_file == "Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gguf"
+    q3, q5 = l3.quants
+    assert q3.quant == "Q3_K_M"
+    assert q3.ours is True
+    assert q5.quant == "Q5_K"
+    assert q5.ours is False
+    assert q5.repo == l3.bf16_repo
+    assert q5.revision == l3.bf16_revision
+    assert q5.pattern == "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf"
     l4 = plan.job("L4")
     assert l4.quants[0].ours is False
     assert "voxprint-model-index" in l4.index_gap
@@ -307,6 +326,128 @@ def test_gguf_source_skips_conversion(tmp_path: Path, monkeypatch: pytest.Monkey
     report = run_kl(job, tmp_path / "out", corpus=corpus, runner=Scripted(), fetch=fetch, convert=convert)
     assert report["mtp"] is None
     assert report["source_format"] == "gguf"
+
+
+L3_F16 = "Huihui-Qwen3.6-27B-abliterated-ggml-model-f16.gguf"
+
+
+def test_gguf_reference_mtp_reads_the_published_head(tmp_path: Path) -> None:
+    kept_path = tmp_path / "kept.gguf"
+    write_tiny(kept_path, blocks=3, nextn=1)
+    _, kept_meta = read_model_arch(kept_path)
+    status = gguf_reference_mtp(kept_meta)
+    assert status["mtp_kept"] is True
+    assert status["source_layers"] == 2
+    assert status["source_mtp_layers"] == 1
+    bare = tmp_path / "bare.gguf"
+    write_tiny(bare, blocks=2, nextn=0)
+    _, bare_meta = read_model_arch(bare)
+    with pytest.raises(StageError) as caught:
+        gguf_reference_mtp(bare_meta)
+    assert caught.value.code == "kl_mtp"
+    assert "no MTP head" in str(caught.value)
+    over = dict(kept_meta)
+    over["block_count"] = 3
+    over["nextn_predict_layers"] = 9
+    with pytest.raises(StageError) as over_caught:
+        gguf_reference_mtp(over)
+    assert over_caught.value.code == "kl_mtp"
+
+
+def test_gguf_reference_with_mtp_skips_conversion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bins(tmp_path / "bin", monkeypatch)
+    quant = tmp_path / "model-Q3_K_M.gguf"
+    write_tiny(quant, blocks=3, nextn=1)
+
+    def fetch(repo: str, revision: str, dest: Path, patterns: list[str] | None) -> None:
+        del repo, revision
+        dest.mkdir(parents=True, exist_ok=True)
+        assert patterns == [L3_F16]
+        assert not (dest / "config.json").exists()
+        write_tiny(dest / L3_F16, blocks=3, nextn=1)
+
+    def convert(runner: Runner, source: Path, outfile: Path) -> None:
+        del runner, source, outfile
+        raise AssertionError("a published F16 GGUF must not be reconverted")
+
+    corpus = tmp_path / "ppl.txt"
+    corpus.write_text("public\n", encoding="utf-8")
+    job = KlJob(
+        id="L3",
+        bf16_repo="huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+        bf16_revision="2da8c0432f0a42c25c14cbc99f90028a90d3dcd3",
+        source_format="gguf",
+        f16_file=L3_F16,
+        expect_mtp=True,
+        index_gap="",
+        note="",
+        quants=(QuantRef(quant="Q3_K_M", repo="", revision="", pattern=str(quant), ours=True),),
+        chunks=1,
+        ctx=512,
+        fit_ctx=8192,
+        headroom_gb=3.0,
+        budgets_gb=(16.0, 24.0),
+        kv_cache="q8_0",
+    )
+    work = tmp_path / "out"
+    report = run_kl(job, work, corpus=corpus, runner=Scripted(), fetch=fetch, convert=convert)
+    mtp = report["mtp"]
+    assert isinstance(mtp, dict)
+    assert mtp["mtp_kept"] is True
+    assert mtp["source_layers"] == 2
+    assert mtp["source_mtp_layers"] == 1
+    assert mtp["gguf_nextn_predict_layers"] == 1
+    assert report["source_format"] == "gguf"
+    assert not (work / "source").exists()
+    assert not (work / "f16.gguf").exists()
+
+
+def test_gguf_reference_without_mtp_fails_and_reclaims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bins(tmp_path / "bin", monkeypatch)
+
+    def fetch(repo: str, revision: str, dest: Path, patterns: list[str] | None) -> None:
+        del repo, revision
+        dest.mkdir(parents=True, exist_ok=True)
+        assert patterns == [L3_F16]
+        write_tiny(dest / L3_F16, blocks=2, nextn=0)
+
+    def convert(runner: Runner, source: Path, outfile: Path) -> None:
+        del runner, source, outfile
+        raise AssertionError("a published F16 GGUF must not be reconverted")
+
+    job = KlJob(
+        id="L3",
+        bf16_repo="huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+        bf16_revision="2da8c0432f0a42c25c14cbc99f90028a90d3dcd3",
+        source_format="gguf",
+        f16_file=L3_F16,
+        expect_mtp=True,
+        index_gap="",
+        note="",
+        quants=(
+            QuantRef(
+                quant="Q5_K",
+                repo="huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+                revision="2da8c0432f0a42c25c14cbc99f90028a90d3dcd3",
+                pattern="Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf",
+                ours=False,
+            ),
+        ),
+        chunks=1,
+        ctx=512,
+        fit_ctx=8192,
+        headroom_gb=3.0,
+        budgets_gb=(16.0, 24.0),
+        kv_cache="q8_0",
+    )
+    work = tmp_path / "work"
+    (tmp_path / "ppl.txt").write_text("x\n", encoding="utf-8")
+    with pytest.raises(StageError) as caught:
+        run_kl(job, work, corpus=tmp_path / "ppl.txt", runner=Scripted(), fetch=fetch, convert=convert)
+    assert caught.value.code == "kl_mtp"
+    assert "no MTP head" in str(caught.value)
+    assert not (work / "source").exists()
+    assert not (work / "f16.gguf").exists()
 
 
 def test_two_quant_files_are_a_setup_error(tmp_path: Path) -> None:
