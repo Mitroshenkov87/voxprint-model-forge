@@ -123,6 +123,9 @@ detected GPU and its compute capability.
 ## Shared downloads
 
 Each `repo@revision` is downloaded once per run into `$FORGE_OUT/compare-cache/`.
+An arm may set `sha256`. After the download, that digest is checked against the
+one named file in `files`. A mismatch, or more than one file, stops the job.
+Leave it unset when the arm downloads a whole repo.
 Arm folders hardlink the files they load. A local FP8 arm does not link
 `transformer/*.safetensors` from the base snapshot; the config stays, and the
 FP8 file replaces the weights. That transformer is built from `config.json`,

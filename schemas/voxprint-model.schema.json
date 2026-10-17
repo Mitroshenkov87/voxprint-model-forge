@@ -67,7 +67,11 @@
         "properties": {
           "kind": {"enum": ["hf", "kaggle", "gdrive", "modelscope", "url"]},
           "ref": {"type": "string", "minLength": 1},
-          "revision": {"type": "string"}
+          "revision": {"type": "string"},
+          "ours": {
+            "type": "boolean",
+            "description": "This mirror holds voxprint-model.json. At most one hf mirror is marked."
+          }
         }
       }
     },

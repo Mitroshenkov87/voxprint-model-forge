@@ -24,6 +24,7 @@ from voxprint_forge.compare.int4 import load_zimage_int4
 from voxprint_forge.compare.plan import Arm, Job, Kind
 from voxprint_forge.diffusion.fp8_native import Fp8Linear, _shell_coverage_error, apply_fp8_native, self_check
 from voxprint_forge.diffusion.scenes import canny_map, depth_map, pose_map, render_scene
+from voxprint_forge.hashing import sha256_file
 from voxprint_forge.scrub import active_secrets, scrub
 
 GeneratorFactory = Callable[[str], "Seedable"]
@@ -58,16 +59,17 @@ def fetch_arm(arm: Arm, dest: Path, *, cache: Path | None = None) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     if cache is not None:
         _fetch_cached(snapshot_download, arm, dest, cache)
-        return
-    if arm.base_repo:
-        _snapshot(snapshot_download, arm.base_repo, arm.base_revision, dest / "base", None)
-    if arm.local:
-        _copy_local(arm, dest / "weights")
-    elif arm.repo:
-        patterns = list(arm.files) or None
-        _snapshot(snapshot_download, arm.repo, arm.revision, dest / "weights", patterns)
-    elif not arm.base_repo:
-        raise CompareSetup(f"arm {arm.id} has no repo", code="compare_weights")
+    else:
+        if arm.base_repo:
+            _snapshot(snapshot_download, arm.base_repo, arm.base_revision, dest / "base", None)
+        if arm.local:
+            _copy_local(arm, dest / "weights")
+        elif arm.repo:
+            patterns = list(arm.files) or None
+            _snapshot(snapshot_download, arm.repo, arm.revision, dest / "weights", patterns)
+        elif not arm.base_repo:
+            raise CompareSetup(f"arm {arm.id} has no repo", code="compare_weights")
+    _verify_arm_digest(arm, dest)
 
 
 def _fetch_cached(download: object, arm: Arm, dest: Path, cache: Path) -> None:
@@ -647,6 +649,27 @@ def _load_base(pipeline_cls: object, base: Path, dtype: object, **extra: object)
 def _require_dir(path: Path, arm_id: str) -> Path:
     if not path.is_dir():
         raise CompareSetup(f"arm {arm_id} is missing a base snapshot", code="compare_weights")
+    return path
+
+
+def _verify_arm_digest(arm: Arm, dest: Path) -> None:
+    if not arm.sha256:
+        return
+    path = _named_weight(arm, dest / "weights")
+    actual = sha256_file(path)
+    if actual != arm.sha256:
+        raise CompareSetup(f"arm {arm.id} sha256 mismatch for {path.name}", code="compare_weights")
+
+
+def _named_weight(arm: Arm, folder: Path) -> Path:
+    if len(arm.files) != 1 or any(mark in arm.files[0] for mark in "*?[]"):
+        raise CompareSetup(f"arm {arm.id} sha256 needs one named file", code="compare_weights")
+    rel = Path(arm.files[0])
+    if rel.is_absolute() or ".." in rel.parts:
+        raise CompareSetup(f"arm {arm.id} sha256 needs one named file", code="compare_weights")
+    path = folder / rel
+    if not path.is_file():
+        raise CompareSetup(f"arm {arm.id} sha256 file {rel.as_posix()} was not downloaded", code="compare_weights")
     return path
 
 

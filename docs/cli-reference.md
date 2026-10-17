@@ -418,11 +418,14 @@ options:
 
 ```text
 usage: forge index build [-h] --from MANIFEST_FROM --out OUT
+                         [--revision REPO=SHA]
 
 options:
   -h, --help            show this help message and exit
   --from MANIFEST_FROM  Directory to scan.
   --out OUT             Where to write index.json.
+  --revision REPO=SHA   Commit of voxprint-model.json in REPO, 40 hex digits.
+                        Repeat for each repo.
 ```
 
 ## `forge index push`

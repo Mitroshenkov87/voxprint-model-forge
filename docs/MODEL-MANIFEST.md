@@ -47,7 +47,7 @@ Every field is required. The SPDX key is `license`.
 | `tier` | `min_vram_gib`, `recommended_vram_gib`, `gpu_min_cc`. |
 | `runtime` | `engine` is `llama.cpp`, `diffusers`, or `nunchaku`, plus `version_req`. |
 | `base_model` | Upstream repo id. Empty when a dry-run backfill could not read one. |
-| `card_url` | `https://huggingface.co/<repo>` when an `hf` mirror is present, otherwise `""`. |
+| `card_url` | `https://huggingface.co/<repo>` for the mirror that holds this file. An `hf` mirror with `ours` set, or the single `Mitroshenkov87` mirror, wins over an upstream author listed first. One `hf` mirror is that repo. Empty when there is no `hf` mirror. |
 | `flags` | Includes `least-censored` when the plan ablates or the base was already abliterated. |
 | `on_demand` | `true` for these downloadable weights. |
 | `build` | `forge_version`, `tag`, `date`. `tag` is `""` until a release tag is passed in. |
@@ -90,6 +90,7 @@ deliverable.
 
 ```text
 voxprint-forge-cli index build --from DIR --out index.json
+voxprint-forge-cli index build --from DIR --out index.json --revision REPO=40HEX
 voxprint-forge-cli index push --index index.json --push
 voxprint-forge-cli index backfill --out DIR
 ```
@@ -97,12 +98,19 @@ voxprint-forge-cli index backfill --out DIR
 `index build` scans `DIR` for `voxprint-model.json` and writes:
 
 ```json
-[{"id": "tiny", "repo": "Mitroshenkov87/voxprint-tiny", "revision": "main", "sha256": "<sha256 of voxprint-model.json>"}]
+[{"id": "tiny", "repo": "Mitroshenkov87/voxprint-tiny", "revision": "<40-hex commit of voxprint-model.json>", "sha256": "<sha256 of voxprint-model.json>"}]
 ```
 
-`revision` is the `hf` mirror revision. A fresh publish records `main`.
-Backfill records the Hub commit SHA it listed. `sha256` is the manifest
-file, not a weight.
+`repo` is the mirror that holds `voxprint-model.json`: the `hf` mirror with
+`ours` set, or the single mirror under `Mitroshenkov87`. The first `hf`
+mirror may be the upstream author, and that author repo has no descriptor.
+A manifest with no such mirror is an error. `revision` is the commit in
+that repo that contains `voxprint-model.json`. The build asks Hugging Face
+for the last commit that touches the file on the published ref, or takes
+`--revision REPO=SHA` (repeatable, 40 lowercase hex digits). It does not
+use the mirror's `revision`. That field is often a later weights commit,
+and the descriptor is not in it. If the commit cannot be resolved, the
+build fails and writes no index. `sha256` is the manifest file, not a weight.
 
 `index push` without `--push` exits 2 and does not upload. With `--push` it
 uploads `index.json` to the dataset `Mitroshenkov87/voxprint-model-index`.

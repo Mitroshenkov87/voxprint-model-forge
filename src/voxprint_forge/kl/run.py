@@ -15,6 +15,7 @@ from huggingface_hub import snapshot_download
 from voxprint_forge.errors import DownloadError, StageError
 from voxprint_forge.evaluate import data_dir, parse_ppl
 from voxprint_forge.fitmath import Arch, fits_budget
+from voxprint_forge.hashing import sha256_file
 from voxprint_forge.kl.arch import (
     gguf_reference_mtp,
     mtp_status,
@@ -231,6 +232,8 @@ def _prepare_base(
 ) -> Path:
     fmt: SourceFormat = job.source_format
     if fmt == "safetensors":
+        if job.sha256:
+            raise StageError(f"{job.id} sha256 needs one GGUF source file", code="kl_download")
         fetch(job.bf16_repo, job.bf16_revision, source, None)
         (convert or convert_f16)(runner, source, f16)
         if not f16.is_file():
@@ -238,12 +241,22 @@ def _prepare_base(
         return f16
     if fmt == "gguf":
         fetch(job.bf16_repo, job.bf16_revision, source, [job.f16_file])
-        return select_quant_file(source, job.f16_file, "F16")
+        path = select_quant_file(source, job.f16_file, "F16")
+        _check_sha256(path, job.sha256, f"{job.id} reference")
+        return path
     return _unexpected_format(fmt)
 
 
 def _unexpected_format(fmt: Never) -> Never:
     raise StageError(f"unhandled KL source format {fmt}", code="kl_plan")
+
+
+def _check_sha256(path: Path, expected: str, label: str) -> None:
+    if not expected:
+        return
+    actual = sha256_file(path)
+    if actual != expected:
+        raise StageError(f"{label} sha256 mismatch", code="kl_download")
 
 
 def _mtp(job: KlJob, source: Path, meta: dict[str, object]) -> dict[str, object] | None:
@@ -278,6 +291,7 @@ def _one_quant(
     else:
         fetch(quant.repo, quant.revision, folder, [quant.pattern])
         path = select_quant_file(folder, quant.pattern, quant.quant)
+    _check_sha256(path, quant.sha256, f"{job.id} {quant.quant}")
     done = runner.run(
         kl_argv(
             tool("llama-perplexity"),
