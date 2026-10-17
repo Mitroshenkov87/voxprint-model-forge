@@ -153,9 +153,7 @@ class MivoloEstimator:
     name = ESTIMATOR_ID
 
     def __init__(self, folder: Path, detector: Path, device: str = "cuda", python: str | None = None) -> None:
-        import os
         import subprocess
-        import sys
         import tempfile
 
         worker = Path(__file__).resolve().parent / "mivolo_worker.py"
