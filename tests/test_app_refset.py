@@ -10,13 +10,14 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6 import QtCore, QtWidgets  # noqa: E402
-from voxprint_common.i18n import set_language, tr  # noqa: E402
+from voxprint_common.i18n import set_language  # noqa: E402
 
 from tests.forge_app_stub import ALL_COMMANDS, StubRunner  # noqa: E402
 from tests.test_app_window import CONTROLS, _next, _scroll_problems, _status  # noqa: E402
 from tests.test_lora_refset import SUBJECT, Loaders, _refs  # noqa: E402
 from voxprint_forge.app import engine  # noqa: E402
 from voxprint_forge.app.engine import Outcome  # noqa: E402
+from voxprint_forge.app.text import tr  # noqa: E402
 from voxprint_forge.lora import refset  # noqa: E402
 from voxprint_forge.lora.errors import LoraBlocked  # noqa: E402
 from voxprint_forge.lora.events import Progress  # noqa: E402
@@ -348,3 +349,30 @@ def test_open_folder_lines_up_with_back(make_app, tmp_path, expert) -> None:
     folder = _find(app, QtWidgets.QPushButton, "openFolder")
     back = _find(app, QtWidgets.QPushButton, "wizardBack")
     assert folder.mapTo(app.window, QtCore.QPoint()).x() == back.mapTo(app.window, QtCore.QPoint()).x()
+
+
+def test_ru_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:
+    app = make_app(_engine([]), lang="ru")
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    QtWidgets.QApplication.processEvents()
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    labels = [w.text() for w in page.findChildren(QtWidgets.QLabel)]
+    assert "Круг 1 готов: 24 картинки на просмотр" in labels
+    assert "24 картинки за круг, средние изменения." in labels
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == "Оставлено 0 из 24. Для обучения нужно 10–30"
+    app.expert.set_enabled(True)
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == (
+        "Оставлено 0 из 24. Рекомендуется: 10–30. Допустимо в режиме эксперта: 5–60")
+
+
+def test_expert_range_is_not_named_when_it_matches(make_app, tmp_path, monkeypatch) -> None:
+    from voxprint_forge.app import window
+
+    monkeypatch.setattr(window, "expert_range_differs", lambda: False)
+    app = make_app(_engine([]))
+    app.expert.set_enabled(True)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == "Kept 0 of 24. Training needs 10–30"

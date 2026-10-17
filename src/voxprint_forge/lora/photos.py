@@ -11,12 +11,9 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from voxprint_forge.lora.errors import LoraUsageError
+from voxprint_forge.lora.limits import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE  # noqa: F401 - re-export
 
 EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
-SIMPLE_RANGE = (10, 30)
-EXPERT_FLOOR = 5
-EXPERT_CAP = 60
-MIN_SIDE = 512
 BLUR_THRESHOLD = 60.0
 DUP_THRESHOLD = 6
 PREPARED_SIDE = 1024
@@ -38,15 +35,15 @@ def collect(photos_dir: Path | None, photos: Sequence[Path], exclude: Sequence[P
 
 
 def check_count(count: int, mode: str) -> str | None:
-    """Raise on a count the mode refuses; return ``lora.warn.count`` when Expert is outside 10-30."""
-    low, high = SIMPLE_RANGE
+    """Raise on a count the mode refuses; return ``lora.warn.count`` when Expert is outside the recommended range."""
+    low, high = RECOMMENDED_RANGE
     if count == 0:
         raise LoraUsageError("lora.err.no_photos")
     if mode == "simple":
         if count < low:
             raise LoraUsageError("lora.err.too_few", need=low - count)
         if count > high:
-            raise LoraUsageError("lora.err.too_many", extra=count - high)
+            raise LoraUsageError("lora.err.too_many", extra=count - high, high=high)
         return None
     if count < EXPERT_FLOOR:
         raise LoraUsageError("lora.err.below_floor")

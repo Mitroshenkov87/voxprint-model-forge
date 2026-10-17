@@ -352,7 +352,8 @@ def test_refset_text_never_says_what_the_check_looks_for() -> None:
     for lang in ("en", "ru"):
         for key, value in catalog(lang).items():
             if "refset" in key:
-                assert not pattern.search(value), (lang, key, value)
+                for form in (value.values() if isinstance(value, dict) else (value,)):
+                    assert not pattern.search(form), (lang, key, form)
 
 
 def test_refset_preflight_reports_each_requirement(tmp_path) -> None:

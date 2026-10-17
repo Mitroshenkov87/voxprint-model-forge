@@ -7,14 +7,14 @@
  "lora.drop.blurry": "Too blurry to learn from.",
  "lora.drop.duplicate": "Almost the same as another photo.",
  "lora.drop.safety": "Set aside by the safety check.",
- "lora.drop.small": "Too small: the shorter side is under {min_side} pixels.",
+ "lora.drop.small": "Too small: the shorter side is under {min_side} px.",
  "lora.drop.unreadable": "This file could not be opened as a picture.",
  "lora.err.above_cap": "At most {cap} photos can be used.",
  "lora.err.adult_content": "Adult content can only be marked for a person who is 18 or older.",
  "lora.err.base_mismatch": "This model was trained on a different base model.",
  "lora.err.base_missing": "The base model is not installed. Open Manage models.",
  "lora.err.base_restrictive": "This base model's licence does not allow sharing trained models. Saving for your own use only.",
- "lora.err.below_floor": "At least 5 photos are needed.",
+ "lora.err.below_floor": "At least {expert_low} photos are needed.",
  "lora.err.blocked": "These photos cannot be used for training.",
  "lora.err.captioner_missing": "The description model is not installed. Open Manage models.",
  "lora.err.consent_method": "Choose one way of consent: verbal, or an attached release file.",
@@ -35,13 +35,25 @@
  "lora.err.refset_none_kept": "Keep at least one picture, or make another round.",
  "lora.err.refset_not_started": "Make a first round of pictures.",
  "lora.err.refset_refs": "Add 1 to 10 reference pictures.",
- "lora.err.refset_steps": "Choose {low} to {high} steps.",
+ "lora.err.refset_steps": {
+  "by": "high",
+  "one": "Choose {low} to {high} step.",
+  "other": "Choose {low} to {high} steps."
+ },
  "lora.err.refset_strength": "Choose a variation strength from {low} to {high}.",
  "lora.err.refset_teacher_missing": "The picture model Z-Image-Turbo is not installed. Install it in Manage models.",
  "lora.err.refset_unreadable": "A reference could not be read or is smaller than 512 pixels.",
  "lora.err.text_encoder": "This base model cannot train its text encoder.",
- "lora.err.too_few": "Add at least {need} more photos to continue.",
- "lora.err.too_many": "Remove {extra} photos; 30 is the limit.",
+ "lora.err.too_few": {
+  "by": "need",
+  "one": "Add at least {need} more photo to continue.",
+  "other": "Add at least {need} more photos to continue."
+ },
+ "lora.err.too_many": {
+  "by": "extra",
+  "one": "Remove {extra} photo; {high} is the limit.",
+  "other": "Remove {extra} photos; {high} is the limit."
+ },
  "lora.err.vram": "Your graphics card has {have} GB; this needs {need} GB. Try the Quick test preset.",
  "lora.expert.alpha.tip": "Scales the adapter. Usually equal to rank.",
  "lora.expert.batch.tip": "Photos per step. Higher needs more memory.",
@@ -74,8 +86,8 @@
  "lora.menu.open.desc": "Open a saved training project.",
  "lora.mix_old": "`--replay 0.0-1.0`",
  "lora.photos.add.tip": "Add JPG, PNG or WebP photos. You can also drag a folder here.",
- "lora.photos.count.tip": "10 is the minimum, 30 the maximum. More variety helps more than more photos.",
- "lora.photos.count_expert.tip": "Expert mode: 5 is the minimum. Outside 10-30 results are less predictable.",
+ "lora.photos.count.tip": "{rec_low} is the minimum, {rec_high} the maximum. More variety helps more than more photos.",
+ "lora.photos.count_expert.tip": "Allowed in Expert: {expert_low}–{expert_high} photos. Outside the recommended {rec_low}–{rec_high} results are less predictable.",
  "lora.photos.remove.tip": "Remove this photo from training. The file on your disk stays.",
  "lora.prepare.crop.tip": "How photos are cropped: centred on the subject, or kept whole.",
  "lora.prepare.dropped.tip": "Photos set aside, with the reason. Safety drops cannot be overridden.",
@@ -96,7 +108,11 @@
  "lora.progress.checkpoint": "Saving an intermediate version",
  "lora.progress.crop": "Cropping photo {n} of {total}",
  "lora.progress.done": "Done",
- "lora.progress.estimate": "Estimated training time: about {minutes} min for {steps} steps",
+ "lora.progress.estimate": {
+  "by": "steps",
+  "one": "Estimated training time: about {minutes} min for {steps} step",
+  "other": "Estimated training time: about {minutes} min for {steps} steps"
+ },
  "lora.progress.eta": "About {minutes} min left",
  "lora.progress.eta_unknown": "Estimating time left…",
  "lora.progress.export": "Saving the model file",
@@ -107,8 +123,15 @@
  "lora.progress.paused": "Paused. Progress is saved.",
  "lora.progress.preview": "Drawing a test picture",
  "lora.progress.refset_check": "Checking picture {n} of {total}",
- "lora.progress.refset_done": "Round {round} is ready: {shown} pictures to review",
- "lora.progress.refset_finish": "Saving the approved set of {count} pictures",
+ "lora.progress.refset_done": {
+  "by": "shown",
+  "one": "Round {round} is ready: {shown} picture to review",
+  "other": "Round {round} is ready: {shown} pictures to review"
+ },
+ "lora.progress.refset_finish": {
+  "one": "Saving the approved set of {count} picture",
+  "other": "Saving the approved set of {count} pictures"
+ },
  "lora.progress.refset_generate": "Drawing picture {n} of {total}",
  "lora.progress.refset_load": "Loading the picture model",
  "lora.progress.refset_prompt": "Describing reference {n} of {total}",
@@ -139,14 +162,14 @@
  "lora.result.checkpoint.tip": "Earlier versions saved during training. An earlier one is sometimes more flexible.",
  "lora.result.extend.tip": "Add new photos to improve this model without starting over.",
  "lora.result.save.tip": "Save one .safetensors file with its description next to it.",
- "lora.step.photos.desc": "Add 10 to 30 photos of what the model should learn: a person, an object or a style.",
+ "lora.step.photos.desc": "Add {rec_low} to {rec_high} photos of what the model should learn: a person, an object or a style.",
  "lora.step.photos.help": "Drop photos here or click Add photos. Use sharp photos with different angles, light and backgrounds. Avoid near-duplicates and group shots. 15-20 good photos are usually enough.",
  "lora.step.photos.title": "Photos",
  "lora.step.prepare.desc": "The app checks every photo, crops it and writes a description for training.",
  "lora.step.prepare.help": "This runs by itself. Photos that are blurry, too small, duplicated or fail the safety check are set aside with a reason. You can review the crops and descriptions before training, and remove any photo.",
  "lora.step.prepare.title": "Check and prepare",
  "lora.step.refset.desc": "Make a full photo set from 1 to 10 references: the app draws pictures from them, you keep the good ones.",
- "lora.step.refset.help": "Press Make pictures. Tick the pictures that look right; unticked ones are left out. The next round starts from the kept pictures and your references. When the set looks exactly as you see it, press This is it, then Next. With your own 10 to 30 photos you can skip this step.",
+ "lora.step.refset.help": "Press Make pictures. Tick the pictures that look right; unticked ones are left out. The next round starts from the kept pictures and your references. When the set looks exactly as you see it, press This is it, then Next. With your own {rec_low} to {rec_high} photos you can skip this step.",
  "lora.step.refset.title": "Build a set",
  "lora.step.result.desc": "Try the trained model, save it, or send it to Canvas.",
  "lora.step.result.help": "Compare the previews and pick the one you like best. Save writes one file you can keep or share. Open in Canvas adds it to Canvas with a strength slider. To improve it later, use Add more photos.",
@@ -174,5 +197,5 @@
  "lora.train.start.tip": "Start training on your graphics card. You can pause at any time.",
  "lora.train.stop.tip": "Stop now and keep the best checkpoint so far.",
  "lora.vram": "Graphics card memory",
- "lora.warn.count": "{count} photos is outside the usual 10-30; results may be less predictable."
+ "lora.warn.count": "{count} photos is outside the recommended {rec_low}–{rec_high}; results may be less predictable."
 }

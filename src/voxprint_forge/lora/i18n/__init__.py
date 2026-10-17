@@ -13,7 +13,7 @@ _DIR = Path(__file__).resolve().parent
 
 
 @cache
-def catalog(lang: str) -> dict[str, str]:
+def catalog(lang: str) -> dict[str, str | dict[str, str]]:
     """All strings for ``lang`` (``en`` or ``ru``)."""
     if lang not in LANGS:
         raise ValueError(f"unknown language {lang!r}")
@@ -27,9 +27,16 @@ def current_lang() -> str:
 
 
 def text(key: str, lang: str | None = None, **params: object) -> str:
-    """The string for ``key`` with ``{param}`` placeholders filled. Unknown keys return the key."""
-    template = catalog(lang or current_lang()).get(key, key)
-    try:
-        return template.format(**params)
-    except (KeyError, IndexError, ValueError):
-        return template
+    """The string for ``key`` with ``{param}`` placeholders filled. Unknown keys return the key.
+
+    The range placeholders (``{rec_low}`` …) come from :mod:`voxprint_forge.lora.limits`; an entry with
+    plural forms picks one by ``count`` through :func:`voxprint_forge.plural.pick`.
+    """
+    from voxprint_forge.lora.limits import text_params
+    from voxprint_forge.plural import fill, pick
+
+    code = lang or current_lang()
+    template = catalog(code).get(key, key)
+    if isinstance(template, dict):
+        template = pick(template, params, code)
+    return fill(str(template), {**text_params(), **params})

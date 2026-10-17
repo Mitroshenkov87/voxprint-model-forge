@@ -33,8 +33,12 @@ def tiny(**overrides):
 def test_catalogs_have_the_same_keys_and_placeholders() -> None:
     en, ru = catalog("en"), catalog("ru")
     assert set(en) == set(ru)
+    def found(value):  # a count string holds one text per plural form
+        forms = value.values() if isinstance(value, dict) else (value,)
+        return {name for form in forms for name in PLACEHOLDER.findall(form)}
+
     for key in en:
-        assert set(PLACEHOLDER.findall(en[key])) == set(PLACEHOLDER.findall(ru[key])), key
+        assert found(en[key]) == found(ru[key]), key
         assert en[key] and ru[key], key
 
 

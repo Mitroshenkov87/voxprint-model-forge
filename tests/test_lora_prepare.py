@@ -100,7 +100,7 @@ def test_simple_mode_is_10_to_30_and_expert_warns_with_floor_5() -> None:
     assert low.value.params == {"need": 1}
     with pytest.raises(LoraUsageError) as high:
         check_count(31, "simple")
-    assert high.value.params == {"extra": 1}
+    assert high.value.params == {"extra": 1, "high": 30}  # the limit is named, not spelled in the string
     assert check_count(10, "simple") is None and check_count(30, "simple") is None
     assert check_count(6, "expert") == "lora.warn.count"
     assert check_count(20, "expert") is None

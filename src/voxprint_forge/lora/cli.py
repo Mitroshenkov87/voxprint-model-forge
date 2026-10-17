@@ -16,9 +16,13 @@ from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_s
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Event, Progress, json_line, sentence
 from voxprint_forge.lora.i18n import current_lang
+from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
+
+_REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
+_EXPERT = "{}-{}".format(*EXPERT_RANGE)
 
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -66,7 +70,8 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
     round_.add_argument("--seed", type=int, default=None, help="First seed of the round. Default: 1000 x round.")
     finish = steps.add_parser("finish", help="Copy the references and kept candidates into refset/approved.")
     finish.add_argument("--project", type=Path, required=True, help="Project folder.")
-    finish.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Set size: 10-30, or 5-60.")
+    finish.add_argument("--mode", choices=("simple", "expert"), default="simple",
+                        help=f"Set size: {_REC}, or {_EXPERT} in Expert.")
     finish.add_argument("--base", default=bases.DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
 
 
@@ -97,9 +102,11 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
     command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
     _subject_flags(command)
-    command.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Photo limits: 10-30, or 5+.")
+    command.add_argument("--mode", choices=("simple", "expert"), default="simple",
+                         help=f"Photo limits: {_REC}, or {_EXPERT} in Expert.")
     command.add_argument(
-        "--allow-count-outside-range", action="store_true", help="Expert limits: warn outside 10-30, at least 5."
+        "--allow-count-outside-range", action="store_true",
+        help=f"Expert limits: warn outside {_REC}, allowed {_EXPERT}."
     )
     command.add_argument("--crop", choices=("subject", "whole"), default="subject", help="How photos are cropped.")
     command.add_argument("--captions", type=Path, default=None, help="JSONL caption overrides: id, long, short.")

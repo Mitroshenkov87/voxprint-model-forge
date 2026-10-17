@@ -2,9 +2,9 @@
 
 Each step has a validator that returns a :class:`Check`: whether Next is
 allowed and, if not, the catalog key and parameters of the plain reason.
-Photo limits follow plan §9.7: Simple mode is a hard 10-30; Expert mode warns
-outside 10-30 and has a hard floor of 5 and a cap of ``EXPERT_CAP``. The
-limits are the engine's own (:mod:`voxprint_forge.lora.photos`).
+Photo limits follow plan §9.7: Simple mode is a hard ``RECOMMENDED_RANGE``; Expert
+mode warns outside it and has a hard floor ``EXPERT_FLOOR`` and a cap ``EXPERT_CAP``.
+The numbers live in :mod:`voxprint_forge.lora.limits`.
 The safety result comes from the engine and cannot be changed here.
 """
 
@@ -14,10 +14,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, SIMPLE_RANGE
+from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, RECOMMENDED_RANGE
 from voxprint_forge.lora.refset import REF_RANGE
 
-SIMPLE_MIN, SIMPLE_MAX = SIMPLE_RANGE
+SIMPLE_MIN, SIMPLE_MAX = RECOMMENDED_RANGE
 PHOTO_SUFFIXES = EXTENSIONS
 KINDS = ("person", "object", "style")
 SOURCES = ("photos", "refs")
@@ -155,7 +155,7 @@ class Draft:
             if count < SIMPLE_MIN:
                 return Check(False, "lora.err.too_few", {"need": SIMPLE_MIN - count})
             if count > SIMPLE_MAX:
-                return Check(False, "lora.err.too_many", {"extra": count - SIMPLE_MAX})
+                return Check(False, "lora.err.too_many", {"extra": count - SIMPLE_MAX, "high": SIMPLE_MAX})
         if self.kind not in KINDS:
             return Check(False, "forge.app.err.no_kind")
         if self.expert and not SIMPLE_MIN <= count <= SIMPLE_MAX:

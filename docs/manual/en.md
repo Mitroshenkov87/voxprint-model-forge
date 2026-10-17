@@ -62,7 +62,7 @@ Model Forge needs some models before it can train. They are not inside the setup
 ## 4. Simple and Expert mode
 
 - **Simple mode** (default) guides you through six steps with safe default settings. You choose a preset; the app picks the numbers.
-- **Expert mode** (the **Expert mode** button, top right) shows every training setting in a side panel, and allows 5 to 60 photos instead of 10 to 30.
+- **Expert mode** (the **Expert mode** button, top right) shows every training setting in a side panel. Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.
 
 ![Expert mode](img/en-expert-4-train-running.png)
 
@@ -81,7 +81,7 @@ Start with **More → New model**. The steps are shown at the top of the window 
 
 Good photos make a good model:
 
-- 15 to 20 sharp photos are usually enough (10 to 30 in Simple mode).
+- 15 to 20 sharp photos are usually enough (recommended: 10 to 30 photos).
 - Vary the angle, light, background and clothing.
 - One subject per photo. Avoid group shots, heavy filters and near-duplicates.
 - For a style, use pictures that share the style but show different things.
@@ -167,7 +167,7 @@ Good to know:
 - Simple mode draws 24 pictures per round with medium variation. Expert mode shows **Pictures per round** (8 to 64), **Variation strength** (0.25 to 0.90; higher moves further from the source) and **Steps** (4 to 16) in the Expert settings panel on the right, under **Build a set**; there you can also edit the **Descriptions** after the first round.
 - The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.
 - Pictures marked **≈ very similar to another** look almost the same as another one; keep only one of them.
-- The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. **Kept … of …. Training needs …** above the pictures shows how many you have kept.
+- Recommended set size: 10 to 30 pictures, references included. Allowed in Expert: 5 to 60 pictures. **Kept … of …. Training needs …** above the pictures shows how many you have kept; in Expert mode it reads **Kept … of …. Recommended: …. Allowed in Expert: …**.
 - Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.
 - The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.
 - **Start over** forgets the rounds and keeps the references.

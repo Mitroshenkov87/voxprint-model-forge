@@ -37,7 +37,7 @@ from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import RULE_VERSION, Gate
-from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, SIMPLE_RANGE, open_photo, photo_id
+from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE, open_photo, photo_id
 from voxprint_forge.lora.project import Project
 
 SCHEMA = "voxprint-refset/1"
@@ -443,8 +443,8 @@ def run_round(
     })
     state["finished"] = False
     save_state(project, state)
-    progress.emit("refset.done", "lora.progress.refset_done", {"round": round_no + 1, "shown": len(shown)},
-                  state="done")
+    progress.emit("refset.done", "lora.progress.refset_done",
+                  {"round": round_no + 1, "shown": len(shown)}, state="done")
     return {"state": "done", "round": round_no, "shown": len(shown), "kept_so_far": len(kept(state)),
             "approved": approved_count(state)}
 
@@ -579,11 +579,11 @@ def finish(
     if not chosen:
         raise LoraUsageError("lora.err.refset_none_kept")
     total = approved_count(state)
-    low, high = (SIMPLE_RANGE if mode == "simple" else (EXPERT_FLOOR, EXPERT_CAP))
+    low, high = (RECOMMENDED_RANGE if mode == "simple" else (EXPERT_FLOOR, EXPERT_CAP))
     if total < low:
         raise LoraUsageError("lora.err.too_few", need=low - total)
     if total > high:
-        raise LoraUsageError("lora.err.too_many", extra=total - high)
+        raise LoraUsageError("lora.err.too_many", extra=total - high, high=high)
     root = folder(project)
     approved = root / "approved"
     shutil.rmtree(approved, ignore_errors=True)

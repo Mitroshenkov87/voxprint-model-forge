@@ -9,7 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from PySide6 import QtCore, QtWidgets
-from voxprint_common.i18n import tr
+
+from voxprint_forge.app.text import tr
 
 
 class Details(QtWidgets.QWidget):

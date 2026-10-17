@@ -7,11 +7,12 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6 import QtCore, QtWidgets  # noqa: E402
-from voxprint_common.i18n import set_language, tr  # noqa: E402
+from voxprint_common.i18n import set_language  # noqa: E402
 
 from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_prepared  # noqa: E402
 from voxprint_forge.app.draft import STEPS  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
+from voxprint_forge.app.text import tr  # noqa: E402
 
 CONTROLS = (
     QtWidgets.QAbstractButton,
