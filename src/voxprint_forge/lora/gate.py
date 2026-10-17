@@ -11,6 +11,12 @@ of 20 and no soft path: any doubt drops the photo.
 * A clear minor signal blocks the whole run.
 
 There are no thresholds to configure and no override.
+
+Rule v3 (default; ``rule="v1"`` keeps the strict rule): a face-age estimate of 18 or more but under 20 no
+longer drops a face photo on its own. It passes only when the judge confirms an adult (clearly or youthful
+adult, confident, no "could be under 20") and every age cue is absent. Any estimate under 18 still drops
+and blocks. Each photo kept this way carries an ``audit`` record (id-free: estimates, verdict, cues).
+Photos without a face are judged exactly as in v1.
 """
 
 from __future__ import annotations
@@ -19,7 +25,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RULE_VERSION = 1
+RULES = ("v1", "v3")
+DEFAULT_RULE = "v3"
+RULE_VERSION = 3
+ADULT_CODES = ("clearly_adult", "youthful_adult")
+RELAXABLE = ("youthful_adult", "under_20", "estimator_under_20")
 AGE_MIN = 20.0
 AGE_HARD_MIN = 18.0
 MIN_CONFIDENCE = 0.5
@@ -89,6 +99,7 @@ class Decision:
     minor: bool
     path: str
     trace: dict[str, Any] = field(default_factory=dict, compare=False)
+    audit: dict[str, Any] | None = field(default=None, compare=False)
 
     @property
     def keep(self) -> bool:
@@ -96,8 +107,12 @@ class Decision:
         return not self.reasons
 
 
-def decide(verdict: Verdict | None, reading: AgeReading | None, *, estimator_ok: bool) -> Decision:
+def decide(
+    verdict: Verdict | None, reading: AgeReading | None, *, estimator_ok: bool, rule: str = DEFAULT_RULE
+) -> Decision:
     """Apply the rules to one photo. ``estimator_ok`` is False when the estimator was missing or failed."""
+    if rule not in RULES:
+        raise ValueError(f"unknown gate rule {rule!r}")
     if verdict is None:
         return Decision(("judge_missing",), False, "none")
     reasons: list[str] = []
@@ -148,15 +163,42 @@ def decide(verdict: Verdict | None, reading: AgeReading | None, *, estimator_ok:
                     minor = True
                 elif age < AGE_MIN:
                     reasons.append("estimator_under_20")
-    return Decision(tuple(dict.fromkeys(reasons)), minor, path)
+    reasons = list(dict.fromkeys(reasons))
+    audit = None
+    if rule == "v3" and path == "full" and reasons and not minor and set(reasons) <= set(RELAXABLE):
+        adult = (
+            verdict.reason_code in ADULT_CODES
+            and verdict.could_be_under_20 is False
+            and all(verdict.indicators.get(k) == "absent" for k in INDICATORS)
+            and reading is not None
+            and all(a is not None and a >= AGE_HARD_MIN for a in reading.ages)
+            and verdict.min_age is not None
+            and verdict.min_age >= AGE_HARD_MIN
+        )
+        if adult:
+            ests = [verdict.min_age, *reading.ages]  # type: ignore[union-attr]
+            audit = {
+                "rule": "v3",
+                "min_estimate": min(ests),
+                "judge_age": verdict.min_age,
+                "estimator_ages": list(reading.ages),  # type: ignore[union-attr]
+                "verdict": _code(verdict.reason_code),
+                "markers": {_code(k): _code(v) for k, v in verdict.indicators.items()},
+                "relaxed": reasons,
+            }
+            reasons = []
+    return Decision(tuple(reasons), minor, path, audit=audit)
 
 
 class Gate:
     """The judge plus the age estimator. A missing judge makes the gate unavailable."""
 
-    def __init__(self, judge: Judge | None, estimator: AgeEstimator | None) -> None:
+    def __init__(self, judge: Judge | None, estimator: AgeEstimator | None, rule: str = DEFAULT_RULE) -> None:
+        if rule not in RULES:
+            raise ValueError(f"unknown gate rule {rule!r}")
         self.judge = judge
         self.estimator = estimator
+        self.rule = rule
 
     @property
     def available(self) -> bool:
@@ -187,8 +229,8 @@ class Gate:
                 trace["estimator"] = {"ok": False, "stage": getattr(exc, "stage", "estimator"), **error_info(exc)}
         else:
             trace["estimator"] = {"ok": False, "missing": True}
-        decision = decide(verdict, reading, estimator_ok=estimator_ok)
-        return Decision(decision.reasons, decision.minor, decision.path, trace)
+        decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=getattr(self, "rule", DEFAULT_RULE))
+        return Decision(decision.reasons, decision.minor, decision.path, trace, decision.audit)
 
 
 def error_info(exc: BaseException) -> dict[str, str]:
