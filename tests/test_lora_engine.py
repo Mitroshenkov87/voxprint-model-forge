@@ -247,3 +247,9 @@ def test_pause_file_pauses_and_resume_needs_it_gone(tmp_path) -> None:
 def test_pause_file_name_is_fixed(tmp_path) -> None:
     project = make_project(tmp_path)
     assert project.pause == project.root / "PAUSE"
+
+
+def test_only_bases_with_a_training_loader_are_offered() -> None:
+    offered = {info.mdl_id for info in bases.trainable()}
+    assert "z-image" in offered and "moss-image-base" not in offered
+    assert "moss-image-base" in {info.mdl_id for info in bases.available()}

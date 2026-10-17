@@ -75,6 +75,7 @@ def main(out: Path) -> None:
             forge.prepare()
             shot("3-prepare")
             next_button.click()
+            shot_open_base(forge, app, out / f"{lang}-{mode}-4-train-base-open.png")
             runner.hold = True
             forge.train()
             shot("4-train-running")
@@ -86,6 +87,24 @@ def main(out: Path) -> None:
             shot("6-check")
             forge.window.close()
             forge.expert.set_enabled(False)
+
+
+def shot_open_base(forge, app, path: Path) -> None:
+    """The Train step with the base-model list open (the popup is its own window, so paint it in)."""
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+    combo = forge.window.findChild(QtWidgets.QComboBox, "forge.train.base")
+    combo.showPopup()
+    app.processEvents()
+    image = forge.window.grab()
+    popup = combo.view().window()
+    painter = QtGui.QPainter(image)
+    corner = forge.window.mapFromGlobal(popup.mapToGlobal(QtCore.QPoint(0, 0)))
+    painter.drawPixmap(corner, popup.grab())
+    painter.end()
+    image.save(str(path))
+    combo.hidePopup()
+    app.processEvents()
 
 
 if __name__ == "__main__":
