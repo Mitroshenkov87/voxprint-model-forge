@@ -167,7 +167,7 @@ uv pip install --python "$VENV" \
   "requests" \
   "scipy" \
   "sentencepiece" \
-  "protobuf"
+  "protobuf==5.29.6"
 
 if ! "$VENV/bin/python" -c 'import torchao, lpips, pillow_avif; from diffusers import ZImagePipeline, ZImageControlNetPipeline, ZImageControlNetInpaintPipeline'; then
   printf 'ZImagePipeline or a canvas extra is missing. diffusers==0.41.0 did not import.\n' >&2
