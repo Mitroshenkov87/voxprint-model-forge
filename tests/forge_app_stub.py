@@ -10,7 +10,7 @@ from pathlib import Path
 
 from voxprint_forge.app.engine import EngineEvent, Outcome
 
-ALL_COMMANDS = frozenset({"prepare", "train", "extend", "export"})
+ALL_COMMANDS = frozenset({"prepare", "train", "extend", "export", "refset"})
 
 
 def make_photos(folder: Path, count: int) -> list[Path]:
@@ -60,8 +60,9 @@ class StubRunner:
         self.calls.append(list(args))
         project = Path(args[args.index("--project") + 1])
         self.pause_seen_at_start.append((project / "PAUSE").exists())
-        events, outcome = self.script.get(args[2], ([], Outcome(True, {})))
-        effect = self.effects.get(args[2])
+        key = f"refset.{args[3]}" if args[2] == "refset" else args[2]
+        events, outcome = self.script.get(key, ([], Outcome(True, {})))
+        effect = self.effects.get(key)
         if effect is not None:
             effect(Path(args[args.index("--project") + 1]))
         self.busy = True

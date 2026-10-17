@@ -125,13 +125,13 @@
 </blockquote>
 <h2>4. Simple and Expert mode</h2>
 <ul>
-<li><strong>Simple mode</strong> (default) guides you through five steps with safe default settings. You choose a preset; the app picks the numbers.</li>
+<li><strong>Simple mode</strong> (default) guides you through six steps with safe default settings. You choose a preset; the app picks the numbers.</li>
 <li><strong>Expert mode</strong> (the <strong>Expert mode</strong> button, top right) shows every training setting in a side panel, and allows 5 to 60 photos instead of 10 to 30.</li>
 </ul>
 <p><img alt="Expert mode" src="img/en-expert-4-train-running.png" /></p>
 <p>The safety check (section 5.3) works the same in both modes. Expert mode has no safety settings.</p>
 <h2>5. Training a LoRA: person, object, style</h2>
-<p>Start with <strong>More → New model</strong>. The steps are shown at the top of the window (Step 1 of 5 … Step 5 of 5). Each step shows one short line. <strong>Details ▸</strong> under it opens the full explanation; it starts closed. The subject and base-model choices have their own <strong>Details ▸</strong>.</p>
+<p>Start with <strong>More → New model</strong>. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6). Each step shows one short line. <strong>Details ▸</strong> under it opens the full explanation; it starts closed. The subject and base-model choices have their own <strong>Details ▸</strong>.</p>
 <h3>5.1 Photos</h3>
 <p><img alt="Step 1, Photos" src="img/en-simple-1-photos.png" /></p>
 <ol>
@@ -195,6 +195,26 @@
 <p><strong>Screenshot placeholder:</strong> the LoRA in Canvas with the strength slider.</p>
 </blockquote>
 <p>To improve a model later, press <strong>Add more photos</strong> on this step. Training continues from the model with the new photos and a share of the old ones.</p>
+<h3>5.7 Build a set from references</h3>
+<p>Have only a few good pictures? Model Forge can build the training set with you.</p>
+<ol>
+<li>On step 1 choose <strong>Build a set from references</strong> under <strong>Train on</strong> and add 1 to 10 references of one subject.</li>
+<li>Fill in step 2 as usual: names, <strong>Consent obtained</strong>, <strong>Verbal</strong> or a release, <strong>Subject is 18+</strong> and, if it applies, <strong>Dataset contains adult content (18+)</strong>.</li>
+<li>On step 3, <strong>Build a set</strong>, press <strong>Make pictures</strong>. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.</li>
+<li>Press <strong>Keep</strong> under each picture that looks right and <strong>Reject</strong> under the rest.</li>
+<li>Press <strong>Next round</strong>. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.</li>
+<li>Press <strong>This is it</strong>. The references and the kept pictures become the training set, and the usual steps follow: <strong>Check photos</strong>, training and the result.</li>
+</ol>
+<p>Good to know:</p>
+<ul>
+<li>Simple mode draws 24 pictures per round with medium variation. Expert mode sets <strong>Pictures per round</strong> (8 to 64), <strong>Variation strength</strong> (0.25 to 0.90; higher moves further from the source), <strong>Steps</strong> (4 to 16), and lets you edit the <strong>Descriptions</strong> after the first round.</li>
+<li>The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.</li>
+<li>Pictures marked <strong>≈ similar</strong> look almost the same as another one; keep only one of them.</li>
+<li>The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. <strong>Kept … · set … of …</strong> shows where you are.</li>
+<li>Each model is unloaded before the next one starts, so a 16 GB graphics card is enough. A round of 24 pictures takes a few minutes.</li>
+<li>The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.</li>
+<li><strong>Start over</strong> forgets the rounds and keeps the references.</li>
+</ul>
 <h2>6. Managing models</h2>
 <ul>
 <li><strong>Manage models</strong> (in <strong>Check this computer</strong>) opens the VOXPrint model downloader. There you can see installed models, their size and licence, download missing ones and remove ones you no longer need.</li>

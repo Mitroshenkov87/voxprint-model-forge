@@ -66,7 +66,7 @@ options:
 
 ```text
 usage: forge preflight [-h] [--vm] [--for {all,lora}]
-                       [--min-free-gb MIN_FREE_GB]
+                       [--min-free-gb MIN_FREE_GB] [--refset]
 
 options:
   -h, --help            show this help message and exit
@@ -80,6 +80,10 @@ options:
                         Default: all.
   --min-free-gb MIN_FREE_GB
                         Disk needed for --vm. Default: 150.
+  --refset              Check this computer for Build a set from references:
+                        diffusers img2img, Z-Image-Turbo, the safety check
+                        models and env, DINOv2, CUDA 16 GB+, 32 GB RAM and
+                        disk. Exit 6 on a missing requirement.
 ```
 
 ## `forge status`
@@ -411,16 +415,18 @@ options:
 ## `forge lora`
 
 ```text
-usage: forge lora [-h] {prepare,export,train,extend} ...
+usage: forge lora [-h] {prepare,export,train,extend,refset} ...
 
 positional arguments:
-  {prepare,export,train,extend}
+  {prepare,export,train,extend,refset}
     prepare             Check, crop and describe photos into a project.
     export              Save the LoRA as one .safetensors file with voxprint-
                         model.json.
     train               Train a LoRA on the prepared photos of a project.
     extend              Continue an existing LoRA with the newest photos of a
                         project.
+    refset              Build a photo set from 1-10 references, round by
+                        round.
 
 options:
   -h, --help            show this help message and exit
@@ -623,6 +629,79 @@ options:
   --dry-run             Print the plan and time estimate; train nothing.
   --from FROM_LORA      Existing LoRA .safetensors.
   --replay REPLAY       Share of older photos kept, 0.0-1.0.
+```
+
+## `forge lora refset`
+
+```text
+usage: forge lora refset [-h] {round,finish} ...
+
+positional arguments:
+  {round,finish}
+    round         Check the references (first time), then make and check
+                  candidates.
+    finish        Copy the references and kept candidates into
+                  refset/approved.
+
+options:
+  -h, --help      show this help message and exit
+```
+
+## `forge lora refset round`
+
+```text
+usage: forge lora refset round [-h] --project PROJECT [--ref REF]
+                               [--kind {person,object,style}] [--name NAME]
+                               [--stage-name STAGE_NAME] [--trigger TRIGGER]
+                               [--consent-obtained] [--subject-adult]
+                               [--rights-confirmed] [--release RELEASE]
+                               [--consent-method {verbal,file}]
+                               [--adult-content]
+                               [--provenance-note PROVENANCE_NOTE]
+                               [--candidates CANDIDATES] [--strength STRENGTH]
+                               [--steps STEPS] [--seed SEED]
+
+options:
+  -h, --help            show this help message and exit
+  --project PROJECT     Project folder.
+  --ref REF             One reference picture. 1-10.
+  --kind {person,object,style}
+                        What the photos show.
+  --name NAME           Name of the subject.
+  --stage-name STAGE_NAME
+                        Optional alias; becomes the trigger word.
+  --trigger TRIGGER     Word that calls the model in a prompt.
+  --consent-obtained    Person: consent was obtained.
+  --subject-adult       Person: the subject is 18 or older.
+  --rights-confirmed    Object or style: you have the rights.
+  --release RELEASE     Optional model release file.
+  --consent-method {verbal,file}
+                        Person: verbal (no file) or file (needs --release).
+                        Default: file with --release, else verbal.
+  --adult-content       Person, 18+ only: the photos contain adult content (a
+                        label).
+  --provenance-note PROVENANCE_NOTE
+                        Optional note on where the photos come from.
+  --candidates CANDIDATES
+                        Candidates per round, 8-64. Default: 24.
+  --strength STRENGTH   Variation strength (img2img denoise), 0.25-0.9.
+                        Default: 0.5.
+  --steps STEPS         Turbo steps, 4-16. Default: 9.
+  --seed SEED           First seed of the round. Default: 1000 x round.
+```
+
+## `forge lora refset finish`
+
+```text
+usage: forge lora refset finish [-h] --project PROJECT
+                                [--mode {simple,expert}] [--base BASE]
+
+options:
+  -h, --help            show this help message and exit
+  --project PROJECT     Project folder.
+  --mode {simple,expert}
+                        Set size: 10-30, or 5-60.
+  --base BASE           Base model the set is for. Default: z-image.
 ```
 
 ## `forge index`

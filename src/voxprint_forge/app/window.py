@@ -31,9 +31,11 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
-from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
+from voxprint_forge.app.draft import KINDS, SOURCES, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
+from voxprint_forge.lora import refset
+from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, SIMPLE_RANGE
 
 APP_ID = "model-forge"
 LOCALES = Path(__file__).resolve().parent / "locales"
@@ -127,6 +129,9 @@ class ForgeApp:
         self.simple: dict[str, str] = {"preset": "balanced", "likeness": "balanced", "vram": "auto"}
         self.simple["base"] = self._bases()[0][0] if self._bases() else ""
         self.previews = True
+        self.refset_settings: dict[str, float] = {
+            "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS,
+        }
         self.project = self.home / "lora" / "untitled"
         self.status: tuple[str, dict[str, object], bool] | None = None
         self.progress_text = ""
@@ -304,6 +309,7 @@ class ForgeApp:
         builder = {
             "photos": self._photos,
             "subject": self._subject,
+            "refset": self._refset,
             "prepare": self._prepare,
             "train": self._train,
             "result": self._result,
@@ -348,7 +354,10 @@ class ForgeApp:
         layout.insertWidget(0, outer, 1)  # type: ignore[attr-defined]
 
     def _intro(self, column: QtWidgets.QVBoxLayout, step: str) -> None:
-        short = QtWidgets.QLabel(tr(f"forge.app.step.{step}.short"))
+        key = f"forge.app.step.{step}.short"
+        if step == "photos" and self.draft.source == "refs":
+            key = "forge.app.step.photos.short_refs"
+        short = QtWidgets.QLabel(tr(key))
         short.setObjectName("panel")
         short.setWordWrap(True)
         short.setToolTip(tr(f"lora.step.{step}.desc"))
@@ -384,6 +393,8 @@ class ForgeApp:
         folder = _button("forge.app.photos.add_folder", "forge.app.photos.add_folder.tip", self.choose_folder)
         remove = _button("forge.app.photos.remove", "lora.photos.remove.tip", lambda: self._remove(drop))
         count_key = "forge.app.photos.count_expert" if self.draft.expert else "forge.app.photos.count"
+        if self.draft.source == "refs":
+            count_key = "forge.app.photos.count_refs"
         count = QtWidgets.QLabel(tr(count_key, count=len(self.draft.photos)))
         count.setObjectName("presetLabel")
         count.setToolTip(tr("lora.photos.count_expert.tip" if self.draft.expert else "lora.photos.count.tip"))
@@ -396,6 +407,11 @@ class ForgeApp:
         kind_label.setObjectName("settingGroup")
         column.addWidget(kind_label)
         column.addLayout(self._chips(KINDS, "lora.kind.{}", self.draft.kind, self._set_kind, tip="lora.kind.tip"))
+        source_label = QtWidgets.QLabel(tr("forge.app.source.label"))
+        source_label.setObjectName("settingGroup")
+        column.addWidget(source_label)
+        column.addLayout(self._chips(SOURCES, "forge.app.source.{}", self.draft.source, self._set_source,
+                                     tips="forge.app.source.{}.tip"))
 
     def _chips(
         self,
@@ -537,6 +553,242 @@ class ForgeApp:
         if isinstance(row, FlowRow):
             row.relayout()
         self._gate()
+
+    # ----- build a set from references ------------------------------------
+    def _refset(self, column: QtWidgets.QVBoxLayout) -> None:
+        """References, round settings, Make pictures / This is it, and the Keep/Reject review grid."""
+        if self.draft.source != "refs":
+            skip = QtWidgets.QLabel(tr("forge.app.refset.skip"))
+            skip.setObjectName("panel")
+            skip.setWordWrap(True)
+            column.addWidget(skip)
+            switch = _button("forge.app.refset.switch", "forge.app.source.refs.tip",
+                             lambda: self._set_source("refs"))
+            column.addWidget(switch, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+            return
+        self._kept_label = self._finish_button = None
+        state = refset.load_state(self.project)
+        if state.get("refs") and not refset.same_refs(state, self.draft.photos):
+            state = refset.empty_state()  # new references: the engine starts a new loop on the next round
+        busy = self.runner.busy  # type: ignore[attr-defined]
+        blocked = bool(state.get("blocked"))
+        heading = QtWidgets.QLabel(tr("forge.app.refset.refs", count=len(self.draft.photos)))
+        heading.setObjectName("settingGroup")
+        column.addWidget(heading)
+        strip = QtWidgets.QListWidget()
+        strip.setObjectName("forge.refset.refs")
+        strip.setToolTip(tr("forge.app.refset.refs.tip"))
+        strip.setViewMode(QtWidgets.QListView.ViewMode.IconMode)
+        strip.setFlow(QtWidgets.QListView.Flow.LeftToRight)
+        strip.setWrapping(False)
+        strip.setIconSize(QtCore.QSize(72, 72))
+        strip.setFixedHeight(104)
+        strip.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        for path in self.draft.photos:
+            strip.addItem(QtWidgets.QListWidgetItem(_thumb(path), ""))
+        column.addWidget(strip)
+        self._refset_settings(column, state)
+        rounds = state.get("rounds") or []
+        row = QtWidgets.QHBoxLayout()
+        make_key = "forge.app.refset.next_round" if rounds else "forge.app.refset.make"
+        make = _button(make_key, "forge.app.refset.make.tip", self.make_round, primary=True)
+        make.setObjectName("primary")
+        finish = _button("forge.app.refset.finish", "forge.app.refset.finish.tip", self.finish_set)
+        finish.setObjectName("forge.refset.finish")
+        restart = _button("forge.app.refset.restart", "forge.app.refset.restart.tip", self.restart_set)
+        restart.setObjectName("forge.refset.restart")
+        make.setEnabled(not busy and not blocked)
+        finish.setEnabled(not busy and not blocked and bool(refset.kept(state)))
+        self._finish_button = finish
+        restart.setEnabled(not busy and not blocked and bool(rounds))
+        for widget in (make, finish, restart):
+            row.addWidget(widget)
+        row.addStretch(1)
+        column.addLayout(row)
+        if blocked:
+            if self.status is None:
+                self.status = ("lora.err.refset_blocked", {}, True)
+            stop = QtWidgets.QLabel(tr("lora.err.refset_blocked"))
+            stop.setObjectName("warn")
+            stop.setWordWrap(True)
+            column.addWidget(stop)
+        self._progress_widgets(column)
+        column.addWidget(self._details("refset.more", (
+            tr("forge.app.refset.more.rounds"), tr("forge.app.refset.more.strength"),
+            tr("forge.app.refset.more.similar"), tr("forge.app.refset.more.check"),
+        )))
+        if blocked or not rounds:
+            return
+        self._kept_label = QtWidgets.QLabel()
+        self._kept_label.setObjectName("presetLabel")
+        self._kept_label.setWordWrap(True)
+        column.addWidget(self._kept_label)
+        shown = refset.candidates(state)
+        similar = sum(1 for item in shown if item.get("near_duplicate_of"))
+        if similar:
+            warn = QtWidgets.QLabel(tr("forge.app.refset.similar", count=similar))
+            warn.setObjectName("warn")
+            warn.setWordWrap(True)
+            column.addWidget(warn)
+        if not shown:
+            empty = QtWidgets.QLabel(tr("forge.app.refset.none_shown"))
+            empty.setObjectName("panel")
+            empty.setWordWrap(True)
+            column.addWidget(empty)
+        root = refset.folder(self.project)
+        cards = tuple(self._candidate_card(item, root / str(item["file"]), busy) for item in shown)
+        if cards:
+            column.addWidget(_flow_row("forge.refset.grid", *cards))
+        self._update_kept()
+
+    def _refset_settings(self, column: QtWidgets.QVBoxLayout, state: dict[str, object]) -> None:
+        values = self.refset_settings
+        if not self.draft.expert:
+            summary = QtWidgets.QLabel(tr("forge.app.refset.simple", count=refset.DEFAULT_CANDIDATES))
+            summary.setObjectName("panel")
+            summary.setWordWrap(True)
+            column.addWidget(summary)
+            return
+        form = QtWidgets.QFormLayout()
+        count = QtWidgets.QSpinBox()
+        count.setObjectName("forge.refset.count")
+        count.setRange(*refset.CANDIDATE_RANGE)
+        count.setValue(int(values["count"]))
+        count.setToolTip(tr("forge.app.refset.count.tip"))
+        count.valueChanged.connect(lambda v: values.__setitem__("count", int(v)))
+        strength = QtWidgets.QDoubleSpinBox()
+        strength.setObjectName("forge.refset.strength")
+        strength.setRange(refset.STRENGTH_MIN, refset.STRENGTH_MAX)
+        strength.setSingleStep(0.05)
+        strength.setDecimals(2)
+        strength.setValue(float(values["strength"]))
+        strength.setToolTip(tr("forge.app.refset.strength.tip"))
+        strength.valueChanged.connect(lambda v: values.__setitem__("strength", round(float(v), 2)))
+        steps = QtWidgets.QSpinBox()
+        steps.setObjectName("forge.refset.steps")
+        steps.setRange(*refset.STEPS_RANGE)
+        steps.setValue(int(values["steps"]))
+        steps.setToolTip(tr("forge.app.refset.steps.tip"))
+        steps.valueChanged.connect(lambda v: values.__setitem__("steps", int(v)))
+        form.addRow(tr("forge.app.refset.count"), count)
+        form.addRow(tr("forge.app.refset.strength"), strength)
+        form.addRow(tr("forge.app.refset.steps"), steps)
+        column.addLayout(form)
+        heading = QtWidgets.QLabel(tr("forge.app.refset.prompts"))
+        heading.setObjectName("settingGroup")
+        column.addWidget(heading)
+        prompts = refset.load_prompts(self.project) if state.get("refs_checked") else {}
+        refs = [(str(r["id"]), refset.folder(self.project) / str(r["file"])) for r in state.get("refs") or []
+                if str(r.get("id")) in prompts]
+        if not refs:
+            later = QtWidgets.QLabel(tr("forge.app.refset.prompts_later"))
+            later.setObjectName("simpleNote")
+            later.setWordWrap(True)
+            column.addWidget(later)
+            return
+        table = QtWidgets.QTableWidget(len(refs), 2)
+        table.setObjectName("forge.refset.prompts")
+        table.setToolTip(tr("forge.app.refset.prompts.tip"))
+        table.horizontalHeader().setVisible(False)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setIconSize(QtCore.QSize(48, 48))
+        table.setWordWrap(True)
+        for index, (rid, path) in enumerate(refs):
+            picture = QtWidgets.QTableWidgetItem(_thumb(path, 48), "")
+            picture.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            text = QtWidgets.QTableWidgetItem(prompts[rid])
+            text.setData(QtCore.Qt.ItemDataRole.UserRole, rid)
+            table.setItem(index, 0, picture)
+            table.setItem(index, 1, text)
+            table.setRowHeight(index, 56)
+        table.setColumnWidth(0, 60)
+        table.setFixedHeight(min(4, len(refs)) * 56 + 6)
+        table.itemChanged.connect(self._prompt_edited)
+        column.addWidget(table)
+
+    def _candidate_card(self, item: dict[str, object], path: Path, busy: bool) -> QtWidgets.QFrame:
+        cid = str(item["id"])
+        card = QtWidgets.QFrame()
+        card.setObjectName("card")
+        card.setProperty("candidate", cid)
+        inner = QtWidgets.QVBoxLayout(card)
+        inner.setContentsMargins(6, 6, 6, 6)
+        inner.setSpacing(4)
+        picture = QtWidgets.QLabel()
+        picture.setFixedSize(136, 136)
+        picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        pixmap = QtGui.QPixmap(str(path))
+        if not pixmap.isNull():
+            picture.setPixmap(pixmap.scaled(136, 136, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                            QtCore.Qt.TransformationMode.SmoothTransformation))
+        picture.setToolTip(tr("forge.app.refset.picture.tip", seed=item.get("seed", ""),
+                              round=int(item.get("round", 0)) + 1))
+        inner.addWidget(picture)
+        if item.get("near_duplicate_of"):
+            mark = QtWidgets.QLabel(tr("forge.app.refset.similar_mark"))
+            mark.setObjectName("warn")
+            mark.setToolTip(tr("forge.app.refset.similar_mark.tip"))
+            inner.addWidget(mark)
+        row = QtWidgets.QVBoxLayout()  # stacked: each chip gets the full card width, so RU labels are not cut
+        row.setSpacing(4)
+        verdict = str(item.get("verdict", "pending"))
+        buttons = {}
+        for value, label, tip in (("keep", "forge.app.refset.keep", "forge.app.refset.keep.tip"),
+                                  ("reject", "forge.app.refset.reject", "forge.app.refset.reject.tip")):
+            button = QtWidgets.QPushButton(tr(label))
+            button.setObjectName(f"forge.refset.{value}.{cid}")
+            button.setProperty("chip", "true")
+            button.setCheckable(True)
+            button.setChecked(verdict == value)
+            button.setToolTip(tr(tip))
+            button.setEnabled(not busy)
+            button.setAutoDefault(False)
+            buttons[value] = button
+            row.addWidget(button)
+        for value, button in buttons.items():
+            other = buttons["reject" if value == "keep" else "keep"]
+            button.toggled.connect(lambda checked, v=value, o=other: self._verdict(cid, v, checked, o))
+        inner.addLayout(row)
+        card.setFixedWidth(152)
+        return card
+
+    def _verdict(self, cid: str, value: str, checked: bool, other: QtWidgets.QPushButton) -> None:
+        if checked and other.isChecked():
+            other.blockSignals(True)
+            other.setChecked(False)
+            other.blockSignals(False)
+        refset.set_verdict(self.project, cid, value if checked else "pending")
+        self.draft.approved = []
+        self.draft.prepared = None
+        self._update_kept()
+        self._gate()
+
+    _kept_label: QtWidgets.QLabel | None = None
+    _finish_button: QtWidgets.QPushButton | None = None
+
+    def _update_kept(self) -> None:
+        label = getattr(self, "_kept_label", None)
+        if label is None:
+            return
+        state = refset.load_state(self.project)
+        low, high = SIMPLE_RANGE if not self.draft.expert else (EXPERT_FLOOR, EXPERT_CAP)
+        busy = self.runner.busy  # type: ignore[attr-defined]
+        try:
+            label.setText(tr("forge.app.refset.kept", kept=len(refset.kept(state)),
+                             total=refset.approved_count(state), low=low, high=high))
+            if self._finish_button is not None:
+                self._finish_button.setEnabled(not busy and not state.get("blocked") and bool(refset.kept(state)))
+        except RuntimeError:
+            pass
+
+    def _prompt_edited(self, item: QtWidgets.QTableWidgetItem) -> None:
+        rid = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not rid:
+            return
+        prompts = refset.load_prompts(self.project)
+        prompts[str(rid)] = item.text().strip()
+        refset.save_prompts(self.project, prompts)
 
     def _prepare(self, column: QtWidgets.QVBoxLayout) -> None:
         crop_label = QtWidgets.QLabel(tr("forge.app.prepare.crop"))
@@ -750,6 +1002,10 @@ class ForgeApp:
         for mdl_id, label, _permissive in self._bases():
             key = "forge.app.check.base_ready" if _base_installed(mdl_id) else "forge.app.check.base_missing"
             lines.append(tr(key, name=label))
+        from voxprint_forge.lora.backends import installed_dir
+
+        teacher = installed_dir(refset.TEACHER_ID) is not None
+        lines.append(tr("forge.app.check.teacher_ready" if teacher else "forge.app.check.teacher_missing"))
         self._check_lines.setText("\n".join(lines))
 
     # ----- actions ------------------------------------------------------
@@ -760,6 +1016,11 @@ class ForgeApp:
             self.draft.verbal = self.draft.adult_content = False
             self.draft.prepared = None
         self._gate()
+
+    def _set_source(self, source: str) -> None:
+        if source != self.draft.source:
+            self.draft.set_source(source)
+        self.repaint()
 
     def _set_crop(self, crop: str) -> None:
         if crop != self.draft.crop:
@@ -922,6 +1183,49 @@ class ForgeApp:
                 self.draft.prepared = None
 
         self._run(args, done)
+
+    def make_round(self) -> None:
+        """``lora refset round``: check the references (first time), draw candidates, check each one."""
+        if not self._needs("refset"):
+            return
+        values = self.refset_settings if self.draft.expert else {
+            "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS}
+        args = engine.refset_round_args(self.draft, self.project, count=int(values["count"]),
+                                        strength=float(values["strength"]), steps=int(values["steps"]))
+
+        def done(outcome: engine.Outcome) -> None:
+            self.draft.approved = []
+            self.draft.prepared = None
+            if outcome.ok:
+                rounds = refset.load_state(self.project).get("rounds") or [{}]
+                last = rounds[-1]
+                self.progress_text = tr("lora.progress.refset_done", round=int(last.get("round", 0)) + 1,
+                                        shown=len(last.get("candidates") or []))
+                self.progress_percent = None
+
+        self._run(args, done)
+
+    def finish_set(self) -> None:
+        """"This is it": hand the references and the kept pictures to the normal preparation."""
+        if not self._needs("refset"):
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            if outcome.ok:
+                self.draft.approved = refset.approved_files(self.project)
+                self.draft.prepared = None
+                self.status = ("forge.app.refset.finished", {"count": len(self.draft.approved)}, False)
+
+        self._run(engine.refset_finish_args(self.draft, self.project, self.simple.get("base", "")), done)
+
+    def restart_set(self) -> None:
+        """Start over with the same references (a blocked set stays blocked)."""
+        if self.runner.busy:  # type: ignore[attr-defined]
+            return
+        if refset.restart(self.project):
+            self.draft.approved = []
+            self.draft.prepared = None
+        self.repaint()
 
     def _train_args(self, *, resume: bool = False, dry_run: bool = False) -> list[str]:
         values: dict[str, object] = dict(self.expert_values())
