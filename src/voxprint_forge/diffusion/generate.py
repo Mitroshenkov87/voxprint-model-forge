@@ -22,6 +22,7 @@ from PIL import Image
 from safetensors import safe_open
 from transformers import CLIPModel, CLIPProcessor
 
+from voxprint_forge.compare.score import clip_text_limit
 from voxprint_forge.diffusion.alias import alias_key as _alias_key
 from voxprint_forge.diffusion.controlnet_link import swap_controlnet
 from voxprint_forge.diffusion.controlnet_union import places_for_count, union_config
@@ -120,7 +121,9 @@ class ClipScorer:
     def text_image(self, image: Image.Image, text: str) -> float:
         """Cosine similarity of this image and a text prompt."""
         image_inputs = self.processor(images=image, return_tensors="pt")
-        text_inputs = self.processor(text=[text], return_tensors="pt", padding=True)
+        text_inputs = self.processor(
+            text=[text], return_tensors="pt", padding=True, truncation=True, max_length=clip_text_limit(self.model)
+        )
         pixels = image_inputs["pixel_values"].to(self.device)
         input_ids = text_inputs["input_ids"].to(self.device)
         mask = text_inputs.get("attention_mask")
