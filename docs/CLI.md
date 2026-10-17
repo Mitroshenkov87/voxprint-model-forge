@@ -135,6 +135,14 @@ Exit codes are the same table as the rest of the CLI. Hugging Face repos are pub
 
 Markers are `~/.done/diffusion-int4/<step>` (`FORGE_DONE_DIR`). `~/watch.json` (`FORGE_WATCH`) lists the jobs, which are done, and the expected minutes. Heartbeats stay in `~/forge-out/status.json`.
 
+`bash scripts/vm_run_diffusion_int4.sh` is the A100 (compute 8.0) and H100 rental script. It clones Wan2.2, ComfyUI-GGUF, and llama.cpp, applies `lcpp.patch`, builds `llama-quantize` for `80;90`, creates `venv-wan`, and exports `FORGE_WAN_REPO`, `FORGE_WAN_PYTHON`, `FORGE_COMFY_GGUF`, `FORGE_LLAMA_SRC`, and `FORGE_LLAMA_BIN`. `--dry-run` skips CUDA and those clones. Qwen-Image-Edit is not part of this script.
+
+## Z-Image INT4
+
+The Windows RTX 4090 laptop check is still the 16 GB fit. Nunchaku has sm_89 kernels. INT4 runs from compute capability 8.0. The Linux driver floor is 525.60.13. Ampere FP8 timings are not representative of RTX 40/50.
+
+`scripts/smoke_laptop.ps1` runs only the `zimage` step. `scripts/nunchaku_zimage_test.ps1` (Windows) and `scripts/nunchaku_zimage_test.sh` (Linux) run tag `nunchaku-test-2`: `zimage-r128` and optional `zimage-r256`, with `cap16` as the 16 GB cap. The module is `python -m voxprint_forge.diffusion.nunchaku_zimage`.
+
 ## Fit
 
 `fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. For each quant, best first, fit tries placements in order: everything on the GPU, KV in RAM (`--no-kv-offload`), MoE experts on CPU (`--n-cpu-moe`, when the plan sets `moe_layers` and `expert_fraction`), then a diffusion text encoder in RAM or sequential loading (when the plan sets `encoder_gib`). An offload that fits is kept instead of a smaller quant. GPU and flagged offloads are measured with llama-server on the target. Encoder offload and sequential loading have no llama-server flag, so those two are the byte formula. The fit marker, the registry draft, and the model card record the split that tier assumes. The gate uses on-card weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.

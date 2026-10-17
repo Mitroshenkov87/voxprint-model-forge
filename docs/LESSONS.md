@@ -26,7 +26,7 @@ The rental lost about 40 minutes to three startup bugs.
 - Kaggle model slugs cannot contain dots. `t-lite-it-2.1` is `voxprint-t-lite-it-2-1` on Kaggle and keeps the dot on Hugging Face.
 - Union 2.1 lite is 3 control blocks. VideoX-Fun `config/z_image/z_image_control_2.1_lite.yaml` places them at `[0, 10, 20]`, with refiner blocks `[0, 1]`. The full 2.1 map is every even index from 0 through 28. The VM assumption matched that lite file.
 - `pgrep -f scripts/bootstrap.sh` also matched the tmux server command line. The guard now uses a live `bootstrap.lock` pid, or a python/bash process that is actually the job.
-- The base part used to delete its upstream tree at upload time. Shared sources stay until every `consumers` entry (including `qwen` and `bake-off`) has released.
+- The base part used to delete its upstream tree at upload time. Shared sources stay until every `consumers` entry (including `bake-off`) has released.
 
 ## Dry run before a bundle
 

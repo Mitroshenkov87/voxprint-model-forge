@@ -1,9 +1,8 @@
 """Pinned tools, models, and time estimates for the diffusion-int4 stage.
 
 Licence checks below were read from the pinned trees on 2026-10-11.
-deepcompressor ``LICENSE`` is Apache-2.0 (copyright 2024 Yujun Lin, Muyang Li,
-Zhekai Zhang, Haotian Tang, Shang Yang, Song Han). ComfyUI-GGUF ``LICENSE``
-and Wan2.2 ``LICENSE.txt`` are Apache-2.0. llama.cpp tag ``b3962`` is MIT.
+ComfyUI-GGUF ``LICENSE`` and Wan2.2 ``LICENSE.txt`` are Apache-2.0.
+llama.cpp tag ``b3962`` is MIT.
 """
 
 from __future__ import annotations
@@ -13,19 +12,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 TargetName = Literal["wan-2.2-a14b"]
-
-# nunchaku-ai/deepcompressor issue 104 is open: the nunchaku team has not
-# published Qwen-Image quant code. That repo redirects to nunchux-ai/deepcompressor.
-# main, deepcompressor-v0.2.0, v0.3.0, and lmquant-v0.0.0 have no
-# QwenImageTransformer2DModel factory. lantudou/deepcompressor2 branch syh is
-# Apache-2.0 and is six commits ahead of 69f3473, which is the base that raises
-# KeyError in DiffusionModelStruct.construct.
-DEEPCOMPRESSOR_REPO = "https://github.com/lantudou/deepcompressor2"
-DEEPCOMPRESSOR_MIRROR = "https://github.com/nunchux-ai/deepcompressor"
-DEEPCOMPRESSOR_COMMIT = "019cbdeae7e2add52eaf4c27a361cfc1e57993b8"
-DEEPCOMPRESSOR_BRANCH = "syh"
-DEEPCOMPRESSOR_BASE_COMMIT = "69f3473f5e1c1504bae35cc50c7858ef900a9b17"
-DEEPCOMPRESSOR_LICENCE = "Apache-2.0"
 
 COMFY_GGUF_REPO = "https://github.com/city96/ComfyUI-GGUF"
 COMFY_GGUF_COMMIT = "6ea2651e7df66d7585f6ffee804b20e92fb38b8a"
@@ -39,14 +25,6 @@ LLAMA_CPP_LICENCE = "MIT"
 WAN_CODE_REPO = "https://github.com/Wan-Video/Wan2.2"
 WAN_CODE_COMMIT = "1ea34ff48f87168174e12956e200b1d908b1c5ff"
 WAN_CODE_LICENCE = "Apache-2.0"
-
-NUNCHAKU_FORK_REPO = "tonera/vitoom-nunchaku"
-NUNCHAKU_FORK_COMMIT = "85bad5510d409570527b018387491fd0c81e4727"
-NUNCHAKU_WHEEL = (
-    "nunchaku-1.3.0.dev20260622+cu12.8torch2.11-cp311-cp311-linux_x86_64.whl"
-)
-NUNCHAKU_WHEEL_SHA256 = "bcdfe6fcc36cd37da34c1d0f1e0fa7c9b4201b2a70a89a3274d22420221afd2f"
-NUNCHAKU_LICENCE = "Apache-2.0"
 
 WAN_WEIGHT_REPO = "Wan-AI/Wan2.2-T2V-A14B"
 WAN_WEIGHT_REVISION = "c8c270b13ee05bfa474194ac9fb07a5868a97cea"

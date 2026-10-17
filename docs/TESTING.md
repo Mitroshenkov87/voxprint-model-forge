@@ -26,7 +26,7 @@ images.
 
 | Check | Hard cases | Minimum before a stop |
 | --- | --- | --- |
-| Base and Qwen image | 8 prompts, seed 0 | 4 |
+| Base image | 8 prompts, seed 0 | 4 |
 | Control | 6 typed cases, seed 0, one of each type first | 3 |
 | Inpaint | 4 prompts | 2 |
 | Edit | 6 pairs, seed 0 | 4 |

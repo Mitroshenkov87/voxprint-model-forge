@@ -18,14 +18,14 @@ id = "turbo"
 repo = "Tongyi-MAI/Z-Image-Turbo"
 revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 licence = "apache-2.0"
-consumers = ["base", "controlnet", "qwen", "bake-off"]
+consumers = ["base", "controlnet", "bake-off"]
 
 [[parts.sources]]
 id = "base"
 repo = "Tongyi-MAI/Z-Image"
 revision = "04cc4abb7c5069926f75c9bfde9ef43d49423021"
 licence = "apache-2.0"
-consumers = ["base", "qwen", "bake-off"]
+consumers = ["base", "bake-off"]
 allow = [
   "transformer/**",
   "text_encoder/**",
@@ -59,4 +59,4 @@ id = "turbo"
 repo = "Tongyi-MAI/Z-Image-Turbo"
 revision = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 licence = "apache-2.0"
-consumers = ["base", "controlnet", "qwen", "bake-off"]
+consumers = ["base", "controlnet", "bake-off"]

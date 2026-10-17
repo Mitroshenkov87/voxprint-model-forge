@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ from voxprint_forge.errors import LicenceError, StageError
 from voxprint_forge.statusfile import read_status
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "vm_run_diffusion_int4.sh"
 POISON = '<script>alert("xss")</script>'
 
 
@@ -234,6 +236,47 @@ def test_cli_dry_run_json_and_disk_floor(tmp_path: Path, monkeypatch: pytest.Mon
         ]
     )
     assert floor == 2
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the rental script is bash")
+def test_script_dry_run(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path / "home"),
+            "FORGE_OUT": str(tmp_path / "forge-out"),
+            "FORGE_DONE_DIR": str(tmp_path / "done"),
+            "FORGE_WATCH": str(tmp_path / "watch.json"),
+            "FORGE_HOST_KIND": "local",
+            "FORGE_PYTHON": sys.executable,
+            "PYTHONPATH": site.getusersitepackages(),
+        }
+    )
+    (tmp_path / "home").mkdir()
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "--dry-run"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "ALL-DONE" in done.stdout
+    assert (tmp_path / "watch.json").is_file()
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "1ea34ff48f87168174e12956e200b1d908b1c5ff" in text
+    assert "6ea2651e7df66d7585f6ffee804b20e92fb38b8a" in text
+    assert "c8c07d658a6cefc5a50cfdf6be7d726503612303" in text
+    assert "lcpp.patch" in text
+    assert 'CMAKE_CUDA_ARCHITECTURES="80;90"' in text
+    assert "venv-wan" in text
+    for name in ("FORGE_WAN_REPO", "FORGE_WAN_PYTHON", "FORGE_COMFY_GGUF", "FORGE_LLAMA_SRC", "FORGE_LLAMA_BIN"):
+        assert name in text
+    assert "deepcompressor" not in text
+    assert "--own-edit" not in text
+    assert "--qwen-image" not in text
+    assert "smoke_laptop" not in text
 
 
 def test_forge_help_lists_diffusion_int4() -> None:
