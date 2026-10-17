@@ -88,6 +88,13 @@ def mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values)
 
 
-def passes(lpips_mean: float, clip_drop_mean: float, *, lpips_max: float, clip_drop_max: float) -> bool:
-    """True when this candidate meets the Forge quality bar."""
-    return lpips_mean <= lpips_max and clip_drop_mean <= clip_drop_max
+def passes(
+    lpips_mean: float,
+    clip_drop_mean: float,
+    *,
+    lpips_max: float,
+    clip_drop_max: float,
+    lpips_gate: bool = True,
+) -> bool:
+    """True when this candidate meets the automatic bar. LPIPS gates only when ``lpips_gate``."""
+    return (not lpips_gate or lpips_mean <= lpips_max) and clip_drop_mean <= clip_drop_max
