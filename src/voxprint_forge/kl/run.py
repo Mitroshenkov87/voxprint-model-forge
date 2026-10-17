@@ -17,6 +17,7 @@ from voxprint_forge.evaluate import data_dir, parse_ppl
 from voxprint_forge.fitmath import Arch, fits_budget
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.kl.arch import (
+    gguf_model_name,
     gguf_reference_mtp,
     mtp_status,
     read_model_arch,
@@ -26,6 +27,7 @@ from voxprint_forge.kl.arch import (
 from voxprint_forge.kl.parse import parse_kl, tokens_per_second
 from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat
 from voxprint_forge.kl.preflight import require_llama_arch
+from voxprint_forge.kl.recover import recover_ablation
 from voxprint_forge.llama import Runner, convert_argv, convert_script, kl_argv, server_argv, tool
 from voxprint_forge.measure import parse_buffers
 from voxprint_forge.scrub import active_secrets, scrub
@@ -50,6 +52,19 @@ def speed_facts(name: str, capability: tuple[int, int] | None) -> dict[str, obje
 SERVER_PATTERN = "KV buffer size"
 FetchFn = Callable[[str, str, Path, list[str] | None], None]
 ConvertFn = Callable[[Runner, Path, Path], None]
+RecoverFn = Callable[[Path, Path, Path], dict[str, object]]
+
+# llama-perplexity stores base log-probs floored at (max logit - 16). When the
+# KL run's "Mean PPL(base)" (read back from that file) and the base run's own
+# final estimate disagree by more than this, many target tokens sit more than
+# 16 nats below the argmax: the corpus is far outside what the model predicts
+# (Gemma 4 instruct on raw prose does this) and PPL is not a usable figure.
+PPL_CLAMP_TOLERANCE = 0.02
+PPL_INVALID_NOTE = (
+    "PPL is not a usable figure for this model on this corpus: the base PPL read back from the KL file "
+    "differs from the base run by more than 2%, so many target tokens are more than 16 nats below the "
+    "top token. Compare quants by KL, top-1 and delta-p only."
+)
 
 
 def run_kl(
@@ -60,6 +75,7 @@ def run_kl(
     runner: Runner | None = None,
     fetch: FetchFn | None = None,
     convert: ConvertFn | None = None,
+    recover: RecoverFn | None = None,
 ) -> dict[str, object]:
     """Score ``job`` and write ``summary.json``. BF16 and F16 files are deleted afterwards.
 
@@ -77,9 +93,11 @@ def run_kl(
     source = work / "source"
     f16 = work / "f16.gguf"
     logits = work / "base-logits.bin"
+    ablated = work / "ablated"
     try:
-        f16_path = _prepare_base(job, source, f16, active, fetch_fn, convert)
+        f16_path, reference = _prepare_base(job, work, source, f16, active, fetch_fn, convert, recover, ablated)
         arch, meta = read_model_arch(f16_path)
+        reference["name"] = gguf_model_name(f16_path)
         mtp = _mtp(job, source, meta)
         base_done = active.run(
             kl_argv(
@@ -94,7 +112,7 @@ def run_kl(
         )
         base_log = base_done.stdout + base_done.stderr
         quants = [
-            _one_quant(job, quant, work, text, logits, arch, active, fetch_fn)
+            _one_quant(job, quant, work, text, logits, arch, active, fetch_fn, str(reference["name"]))
             for quant in job.quants
         ]
         payload: dict[str, object] = {
@@ -109,15 +127,54 @@ def run_kl(
             **speed_facts(*_detected_gpu()),
             "architecture": meta,
             "mtp": mtp,
+            "reference": reference,
             "index_gap": job.index_gap,
             "note": job.note,
             "quants": quants,
             "base_reclaimed": True,
         }
+        mark_ppl_validity(payload)
         _write(work, payload)
         return payload
     finally:
         reclaim_base(source, f16, logits)
+        if ablated.exists():
+            shutil.rmtree(ablated)
+
+
+def mark_ppl_validity(payload: dict[str, object]) -> None:
+    """Set ``ppl_valid`` on the job and on each quant row (see ``PPL_CLAMP_TOLERANCE``)."""
+    base = payload.get("ppl_base")
+    rows = payload.get("quants")
+    verdicts: list[bool] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            readback = row.get("ppl_base")
+            valid = (
+                isinstance(base, (int, float))
+                and isinstance(readback, (int, float))
+                and base > 0
+                and abs(float(readback) / float(base) - 1.0) <= PPL_CLAMP_TOLERANCE
+            )
+            row["ppl_valid"] = valid
+            verdicts.append(valid)
+    payload["ppl_valid"] = bool(verdicts) and all(verdicts)
+    payload["ppl_note"] = "" if payload["ppl_valid"] else PPL_INVALID_NOTE
+
+
+def rerender(work: Path) -> dict[str, object]:
+    """Re-mark PPL validity and rewrite ``summary.json`` and ``summary.md`` from an existing run. No GPU."""
+    path = work / "summary.json"
+    if not path.is_file():
+        raise StageError(f"no summary.json in {work.name}", code="kl_render")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise StageError("summary.json is not an object", code="kl_render")
+    mark_ppl_validity(payload)
+    _write(work, payload)
+    return payload
 
 
 def _detected_gpu() -> tuple[str, tuple[int, int] | None]:
@@ -224,27 +281,58 @@ def tier_rows(
 
 def _prepare_base(
     job: KlJob,
+    work: Path,
     source: Path,
     f16: Path,
     runner: Runner,
     fetch: FetchFn,
     convert: ConvertFn | None,
-) -> Path:
+    recover: RecoverFn | None,
+    ablated: Path,
+) -> tuple[Path, dict[str, object]]:
     fmt: SourceFormat = job.source_format
+    record: dict[str, object] = {"kind": job.reference, "ablation": None}
     if fmt == "safetensors":
         if job.sha256:
             raise StageError(f"{job.id} sha256 needs one GGUF source file", code="kl_download")
         fetch(job.bf16_repo, job.bf16_revision, source, None)
-        (convert or convert_f16)(runner, source, f16)
+        tree = source
+        if job.reference == "recover-ablation":
+            quant = _fetch_quant(job, _ablation_ref(job), work, fetch)
+            record["ablation"] = (recover or recover_ablation)(quant, source, ablated)
+            if not ablated.is_dir():
+                raise StageError("ablation recovery wrote no model directory", code="kl_reference")
+            tree = ablated
+        (convert or convert_f16)(runner, tree, f16)
         if not f16.is_file():
             raise StageError("F16 conversion produced no file", code="kl_convert")
-        return f16
+        if tree != source and tree.exists():
+            shutil.rmtree(tree)
+        return f16, record
     if fmt == "gguf":
         fetch(job.bf16_repo, job.bf16_revision, source, [job.f16_file])
         path = select_quant_file(source, job.f16_file, "F16")
         _check_sha256(path, job.sha256, f"{job.id} reference")
-        return path
+        return path, record
     return _unexpected_format(fmt)
+
+
+def _ablation_ref(job: KlJob) -> QuantRef:
+    for quant in job.quants:
+        if quant.quant == job.ablation_quant:
+            return quant
+    raise StageError(f"{job.id} has no quant {job.ablation_quant}", code="kl_plan")
+
+
+def _fetch_quant(job: KlJob, quant: QuantRef, work: Path, fetch: FetchFn) -> Path:
+    if Path(quant.pattern).is_file():
+        path = Path(quant.pattern)
+    else:
+        folder = work / "quants" / quant.quant
+        fetch(quant.repo, quant.revision, folder, [quant.pattern])
+        path = select_quant_file(folder, quant.pattern, quant.quant)
+    _check_sha256(path, quant.sha256, f"{job.id} {quant.quant}")
+    return path
 
 
 def _unexpected_format(fmt: Never) -> Never:
@@ -284,14 +372,10 @@ def _one_quant(
     arch: Arch,
     runner: Runner,
     fetch: FetchFn,
+    reference_name: str,
 ) -> dict[str, object]:
-    folder = work / "quants" / quant.quant
-    if Path(quant.pattern).is_file():
-        path = Path(quant.pattern)
-    else:
-        fetch(quant.repo, quant.revision, folder, [quant.pattern])
-        path = select_quant_file(folder, quant.pattern, quant.quant)
-    _check_sha256(path, quant.sha256, f"{job.id} {quant.quant}")
+    path = _fetch_quant(job, quant, work, fetch)
+    name = gguf_model_name(path)
     done = runner.run(
         kl_argv(
             tool("llama-perplexity"),
@@ -316,6 +400,8 @@ def _one_quant(
         "ours": quant.ours,
         "file": path.name,
         "file_bytes": path.stat().st_size,
+        "name": name,
+        "reference_name_match": name == reference_name,
         "ppl": stats.ppl_quant,
         "ppl_base": stats.ppl_base,
         "kl_mean": stats.kl_mean,
@@ -333,14 +419,27 @@ def _write(work: Path, payload: dict[str, object]) -> None:
 
 
 def _markdown(payload: dict[str, object]) -> str:
+    valid = payload.get("ppl_valid", True) is not False
     lines = [
         f"# {payload['job']}",
         "",
-        f"Base PPL: {payload['ppl_base']}",
+        f"Base PPL: {payload['ppl_base']}" + ("" if valid else " (not usable, see below)"),
         "",
         str(payload["gpu_note"]),
         "",
     ]
+    if not valid:
+        lines.extend([str(payload.get("ppl_note") or PPL_INVALID_NOTE), ""])
+    reference = payload.get("reference")
+    if isinstance(reference, dict):
+        line = f"Reference: {reference.get('kind', 'upstream')}"
+        ablation = reference.get("ablation")
+        if isinstance(ablation, dict):
+            line += (
+                f", refusal direction read back from {ablation.get('from')} "
+                f"({ablation.get('matrices')} matrices, eigenvalue ratio {float(ablation.get('eigen_ratio') or 0):.4f})"
+            )
+        lines.extend([line + ".", ""])
     if payload.get("index_gap"):
         lines.extend([str(payload["index_gap"]), ""])
     if payload.get("note"):
@@ -350,10 +449,14 @@ def _markdown(payload: dict[str, object]) -> str:
         for item in quants:
             if not isinstance(item, dict):
                 continue
+            ppl = item["ppl"] if item.get("ppl_valid", True) is not False else "n/a"
+            mismatch = "" if item.get("reference_name_match", True) is not False else (
+                f" WARNING: GGUF name '{item.get('name')}' differs from the reference"
+            )
             lines.append(
-                f"- {item['quant']}: PPL {item['ppl']}, KL mean {item['kl_mean']}, "
+                f"- {item['quant']}: PPL {ppl}, KL mean {item['kl_mean']}, "
                 f"KL p99 {item['kl_p99']}, top-1 {item['top1_agreement_pct']}%, "
-                f"delta-p RMS {item['delta_p_rms_pct']}%, {item['file_bytes']} bytes"
+                f"delta-p RMS {item['delta_p_rms_pct']}%, {item['file_bytes']} bytes{mismatch}"
             )
     lines.append("")
     return "\n".join(lines)

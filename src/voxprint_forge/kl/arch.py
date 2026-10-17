@@ -202,6 +202,11 @@ def _pattern(reader: gguf.GGUFReader, key: str) -> list[bool] | None:
     return None
 
 
+def gguf_model_name(path: Path) -> str:
+    """``general.name`` of one GGUF, or empty. Our ablated quants carry the converter's ``Ablated``."""
+    return _text(gguf.GGUFReader(str(path)), gguf.Keys.General.NAME)
+
+
 def _text(reader: gguf.GGUFReader, key: str) -> str:
     field = reader.get_field(key)
     if field is None:

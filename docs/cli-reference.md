@@ -400,7 +400,7 @@ options:
 
 ```text
 usage: forge kl [-h] [--job JOB] [--plan PLAN] [--bf16 BF16] [--quant QUANT]
-                [--chunks CHUNKS] [--ctx CTX]
+                [--chunks CHUNKS] [--ctx CTX] [--render RENDER]
 
 options:
   -h, --help       show this help message and exit
@@ -410,6 +410,8 @@ options:
   --quant QUANT    Repeatable. A local .gguf, or repo@revision:*.QUANT*.gguf.
   --chunks CHUNKS  Perplexity chunks. Default: the plan, or 100.
   --ctx CTX        Perplexity context. Default: the plan, or 512.
+  --render RENDER  Rewrite summary.json/summary.md in this results folder from
+                   its summary.json. No GPU, no download.
 ```
 
 ## `forge lora`

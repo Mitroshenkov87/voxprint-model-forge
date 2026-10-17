@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from voxprint_forge.errors import UsageError
 from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan
-from voxprint_forge.kl.run import run_kl
+from voxprint_forge.kl.run import rerender, run_kl
 
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -27,6 +28,12 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     )
     command.add_argument("--chunks", type=int, default=None, help="Perplexity chunks. Default: the plan, or 100.")
     command.add_argument("--ctx", type=int, default=None, help="Perplexity context. Default: the plan, or 512.")
+    command.add_argument(
+        "--render",
+        type=Path,
+        default=None,
+        help="Rewrite summary.json/summary.md in this results folder from its summary.json. No GPU, no download.",
+    )
 
 
 def execute(
@@ -39,8 +46,13 @@ def execute(
     quants: list[str] | None,
     chunks: int | None,
     ctx: int | None,
+    render: Path | None = None,
 ) -> dict[str, object]:
     """Run one KL job. Results land in ``forge-out/results/kl/<id>``."""
+    if render is not None:
+        if job_id or bf16 or quants:
+            raise UsageError("--render takes only the results folder", code="usage")
+        return rerender(render)
     job = _resolve(root, job_id, plan_path, bf16, quants, chunks, ctx)
     return run_kl(job, forge_out / "results" / "kl" / job.id)
 
@@ -87,22 +99,10 @@ def _resolve(
 def _override(job: KlJob, chunks: int | None, ctx: int | None) -> KlJob:
     if chunks is None and ctx is None:
         return job
-    return KlJob(
-        id=job.id,
-        bf16_repo=job.bf16_repo,
-        bf16_revision=job.bf16_revision,
-        source_format=job.source_format,
-        f16_file=job.f16_file,
-        expect_mtp=job.expect_mtp,
-        index_gap=job.index_gap,
-        note=job.note,
-        quants=job.quants,
+    return replace(
+        job,
         chunks=job.chunks if chunks is None else chunks,
         ctx=job.ctx if ctx is None else ctx,
-        fit_ctx=job.fit_ctx,
-        headroom_gb=job.headroom_gb,
-        budgets_gb=job.budgets_gb,
-        kv_cache=job.kv_cache,
     )
 
 

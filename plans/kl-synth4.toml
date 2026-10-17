@@ -1,6 +1,9 @@
 # Synth4 perplexity / KL jobs. Prompt text is not stored here.
 # L2 and L3 pin a published F16 GGUF, so those jobs do not reconvert.
 # L1 and L4 download safetensors and run convert_hf_to_gguf.py --outtype f16.
+# L1's quants are our own ablation (GGUF general.name "Ablated"). L1 reads the removed
+# direction back from our Q5_K_M and projects it out of the pinned BF16 before converting
+# (reference = "recover-ablation"), so the reference is what the quants were made from.
 # L4 is QA of an upstream mirror. The index gap is recorded and nothing is uploaded.
 # sha256, when set on a job or a quant, is checked after that file is downloaded.
 
@@ -17,8 +20,10 @@ id = "L1"
 bf16_repo = "t-tech/T-lite-it-2.1"
 bf16_revision = "d125c970c553de58fcee3c937d5e4867d4a448d8"
 source_format = "safetensors"
+reference = "recover-ablation"
+ablation_quant = "Q5_K_M"
 expect_mtp = false
-note = "Our IQ4_XS and Q5_K_M against the T-lite BF16 converted to F16."
+note = "Our IQ4_XS and Q5_K_M against the pinned T-lite BF16 with our ablation direction (read back from our Q5_K_M) projected out, converted to F16. That is what both were quantised from. The 2026-10-17 run scored them against the un-ablated BF16, so its KL (0.18 for both) was the ablation, not the quantisation."
 
 [[jobs.quants]]
 quant = "IQ4_XS"
@@ -41,7 +46,7 @@ bf16_revision = "2491ee58472b82a2372d288f982943b9d5e6a82c"
 source_format = "gguf"
 f16_file = "gemma-4-31b-abliterated-f16.gguf"
 expect_mtp = false
-note = "This revision's pinned file is already F16 GGUF, so convert_hf_to_gguf.py is not run. Recheck google/gemma-4-31b-it Apache-2.0 before publishing; an anonymous listing can miss a gated model."
+note = "This revision's pinned file is already F16 GGUF, so convert_hf_to_gguf.py is not run. Gemma 4 instruct on raw prose has PPL in the thousands at ctx 512, so compare L2 by KL and top-1 only. The tensors checked in this GGUF (including layer 59 attn_output and ffn_down, the ones the author's script changes) are byte-identical to google/gemma-4-31B-it; the ablation is only in the repo's safetensors folder. Recheck google/gemma-4-31b-it Apache-2.0 before publishing; an anonymous listing can miss a gated model."
 
 [[jobs.quants]]
 quant = "IQ3_XXS"

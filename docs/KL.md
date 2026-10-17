@@ -1,6 +1,6 @@
 # KL stage
 
-`forge kl` scores GGUF quants against an F16 base for the synth4 L-jobs. The corpus is `src/voxprint_forge/data/ppl.txt` (licence in `data/LICENCES.md`): 100 chunks of 512 tokens.
+`forge kl` scores GGUF quants against an F16 base for the synth4 L-jobs. The corpus is `src/voxprint_forge/data/ppl.txt` (licence in `data/LICENCES.md`), at most 100 chunks of 512 tokens. The file is about 1,700 words, so a run scores only 3 to 5 chunks; treat small KL gaps between quants as noise.
 
 ## Command
 
@@ -44,3 +44,13 @@ L4 scores the upstream t-tech Q4_K_M mirror. We did not quantise it. `voxprint-m
 When the job finishes, the downloaded source, the F16 file, and the base logits are deleted so the next L-job can use the disk. Downloaded quant files stay under `results/kl/<job>/quants/` until you remove them.
 
 Exit codes are the normal forge table: 0 when the report is written, 6 when conversion, KL parsing, or the MTP check fails, 9 when a llama.cpp tool is missing.
+
+## Ablated quants (L1)
+
+Our `mode = "ablate"` quants were made from the BF16 after Forge's refusal-direction ablation, not from the stock BF16. Scoring them against the stock weights measures the ablation (L1 on 2026-10-17: KL 0.18 for both IQ4_XS and Q5_K_M). `reference = "recover-ablation"` with `ablation_quant` fixes the reference: `kl.recover` reads the removed direction back from that quant (the smallest eigenvector of the summed `W W^T` over `attn_output` and `ffn_down`; the job fails when its eigenvalue ratio is above 0.1, which is what an un-ablated file gives), projects it out of the pinned BF16 exactly as the ablation step does, and converts that tree. Re-running the ablation is not used because it is not bit-reproducible. Each quant row records its GGUF `general.name` and whether it matches the reference's name.
+
+## PPL validity (L2)
+
+llama-perplexity stores the base log-probs floored at the top logit minus 16. When the base PPL read back in a KL run differs from the base run by more than 2%, many tokens sit below that floor and the corpus is far outside what the model predicts. The summary then sets `ppl_valid = false`, prints PPL as n/a and says to compare by KL, top-1 and delta-p. Gemma 4 31B instruct does this on raw prose at context 512 (L2: base 6827, read back 3867). `forge kl --render <results folder>` rewrites an existing summary with these fields without a GPU.
+
+The pinned L2 GGUF matches google/gemma-4-31B-it byte for byte in the tensors checked, including layer 59 `attn_output` and `ffn_down`, which the author's ablation script changes. The ablated weights are only in the repo's safetensors folder.

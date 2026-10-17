@@ -402,6 +402,7 @@ def _dispatch(args: argparse.Namespace) -> object:
             quants=args.quant,
             chunks=args.chunks,
             ctx=args.ctx,
+            render=args.render,
         )
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
