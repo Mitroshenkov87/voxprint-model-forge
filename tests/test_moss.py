@@ -155,3 +155,93 @@ def test_preflight_fails_on_sha_mismatch_and_old_diffusers() -> None:
     failed = {c["check"] for c in checks if c["required"] and not c["ok"]}
     assert {"runtime versions", "cuda", "disk"} <= failed
     assert any(name.startswith("hub Comfy-Org") for name in failed)
+
+
+def _fake_kernel_module(name: str):
+    """A modeling module whose kernel names are bound to a CUDA-only 'package' implementation."""
+    import functools
+    import sys
+    import types
+
+    import torch
+
+    mod = types.ModuleType(name)
+
+    def torch_fn(x: torch.Tensor, *a: object, **k: object) -> torch.Tensor:
+        return x + 1
+
+    def make_wrapped(ref):
+        @functools.wraps(ref)
+        def wrapped(x: torch.Tensor, *a: object, **k: object) -> torch.Tensor:
+            if not x.is_cuda:
+                raise RuntimeError("Expected x.is_cuda() to be true, but got false.")
+            return ref(x)
+
+        return wrapped
+
+    for n in moss.CUDA_ONLY_KERNELS:
+        setattr(mod, n, make_wrapped(torch_fn))
+
+    class Layer(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.w = torch.nn.Parameter(torch.zeros(1))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return sys.modules[name].causal_conv1d_fn(x) + sys.modules[name].torch_chunk_gated_delta_rule(x)
+
+    Layer.__module__ = name
+    sys.modules[name] = mod
+    return mod, Layer
+
+
+def test_cpu_encoder_uses_torch_kernels_and_restores_them() -> None:
+    torch = pytest.importorskip("torch")
+    mod, Layer = _fake_kernel_module("fake_qwen_modeling")
+    layer = Layer()
+    x = torch.zeros(2)
+    with pytest.raises(RuntimeError, match="is_cuda"):
+        layer(x)
+    original = mod.causal_conv1d_fn
+    with moss.torch_reference_kernels(layer) as swapped:
+        assert len(swapped) == len(moss.CUDA_ONLY_KERNELS)
+        assert torch.equal(layer(x), torch.full((2,), 2.0))
+    assert mod.causal_conv1d_fn is original
+
+
+def test_encode_on_cpu_keeps_embeds_and_mask_on_the_encoder_device() -> None:
+    torch = pytest.importorskip("torch")
+    _, Layer = _fake_kernel_module("fake_qwen_modeling_enc")
+
+    class Batch(dict):
+        def to(self, device: object) -> "Batch":
+            return Batch({k: v.to(device) for k, v in self.items()})
+
+    class Tok:
+        def apply_chat_template(self, msgs, **k):  # noqa: ANN001, ANN003, ANN201
+            return msgs[0]["content"]
+
+        def __call__(self, text, **k):  # noqa: ANN001, ANN003, ANN204
+            return Batch(input_ids=torch.zeros(1, 5))
+
+    class Out:
+        def __init__(self, h: torch.Tensor) -> None:
+            self.last_hidden_state = h
+
+    class TE(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layer = Layer()
+
+        def forward(self, input_ids, **k):  # noqa: ANN001, ANN003, ANN201
+            h = input_ids.unsqueeze(-1).repeat(1, 1, 3)
+            return Out(self.layer(h))
+
+    class Pipe:
+        tokenizer = Tok()
+        text_encoder = TE()
+
+    row, mask = moss.encode_on_cpu(Pipe(), "a prompt")
+    assert row.device.type == "cpu" and mask.device == row.device
+    assert mask.dtype == torch.bool and tuple(mask.shape) == (1, 5)
+    assert tuple(row.shape) == (1, 5, 3)
