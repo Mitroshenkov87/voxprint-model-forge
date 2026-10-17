@@ -10,9 +10,13 @@ import threading
 from pathlib import Path
 
 from voxprint_forge.lora import bases
+from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
+from voxprint_forge.lora.captioner import FALLBACK as CAPTION_FALLBACK
+from voxprint_forge.lora.consent import KINDS, Subject, check_subject
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Event, Progress, json_line, sentence
 from voxprint_forge.lora.i18n import current_lang
+from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
 
@@ -21,6 +25,7 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     """Register ``lora`` and its subcommands."""
     lora = sub.add_parser("lora", help="Train a LoRA from your photos: prepare, train, extend, export.")
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
+    _prepare_flags(lora_sub.add_parser("prepare", help="Check, crop and describe photos into a project."))
     train = lora_sub.add_parser("train", help="Train a LoRA on the prepared photos of a project.")
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
     for command in (train, extend):
@@ -32,6 +37,34 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     train.add_argument("--train-text-encoder", action="store_true", default=None, help="Also train the text encoder.")
     extend.add_argument("--from", dest="from_lora", type=Path, required=True, help="Existing LoRA .safetensors.")
     extend.add_argument("--replay", type=float, default=None, help="Share of older photos kept, 0.0-1.0.")
+
+
+def _prepare_flags(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--project", type=Path, required=True, help="Project folder.")
+    command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG or WebP photos.")
+    command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
+    command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
+    command.add_argument("--kind", choices=KINDS, default=None, help="What the photos show.")
+    command.add_argument("--name", default="", help="Name of the subject.")
+    command.add_argument("--stage-name", default="", help="Optional alias; becomes the trigger word.")
+    command.add_argument("--trigger", default="", help="Word that calls the model in a prompt.")
+    command.add_argument("--consent-obtained", action="store_true", help="Person: consent was obtained.")
+    command.add_argument("--subject-adult", action="store_true", help="Person: the subject is 18 or older.")
+    command.add_argument("--rights-confirmed", action="store_true", help="Object or style: you have the rights.")
+    command.add_argument("--release", type=Path, default=None, help="Optional model release file.")
+    command.add_argument("--provenance-note", default="", help="Optional note on where the photos come from.")
+    command.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Photo limits: 10-30, or 5+.")
+    command.add_argument(
+        "--allow-count-outside-range", action="store_true", help="Expert limits: warn outside 10-30, at least 5."
+    )
+    command.add_argument("--crop", choices=("subject", "whole"), default="subject", help="How photos are cropped.")
+    command.add_argument("--captions", type=Path, default=None, help="JSONL caption overrides: id, long, short.")
+    command.add_argument(
+        "--caption-model", choices=(CAPTION_DEFAULT, CAPTION_FALLBACK), default=CAPTION_DEFAULT, help="Captioner."
+    )
+    command.add_argument("--min-side", type=int, default=MIN_SIDE, help="Smallest short side in pixels (Expert).")
+    command.add_argument("--blur-threshold", type=float, default=BLUR_THRESHOLD, help="Blur limit (Expert).")
+    command.add_argument("--dup-threshold", type=int, default=DUP_THRESHOLD, help="Duplicate limit (Expert).")
 
 
 def _training_flags(command: argparse.ArgumentParser) -> None:
@@ -67,6 +100,8 @@ _CONFIG_FLAGS = (
 
 def execute(args: argparse.Namespace) -> dict[str, object]:
     """Run one ``lora`` subcommand and return its result."""
+    if args.lora_command == "prepare":
+        return _prepare(args)
     if args.lora_command in ("train", "extend"):
         return _train(args)
     raise LoraUsageError("lora.err.not_prepared")
@@ -147,3 +182,62 @@ def _apply_captions(project: Project, path: Path) -> None:
         for i in project.items()
     ]
     project.write_items(items)
+
+
+def _device() -> str:
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _load_gate():
+    from voxprint_forge.lora.backends import load_gate
+
+    return load_gate(_device())
+
+
+def _load_captioner(choice: str):
+    from voxprint_forge.lora.captioner import load_captioner
+
+    return load_captioner(choice)
+
+
+def _prepare(args: argparse.Namespace) -> dict[str, object]:
+    from voxprint_forge.lora.prepare import prepare
+
+    project = Project(args.project)
+    stored = project.read() if project.file.is_file() else {}
+    if args.kind is None and isinstance(stored.get("subject"), dict):
+        subject = Subject(**stored["subject"])  # type: ignore[arg-type]
+    else:
+        subject = check_subject(
+            args.kind or "",
+            name=args.name,
+            stage_name=args.stage_name,
+            trigger=args.trigger,
+            consent_obtained=args.consent_obtained,
+            subject_adult=args.subject_adult,
+            rights_confirmed=args.rights_confirmed,
+            provenance_note=args.provenance_note,
+            release=args.release,
+        )
+    files = collect(args.photos, args.photo, args.exclude)
+    mode = "expert" if args.allow_count_outside_range else args.mode
+    result = prepare(
+        project,
+        files,
+        subject,
+        gate=_load_gate(),
+        load_captioner=_load_captioner,
+        progress=Progress(printer(args.json)),
+        mode=mode,
+        crop_mode=args.crop,
+        caption_model=args.caption_model,
+        min_side=args.min_side,
+        blur_threshold=args.blur_threshold,
+        dup_threshold=args.dup_threshold,
+        release=args.release,
+    )
+    if args.captions is not None:
+        _apply_captions(project, args.captions)
+    return result

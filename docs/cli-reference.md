@@ -400,16 +400,69 @@ options:
 ## `forge lora`
 
 ```text
-usage: forge lora [-h] {train,extend} ...
+usage: forge lora [-h] {prepare,train,extend} ...
 
 positional arguments:
-  {train,extend}
-    train         Train a LoRA on the prepared photos of a project.
-    extend        Continue an existing LoRA with the newest photos of a
-                  project.
+  {prepare,train,extend}
+    prepare             Check, crop and describe photos into a project.
+    train               Train a LoRA on the prepared photos of a project.
+    extend              Continue an existing LoRA with the newest photos of a
+                        project.
 
 options:
-  -h, --help      show this help message and exit
+  -h, --help            show this help message and exit
+```
+
+## `forge lora prepare`
+
+```text
+usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
+                          [--photo PHOTO] [--exclude EXCLUDE]
+                          [--kind {person,object,style}] [--name NAME]
+                          [--stage-name STAGE_NAME] [--trigger TRIGGER]
+                          [--consent-obtained] [--subject-adult]
+                          [--rights-confirmed] [--release RELEASE]
+                          [--provenance-note PROVENANCE_NOTE]
+                          [--mode {simple,expert}]
+                          [--allow-count-outside-range]
+                          [--crop {subject,whole}] [--captions CAPTIONS]
+                          [--caption-model {qwen3-vl-4b,florence2-large}]
+                          [--min-side MIN_SIDE]
+                          [--blur-threshold BLUR_THRESHOLD]
+                          [--dup-threshold DUP_THRESHOLD]
+
+options:
+  -h, --help            show this help message and exit
+  --project PROJECT     Project folder.
+  --photos PHOTOS       Folder of JPG, PNG or WebP photos.
+  --photo PHOTO         One photo. Repeat as needed.
+  --exclude EXCLUDE     Leave this photo out.
+  --kind {person,object,style}
+                        What the photos show.
+  --name NAME           Name of the subject.
+  --stage-name STAGE_NAME
+                        Optional alias; becomes the trigger word.
+  --trigger TRIGGER     Word that calls the model in a prompt.
+  --consent-obtained    Person: consent was obtained.
+  --subject-adult       Person: the subject is 18 or older.
+  --rights-confirmed    Object or style: you have the rights.
+  --release RELEASE     Optional model release file.
+  --provenance-note PROVENANCE_NOTE
+                        Optional note on where the photos come from.
+  --mode {simple,expert}
+                        Photo limits: 10-30, or 5+.
+  --allow-count-outside-range
+                        Expert limits: warn outside 10-30, at least 5.
+  --crop {subject,whole}
+                        How photos are cropped.
+  --captions CAPTIONS   JSONL caption overrides: id, long, short.
+  --caption-model {qwen3-vl-4b,florence2-large}
+                        Captioner.
+  --min-side MIN_SIDE   Smallest short side in pixels (Expert).
+  --blur-threshold BLUR_THRESHOLD
+                        Blur limit (Expert).
+  --dup-threshold DUP_THRESHOLD
+                        Duplicate limit (Expert).
 ```
 
 ## `forge lora train`
