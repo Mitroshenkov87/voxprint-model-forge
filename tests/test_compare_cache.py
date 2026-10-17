@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -99,6 +102,32 @@ def test_fp8_notes_use_the_detected_gpu() -> None:
     assert "d: FP8 E4M3" in text
 
 
+def test_fp8_note_skips_disabled_arms() -> None:
+    job = load_compare_plan(PLAN).job("D1")
+    disabled = replace(
+        job,
+        arms=tuple(replace(arm, enabled=False) if arm.id == "d" else arm for arm in job.arms),
+    )
+    text = fp8_note(disabled, "NVIDIA H100 NVL", "9.0")
+    assert "d: FP8 E4M3" not in text
+    assert "c: FP8 E4M3" in text
+    assert "c-dq: FP8 weights expanded to BF16" in text
+
+
+def test_local_fp8_loads_without_base_transformer_weights(tmp_path: Path) -> None:
+    """A child process loads a tiny on-disk pipeline that has no transformer weights."""
+    script = ROOT / "tests" / "compare_fp8_shell.py"
+    done = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "layers_swapped" in done.stdout
+    assert "diffusers" not in sys.modules
+
+
 def test_tokens_per_second_is_a100_only_on_sm80() -> None:
     hopper = speed_facts("NVIDIA H100 NVL", (9, 0))
     assert hopper["tokens_per_second_is_a100"] is False
@@ -116,3 +145,4 @@ def test_script_headers_say_synth4() -> None:
         header = (ROOT / "scripts" / name).read_text(encoding="utf-8").splitlines()[1]
         assert "synth4" in header
         assert "A100" not in header
+

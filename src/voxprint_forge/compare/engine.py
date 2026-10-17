@@ -279,7 +279,7 @@ def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> o
         _stamp_dequant(pipe, arm)
         return pipe
     base = _require_dir(folder / "base", arm.id)
-    pipe = pipeline_cls.from_pretrained(str(base), torch_dtype=dtype)
+    pipe = _load_base(pipeline_cls, base, dtype)
     overlay_root = weights if weights.is_dir() else folder
     _overlay(pipe, overlay_root)
     _stamp_dequant(pipe, arm)
@@ -289,7 +289,7 @@ def _text_pipe(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> o
 def _native_text(pipeline_cls: object, arm: Arm, folder: Path, dtype: object) -> object:
     """Load the base on CPU in BF16, swap FP8 linears, then drop the replaced weights."""
     base = _require_dir(folder / "base", arm.id)
-    pipe = pipeline_cls.from_pretrained(str(base), torch_dtype=dtype)
+    pipe = _load_base(pipeline_cls, base, dtype)
     weights = folder / "weights"
     overlay_root = weights if weights.is_dir() else folder
     stats = _overlay(pipe, overlay_root, native=True, act_scale=arm.fp8_act_scale)
@@ -597,6 +597,27 @@ def _place(pipe: object, arm: Arm) -> None:
     setter = getattr(pipe, "set_progress_bar_config", None)
     if setter is not None:
         setter(disable=True)
+
+
+def _load_base(pipeline_cls: object, base: Path, dtype: object, **extra: object) -> object:
+    """Load a base snapshot.
+
+    The shared cache leaves ``transformer/config.json`` in place and does not
+    link ``transformer/*.safetensors`` for a local FP8 arm. Build that module
+    from the config so diffusers does not ask for the base BF16 file.
+    """
+    transformer = base / "transformer"
+    config_path = transformer / "config.json"
+    has_weights = transformer.is_dir() and any(transformer.rglob("*.safetensors"))
+    if has_weights or not config_path.is_file():
+        return pipeline_cls.from_pretrained(str(base), torch_dtype=dtype, **extra)
+    from diffusers import ZImageTransformer2DModel
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    shell = ZImageTransformer2DModel.from_config(config)
+    if dtype is not None:
+        shell = shell.to(dtype=dtype)
+    return pipeline_cls.from_pretrained(str(base), transformer=shell, torch_dtype=dtype, **extra)
 
 
 def _require_dir(path: Path, arm_id: str) -> Path:

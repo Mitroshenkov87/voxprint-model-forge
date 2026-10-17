@@ -315,11 +315,11 @@ def _fmt(value: object) -> str:
 
 
 def fp8_note(job: Job, gpu_name: str, capability: str) -> str:
-    """One sentence per FP8 arm. The detected GPU name is used, never a fixed A100 label."""
+    """One sentence per enabled FP8 arm. The detected GPU name is used, never a fixed A100 label."""
     device = gpu_name or "this datacenter GPU"
     sm = _sm_label(capability)
     lines: list[str] = []
-    for arm in job.arms:
+    for arm in job.enabled_arms():
         if arm.compute == "bf16-dequant":
             lines.append(f"{arm.id}: FP8 weights expanded to BF16; s/img and VRAM are BF16 numbers.")
         elif arm.compute == "fp8-native":
