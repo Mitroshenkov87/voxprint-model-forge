@@ -390,8 +390,8 @@ def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp
     assert combo.itemText(0) == "Z-Image" and combo.width() <= basepicker.MAX_WIDTH
     detail = combo.itemData(0, basepicker.DETAIL_ROLE)
     assert detail == f"{tr('forge.app.base.z-image.note')} · {tr('forge.app.base.vram_tier', gb=16)}"
-    assert "16" in detail and tr("forge.app.base.vram_tier.tip", vram=tr("forge.app.base.vram_tier", gb=16)) in (
-        combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole))
+    tip = combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole)
+    assert "16" in detail and tip.endswith(detail)  # no video memory line until it is measured
     hint = app.window.findChild(QtWidgets.QLabel, "forge.train.base.hint")
     assert hint is not None and hint.text() == tr("forge.app.base.hint") and hint.isVisibleTo(app.window)
 
@@ -400,8 +400,25 @@ def test_base_vram_uses_measured_peaks_only_when_present(monkeypatch) -> None:
     from voxprint_forge.app import basepicker
 
     assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_tier", gb=16)
+    assert basepicker.memory_details() is None
+    assert basepicker.tooltip("z-image", "Z-Image", "repo", "Apache-2.0").endswith(basepicker.detail_line("z-image"))
     monkeypatch.setitem(basepicker.MEASURED_PEAK_GB, "z-image", {16: 14.5, 24: 19.0})
-    assert basepicker.vram_text("z-image") == tr("forge.app.base.vram_measured", gb="14.5")
+    measured = tr("forge.app.base.vram_measured", gb="14.5")
+    assert basepicker.vram_text("z-image") == measured
+    assert basepicker.memory_details() == tr("forge.app.base.vram_measured.tip", vram=measured)
+    assert basepicker.tooltip("z-image", "Z-Image", "repo", "Apache-2.0").endswith(
+        tr("forge.app.base.vram_measured.tip", vram=measured))
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_base_details_have_no_memory_line_until_measured(make_app, tmp_path, lang) -> None:
+    from voxprint_forge.app.details import Details
+
+    app = _train(make_app, tmp_path, lang, False)
+    box = app.window.findChild(Details, "forge.details.train.base")
+    texts = [label.text() for label in box.body.findChildren(QtWidgets.QLabel)]
+    assert texts == [tr("forge.app.base.details")]
+    assert all(word not in text for text in texts for word in ("Not measured", "Ещё не измерено", "измерено"))
 
 
 def _train(make_app, tmp_path, lang, expert):

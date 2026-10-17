@@ -14,8 +14,8 @@ from voxprint_forge.lora.presets import VRAM_TIERS
 
 # Peak training memory in GB per base and tier, from LORA-CALIB (``train16`` / ``train24`` peak_vram_gb).
 # TODO(lora-calib): LORA-CALIB has not produced training numbers yet (the 17 Oct run stopped at prepare).
-# Fill this from its summary.json, e.g. {"z-image": {16: <peak>, 24: <peak>}}; until then the picker
-# shows the preset tier ("16 GB+"), never a guessed figure.
+# Fill this from its summary.json, e.g. {"z-image": {16: <peak>, 24: <peak>}}; until then the list shows
+# the preset tier ("16 GB+"), never a guessed figure, and Details and the tooltip have no memory line.
 MEASURED_PEAK_GB: dict[str, dict[int, float]] = {}
 
 DETAIL_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -45,10 +45,10 @@ def vram_text(mdl_id: str) -> str:
     return tr("forge.app.base.vram_tier", gb=min(VRAM_TIERS))
 
 
-def memory_details() -> str:
-    """What the video memory figure in the list means (the preset tier, or measured peaks)."""
+def memory_details() -> str | None:
+    """The measured video memory sentence for Details, or None (no line at all) until calibration has run."""
     if not MEASURED_PEAK_GB:
-        return tr("forge.app.base.vram_tier.tip", vram=tr("forge.app.base.vram_tier", gb=min(VRAM_TIERS)))
+        return None
     return tr("forge.app.base.vram_measured.tip", vram=", ".join(vram_text(mdl_id) for mdl_id in MEASURED_PEAK_GB))
 
 
@@ -61,12 +61,10 @@ def detail_line(mdl_id: str) -> str:
 
 
 def tooltip(mdl_id: str, name: str, repo: str, licence: str) -> str:
-    """Full details for one option."""
-    measured = bool(MEASURED_PEAK_GB.get(mdl_id))
-    key = "forge.app.base.vram_measured.tip" if measured else "forge.app.base.vram_tier.tip"
-    memory = tr(key, vram=vram_text(mdl_id))
+    """Full details for one option; the video memory sentence only when it was measured."""
+    memory = tr("forge.app.base.vram_measured.tip", vram=vram_text(mdl_id)) if MEASURED_PEAK_GB.get(mdl_id) else ""
     return tr("forge.app.base.option.tip", name=name, repo=repo, licence=licence, detail=detail_line(mdl_id),
-              memory=memory)
+              memory=memory).rstrip()
 
 
 class TwoLineDelegate(QtWidgets.QStyledItemDelegate):
