@@ -27,6 +27,8 @@ On failure the object also has `error.code` and `error.message`.
 
 `forge compare --job ID` uses another short set: 0 when every candidate passes, 1 when the quality bar fails, 2 for setup, 3 when there is no CUDA GPU. See `docs/COMPARE.md`.
 
+`forge kl` uses the table above. It writes a perplexity and KL report for one L-job and exits 6 when conversion, the log parse, or the Qwen3.6 MTP check fails. See `docs/KL.md`.
+
 ## Install
 
 Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.

@@ -1,0 +1,95 @@
+# Synth4 perplexity / KL jobs. Prompt text is not stored here.
+# L2's pinned revision publishes an F16 GGUF, so that job does not reconvert.
+# L1, L3, and L4 download safetensors and run convert_hf_to_gguf.py --outtype f16.
+# L4 is QA of an upstream mirror. The index gap is recorded and nothing is uploaded.
+
+[defaults]
+chunks = 100
+ctx = 512
+fit_ctx = 8192
+kv_cache = "q8_0"
+headroom_gb = 3.0
+budgets_gb = [16.0, 24.0]
+
+[[jobs]]
+id = "L1"
+bf16_repo = "t-tech/T-lite-it-2.1"
+bf16_revision = "d125c970c553de58fcee3c937d5e4867d4a448d8"
+source_format = "safetensors"
+expect_mtp = false
+note = "Our IQ4_XS and Q5_K_M against the T-lite BF16 converted to F16."
+
+[[jobs.quants]]
+quant = "IQ4_XS"
+repo = "Mitroshenkov87/voxprint-t-lite-it-2.1"
+revision = "d85d9393"
+pattern = "*IQ4_XS*.gguf"
+ours = true
+
+[[jobs.quants]]
+quant = "Q5_K_M"
+repo = "Mitroshenkov87/voxprint-t-lite-it-2.1"
+revision = "d85d9393"
+pattern = "*Q5_K_M*.gguf"
+ours = true
+
+[[jobs]]
+id = "L2"
+bf16_repo = "paperscarecrow/Gemma-4-31B-it-abliterated"
+bf16_revision = "2491ee58472b82a2372d288f982943b9d5e6a82c"
+source_format = "gguf"
+f16_file = "gemma-4-31b-abliterated-f16.gguf"
+expect_mtp = false
+note = "This revision's pinned file is already F16 GGUF, so convert_hf_to_gguf.py is not run. Recheck google/gemma-4-31b-it Apache-2.0 before publishing; an anonymous listing can miss a gated model."
+
+[[jobs.quants]]
+quant = "IQ3_XXS"
+repo = "Mitroshenkov87/voxprint-gemma4-31b"
+revision = "0d84d5f0"
+pattern = "*IQ3_XXS*.gguf"
+ours = true
+
+[[jobs.quants]]
+quant = "Q4_K_M"
+repo = "Mitroshenkov87/voxprint-gemma4-31b"
+revision = "0d84d5f0"
+pattern = "*Q4_K_M*.gguf"
+ours = true
+
+[[jobs]]
+id = "L3"
+bf16_repo = "huihui-ai/Huihui-Qwen3.6-27B-abliterated"
+bf16_revision = "27502c8717fd5a2f8c0c77188c10c243fd4f672e"
+source_format = "safetensors"
+expect_mtp = true
+note = "Confirm llama.cpp b11476 keeps the Qwen3.6 MTP head: GGUF nextn_predict_layers must match the checkpoint."
+
+[[jobs.quants]]
+quant = "Q3_K_M"
+repo = "Mitroshenkov87/voxprint-huihui-qwen36-27b"
+revision = "29771181"
+pattern = "*Q3_K_M*.gguf"
+ours = true
+
+[[jobs.quants]]
+quant = "Q5_K"
+repo = "Mitroshenkov87/voxprint-huihui-qwen36-27b"
+revision = "29771181"
+pattern = "*Q5_K.gguf"
+ours = true
+
+[[jobs]]
+id = "L4"
+bf16_repo = "t-tech/T-pro-it-2.1"
+bf16_revision = "a677a7c27bb8820c816fbcf578d912acedcf4439"
+source_format = "safetensors"
+expect_mtp = false
+index_gap = "Mitroshenkov87/voxprint-model-index has no entry for voxprint-mirror-t-pro-it-2.1-gguf. This job does not upload that file."
+note = "QA of an upstream t-tech Q4_K_M mirror. We did not quantise this file."
+
+[[jobs.quants]]
+quant = "Q4_K_M"
+repo = "Mitroshenkov87/voxprint-mirror-t-pro-it-2.1-gguf"
+revision = "56ca6ce9"
+pattern = "*Q4_K_M*.gguf"
+ours = false
