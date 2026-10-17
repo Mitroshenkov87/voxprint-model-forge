@@ -313,10 +313,11 @@ def _dispatch(args: argparse.Namespace) -> object:
         return execute_compare(
             root,
             forge_out,
-            str(args.job),
+            args.job,
             args.plan,
             make_fp8=bool(args.make_fp8),
             out=args.out,
+            reclaim_cache=bool(args.reclaim_cache),
         )
     if args.command == "kl":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))

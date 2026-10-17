@@ -46,14 +46,19 @@ def seeded_generator(seed: int, factory: GeneratorFactory | None = None) -> Seed
     return factory("cuda").manual_seed(seed)
 
 
-def fetch_arm(arm: Arm, dest: Path) -> None:
+def fetch_arm(arm: Arm, dest: Path, *, cache: Path | None = None) -> None:
     """Download one public arm. No token is printed. Private data is not fetched.
 
     ``local`` arms copy named files from ``FORGE_FP8_DIR`` and do not publish them.
+    When ``cache`` is set, each ``repo@revision`` is downloaded once and the arm
+    folder hardlinks the files it loads.
     """
     from huggingface_hub import snapshot_download
 
     dest.mkdir(parents=True, exist_ok=True)
+    if cache is not None:
+        _fetch_cached(snapshot_download, arm, dest, cache)
+        return
     if arm.base_repo:
         _snapshot(snapshot_download, arm.base_repo, arm.base_revision, dest / "base", None)
     if arm.local:
@@ -61,6 +66,23 @@ def fetch_arm(arm: Arm, dest: Path) -> None:
     elif arm.repo:
         patterns = list(arm.files) or None
         _snapshot(snapshot_download, arm.repo, arm.revision, dest / "weights", patterns)
+    elif not arm.base_repo:
+        raise CompareSetup(f"arm {arm.id} has no repo", code="compare_weights")
+
+
+def _fetch_cached(download: object, arm: Arm, dest: Path, cache: Path) -> None:
+    from voxprint_forge.compare.cache import bind_tree, ensure_cached, skip_transformer_weights
+
+    if arm.base_repo:
+        source = ensure_cached(download, cache, arm.base_repo, arm.base_revision, None)
+        skip = skip_transformer_weights if arm.local and arm.quant == "fp8" else None
+        bind_tree(source, dest / "base", skip=skip)
+    if arm.local:
+        _copy_local(arm, dest / "weights")
+    elif arm.repo:
+        patterns = tuple(arm.files) if arm.files else None
+        source = ensure_cached(download, cache, arm.repo, arm.revision, patterns)
+        bind_tree(source, dest / "weights", skip=None)
     elif not arm.base_repo:
         raise CompareSetup(f"arm {arm.id} has no repo", code="compare_weights")
 

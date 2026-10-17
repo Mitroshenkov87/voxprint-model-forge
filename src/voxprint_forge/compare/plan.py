@@ -106,6 +106,7 @@ class ComparePlan:
 
     path: Path
     jobs: tuple[Job, ...]
+    queue: tuple[str, ...] = ()
 
     def job(self, job_id: str) -> Job:
         """Return one job by id."""
@@ -132,7 +133,8 @@ def load_compare_plan(path: Path) -> ComparePlan:
     ids = [item.id for item in jobs]
     if len(ids) != len(set(ids)):
         raise CompareSetup("compare plan repeats a job id", code="compare_plan")
-    return ComparePlan(path=path, jobs=jobs)
+    queue = _queue(defaults.get("queue"), ids)
+    return ComparePlan(path=path, jobs=jobs, queue=queue)
 
 
 def _job(raw: object, defaults: dict[str, object]) -> Job:
@@ -211,6 +213,18 @@ def _arm(raw: object, job_id: str) -> Arm:
         fp8_act_scale=act_scale,
         requires_cc=_cc_list(raw.get("requires_cc"), f"{job_id} arm {arm_id} requires_cc"),
     )
+
+
+def _queue(value: object, job_ids: list[str]) -> tuple[str, ...]:
+    if value is None:
+        return tuple(job_ids)
+    rows = _strs(value)
+    if not rows:
+        raise CompareSetup("compare queue is empty", code="compare_plan")
+    unknown = [item for item in rows if item not in job_ids]
+    if unknown:
+        raise CompareSetup(f"compare queue has unknown job {unknown[0]}", code="compare_plan")
+    return tuple(rows)
 
 
 def _attention(value: object, job_id: str) -> str:

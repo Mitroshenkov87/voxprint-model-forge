@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One synth4 KL job on the A100.
+# One synth4 KL job.
 # Usage: scripts/vm_run_kl.sh --job L1 [--json]
 # Needs FORGE_LLAMA_BIN (llama-perplexity, llama-server) and, for safetensors
 # jobs, FORGE_LLAMA_SRC (convert_hf_to_gguf.py from llama.cpp b11476).

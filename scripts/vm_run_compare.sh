@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One synth4 compare job on the A100.
+# One synth4 compare job.
 # Usage: scripts/vm_run_compare.sh --job D1 [--json]
 # Private prompts: set FORGE_PRIVATE_PROMPTS to a directory. Unset skips that set.
 # This script does not print tokens, hosts, or prompt text.

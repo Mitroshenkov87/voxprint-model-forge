@@ -13,6 +13,7 @@ public_seeds = [0, 1]
 private_limit = 50
 control_scale = 0.75
 attention = "sdpa"
+queue = ["D1", "D3", "D2", "D4"]
 
 [[jobs]]
 id = "D1"

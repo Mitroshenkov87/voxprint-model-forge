@@ -12,11 +12,12 @@ from pathlib import Path
 from PIL import Image
 
 from voxprint_forge.compare.attention import attention_scope, gpu_record
+from voxprint_forge.compare.cache import entries, remove_entry
 from voxprint_forge.compare.cases import Case, Schedule, build_schedule
 from voxprint_forge.compare.codes import EXIT_FAIL, EXIT_PASS, CompareNoGpu, CompareSetup
 from voxprint_forge.compare.engine import fetch_arm, make_generator
 from voxprint_forge.compare.metrics import PairScore
-from voxprint_forge.compare.plan import Arm, Job
+from voxprint_forge.compare.plan import Arm, ComparePlan, Job
 from voxprint_forge.compare.privacy import assert_text_clean, secret_strings
 from voxprint_forge.compare.reclaim import component_bytes, reclaim_weights
 from voxprint_forge.compare.results import (
@@ -60,6 +61,8 @@ def run_compare(
     smi: SmiFn | None = None,
     cuda: bool | None = None,
     capability: tuple[int, int] | None = None,
+    cache: Path | None = None,
+    plan: ComparePlan | None = None,
 ) -> dict[str, object]:
     """Score every enabled candidate against the reference.
 
@@ -93,7 +96,8 @@ def run_compare(
     images = results / "images"
     pairs_path = results / PAIRS_NAME
     done = load_pairs(pairs_path, secrets)
-    sizes = _prepare_weights(job, weights, fetch, live)
+    sizes = _prepare_weights(job, weights, fetch, live, cache)
+    finished = False
     _log(f"{job.id} cases={len(schedule.cases)} resumed={len(done)}", secrets)
     try:
         if live:
@@ -133,8 +137,11 @@ def run_compare(
             gpu=gpu,
         )
         write_summary(results, payload, secrets)
+        finished = True
     finally:
         reclaim_weights(weights)
+        if finished and cache is not None and plan is not None:
+            release_cache(plan, job.id, cache, seen)
     exit_code = EXIT_PASS if payload["passed"] else EXIT_FAIL
     _log(f"{job.id} exit={exit_code}", secrets)
     return {
@@ -225,6 +232,7 @@ def _prepare_weights(
     weights: Path,
     fetch: FetchFn | None,
     live: bool,
+    cache: Path | None,
 ) -> dict[str, dict[str, int]]:
     weights.mkdir(parents=True, exist_ok=True)
     sizes: dict[str, dict[str, int]] = {}
@@ -237,9 +245,46 @@ def _prepare_weights(
         if fetch is not None:
             fetch(arm, folder)
         elif live:
-            fetch_arm(arm, folder)
+            fetch_arm(arm, folder, cache=cache)
         sizes[arm.id] = component_bytes(folder)
     return sizes
+
+
+def release_cache(
+    plan: ComparePlan,
+    job_id: str,
+    root: Path,
+    capability: tuple[int, int] | None,
+) -> list[str]:
+    """Delete snapshots whose last queue user is ``job_id``.
+
+    A job the GPU gate skips, such as D2 on sm_90, holds nothing. The Turbo
+    base can therefore leave the disk at the end of D3.
+    """
+    queue = plan.queue or tuple(item.id for item in plan.jobs)
+    removed: list[str] = []
+    for path, repo, revision in entries(root):
+        users = [item for item in queue if job_holds(plan.job(item), repo, revision, capability)]
+        if users and users[-1] == job_id:
+            remove_entry(path)
+            removed.append(path.name)
+    return removed
+
+
+def job_holds(job: Job, repo: str, revision: str, capability: tuple[int, int] | None) -> bool:
+    """True when this job would download ``repo@revision`` on this GPU."""
+    gated = gate_requires_cc(gate_fp8_native(gate_local_arms(job), capability), capability)
+    if not gated.candidates():
+        return False
+    arms = (gated.reference_arm(), *gated.candidates())
+    for arm in arms:
+        if arm.reuse_job:
+            continue
+        if arm.base_repo == repo and arm.base_revision == revision:
+            return True
+        if not arm.local and arm.repo == repo and arm.revision == revision:
+            return True
+    return False
 
 
 def _generate_pairs(
