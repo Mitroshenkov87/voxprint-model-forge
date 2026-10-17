@@ -164,8 +164,12 @@ def train_args(
             if key in values and values[key] is not None and not (command == "extend" and key in TRAIN_ONLY):
                 args += [flag, str(values[key])]
         for key, flag in SWITCH_FOR.items():
-            if values.get(key) and not (command == "extend" and key in TRAIN_ONLY):
+            if command == "extend" and key in TRAIN_ONLY:
+                continue
+            if values.get(key):
                 args.append(flag)
+            elif key == "lora.grad_checkpointing" and values.get(key) is False:
+                args.append("--no-grad-checkpointing")  # on by default for both memory tiers
         if extend_from is not None and values.get("lora.mix_old") is not None:
             args += ["--replay", str(values["lora.mix_old"])]
     if resume:

@@ -155,3 +155,63 @@ def test_cli_export(tmp_path, capsys) -> None:
     out = capsys.readouterr().out
     body = out[out.index("\n{\n") + 1 :] if "\n{\n" in out else out[out.index("{\n") :]
     assert json.loads(body)["result"]["state"] == "done"
+
+
+def _to_bf16(project, name):
+    import torch
+    from safetensors.torch import load_file, save_file
+
+    path = project.checkpoints / name
+    tensors = {key: value.to(torch.bfloat16) for key, value in load_file(str(path)).items()}
+    with safe_open(str(path), framework="pt") as handle:
+        meta = handle.metadata()
+    save_file(tensors, str(path), metadata=meta)
+    return tensors
+
+
+def test_bf16_checkpoint_exports_and_keeps_its_dtype(tmp_path) -> None:
+    """synth4 LORA-CALIB: BF16 LoRA tensors failed at export.write ('Got unsupported ScalarType BFloat16')."""
+    import torch
+
+    from voxprint_forge.lora.export import tensor_bytes, tensors_digest
+
+    project = trained(tmp_path)
+    source = _to_bf16(project, "step-000004.safetensors")
+    result = export(project, Progress())
+    with safe_open(result["file"], framework="pt") as handle:
+        assert {handle.get_tensor(key).dtype for key in handle.keys()} == {torch.bfloat16}
+        for key in handle.keys():
+            assert torch.equal(handle.get_tensor(key), source[key])
+    assert result["id"].endswith(tensors_digest(source)[:8])
+    assert tensor_bytes(torch.tensor([1.0], dtype=torch.bfloat16)) == b"\x80\x3f"
+    assert json.loads((project.root / "export" / "voxprint-model.json").read_text())["sha256"] == result["sha256"]
+
+
+def test_fp32_id_matches_the_numpy_bytes(tmp_path) -> None:
+    """The uint8 view gives the old ``.numpy().tobytes()`` bytes, so FP32 LoRA ids do not change."""
+    from safetensors.torch import load_file
+
+    project = trained(tmp_path)
+    tensors = load_file(str(project.checkpoints / "step-000004.safetensors"))
+    digest = hashlib.sha256()
+    for key in sorted(tensors):
+        digest.update(key.encode())
+        digest.update(tensors[key].numpy().tobytes())
+    assert export(project, Progress())["id"].endswith(digest.hexdigest()[:8])
+
+
+def test_export_resumes_after_a_failed_export(tmp_path, monkeypatch) -> None:
+    """A failed export leaves the trained project as it was; exporting again needs no retraining."""
+    from voxprint_forge.lora import export as module
+
+    project = trained(tmp_path)
+    _to_bf16(project, "step-000002.safetensors")
+    before = project.read()
+    monkeypatch.setattr(module, "save_file", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk")))
+    with pytest.raises(RuntimeError):
+        export(project, Progress())
+    monkeypatch.undo()
+    assert project.read() == before
+    last = export(project, Progress())
+    early = export(project, Progress(), checkpoint=2, out=tmp_path / "early" / "x.safetensors")
+    assert header(last["file"])["voxprint.lora.steps"] == "4" and header(early["file"])["voxprint.lora.steps"] == "2"

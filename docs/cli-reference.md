@@ -521,7 +521,8 @@ usage: forge lora train [-h] --project PROJECT
                         [--vram {auto,16,24}] [--steps STEPS] [--lr LR]
                         [--scheduler {constant,cosine}] [--warmup WARMUP]
                         [--batch BATCH] [--grad-accum GRAD_ACCUM]
-                        [--precision {bf16,fp16}] [--grad-checkpointing]
+                        [--precision {bf16,fp16}]
+                        [--grad-checkpointing | --no-grad-checkpointing]
                         [--caption-mode {long,short,both}]
                         [--caption-dropout CAPTION_DROPOUT]
                         [--captions CAPTIONS] [--seed SEED]
@@ -550,7 +551,8 @@ options:
                         Gradient accumulation (Expert).
   --precision {bf16,fp16}
                         Number format (Expert).
-  --grad-checkpointing  Save memory, slower.
+  --grad-checkpointing, --no-grad-checkpointing
+                        Save memory, slower.
   --caption-mode {long,short,both}
                         Which descriptions to use.
   --caption-dropout CAPTION_DROPOUT
@@ -584,7 +586,8 @@ usage: forge lora extend [-h] --project PROJECT
                          [--vram {auto,16,24}] [--steps STEPS] [--lr LR]
                          [--scheduler {constant,cosine}] [--warmup WARMUP]
                          [--batch BATCH] [--grad-accum GRAD_ACCUM]
-                         [--precision {bf16,fp16}] [--grad-checkpointing]
+                         [--precision {bf16,fp16}]
+                         [--grad-checkpointing | --no-grad-checkpointing]
                          [--caption-mode {long,short,both}]
                          [--caption-dropout CAPTION_DROPOUT]
                          [--captions CAPTIONS] [--seed SEED]
@@ -612,7 +615,8 @@ options:
                         Gradient accumulation (Expert).
   --precision {bf16,fp16}
                         Number format (Expert).
-  --grad-checkpointing  Save memory, slower.
+  --grad-checkpointing, --no-grad-checkpointing
+                        Save memory, slower.
   --caption-mode {long,short,both}
                         Which descriptions to use.
   --caption-dropout CAPTION_DROPOUT

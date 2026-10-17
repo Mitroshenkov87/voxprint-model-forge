@@ -163,6 +163,8 @@ def test_expert_values_are_sent_only_in_expert_mode(tmp_path: Path) -> None:
     expert = engine.train_args(tmp_path, values, expert=True, resume=True)
     assert expert[expert.index("--rank") + 1] == "8" and "--grad-checkpointing" in expert and "--resume" in expert
     assert "--replay" not in expert
+    off = engine.train_args(tmp_path, {**values, "lora.grad_checkpointing": False}, expert=True)
+    assert "--no-grad-checkpointing" in off and "--grad-checkpointing" not in off
     extend = engine.train_args(tmp_path, values, expert=True, extend_from=tmp_path / "old.safetensors")
     assert extend[2] == "extend" and "--rank" not in extend and extend[extend.index("--replay") + 1] == "0.5"
 

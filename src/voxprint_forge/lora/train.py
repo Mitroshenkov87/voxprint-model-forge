@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import random
 import threading
 from collections.abc import Sequence
@@ -74,10 +75,27 @@ def _device(adapter: BaseAdapter, config: TrainConfig) -> str:
     if not torch.cuda.is_available():
         raise LoraStageError("lora.err.no_gpu")
     have = torch.cuda.get_device_properties(0).total_memory / 2**30
+    cap = vram_cap_gb()
+    if cap is not None and cap < have:
+        # Emulates a smaller card on a big one (calibration): the allocator stops at the cap.
+        torch.cuda.set_per_process_memory_fraction(cap / have, 0)
+        have = cap
     need = adapter.vram_need_gb(config)
     if have + 0.5 < need:
         raise LoraStageError("lora.err.vram", have=int(have), need=int(math.ceil(need)))
     return "cuda"
+
+
+def vram_cap_gb() -> float | None:
+    """``FORGE_VRAM_CAP_GB`` (GiB), a test cap that makes a big card behave like a small one; unset means none."""
+    raw = os.environ.get("FORGE_VRAM_CAP_GB", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 def _schedule(config: TrainConfig):
@@ -181,6 +199,8 @@ def train(
         load_lora_state(layers, load_file(str(from_lora)))
     images = _images(project, chosen, config.resolution)
     samples = adapter.encode(images, [{"long": i.long, "short": i.short} for i in chosen], config)
+    if config.previews and preview_prompts:
+        adapter.prepare_previews(list(preview_prompts))
     adapter.release_encoders()
 
     params = lora_parameters(layers)
@@ -276,4 +296,8 @@ def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_
     result = {"state": state, "step": step, "steps": config.steps, "checkpoint": record["checkpoint"], "loss": loss}
     if torch.cuda.is_available():
         result["peak_vram_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+        result["peak_reserved_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+        cap = vram_cap_gb()
+        if cap is not None:
+            result["vram_cap_gb"] = cap
     return result
