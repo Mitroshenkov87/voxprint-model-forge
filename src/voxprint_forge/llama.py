@@ -224,9 +224,51 @@ def quantize_argv(binary: str, source: Path, outfile: Path, quant: str, imatrix:
     return [binary, "--imatrix", str(imatrix), str(source), str(outfile), quant]
 
 
-def perplexity_argv(binary: str, model: Path, corpus: Path, *, chunks: int, ctx: int) -> list[str]:
-    """Argv for llama-perplexity. ``--fit`` stays off."""
-    return [
+# -ctk/-ctv values llama.cpp b11476 accepts (tools/server/README.md at the tag).
+KV_CACHE_TYPES = ("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")
+_UNQUANTIZED_KV = frozenset({"f32", "f16", "bf16"})
+
+
+def kv_cache_args(cache_k: str | None, cache_v: str | None) -> list[str]:
+    """``-ctk K -ctv V`` for the KV cache types. ``None`` keeps llama.cpp's default (f16)."""
+    out: list[str] = []
+    for flag, value in (("-ctk", cache_k), ("-ctv", cache_v)):
+        if value is None:
+            continue
+        if value not in KV_CACHE_TYPES:
+            raise StageError(f"KV cache type {value!r} is not one of {', '.join(KV_CACHE_TYPES)}", code="usage")
+        out += [flag, value]
+    return out
+
+
+def kv_is_quantized(cache_k: str | None, cache_v: str | None) -> bool:
+    """True when either cache type is a quantized one."""
+    return any(v is not None and v not in _UNQUANTIZED_KV for v in (cache_k, cache_v))
+
+
+def with_kv_cache(argv: list[str], cache_k: str | None, cache_v: str | None) -> list[str]:
+    """``argv`` plus the cache flags, and ``-fa on`` when the cache is quantized and FA is not set.
+
+    A quantized V cache needs flash attention on llama.cpp.
+    """
+    out = list(argv) + kv_cache_args(cache_k, cache_v)
+    if kv_is_quantized(cache_k, cache_v) and "-fa" not in out and "--flash-attn" not in out:
+        out += ["-fa", "on"]
+    return out
+
+
+def perplexity_argv(
+    binary: str,
+    model: Path,
+    corpus: Path,
+    *,
+    chunks: int,
+    ctx: int,
+    cache_k: str | None = None,
+    cache_v: str | None = None,
+) -> list[str]:
+    """Argv for llama-perplexity. ``--fit`` stays off. Cache types default to f16."""
+    argv = [
         binary,
         "-m",
         str(model),
@@ -243,6 +285,7 @@ def perplexity_argv(binary: str, model: Path, corpus: Path, *, chunks: int, ctx:
         "--fit",
         "off",
     ]
+    return with_kv_cache(argv, cache_k, cache_v)
 
 
 def kl_argv(
@@ -254,12 +297,15 @@ def kl_argv(
     chunks: int,
     ctx: int,
     compare: bool,
+    cache_k: str | None = None,
+    cache_v: str | None = None,
 ) -> list[str]:
     """Argv for one llama-perplexity KL step. ``--fit`` stays off.
 
     On llama.cpp b11476, ``--kl-divergence-base`` is an alias of
     ``--save-all-logits``. A run without ``--kl-divergence`` writes that file.
     A run with ``--kl-divergence`` reads it and prints KL, top-1, and delta-p.
+    ``cache_k``/``cache_v`` set ``-ctk``/``-ctv``; ``None`` keeps f16.
     """
     argv = [
         binary,
@@ -282,7 +328,7 @@ def kl_argv(
     ]
     if compare:
         argv.append("--kl-divergence")
-    return argv
+    return with_kv_cache(argv, cache_k, cache_v)
 
 
 def server_argv(
