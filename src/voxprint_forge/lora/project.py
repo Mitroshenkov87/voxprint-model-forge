@@ -22,6 +22,9 @@ class Item:
     round: int = 0
 
 
+PAUSE_FILE = "PAUSE"
+
+
 class Project:
     """Paths and files of one project folder."""
 
@@ -47,6 +50,16 @@ class Project:
     def drops(self) -> Path:
         """``drops.jsonl``: photos set aside, with a reason key."""
         return self.root / "drops.jsonl"
+
+    @property
+    def pause(self) -> Path:
+        """``PAUSE``: while this file exists, training saves a version and stops.
+
+        The GUI creates it to pause and deletes it before ``--resume``. The
+        engine only reads it. This works the same on Windows, where a GUI
+        cannot send Ctrl+C to the engine.
+        """
+        return self.root / PAUSE_FILE
 
     @property
     def checkpoints(self) -> Path:

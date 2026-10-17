@@ -142,8 +142,15 @@ def train(
     preview_prompts: Sequence[str] = (),
     base_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Train (or extend, with ``from_lora``) and return the run summary. ``stop`` pauses with a checkpoint."""
+    """Train (or extend, with ``from_lora``) and return the run summary.
+
+    ``stop`` or a ``PAUSE`` file in the project folder pauses with a
+    checkpoint after the current step. A ``PAUSE`` file left from before is
+    refused at the start (``lora.err.pause_file``), so a resume never stops at once.
+    """
     data, items = _check_ready(project)
+    if project.pause.exists():
+        raise LoraUsageError("lora.err.pause_file")
     stop = stop or threading.Event()
     saved: dict | None = None
     if resume:
@@ -232,7 +239,7 @@ def train(
             last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
         if config.previews and preview_prompts and step % config.preview_every == 0:
             _previews(project, adapter, model, preview_prompts, step, config, progress)
-        if stop.is_set() and step < config.steps:
+        if (stop.is_set() or project.pause.exists()) and step < config.steps:
             if last_good is None or not last_good.name.endswith(f"{step:06d}.safetensors"):
                 last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
             progress.emit("train.paused", "lora.progress.paused", state="paused")

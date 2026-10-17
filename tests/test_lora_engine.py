@@ -217,3 +217,33 @@ def test_lora_layer_on_fp8_storage_trains_in_bf16() -> None:
     base = nn.Linear(8, 8).to(torch.float8_e4m3fn)
     layer = LoRALinear(base, 4, 4)
     assert layer.lora_A.weight.dtype == torch.bfloat16 and layer.lora_B.weight.dtype == torch.bfloat16
+
+
+def test_pause_file_pauses_and_resume_needs_it_gone(tmp_path) -> None:
+    straight = make_project(tmp_path / "a")
+    train(straight, tiny(), TinyAdapter(), Progress())
+    paused = make_project(tmp_path / "b")
+
+    def sink(event):
+        if event.params.get("step") == 2:
+            paused.pause.write_text("", encoding="utf-8")
+
+    first = train(paused, tiny(), TinyAdapter(), Progress(sink))
+    assert first["state"] == "paused" and first["step"] == 2
+    assert (paused.checkpoints / "step-000002.safetensors").is_file()
+    assert paused.pause.exists(), "the engine never deletes PAUSE"
+    with pytest.raises(LoraUsageError) as info:
+        train(paused, tiny(), TinyAdapter(), Progress(), resume=True)
+    assert info.value.code == "lora.err.pause_file"
+    paused.pause.unlink()
+    second = train(paused, tiny(), TinyAdapter(), Progress(), resume=True)
+    assert second["state"] == "done" and second["step"] == 6
+    a = load_file(str(straight.checkpoints / "step-000006.safetensors"))
+    b = load_file(str(paused.checkpoints / "step-000006.safetensors"))
+    for key in a:
+        assert torch.allclose(a[key], b[key], atol=1e-6), key
+
+
+def test_pause_file_name_is_fixed(tmp_path) -> None:
+    project = make_project(tmp_path)
+    assert project.pause == project.root / "PAUSE"

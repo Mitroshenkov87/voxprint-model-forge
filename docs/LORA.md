@@ -14,7 +14,16 @@ Training refuses to start unless the project was prepared and passed the safety 
 
 Presets: `--preset quick|balanced|best`, `--likeness flexible|balanced|close`, `--vram auto|16|24`. The values are not final until the GPU calibration run. Expert flags (`--rank`, `--alpha`, `--steps`, `--lr`, `--scheduler`, `--warmup`, `--batch`, `--grad-accum`, `--resolution`, `--precision`, `--grad-checkpointing`, `--caption-mode`, `--caption-dropout`, `--seed`, `--save-every`, `--preview-every`) override single values. There are no safety settings.
 
-Pause with Ctrl+C: the run saves a version and stops. Continue with `--resume`; the saved settings are reused.
+Pause with Ctrl+C, or by creating an empty file named `PAUSE` in the project folder: the run saves a version and stops. Continue with `--resume`; the saved settings are reused.
+
+### Pause file (GUI contract, Windows and Linux)
+
+- File: `<project>/PAUSE`, where `<project>` is the `--project` folder. Content is ignored; an empty file is enough.
+- To pause, the GUI creates the file. After each training step the engine checks for it. If it exists, the engine saves a version at that step, sends an event with `state: "paused"` (`message_key: "lora.progress.paused"`), prints the result with `"state": "paused"` and exits with code 0. If test pictures are being drawn at that step, the pause comes after they finish.
+- The engine never creates or deletes `PAUSE`.
+- To continue, the GUI deletes `PAUSE`, then runs `lora train --project <project> --resume` (or `extend ... --resume`).
+- If `PAUSE` exists when `train` or `extend` starts, the engine refuses with `lora.err.pause_file` (exit code 2) and trains nothing.
+- To stop for good, pause and then export the last version, or end the process. Ctrl+C on Linux does the same as `PAUSE`.
 | `lora export --project DIR` | Saves the last version (or `--checkpoint N`) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
 
 ## Export and the Canvas hand-off
