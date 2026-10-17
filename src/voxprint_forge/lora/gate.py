@@ -88,6 +88,7 @@ class Decision:
     reasons: tuple[str, ...]
     minor: bool
     path: str
+    trace: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
     def keep(self) -> bool:
@@ -163,19 +164,67 @@ class Gate:
         return self.judge is not None and self.estimator is not None
 
     def check(self, image: Any) -> Decision:
-        """Judge one photo. Exceptions drop it (fail closed)."""
+        """Judge one photo. Exceptions drop it (fail closed); the trace says which stage failed and how."""
+        trace: dict[str, Any] = {"judge": {"ok": False}, "estimator": {"ok": False}}
         try:
             verdict = self.judge.judge(image) if self.judge is not None else None
-        except Exception:  # noqa: BLE001 - any judge failure drops the photo
-            return Decision(("judge_error",), False, "none")
+        except Exception as exc:  # noqa: BLE001 - any judge failure drops the photo
+            trace["judge"] = {"ok": False, "stage": getattr(exc, "stage", "judge"), **error_info(exc)}
+            trace["judge"].update(_stats(self.judge))
+            trace["estimator"] = {"ok": False, "skipped": True}
+            return Decision(("judge_error",), False, "none", trace)
+        trace["judge"] = {"ok": verdict is not None, **_stats(self.judge)}
+        if verdict is not None:
+            trace["judge"]["verdict"] = verdict_summary(verdict)
         reading: AgeReading | None = None
         estimator_ok = self.estimator is not None
         if estimator_ok:
             try:
                 reading = self.estimator.estimate(image)  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001 - any estimator failure drops a face photo
+                trace["estimator"] = {"ok": True, "n_faces": reading.n_faces, "ages": list(reading.ages)}
+            except Exception as exc:  # noqa: BLE001 - any estimator failure drops a face photo
                 estimator_ok = False
-        return decide(verdict, reading, estimator_ok=estimator_ok)
+                trace["estimator"] = {"ok": False, "stage": getattr(exc, "stage", "estimator"), **error_info(exc)}
+        else:
+            trace["estimator"] = {"ok": False, "missing": True}
+        decision = decide(verdict, reading, estimator_ok=estimator_ok)
+        return Decision(decision.reasons, decision.minor, decision.path, trace)
+
+
+def error_info(exc: BaseException) -> dict[str, str]:
+    """Exception type and a short code, never the message text (it may hold paths or model output)."""
+    info = {"error": type(exc).__name__}
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        info["code"] = code[:64]
+    return info
+
+
+def verdict_summary(verdict: Verdict) -> dict[str, Any]:
+    """The judge's answer as codes and numbers only."""
+    return {
+        "face_visible": _code(verdict.face_visible),
+        "person": _code(verdict.person),
+        "min_age": verdict.min_age,
+        "confidence": verdict.confidence if isinstance(verdict.confidence, (int, float)) else _code(verdict.confidence),
+        "reason_code": _code(verdict.reason_code),
+        "could_be_under_20": verdict.could_be_under_20
+        if isinstance(verdict.could_be_under_20, bool)
+        else _code(verdict.could_be_under_20),
+        "indicators": {_code(k): _code(v) for k, v in verdict.indicators.items()},
+    }
+
+
+def _code(value: Any) -> Any:
+    """Short codes pass; free text is cut so a trace never carries a description of the image."""
+    if value is None or isinstance(value, bool):
+        return value
+    return str(value)[:24]
+
+
+def _stats(backend: Any) -> dict[str, Any]:
+    stats = getattr(backend, "last_stats", None)
+    return dict(stats) if isinstance(stats, dict) else {}
 
 
 def check_all(gate: Gate, images: Sequence[Any]) -> list[Decision]:

@@ -11,7 +11,7 @@ from voxprint_forge.lora.captioner import DEFAULT, Captioner
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import RULE_VERSION, Gate
+from voxprint_forge.lora.gate import RULE_VERSION, Decision, Gate
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
     DUP_THRESHOLD,
@@ -43,8 +43,13 @@ def prepare(
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
     release: Path | None = None,
+    trace: Path | None = None,
 ) -> dict[str, object]:
-    """Prepare new photos into ``project``. Photos already in the project keep their round."""
+    """Prepare new photos into ``project``. Photos already in the project keep their round.
+
+    ``trace`` (operator diagnostics) gets one JSON line per checked photo: id, path, reason codes and
+    each gate stage's result or exception type. No image content, file names or model text.
+    """
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
     warning = check_count(len(files), mode)
@@ -97,6 +102,9 @@ def prepare(
             total=len(kept),
         )
         decision = gate.check(image)
+        _log_stage_errors(pid, decision)
+        if trace is not None:
+            _write_trace(trace, pid, decision)
         if decision.keep:
             safe.append((pid, image))
         else:
@@ -188,6 +196,31 @@ def _base(project: Project) -> dict[str, object]:
         return project.read()
     except LoraUsageError:
         return {}
+
+
+def _log_stage_errors(pid: str, decision: Decision) -> None:
+    """One stderr line per photo whose gate stage raised: id, stage and exception type only."""
+    import sys
+
+    for part in ("judge", "estimator"):
+        info = decision.trace.get(part, {})
+        if isinstance(info, dict) and "error" in info:
+            code = f" code={info['code']}" if "code" in info else ""
+            print(f"safety gate {info.get('stage', part)} failed on {pid}: {info['error']}{code}", file=sys.stderr)
+
+
+def _write_trace(path: Path, pid: str, decision: Decision) -> None:
+    row = {
+        "id": pid,
+        "keep": decision.keep,
+        "minor": decision.minor,
+        "path": decision.path,
+        "reasons": list(decision.reasons),
+        **decision.trace,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:

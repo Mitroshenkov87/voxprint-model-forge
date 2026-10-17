@@ -69,18 +69,42 @@ def installed_dir(mdl_id: str) -> Path | None:
     return None
 
 
+class JudgeParseError(ValueError):
+    """The judge answered, but not with a usable verdict. ``code`` says why (no model text is kept)."""
+
+    stage = "judge.parse"
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class WorkerError(RuntimeError):
+    """The age worker failed. ``code`` is the worker's exception type or an IPC code; ``stage`` where."""
+
+    def __init__(self, code: str, stage: str = "estimator.worker") -> None:
+        super().__init__(code)
+        self.code = code
+        self.stage = stage
+
+
 def parse_verdict(raw: str) -> Verdict:
-    """Parse the judge's JSON. Anything malformed raises ``ValueError`` (the photo then drops)."""
+    """Parse the judge's JSON. Anything malformed raises ``JudgeParseError`` (the photo then drops)."""
     match = re.search(r"\{.*\}", raw, re.S)
     if match is None:
-        raise ValueError("no JSON object")
-    data = json.loads(match.group(0))
+        raise JudgeParseError("no_json")
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        raise JudgeParseError("bad_json") from None
+    if not isinstance(data, dict):
+        raise JudgeParseError("bad_json")
     age = data.get("min_apparent_age")
     if age is not None and (isinstance(age, bool) or not isinstance(age, (int, float))):
-        raise ValueError("bad age")
+        raise JudgeParseError("bad_age")
     indicators = data.get("indicators")
     if not isinstance(indicators, dict):
-        raise ValueError("no indicators")
+        raise JudgeParseError("no_indicators")
     return Verdict(
         face_visible=str(data.get("face_visible", "")),
         person=str(data.get("person", "")),
@@ -96,8 +120,10 @@ class VlmJudge:
     """Qwen3-VL-4B-Instruct (Apache-2.0) as the age-cue judge."""
 
     name = JUDGE_ID
+    max_new_tokens = 320
 
     def __init__(self, folder: Path, device: str = "cuda") -> None:
+        self.last_stats: dict[str, object] = {}
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -119,11 +145,20 @@ class VlmJudge:
         ).to(self.model.device)
         with torch.no_grad():
             out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-        return self.processor.batch_decode(out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True)[0]
+        new = out[:, inputs["input_ids"].shape[1] :]
+        text = self.processor.batch_decode(new, skip_special_tokens=True)[0]
+        self.last_stats = {
+            "prompt_tokens": int(inputs["input_ids"].shape[1]),
+            "new_tokens": int(new.shape[1]),
+            "hit_token_limit": int(new.shape[1]) >= max_new_tokens,
+            "chars": len(text),
+        }
+        return text
 
     def judge(self, image: Any) -> Verdict:
         """The verdict for one photo."""
-        return parse_verdict(self.ask(image, SYSTEM, USER, 320))
+        self.last_stats = {}
+        return parse_verdict(self.ask(image, SYSTEM, USER, self.max_new_tokens))
 
     def unload(self) -> None:
         """Free graphics memory."""
@@ -189,9 +224,19 @@ class MivoloEstimator:
         assert self.proc.stdin is not None and self.proc.stdout is not None
         self.proc.stdin.write(json.dumps({"path": str(path)}) + "\n")
         self.proc.stdin.flush()
-        reply = json.loads(self.proc.stdout.readline() or "{}")
-        if "error" in reply or "n_faces" not in reply:
-            raise RuntimeError(str(reply.get("error", "no reply")))
+        line = self.proc.stdout.readline()
+        if not line:
+            raise WorkerError(f"worker_exited_rc{self.proc.poll()}", "estimator.ipc")
+        try:
+            reply = json.loads(line)
+        except ValueError:
+            raise WorkerError("bad_reply", "estimator.ipc") from None
+        if not isinstance(reply, dict):
+            raise WorkerError("bad_reply", "estimator.ipc")
+        if "error" in reply:
+            raise WorkerError(str(reply["error"]).split(":", 1)[0][:64] or "worker_error")
+        if "n_faces" not in reply:
+            raise WorkerError("no_reply", "estimator.ipc")
         return AgeReading(int(reply["n_faces"]), tuple(float(a) for a in reply["ages"]))
 
     def unload(self) -> None:

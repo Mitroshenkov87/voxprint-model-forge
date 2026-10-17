@@ -444,6 +444,7 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--min-side MIN_SIDE]
                           [--blur-threshold BLUR_THRESHOLD]
                           [--dup-threshold DUP_THRESHOLD]
+                          [--gate-trace GATE_TRACE]
 
 options:
   -h, --help            show this help message and exit
@@ -482,6 +483,9 @@ options:
                         Blur limit (Expert).
   --dup-threshold DUP_THRESHOLD
                         Duplicate limit (Expert).
+  --gate-trace GATE_TRACE
+                        Operator diagnostics: one JSON line per photo with
+                        each safety-check stage's result (ids and codes).
 ```
 
 ## `forge lora export`
