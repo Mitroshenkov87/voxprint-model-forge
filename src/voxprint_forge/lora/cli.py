@@ -43,13 +43,34 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     train.add_argument("--train-text-encoder", action="store_true", default=None, help="Also train the text encoder.")
     extend.add_argument("--from", dest="from_lora", type=Path, required=True, help="Existing LoRA .safetensors.")
     extend.add_argument("--replay", type=float, default=None, help="Share of older photos kept, 0.0-1.0.")
+    _refset_flags(lora_sub.add_parser("refset", help="Build a photo set from 1-10 references, round by round."))
 
 
-def _prepare_flags(command: argparse.ArgumentParser) -> None:
-    command.add_argument("--project", type=Path, required=True, help="Project folder.")
-    command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG or WebP photos.")
-    command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
-    command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
+def _refset_flags(command: argparse.ArgumentParser) -> None:
+    from voxprint_forge.lora import refset
+
+    steps = command.add_subparsers(dest="refset_command", required=True)
+    round_ = steps.add_parser("round", help="Check the references (first time), then make and check candidates.")
+    round_.add_argument("--project", type=Path, required=True, help="Project folder.")
+    round_.add_argument("--ref", type=Path, action="append", default=[], help="One reference picture. 1-10.")
+    _subject_flags(round_)
+    low, high = refset.CANDIDATE_RANGE
+    round_.add_argument("--candidates", type=int, default=refset.DEFAULT_CANDIDATES,
+                        help=f"Candidates per round, {low}-{high}. Default: {refset.DEFAULT_CANDIDATES}.")
+    round_.add_argument("--strength", type=float, default=refset.DEFAULT_STRENGTH,
+                        help=f"Variation strength (img2img denoise), {refset.STRENGTH_MIN}-{refset.STRENGTH_MAX}. "
+                        f"Default: {refset.DEFAULT_STRENGTH}.")
+    round_.add_argument("--steps", type=int, default=refset.DEFAULT_STEPS,
+                        help=f"Turbo steps, {refset.STEPS_RANGE[0]}-{refset.STEPS_RANGE[1]}. "
+                        f"Default: {refset.DEFAULT_STEPS}.")
+    round_.add_argument("--seed", type=int, default=None, help="First seed of the round. Default: 1000 x round.")
+    finish = steps.add_parser("finish", help="Copy the references and kept candidates into refset/approved.")
+    finish.add_argument("--project", type=Path, required=True, help="Project folder.")
+    finish.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Set size: 10-30, or 5-60.")
+    finish.add_argument("--base", default=bases.DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
+
+
+def _subject_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--kind", choices=KINDS, default=None, help="What the photos show.")
     command.add_argument("--name", default="", help="Name of the subject.")
     command.add_argument("--stage-name", default="", help="Optional alias; becomes the trigger word.")
@@ -68,6 +89,14 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
         "--adult-content", action="store_true", help="Person, 18+ only: the photos contain adult content (a label)."
     )
     command.add_argument("--provenance-note", default="", help="Optional note on where the photos come from.")
+
+
+def _prepare_flags(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--project", type=Path, required=True, help="Project folder.")
+    command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG or WebP photos.")
+    command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
+    command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
+    _subject_flags(command)
     command.add_argument("--mode", choices=("simple", "expert"), default="simple", help="Photo limits: 10-30, or 5+.")
     command.add_argument(
         "--allow-count-outside-range", action="store_true", help="Expert limits: warn outside 10-30, at least 5."
@@ -136,6 +165,8 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         return _prepare(args)
     if args.lora_command in ("train", "extend"):
         return _train(args)
+    if args.lora_command == "refset":
+        return _refset(args)
     raise LoraUsageError("lora.err.not_prepared")
 
 
@@ -281,3 +312,25 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     if args.captions is not None:
         _apply_captions(project, args.captions)
     return result
+
+
+def _refset(args: argparse.Namespace) -> dict[str, object]:
+    from voxprint_forge.lora import refset
+
+    project = Project(args.project)
+    progress = Progress(printer(args.json))
+    if args.refset_command == "finish":
+        return refset.finish(project, progress, mode=args.mode, base=args.base)
+    settings = refset.check_settings(args.candidates, args.strength, args.steps, args.seed)
+    subject = subject_from(args)
+    device = _device()
+    return refset.run_round(
+        project,
+        list(args.ref),
+        subject,
+        settings,
+        load_gate=_load_gate,
+        load_generator=lambda: refset.load_teacher(device),
+        load_embedder=lambda: refset.load_embedder(device),
+        progress=progress,
+    )

@@ -61,7 +61,7 @@ Model Forge needs some models before it can train. They are not inside the setup
 
 ## 4. Simple and Expert mode
 
-- **Simple mode** (default) guides you through five steps with safe default settings. You choose a preset; the app picks the numbers.
+- **Simple mode** (default) guides you through six steps with safe default settings. You choose a preset; the app picks the numbers.
 - **Expert mode** (the **Expert mode** button, top right) shows every training setting in a side panel, and allows 5 to 60 photos instead of 10 to 30.
 
 ![Expert mode](img/en-expert-4-train-running.png)
@@ -70,7 +70,7 @@ The safety check (section 5.3) works the same in both modes. Expert mode has no 
 
 ## 5. Training a LoRA: person, object, style
 
-Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 5 … Step 5 of 5). Each step shows one short line. **Details ▸** under it opens the full explanation; it starts closed. The subject and base-model choices have their own **Details ▸**.
+Start with **More → New model**. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6). Each step shows one short line. **Details ▸** under it opens the full explanation; it starts closed. The subject and base-model choices have their own **Details ▸**.
 
 ### 5.1 Photos
 
@@ -150,6 +150,27 @@ Press **Estimate time** for a forecast, then **Start training**. The bar shows t
 > **Screenshot placeholder:** the LoRA in Canvas with the strength slider.
 
 To improve a model later, press **Add more photos** on this step. Training continues from the model with the new photos and a share of the old ones.
+
+### 5.7 Build a set from references
+
+Have only a few good pictures? Model Forge can build the training set with you.
+
+1. On step 1 choose **Build a set from references** under **Train on** and add 1 to 10 references of one subject.
+2. Fill in step 2 as usual: names, **Consent obtained**, **Verbal** or a release, **Subject is 18+** and, if it applies, **Dataset contains adult content (18+)**.
+3. On step 3, **Build a set**, press **Make pictures**. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.
+4. Press **Keep** under each picture that looks right and **Reject** under the rest.
+5. Press **Next round**. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.
+6. Press **This is it**. The references and the kept pictures become the training set, and the usual steps follow: **Check photos**, training and the result.
+
+Good to know:
+
+- Simple mode draws 24 pictures per round with medium variation. Expert mode sets **Pictures per round** (8 to 64), **Variation strength** (0.25 to 0.90; higher moves further from the source), **Steps** (4 to 16), and lets you edit the **Descriptions** after the first round.
+- The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.
+- Pictures marked **≈ similar** look almost the same as another one; keep only one of them.
+- The set must end up with 10 to 30 pictures (5 to 60 in Expert mode), references included. **Kept … · set … of …** shows where you are.
+- Each model is unloaded before the next one starts, so a 16 GB graphics card is enough. A round of 24 pictures takes a few minutes.
+- The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.
+- **Start over** forgets the rounds and keeps the references.
 
 ## 6. Managing models
 
