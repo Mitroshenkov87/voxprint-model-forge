@@ -1,0 +1,12 @@
+# MiVOLO v2 judge env (CPU or CUDA). Python 3.12. Install mivolo WITHOUT deps (its setup.py pulls ultralytics, AGPL; not needed).
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.51.0
+accelerate==1.8.1
+timm==0.8.13.dev0
+scipy
+numpy<2.3
+opencv-python-headless==4.10.0.84
+pillow
+huggingface_hub
+# then: pip install "setuptools<80" wheel && pip install --no-deps --no-build-isolation "mivolo @ git+https://github.com/WildChlamydia/MiVOLO.git@37475e3f8818b5f22448003feec3e64b01bfb188"

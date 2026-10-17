@@ -60,7 +60,7 @@ voxprint-forge-cli = "voxprint_forge.cli:main"
 [project.gui-scripts]
 voxprint-model-forge = "voxprint_forge.app.__main__:main"
 
-# Display names and install paths. There is no installer in this repo.
+# Display names and install paths. installer/windows builds the Windows setup.
 # An upgrade moves an older program folder here, updates shortcuts and PATH,
 # and leaves %LOCALAPPDATA%\Voxprint and ~/.local/share/voxprint in place.
 [tool.voxprint.install]

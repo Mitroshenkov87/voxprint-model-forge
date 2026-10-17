@@ -123,11 +123,31 @@ class VlmJudge:
             torch.cuda.empty_cache()
 
 
+def mivolo_python() -> str:
+    """Interpreter for the MiVOLO worker.
+
+    ``VOXPRINT_MIVOLO_PYTHON`` wins. Otherwise a ``venv-mivolo`` folder beside
+    this env (the Windows installer layout: ``<app>/venv`` and
+    ``<app>/venv-mivolo``) is used when it has a Python. Else this interpreter.
+    """
+    import os
+    import sys
+
+    explicit = os.environ.get("VOXPRINT_MIVOLO_PYTHON", "").strip()
+    if explicit:
+        return explicit
+    sibling = Path(sys.prefix).parent / "venv-mivolo"
+    for candidate in (sibling / "Scripts" / "python.exe", sibling / "bin" / "python"):
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
 class MivoloEstimator:
     """MiVOLO v2 (Apache-2.0) on YuNet face crops (OpenCV Zoo, MIT), in a worker process.
 
     MiVOLO pins transformers 4.51, which Qwen3-VL cannot use, so the worker runs
-    in its own env: ``VOXPRINT_MIVOLO_PYTHON`` (default: this interpreter).
+    in its own env, found by :func:`mivolo_python`.
     """
 
     name = ESTIMATOR_ID
@@ -139,7 +159,7 @@ class MivoloEstimator:
         import tempfile
 
         worker = Path(__file__).resolve().parent / "mivolo_worker.py"
-        exe = python or os.environ.get("VOXPRINT_MIVOLO_PYTHON", "").strip() or sys.executable
+        exe = python or mivolo_python()
         self.tmp = Path(tempfile.mkdtemp(prefix="vxp-mivolo-"))
         self.proc = subprocess.Popen(
             [exe, str(worker), str(folder), str(detector), device],
