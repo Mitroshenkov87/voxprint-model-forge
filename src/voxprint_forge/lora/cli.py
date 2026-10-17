@@ -129,7 +129,9 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--batch", type=int, default=None, help="Photos per step (Expert).")
     command.add_argument("--grad-accum", type=int, default=None, help="Gradient accumulation (Expert).")
     command.add_argument("--precision", choices=PRECISIONS, default=None, help="Number format (Expert).")
-    command.add_argument("--grad-checkpointing", action="store_true", default=None, help="Save memory, slower.")
+    command.add_argument(
+        "--grad-checkpointing", action=argparse.BooleanOptionalAction, default=None, help="Save memory, slower."
+    )
     command.add_argument("--caption-mode", choices=CAPTION_MODES, default=None, help="Which descriptions to use.")
     command.add_argument("--caption-dropout", type=float, default=None, help="Share of steps without a description.")
     command.add_argument("--captions", type=Path, default=None, help="JSONL caption overrides: id, long, short.")

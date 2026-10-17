@@ -9,13 +9,17 @@
 | `lora prepare --project DIR --photos DIR --kind KIND ...` | Checks, crops and describes the photos. Photos that are unreadable, too small, blurry, near-duplicate or fail the safety check are listed in `drops.jsonl` with a reason key. Running it again on the same project adds the new photos as the next round (for `extend`). |
 | `lora train --project DIR` | Trains on the prepared photos of the project. `--dry-run` prints the plan and the time estimate. |
 | `lora extend --project DIR --from FILE` | Continues an existing LoRA with the newest photos of the project plus `--replay` share (default 0.25) of the older ones. A LoRA made on another base is refused (`lora.err.base_mismatch`). |
-| `lora export --project DIR` | Saves the last version (or `--checkpoint N`) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
+| `lora export --project DIR` | Saves the last version (or `--checkpoint N`, any saved version; a failed export changes nothing, so run it again without retraining) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
 | `lora refset round --project DIR --ref FILE ... --kind KIND ...` | Build a set from 1-10 references. The first round gates every reference (any that does not pass blocks the loop) and has the judge VLM write one prompt per reference (`refset/prompts.json`, local only). Then Z-Image-Turbo img2img (`ZImageImg2ImgPipeline`, BF16, model CPU offload) draws `--candidates` (8-64, default 24) pictures at `--strength` (0.25-0.90, default 0.5) and `--steps` (4-16, default 9); every candidate is gated before it is listed; ones that do not pass are deleted and a minor signal blocks the loop. DINOv2-base marks near-duplicates. Later rounds start from the kept candidates plus the references. Stages run one at a time with a full unload between them. |
 | `lora refset finish --project DIR` | "This is it": copies the references and kept candidates into `refset/approved/` (10-30, or 5-60 with `--mode expert`) and records rounds, seeds, settings, the base and the teacher with its licence in `refset/metadata.json` and `project.json`. Then run `lora prepare` on `refset/approved/`. |
 
 Training refuses to start unless the project was prepared and passed the safety check (`lora.err.gate_missing`). It needs at least 10 prepared photos, or 5 in Expert mode.
 
 Presets: `--preset quick|balanced|best`, `--likeness flexible|balanced|close`, `--vram auto|16|24`. The values are not final until the GPU calibration run. Expert flags (`--rank`, `--alpha`, `--steps`, `--lr`, `--scheduler`, `--warmup`, `--batch`, `--grad-accum`, `--resolution`, `--precision`, `--grad-checkpointing`, `--caption-mode`, `--caption-dropout`, `--seed`, `--save-every`, `--preview-every`) override single values. There are no safety settings.
+
+Memory tiers: both tiers train with gradient checkpointing on (`--no-grad-checkpointing` turns it off in Expert). Without it, a Balanced 1024 px batch of 2 kept every block's activations and reached 79.3 GB on the synth4 calibration run, so the 24 GB tier could not fit. The 24 GB tier keeps the base in BF16; the 16 GB tier also stores it in FP8. The transformer moves to the card only after the text encoder and VAE have left it, and the test prompts are encoded once up front, so previews never load the text encoder next to the transformer.
+
+`FORGE_VRAM_CAP_GB` (GiB) is a test knob for calibration: it caps the allocator with `torch.cuda.set_per_process_memory_fraction`, so a large card behaves like a smaller one. With it set, `lora train` also reports `vram_cap_gb`, and every run reports `peak_reserved_gb` next to `peak_vram_gb`.
 
 Pause with Ctrl+C, or by creating an empty file named `PAUSE` in the project folder: the run saves a version and stops. Continue with `--resume`; the saved settings are reused.
 
@@ -36,7 +40,7 @@ Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `co
 
 `voxprint.lora.adult_content` is a label the user sets: the training photos contain adult content. Apps such as Canvas can use it to label, sort or filter LoRAs (for example, hide them unless the user opts in). It can be `true` only for a person confirmed as 18 or older. It is not a safety setting and changes no checks. `voxprint.subject.consent_method` says how a person's consent was given: `verbal` (no file, `release_sha256` empty) or `file` (a release is attached; only its sha256 is recorded). LoRAs exported before these fields have no `adult_content` key; treat that as `false`.
 
-`--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `$VOXPRINT_USER_MODELS_DIR/lora/<id>/`, by default `<models dir>/user-models/lora/<id>/`. The id is the trigger word plus 8 hex digits of the LoRA tensors.
+`--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `$VOXPRINT_USER_MODELS_DIR/lora/<id>/`, by default `<models dir>/user-models/lora/<id>/`. The id is the trigger word plus 8 hex digits of the LoRA tensors. Tensors keep the dtype they were trained in (BF16 by default; FP32 for an FP16 base); the id hashes their raw bytes.
 
 ## Photos and consent
 

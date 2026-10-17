@@ -101,7 +101,9 @@ def build_config(
         resolution=int(base["resolution"]),  # type: ignore[call-overload]
         batch=1 if small or preset == "quick" else 2,
         grad_accum=2 if small and preset != "quick" else 1,
-        grad_checkpointing=small,
+        # Both tiers: without checkpointing a 1024 px batch of 2 keeps every block's
+        # activations, about 79 GB on Z-Image (synth4 LORA-CALIB), far over 24 GB.
+        grad_checkpointing=True,
         base_fp8=small,
         caption_dropout=dropout,
         save_every=max(1, steps // 6),

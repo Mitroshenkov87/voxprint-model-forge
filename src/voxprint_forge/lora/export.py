@@ -14,6 +14,7 @@ import re
 import shutil
 from pathlib import Path
 
+import torch
 from PIL import Image
 from safetensors.torch import load_file, save_file
 
@@ -91,6 +92,26 @@ def user_models_dir() -> Path:
     return models_dir() / "user-models"
 
 
+def tensor_bytes(tensor: torch.Tensor) -> bytes:
+    """Raw little-endian bytes of a tensor in its own dtype.
+
+    NumPy has no bfloat16, so ``tensor.numpy()`` fails on BF16 LoRAs (the
+    trainer's default). A ``uint8`` view gives the same bytes for every dtype,
+    and the same bytes as ``.numpy().tobytes()`` for FP32 and FP16.
+    """
+    flat = tensor.detach().cpu().contiguous().reshape(-1)
+    return flat.view(torch.uint8).numpy().tobytes()
+
+
+def tensors_digest(tensors: dict[str, torch.Tensor]) -> str:
+    """sha256 over sorted names and raw tensor bytes; the id hex comes from it."""
+    digest = hashlib.sha256()
+    for key in sorted(tensors):
+        digest.update(key.encode())
+        digest.update(tensor_bytes(tensors[key]))
+    return digest.hexdigest()
+
+
 def model_id(data: dict[str, object], tensors_digest: str) -> str:
     """``<trigger slug>-<8 hex>``; the hex is from the LoRA tensors, so the same LoRA keeps its id."""
     subject = dict(data.get("subject") or {})  # type: ignore[call-overload]
@@ -121,12 +142,8 @@ def export(
     progress.emit("export.write", "lora.progress.export", reason_key="lora.reason.export")
     if not info.permissive:
         progress.emit("export.licence", "lora.err.base_restrictive")
-    tensors = load_file(str(source))
-    digest = hashlib.sha256()
-    for key in sorted(tensors):
-        digest.update(key.encode())
-        digest.update(tensors[key].numpy().tobytes())
-    mid = model_id(data, digest.hexdigest())
+    tensors = {key: value.detach().cpu().contiguous() for key, value in load_file(str(source)).items()}
+    mid = model_id(data, tensors_digest(tensors))
     meta = header_metadata({**data, "train": {**train, "step": _step(name)}})
     target = Path(out) if out is not None else project.root / "export" / f"{mid}.safetensors"
     if target.suffix != ".safetensors":

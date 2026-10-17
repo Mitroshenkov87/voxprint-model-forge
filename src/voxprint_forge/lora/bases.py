@@ -73,6 +73,9 @@ class BaseAdapter(ABC):
     ) -> torch.Tensor:
         """Training loss for one micro-batch."""
 
+    def prepare_previews(self, prompts: Sequence[str]) -> None:
+        """Encode the test prompts while the encoders are still loaded. Optional."""
+
     def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
         """A test picture (PIL image) or ``None`` when the adapter cannot draw one."""
         return None
@@ -153,9 +156,14 @@ class ZImageAdapter(BaseAdapter):
         self.pipe: Any = None
         self.device = "cuda"
         self._empty: Any = None
+        self._prompts: dict[str, Any] = {}
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
-        """Load the pipeline; return its transformer, optionally FP8 storage and gradient checkpointing."""
+        """Load the pipeline; return its transformer, optionally FP8 storage and gradient checkpointing.
+
+        The transformer stays on the CPU until :meth:`release_encoders`, so it is
+        never on the card together with the text encoder (about 8 GB) and the VAE.
+        """
         if config.train_text_encoder:
             raise LoraUsageError("lora.err.text_encoder")
         if not weights_dir.is_dir():
@@ -169,7 +177,6 @@ class ZImageAdapter(BaseAdapter):
             transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=_dtype(config))
         if config.grad_checkpointing and hasattr(transformer, "enable_gradient_checkpointing"):
             transformer.enable_gradient_checkpointing()
-        transformer.to(device)
         return transformer
 
     @torch.no_grad()
@@ -196,12 +203,21 @@ class ZImageAdapter(BaseAdapter):
         embeds, _ = self.pipe.encode_prompt(prompt, device=self.device, do_classifier_free_guidance=False)
         return embeds[0]
 
+    def prepare_previews(self, prompts: Sequence[str]) -> None:
+        """Encode each test prompt and the empty negative once, so previews never load the text encoder again."""
+        for prompt in prompts:
+            if prompt not in self._prompts:
+                self._prompts[prompt] = self._embed(prompt).to("cpu")
+        if prompts and "" not in self._prompts:
+            self._prompts[""] = self._embed("").to("cpu")
+
     def release_encoders(self) -> None:
-        """Move the VAE and text encoder to the CPU to free graphics memory for training."""
+        """Move the VAE and text encoder to the CPU, then the transformer to the card."""
         self.pipe.vae.to("cpu")
         self.pipe.text_encoder.to("cpu")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        self.pipe.transformer.to(self.device)
 
     def loss(
         self, model: nn.Module, batch: Sequence[Sample], caption_keys: Sequence[str], rng: random.Random
@@ -218,14 +234,27 @@ class ZImageAdapter(BaseAdapter):
 
     @torch.no_grad()
     def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
-        """Draw one test picture with the current LoRA."""
-        self.pipe.text_encoder.to(self.device)
+        """Draw one test picture with the current LoRA. Only the VAE joins the transformer on the card."""
+        if prompt not in self._prompts:
+            self.pipe.text_encoder.to(self.device)
+            try:
+                self.prepare_previews([prompt])
+            finally:
+                self.pipe.text_encoder.to("cpu")
         self.pipe.vae.to(self.device)
         try:
             generator = torch.Generator(self.device).manual_seed(seed)
-            return self.pipe(prompt, height=config.resolution, width=config.resolution, generator=generator).images[0]
+            return self.pipe(
+                prompt_embeds=[self._prompts[prompt].to(self.device)],
+                negative_prompt_embeds=[self._prompts[""].to(self.device)],
+                height=config.resolution,
+                width=config.resolution,
+                generator=generator,
+            ).images[0]
         finally:
-            self.release_encoders()
+            self.pipe.vae.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def seconds_per_step(self, config: TrainConfig) -> float:
         """[U] until the 16 GB calibration run: about 1.6 s (24 GB) or 3.0 s (16 GB) per step at 1024."""

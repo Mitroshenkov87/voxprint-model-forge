@@ -57,12 +57,24 @@ def test_catalogs_cover_the_plan_tables() -> None:
 def test_presets_follow_memory_tier_and_likeness() -> None:
     big = build_config("balanced", "balanced", 24)
     small = build_config("balanced", "close", 16)
-    assert (big.batch, big.grad_accum, big.grad_checkpointing, big.base_fp8) == (2, 1, False, False)
+    assert (big.batch, big.grad_accum, big.grad_checkpointing, big.base_fp8) == (2, 1, True, False)
     assert (small.batch, small.grad_accum, small.grad_checkpointing, small.base_fp8) == (1, 2, True, True)
     assert small.steps == 1950 and small.caption_dropout == 0.05
     assert build_config("best", "flexible", 24).steps == 2100
+    assert build_config("balanced", "balanced", 24, grad_checkpointing=False).grad_checkpointing is False
     with pytest.raises(ValueError):
         build_config("balanced", "balanced", 24, resolution=100)
+
+
+def test_vram_cap_reads_the_env(monkeypatch) -> None:
+    from voxprint_forge.lora.train import vram_cap_gb
+
+    monkeypatch.delenv("FORGE_VRAM_CAP_GB", raising=False)
+    assert vram_cap_gb() is None
+    monkeypatch.setenv("FORGE_VRAM_CAP_GB", "23.5")
+    assert vram_cap_gb() == 23.5
+    monkeypatch.setenv("FORGE_VRAM_CAP_GB", "x")
+    assert vram_cap_gb() is None
 
 
 def test_events_give_sentences_and_eta_after_warmup() -> None:
@@ -253,3 +265,75 @@ def test_only_bases_with_a_training_loader_are_offered() -> None:
     offered = {info.mdl_id for info in bases.trainable()}
     assert "z-image" in offered and "moss-image-base" not in offered
     assert "moss-image-base" in {info.mdl_id for info in bases.available()}
+
+
+class _Part:
+    def __init__(self, log, name):
+        self.log, self.name, self.device = log, name, "cpu"
+
+    def to(self, device):
+        self.device = device
+        self.log.append((self.name, device))
+        return self
+
+
+class _FakePipe:
+    """Records where each part is; the Z-Image adapter must never hold the transformer and text encoder together."""
+
+    def __init__(self):
+        self.log = []
+        self.vae, self.text_encoder, self.transformer = (_Part(self.log, n) for n in ("vae", "te", "transformer"))
+        self.calls = []
+
+    def on_card(self):
+        return {p.name for p in (self.vae, self.text_encoder, self.transformer) if p.device == "cuda"}
+
+    def encode_prompt(self, prompt, device, do_classifier_free_guidance):
+        assert self.on_card() == {"vae", "te"}
+        return [_Part([], "embeds")], None
+
+    def __call__(self, **kwargs):
+        assert self.on_card() == {"vae", "transformer"}
+        assert "prompt" not in kwargs and len(kwargs["prompt_embeds"]) == 1
+        self.calls.append(kwargs)
+
+        class _Out:
+            images = ["picture"]
+
+        return _Out()
+
+
+def test_z_image_keeps_the_transformer_off_the_card_until_the_encoders_leave(monkeypatch) -> None:
+    from voxprint_forge.lora.bases import ZImageAdapter
+
+    adapter = ZImageAdapter()
+    adapter.pipe = pipe = _FakePipe()
+    adapter.device = "cuda"
+    pipe.text_encoder.to("cuda")
+    pipe.vae.to("cuda")
+    adapter.prepare_previews(["a red cube"])
+    assert pipe.transformer.device == "cpu"
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr("torch.Generator", lambda device: type("G", (), {"manual_seed": lambda self, s: self})())
+    adapter.release_encoders()
+    assert pipe.on_card() == {"transformer"}
+    assert [name for name, _ in pipe.log][-3:] == ["vae", "te", "transformer"]
+    config = build_config("balanced", "balanced", 24)
+    assert adapter.preview(None, "a red cube", 0, config) == "picture"
+    assert pipe.on_card() == {"transformer"} and pipe.text_encoder.device == "cpu"
+    assert ("te", "cuda") not in pipe.log[-4:]
+
+
+def test_preview_prompts_are_encoded_before_the_encoders_leave(tmp_path) -> None:
+    order = []
+
+    class Recording(TinyAdapter):
+        def prepare_previews(self, prompts):
+            order.append(("prepare", tuple(prompts)))
+
+        def release_encoders(self):
+            order.append(("release", ()))
+
+    config = build_config("quick", "balanced", 24, steps=2, resolution=64, save_every=2, previews=True, preview_every=2)
+    train(make_project(tmp_path), config, Recording(), Progress(), preview_prompts=["a cube"])
+    assert order == [("prepare", ("a cube",)), ("release", ())]
