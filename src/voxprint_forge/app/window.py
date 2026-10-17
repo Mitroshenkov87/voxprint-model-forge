@@ -332,6 +332,14 @@ class ForgeApp:
         status.setContentsMargins(0, 4, 0, 4)
         status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         stack.addWidget(scroll, 1)
+        # The footer (status line, then the shell's Back/Next) is pinned under the scrolling step body;
+        # a thin line marks where the body ends, so a row cut by the scroll edge reads as "scroll for more".
+        line = QtWidgets.QFrame()
+        line.setObjectName("forgeStepFooterLine")
+        line.setFixedHeight(1)
+        line.setAutoFillBackground(True)
+        line.setBackgroundRole(QtGui.QPalette.ColorRole.Mid)
+        stack.addWidget(line)
         stack.addWidget(status)
         for index in reversed(range(layout.count())):  # type: ignore[attr-defined]
             item = layout.itemAt(index)  # type: ignore[attr-defined]
