@@ -70,14 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--vm",
         action="store_true",
         help="Check a fresh VM image before a paid GPU job: Python, torch/CUDA, [compare] versions, build tools, "
-        "llama.cpp, the voxprint_common wheel, HF_TOKEN and disk. Exit 6 on any FAIL.",
+        "llama.cpp, the convert_hf_to_gguf.py imports, the voxprint_common wheel, HF_TOKEN and disk. "
+        "Exit 6 on any FAIL.",
     )
     preflight.add_argument(
         "--for",
         dest="vm_scope",
         choices=("all", "lora"),
         default="all",
-        help="With --vm: what the VM is for. 'lora' skips cmake, ninja, nvcc, c++ and llama.cpp. Default: all.",
+        help="With --vm: what the VM is for. 'lora' skips cmake, ninja, nvcc, c++, llama.cpp and the converter "
+        "imports. Default: all.",
     )
     preflight.add_argument("--min-free-gb", type=float, default=150.0, help="Disk needed for --vm. Default: 150.")
     sub.add_parser("status", help="Read status.json and report stalled or failed work.")
