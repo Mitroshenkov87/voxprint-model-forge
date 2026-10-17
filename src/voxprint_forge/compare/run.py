@@ -1,0 +1,286 @@
+"""Run one compare job: generate each arm, score pairs, resume, reclaim."""
+
+from __future__ import annotations
+
+import sys
+import time
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
+from PIL import Image
+
+from voxprint_forge.compare.cases import Case, Schedule, build_schedule
+from voxprint_forge.compare.codes import EXIT_FAIL, EXIT_PASS, CompareNoGpu, CompareSetup
+from voxprint_forge.compare.engine import fetch_arm, make_generator
+from voxprint_forge.compare.metrics import PairScore
+from voxprint_forge.compare.plan import Arm, Job
+from voxprint_forge.compare.privacy import assert_text_clean, secret_strings
+from voxprint_forge.compare.reclaim import component_bytes, reclaim_weights
+from voxprint_forge.compare.results import (
+    PAIRS_NAME,
+    append_pair,
+    load_pairs,
+    pair_key,
+    pair_record,
+    summarise,
+    write_summary,
+)
+from voxprint_forge.compare.score import make_scorer
+from voxprint_forge.compare.vram import SmiSampler, reset_torch_peak, torch_peak_bytes
+
+GenerateFn = Callable[[Arm, Case, Job], Image.Image]
+ScoreFn = Callable[[Image.Image, Image.Image, Case], PairScore]
+FetchFn = Callable[[Arm, Path], None]
+SmiFn = Callable[[], int | None]
+
+
+def cuda_available() -> bool:
+    """True when this process can see a CUDA device."""
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
+def run_compare(
+    job: Job,
+    results: Path,
+    *,
+    private_root: Path | None,
+    generate: GenerateFn | None = None,
+    score: ScoreFn | None = None,
+    fetch: FetchFn | None = None,
+    smi: SmiFn | None = None,
+    cuda: bool | None = None,
+) -> dict[str, object]:
+    """Score every enabled candidate against the reference.
+
+    ``generate`` and ``score`` are the live GPU path when omitted. A machine
+    without CUDA then exits 3 before any download. Weights under
+    ``results/weights`` are deleted at the end. Review images stay.
+    """
+    reference = job.reference_arm()
+    candidates = job.candidates()
+    if not candidates:
+        skipped = ", ".join(item.id for item in job.arms if not item.enabled) or "none"
+        raise CompareSetup(f"{job.id} has no runnable candidate arm (skipped: {skipped})", code="compare_plan")
+    schedule = build_schedule(job, private_root)
+    if not schedule.cases:
+        raise CompareSetup(f"{job.id} has no prompts", code="compare_empty")
+    secrets = secret_strings(
+        (item.prompt for item in schedule.cases),
+        (item.negative for item in schedule.cases),
+    )
+    if not any(not item.warmup for item in schedule.cases):
+        raise CompareSetup(f"{job.id} has no scored image after warm-up", code="compare_empty")
+    live = generate is None
+    if live and not (cuda_available() if cuda is None else cuda):
+        raise CompareNoGpu("compare needs a CUDA GPU", code="compare_gpu")
+    results.mkdir(parents=True, exist_ok=True)
+    weights = results / "weights"
+    images = results / "images"
+    pairs_path = results / PAIRS_NAME
+    done = load_pairs(pairs_path, secrets)
+    sizes = _prepare_weights(job, weights, fetch, live)
+    _log(f"{job.id} cases={len(schedule.cases)} resumed={len(done)}", secrets)
+    try:
+        if live:
+            generate, score = _live_hooks(job, weights)
+        if generate is None or score is None:
+            raise CompareSetup(f"{job.id} has no generator", code="compare_setup")
+        _generate_pairs(
+            job,
+            reference,
+            candidates,
+            schedule,
+            images,
+            pairs_path,
+            done,
+            secrets,
+            generate,
+            score,
+            smi,
+        )
+        payload = summarise(
+            job,
+            list(done.values()),
+            component_bytes=sizes,
+            missing_sets=schedule.missing_sets,
+            case_count=len(schedule.cases),
+            secrets=secrets,
+        )
+        write_summary(results, payload, secrets)
+    finally:
+        reclaim_weights(weights)
+    exit_code = EXIT_PASS if payload["passed"] else EXIT_FAIL
+    _log(f"{job.id} exit={exit_code}", secrets)
+    return {
+        "job": job.id,
+        "exit_code": exit_code,
+        "passed": payload["passed"],
+        "pairs": payload["pairs"],
+        "cases": payload["cases"],
+        "summary": str(results / "summary.json"),
+        "prompt_ids_only": True,
+        "failed_arms": payload["failed_arms"],
+        "missing_private_sets": payload["missing_private_sets"],
+    }
+
+
+def _live_hooks(job: Job, weights: Path) -> tuple[GenerateFn, ScoreFn]:
+    return make_generator(job, weights), make_scorer()
+
+
+def _prepare_weights(
+    job: Job,
+    weights: Path,
+    fetch: FetchFn | None,
+    live: bool,
+) -> dict[str, dict[str, int]]:
+    weights.mkdir(parents=True, exist_ok=True)
+    sizes: dict[str, dict[str, int]] = {}
+    arms = (job.reference_arm(), *job.candidates())
+    for arm in arms:
+        folder = weights / arm.id
+        folder.mkdir(parents=True, exist_ok=True)
+        if arm.reuse_job:
+            continue
+        if fetch is not None:
+            fetch(arm, folder)
+        elif live:
+            fetch_arm(arm, folder)
+        sizes[arm.id] = component_bytes(folder)
+    return sizes
+
+
+def _generate_pairs(
+    job: Job,
+    reference: Arm,
+    candidates: Sequence[Arm],
+    schedule: Schedule,
+    images: Path,
+    pairs_path: Path,
+    done: dict[str, dict[str, object]],
+    secrets: Sequence[str],
+    generate: GenerateFn,
+    score: ScoreFn,
+    smi: SmiFn | None,
+) -> None:
+    cache: dict[tuple[str, int], Image.Image] = {}
+    for case in schedule.cases:
+        reference_image, _ref_seconds, _ref_torch, _ref_smi = _image_for(
+            reference, case, job, images, cache, generate, smi, secrets
+        )
+        for candidate in candidates:
+            key = pair_key(job.id, candidate.id, case)
+            if key in done:
+                continue
+            candidate_image, seconds, torch_bytes, smi_bytes = _image_for(
+                candidate, case, job, images, cache, generate, smi, secrets
+            )
+            try:
+                metrics = score(reference_image, candidate_image, case)
+            except CompareSetup:
+                raise
+            except Exception as exc:
+                message = assert_or_scrub(str(exc), secrets)
+                raise CompareSetup(
+                    f"{job.id} arm {candidate.id} metrics failed: {message}",
+                    code="compare_metric",
+                ) from exc
+            record = pair_record(
+                job=job,
+                candidate=candidate,
+                case=case,
+                score=metrics,
+                seconds=seconds,
+                vram_torch_bytes=torch_bytes,
+                vram_smi_bytes=smi_bytes,
+            )
+            append_pair(pairs_path, record, secrets)
+            done[key] = record
+            _log(f"{job.id} arm={candidate.id} prompt_id={case.prompt_id} seed={case.seed}", secrets)
+
+
+def _image_for(
+    arm: Arm,
+    case: Case,
+    job: Job,
+    images: Path,
+    cache: dict[tuple[str, int], Image.Image],
+    generate: GenerateFn,
+    smi: SmiFn | None,
+    secrets: Sequence[str],
+) -> tuple[Image.Image, float | None, int | None, int | None]:
+    cached = cache.get((arm.id, case.ordinal))
+    if cached is not None:
+        return cached, None, None, None
+    path = _image_file(images, arm, case)
+    reused = _reused_file(images, arm, case)
+    source = reused if reused is not None else path
+    if source.is_file():
+        image = Image.open(source).convert("RGB")
+        cache[(arm.id, case.ordinal)] = image
+        return image, None, None, None
+    if arm.reuse_job:
+        raise CompareSetup(
+            f"{job.id} arm {arm.id} is missing reused images from {arm.reuse_job}",
+            code="compare_reuse",
+        )
+    image, seconds, torch_bytes, smi_bytes = _timed(arm, case, job, generate, smi, secrets)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="PNG")
+    cache[(arm.id, case.ordinal)] = image
+    return image, seconds, torch_bytes, smi_bytes
+
+
+def _timed(
+    arm: Arm,
+    case: Case,
+    job: Job,
+    generate: GenerateFn,
+    smi: SmiFn | None,
+    secrets: Sequence[str],
+) -> tuple[Image.Image, float, int | None, int | None]:
+    reset_torch_peak()
+    started = time.perf_counter()
+    with SmiSampler(smi) as sampler:
+        try:
+            image = generate(arm, case, job)
+        except CompareSetup:
+            raise
+        except CompareNoGpu:
+            raise
+        except Exception as exc:
+            message = assert_or_scrub(str(exc), secrets)
+            raise CompareSetup(f"{job.id} arm {arm.id} failed: {message}", code="compare_generate") from exc
+    seconds = time.perf_counter() - started
+    return image, seconds, torch_peak_bytes(), sampler.peak_bytes
+
+
+def assert_or_scrub(message: str, secrets: Sequence[str]) -> str:
+    """Replace prompt text in an exception before it can reach a log."""
+    cleaned = message
+    for secret in secrets:
+        if secret:
+            cleaned = cleaned.replace(secret, "[prompt]")
+    return cleaned
+
+
+def _image_file(images: Path, arm: Arm, case: Case) -> Path:
+    control = case.control or "none"
+    name = f"{case.prompt_id}-{case.seed}-{case.width}x{case.height}-{control}.png"
+    return images / arm.id / name
+
+
+def _reused_file(images: Path, arm: Arm, case: Case) -> Path | None:
+    if not arm.reuse_job:
+        return None
+    control = case.control or "none"
+    name = f"{case.prompt_id}-{case.seed}-{case.width}x{case.height}-{control}.png"
+    arm_id = arm.reuse_arm or arm.id
+    return images.parent.parent / arm.reuse_job / "images" / arm_id / name
+
+
+def _log(message: str, secrets: Sequence[str]) -> None:
+    assert_text_clean(message, secrets, where="log")
+    print(message, file=sys.stderr)

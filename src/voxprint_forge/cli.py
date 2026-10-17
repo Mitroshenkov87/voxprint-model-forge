@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 from voxprint_forge.accounts import execute_accounts
+from voxprint_forge.compare.cli import add_command as add_compare_command
+from voxprint_forge.compare.cli import execute as execute_compare
 from voxprint_forge.diffusion.int4.cli import (
     add_commands as add_int4_commands,
 )
@@ -113,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     canvas_upload.add_argument("--force", action="store_true", help="Start even if an LLM job is running.")
     int4 = sub.add_parser("diffusion-int4", help="SVDQuant INT4 for Qwen-Image-Edit, plus Wan 2.2 GGUF and FP8.")
     add_int4_commands(int4.add_subparsers(dest="int4_command", required=True))
+    add_compare_command(sub)
     index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
     index_sub = index.add_subparsers(dest="index_command", required=True)
     index_build = index_sub.add_parser(
@@ -261,6 +264,8 @@ def _index(args: argparse.Namespace) -> dict[str, object]:
 def _exit_code(command: str, result: object) -> int:
     if not isinstance(result, dict):
         return 0
+    if command == "compare":
+        return int(result.get("exit_code", 2))
     if command == "status":
         return int(result.get("exit_code", 4))
     if result.get("ok") is False:
@@ -314,6 +319,9 @@ def _dispatch(args: argparse.Namespace) -> object:
         return inspect_status(forge_out)
     if args.command == "diffusion-int4":
         return perform_int4(args, root)
+    if args.command == "compare":
+        forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
+        return execute_compare(root, forge_out, str(args.job), args.plan)
     if args.command == "canvas":
         # diffusers is an optional extra and must not load for LLM commands.
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))

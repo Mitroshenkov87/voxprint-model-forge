@@ -25,6 +25,8 @@ On failure the object also has `error.code` and `error.message`.
 
 `forge status` uses a shorter set, because Hardware Watchdog polls it: 0 when every item is running or finished, 3 when a running item's heartbeat is older than 180 seconds or its pid is gone, 4 when any item is `STAGEFAIL` or `FAILED` or `status.json` is missing. Those two numbers are not the licence and checksum codes above. The other commands keep the table.
 
+`forge compare --job ID` uses another short set: 0 when every candidate passes, 1 when the quality bar fails, 2 for setup, 3 when there is no CUDA GPU. See `docs/COMPARE.md`.
+
 ## Install
 
 Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
