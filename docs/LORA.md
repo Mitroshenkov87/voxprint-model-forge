@@ -15,6 +15,15 @@ Training refuses to start unless the project was prepared and passed the safety 
 Presets: `--preset quick|balanced|best`, `--likeness flexible|balanced|close`, `--vram auto|16|24`. The values are not final until the GPU calibration run. Expert flags (`--rank`, `--alpha`, `--steps`, `--lr`, `--scheduler`, `--warmup`, `--batch`, `--grad-accum`, `--resolution`, `--precision`, `--grad-checkpointing`, `--caption-mode`, `--caption-dropout`, `--seed`, `--save-every`, `--preview-every`) override single values. There are no safety settings.
 
 Pause with Ctrl+C: the run saves a version and stops. Continue with `--resume`; the saved settings are reused.
+| `lora export --project DIR` | Saves the last version (or `--checkpoint N`) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
+
+## Export and the Canvas hand-off
+
+Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `consent_obtained`, `adult_confirmed`, `provenance_note`, `release_attached`, `release_sha256`, and `rights_confirmed` for objects and styles; `voxprint.lora.base`, `base_revision`, `rank`, `alpha`, `steps`, `kind`, `trained_on`. Nothing else: no paths, usernames, machine ids or EXIF, and no key that reads like a gate or threshold setting.
+
+`voxprint-model.json` (`schema: voxprint-model/1`): `min_schema` 1, `id`, `kind`, `type` lora, `producer`, `file`, `sha256`, `size`, `base.mdl_id`, `base.revision`, `licence` (from the base), `default_strength` 0.8, `strength_range` [0, 1.5], `tags`, and `preview` with `preview_sha256` when a test picture exists (`preview.webp`).
+
+`--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `$VOXPRINT_USER_MODELS_DIR/lora/<id>/`, by default `<models dir>/user-models/lora/<id>/`. The id is the trigger word plus 8 hex digits of the LoRA tensors.
 
 ## Photos and consent
 
