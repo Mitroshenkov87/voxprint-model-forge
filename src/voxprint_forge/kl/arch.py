@@ -1,4 +1,8 @@
-"""Architecture and MTP-head checks read from an F16 GGUF and its HF config."""
+"""Architecture and MTP-head checks.
+
+Safetensors jobs compare ``config.json`` with the converted F16 GGUF.
+A published F16 GGUF is its own reference: the MTP head is ``nextn_predict_layers``.
+"""
 
 from __future__ import annotations
 
@@ -89,6 +93,25 @@ def source_mtp_layers(folder: Path) -> tuple[int, int]:
     declared = _positive(merged.get("mtp_num_hidden_layers"))
     indexed = _index_mtp(folder / "model.safetensors.index.json")
     return layers, declared or indexed
+
+
+def gguf_reference_mtp(meta: dict[str, object]) -> dict[str, object]:
+    """MTP status when the reference is already an F16 GGUF.
+
+    The published file is the quantisation source, so there is no
+    ``config.json`` to compare. ``nextn_predict_layers`` is the MTP head.
+    A missing head, or a head larger than ``block_count``, fails the job.
+    """
+    block_count = int(meta["block_count"])
+    nextn = int(meta["nextn_predict_layers"])
+    if nextn < 1:
+        raise StageError("F16 GGUF reference has no MTP head", code="kl_mtp")
+    if nextn > block_count:
+        raise StageError(
+            f"F16 GGUF nextn_predict_layers {nextn} exceeds block_count {block_count}",
+            code="kl_mtp",
+        )
+    return mtp_status(block_count - nextn, nextn, meta)
 
 
 def mtp_status(source_layers: int, source_mtp: int, meta: dict[str, object]) -> dict[str, object]:

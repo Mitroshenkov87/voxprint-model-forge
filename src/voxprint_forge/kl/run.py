@@ -15,7 +15,13 @@ from huggingface_hub import snapshot_download
 from voxprint_forge.errors import DownloadError, StageError
 from voxprint_forge.evaluate import data_dir, parse_ppl
 from voxprint_forge.fitmath import Arch, fits_budget
-from voxprint_forge.kl.arch import mtp_status, read_model_arch, require_mtp, source_mtp_layers
+from voxprint_forge.kl.arch import (
+    gguf_reference_mtp,
+    mtp_status,
+    read_model_arch,
+    require_mtp,
+    source_mtp_layers,
+)
 from voxprint_forge.kl.parse import parse_kl, tokens_per_second
 from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat
 from voxprint_forge.kl.preflight import require_llama_arch
@@ -224,10 +230,17 @@ def _unexpected_format(fmt: Never) -> Never:
 def _mtp(job: KlJob, source: Path, meta: dict[str, object]) -> dict[str, object] | None:
     if not job.expect_mtp:
         return None
-    layers, mtp_layers = source_mtp_layers(source)
-    status = mtp_status(layers, mtp_layers, meta)
-    require_mtp(status)
-    return status
+    fmt: SourceFormat = job.source_format
+    if fmt == "safetensors":
+        layers, mtp_layers = source_mtp_layers(source)
+        status = mtp_status(layers, mtp_layers, meta)
+        require_mtp(status)
+        return status
+    if fmt == "gguf":
+        status = gguf_reference_mtp(meta)
+        require_mtp(status)
+        return status
+    return _unexpected_format(fmt)
 
 
 def _one_quant(
