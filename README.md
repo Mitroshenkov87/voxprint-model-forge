@@ -24,6 +24,8 @@ Checks follow [docs/TESTING.md](docs/TESTING.md). CI is the cheap tier: CLI, dry
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party models keep their own licences; record both code and weights licences in each model card.
 
+The models we publish (compressed and fine-tuned) and the official builds are also subject to the [Acceptable Use Policy](ACCEPTABLE_USE.md), in addition to each model's upstream licence. The code remains Apache-2.0.
+
 ## ☕ Support the Project
 
 If you find this project useful and would like to support its development, you can buy me a coffee!
