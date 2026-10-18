@@ -190,8 +190,8 @@ def test_script_is_unattended_and_pins_the_windows_wheel() -> None:
 
 
 def test_powershell_parses_when_present() -> None:
-    """Windows CI parses the script. Ubuntu skips when pwsh is absent."""
-    shell = shutil.which("pwsh") or shutil.which("powershell")
+    """Windows CI parses the script with pwsh. Ubuntu skips when pwsh is absent."""
+    shell = shutil.which("pwsh")
     if shell is None:
         pytest.skip("pwsh is not installed")
     proc = subprocess.run(

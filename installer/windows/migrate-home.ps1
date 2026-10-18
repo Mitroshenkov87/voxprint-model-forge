@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # VOXPrint AI Suite: one-time move of the per-user data home (voxprint-common 0.2.5).
 #   %LOCALAPPDATA%\Voxprint  ->  %LOCALAPPDATA%\VOXPrint AI Suite
 # The setup runs this as the signed-in (original) user from PrepareToInstall, before any

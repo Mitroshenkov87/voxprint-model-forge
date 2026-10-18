@@ -16,7 +16,7 @@
         5 pinned file mismatch, 6 setup.
 
 .EXAMPLE
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\win_g4r_rerun.ps1 -Work D:\g4r -Tiers D:\g4r\tiers `
+  pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\win_g4r_rerun.ps1 -Work D:\g4r -Tiers D:\g4r\tiers `
     -Prompts $env:USERPROFILE\.priv-in\gemma4-refusal-probe.txt -TensorDiff D:\g4r\tensor-diff.json -DryRun
 #>
 param(

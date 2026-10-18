@@ -10,6 +10,7 @@
 | Computer memory (RAM) | 32 GB. See [RAM tiers](memory.md). |
 | Disk | About 45 GB free: about 35 GB for the models, plus the app and your projects. With MOSS-Image Base as well, add about 27 GB. |
 | Internet | Needed for the install and the first model download only |
+| PowerShell | PowerShell 7 is recommended. If it is missing, the setup offers to download and install it from Microsoft. If you say no, or the install fails, the setup uses Windows PowerShell 5.1 and suggests installing PowerShell 7 later ([how to install](https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows)). |
 
 ## Install on Windows
 
