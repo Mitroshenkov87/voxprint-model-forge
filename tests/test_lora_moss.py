@@ -343,6 +343,7 @@ def test_moss_lora_can_be_hidden(monkeypatch) -> None:
     assert [info.mdl_id for info in bases.trainable()] == ["z-image"]
     assert "moss-image-base" in {info.mdl_id for info in bases.available()}
     with pytest.raises(LoraUsageError) as caught:
-        bases.get_adapter("moss-image-base")
+        bases.get_adapter("moss-image-base", training=True)
     assert caught.value.key == "lora.err.base_missing"
+    assert bases.get_adapter("moss-image-base").info.mdl_id == "moss-image-base"  # export still reads it
     assert bases.get_adapter("z-image").info.mdl_id == "z-image"

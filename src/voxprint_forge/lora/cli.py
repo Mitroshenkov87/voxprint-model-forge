@@ -200,7 +200,7 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         base_id = lora_base(from_lora).get("voxprint.lora.base") or ""
     else:
         base_id = args.base
-    adapter = bases.get_adapter(base_id)
+    adapter = bases.get_adapter(base_id, training=True)
     if args.dry_run:
         return estimate(project, config, adapter)
     prompts = _prompts(args.preview_prompts, data)

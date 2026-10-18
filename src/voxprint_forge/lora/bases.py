@@ -141,10 +141,13 @@ def trainable() -> list[BaseInfo]:
     return [cls.info for cls in _REGISTRY.values() if cls.trainable and cls.info.mdl_id not in off]
 
 
-def get_adapter(mdl_id: str) -> BaseAdapter:
-    """A fresh adapter for ``mdl_id``. Unknown or hidden ids raise ``lora.err.base_missing``."""
+def get_adapter(mdl_id: str, *, training: bool = False) -> BaseAdapter:
+    """A fresh adapter for ``mdl_id``. Unknown ids, and hidden ones for ``training``, raise ``lora.err.base_missing``.
+
+    Export and other reads of an existing run still get a hidden base.
+    """
     cls = _REGISTRY.get(mdl_id)
-    if cls is None or mdl_id in hidden():
+    if cls is None or (training and mdl_id in hidden()):
         raise LoraUsageError("lora.err.base_missing")
     return cls()
 
