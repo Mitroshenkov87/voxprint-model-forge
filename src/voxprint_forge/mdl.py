@@ -39,7 +39,7 @@ INDEX_KEY_ENV = "VOXPRINT_MDL_INDEX_KEY_FILE"
 HOSTED_REPO = f"datasets/{INDEX_REPO}"
 HOSTED_DIR = "descriptors"
 # Serial, head and generated_at of the signed index bundled in voxprint-common
-# 0.2.6 (model-index.pin.json). Apps refuse a remote index older than that pin,
+# 0.3.1 (model-index.pin.json). Apps refuse a remote index older than that pin,
 # so the next one we publish is serial 10.
 BUNDLED_INDEX_SERIAL = 9
 BUNDLED_INDEX_HEAD = "15edeab0f7a874c27d2b38ef6ecb69106ff94df8"
@@ -71,11 +71,19 @@ _TOP = (
     "build",
 )
 # Optional voxprint-model/1 fields. mirror_policy, file_groups and per-file
-# sources come from voxprint-common MDL PR #15. prebuilt, post_install and
-# built_for are the 0.3.0 additions; they are accepted, not interpreted.
-_TOP_OPTIONAL = ("mirror_policy", "file_groups", "prebuilt", "post_install")
+# sources come from voxprint-common MDL PR #15. prebuilt stays the list of
+# fallback sets. onnx_prebuilt (model or file) and post_install (app CLI only)
+# are the 0.3.0 additions; they are accepted, not interpreted.
+_TOP_OPTIONAL = ("mirror_policy", "file_groups", "prebuilt", "onnx_prebuilt", "post_install")
 _FILE_KEYS = ("path", "size", "sha256")
-_FILE_OPTIONAL = ("mirror_policy", "sources", "built_for")
+_FILE_OPTIONAL = ("mirror_policy", "sources", "onnx_prebuilt")
+_PREBUILT_KEYS = ("id", "role", "replaces", "files")
+_PREBUILT_OPTIONAL = ("note",)
+_ONNX_PREBUILT_KEYS = ("path", "sha256", "built_for")
+_ONNX_PREBUILT_OPTIONAL = ("size", "url", "sources", "mirror_policy")
+_POST_INSTALL_KEYS = ("cli", "args")
+_POST_INSTALL_OPTIONAL = ("timeout_s", "outputs")
+_PLACEHOLDERS = frozenset({"id", "model_dir", "source_path", "prebuilt_path", "cache_dir"})
 _GROUP_OPTIONAL = ("mirror_policy", "sources")
 _POLICIES = frozenset({"race", "strict-priority"})
 _INDEX_KEYS = ("head", "serial", "generated_at", "models")
@@ -91,6 +99,9 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _CARD = re.compile(r"^(?:|https://\S+)$")
+_HTTPS = re.compile(r"^https://\S+$")
+_CLI = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ARG = re.compile(r"^(?:[^{}]|\{(?:id|model_dir|source_path|prebuilt_path|cache_dir)\})*$")
 _INLINE_MAX = 8 * 1024 * 1024
 _INDEX_REPO_NAME = "voxprint-model-index"
 
@@ -145,12 +156,16 @@ def build_document(
     forge_version: str = "",
     tag: str = "",
     date: str = "",
+    onnx_prebuilt: Mapping[str, object] | None = None,
+    post_install: Mapping[str, object] | None = None,
+    prebuilt: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
-    """Build one ``voxprint-model/1`` document. VRAM arguments are decimal GB."""
-    copied = [
-        {"path": str(item["path"]), "size": item["size"], "sha256": str(item["sha256"])}
-        for item in files
-    ]
+    """Build one ``voxprint-model/1`` document. VRAM arguments are decimal GB.
+
+    File rows may carry ``onnx_prebuilt``. A model-level ``onnx_prebuilt`` or
+    ``post_install`` (the owning app's CLI only) is copied when given.
+    """
+    copied = [_file_row(item) for item in files]
     copied.sort(key=lambda item: str(item["path"]))
     document: dict[str, object] = {
         "schema": SCHEMA_ID,
@@ -177,8 +192,28 @@ def build_document(
             "date": date or _today(),
         },
     }
+    if onnx_prebuilt is not None:
+        document["onnx_prebuilt"] = dict(onnx_prebuilt)
+    if post_install is not None:
+        document["post_install"] = dict(post_install)
+    if prebuilt is not None:
+        document["prebuilt"] = [dict(item) for item in prebuilt]
     check_document(document)
     return document
+
+
+def _file_row(item: Mapping[str, object]) -> dict[str, object]:
+    """Copy one file row, keeping optional ``onnx_prebuilt`` and mirror fields."""
+    row: dict[str, object] = {
+        "path": str(item["path"]),
+        "size": item["size"],
+        "sha256": str(item["sha256"]),
+    }
+    for key in ("mirror_policy", "sources", "onnx_prebuilt"):
+        if key in item:
+            value = item[key]
+            row[key] = dict(value) if key == "onnx_prebuilt" and isinstance(value, Mapping) else value
+    return row
 
 
 def write_manifest(directory: Path, document: Mapping[str, object]) -> Path:
@@ -219,8 +254,10 @@ def check_document(document: object) -> None:
         _file_groups(document["file_groups"])
     if "prebuilt" in document:
         _prebuilt(document["prebuilt"])
-    if "post_install" in document and not isinstance(document["post_install"], (dict, list)):
-        raise StageError("post_install must be an object or a list", code="mdl")
+    if "onnx_prebuilt" in document:
+        _onnx_prebuilt(document["onnx_prebuilt"])
+    if "post_install" in document:
+        _post_install(document["post_install"])
 
 
 def hash_tree(root: Path) -> list[dict[str, object]]:
@@ -1057,23 +1094,101 @@ def _file_groups(value: object) -> None:
 
 
 def _prebuilt(value: object) -> None:
+    """``prebuilt`` is the list of fallback sets (unchanged since 0.2.6)."""
     if not isinstance(value, list):
         raise StageError("prebuilt must be a list", code="mdl")
+    seen: set[str] = set()
     for item in value:
         if not isinstance(item, dict):
             raise StageError("prebuilt entry is not an object", code="mdl")
-        if "built_for" in item:
-            _built_for(item["built_for"])
+        _keys(item, _PREBUILT_KEYS, _PREBUILT_OPTIONAL, "prebuilt entry")
+        set_id = item["id"]
+        if not isinstance(set_id, str) or _ID.fullmatch(set_id) is None:
+            raise StageError("prebuilt.id must be a lowercase model id", code="mdl")
+        if set_id in seen:
+            raise StageError(f"duplicate prebuilt id {set_id}", code="mdl")
+        seen.add(set_id)
+        _text(item["role"], "prebuilt.role")
+        replaces = item["replaces"]
+        if not isinstance(replaces, str) or not replaces:
+            raise StageError("prebuilt.replaces must be a non-empty string", code="mdl")
+        _files(item["files"])
+        if "note" in item and not isinstance(item["note"], str):
+            raise StageError("prebuilt.note must be a string", code="mdl")
+
+
+def _onnx_prebuilt(value: object) -> None:
+    """One ONNX artifact at model level or on a file (0.3.0)."""
+    if not isinstance(value, dict):
+        raise StageError("onnx_prebuilt must be an object", code="mdl")
+    _keys(value, _ONNX_PREBUILT_KEYS, _ONNX_PREBUILT_OPTIONAL, "onnx_prebuilt")
+    has_url = "url" in value
+    has_sources = "sources" in value
+    if has_url == has_sources:
+        raise StageError("onnx_prebuilt needs exactly one of url or sources", code="mdl")
+    path = value["path"]
+    if not isinstance(path, str) or not _repo_path(path):
+        raise StageError(f"onnx_prebuilt path {path!r} is not relative to the repo root", code="mdl")
+    digest = value["sha256"]
+    if not isinstance(digest, str) or _SHA.fullmatch(digest) is None:
+        raise StageError("onnx_prebuilt sha256 must be 64 lowercase hex characters", code="mdl")
+    if "size" in value:
+        size = value["size"]
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise StageError("onnx_prebuilt size must be a non-negative integer", code="mdl")
+    if has_url:
+        url = value["url"]
+        if not isinstance(url, str) or _HTTPS.fullmatch(url) is None:
+            raise StageError("onnx_prebuilt url must be an https URL", code="mdl")
+    if has_sources:
+        _mirrors(value["sources"])
+    if "mirror_policy" in value:
+        _policy(value["mirror_policy"])
+    _built_for(value["built_for"])
 
 
 def _built_for(value: object) -> None:
     if not isinstance(value, dict):
         raise StageError("built_for must be an object", code="mdl")
-    if "onnxruntime" in value and not isinstance(value["onnxruntime"], str):
-        raise StageError("built_for.onnxruntime must be a string", code="mdl")
-    opset = value.get("opset")
-    if opset is not None and (isinstance(opset, bool) or not isinstance(opset, int)):
-        raise StageError("built_for.opset must be an integer", code="mdl")
+    _exact_keys(value, ("onnxruntime", "opset"), "built_for")
+    runtime = value["onnxruntime"]
+    if not isinstance(runtime, str) or not runtime:
+        raise StageError("built_for.onnxruntime must be a non-empty string", code="mdl")
+    opset = value["opset"]
+    if isinstance(opset, bool) or not isinstance(opset, int) or opset < 1:
+        raise StageError("built_for.opset must be an integer >= 1", code="mdl")
+
+
+def _post_install(value: object) -> None:
+    """``post_install`` runs only the owning app's installed CLI."""
+    if not isinstance(value, dict):
+        raise StageError("post_install must be an object", code="mdl")
+    _keys(value, _POST_INSTALL_KEYS, _POST_INSTALL_OPTIONAL, "post_install")
+    cli = value["cli"]
+    if not isinstance(cli, str) or _CLI.fullmatch(cli) is None:
+        raise StageError("post_install.cli must be the app CLI name", code="mdl")
+    args = value["args"]
+    if not isinstance(args, list) or any(not isinstance(item, str) or _ARG.fullmatch(item) is None for item in args):
+        raise StageError("post_install.args may only use the documented placeholders", code="mdl")
+    if "timeout_s" in value:
+        timeout = value["timeout_s"]
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not (0 < float(timeout) <= 3600):
+            raise StageError("post_install.timeout_s must be in (0, 3600]", code="mdl")
+    if "outputs" in value:
+        outputs = value["outputs"]
+        if not isinstance(outputs, list):
+            raise StageError("post_install.outputs must be a list", code="mdl")
+        for item in outputs:
+            if not isinstance(item, dict):
+                raise StageError("post_install.outputs entry is not an object", code="mdl")
+            _keys(item, ("path",), ("sha256",), "post_install.outputs entry")
+            out_path = item["path"]
+            if not isinstance(out_path, str) or not out_path or out_path.startswith("/") or "\\" in out_path:
+                raise StageError("post_install.outputs path must be relative", code="mdl")
+            if "sha256" in item:
+                digest = item["sha256"]
+                if not isinstance(digest, str) or _SHA.fullmatch(digest) is None:
+                    raise StageError("post_install.outputs sha256 must be 64 lowercase hex", code="mdl")
 
 
 def _text(value: object, label: str) -> None:
@@ -1117,8 +1232,8 @@ def _files(value: object) -> None:
             _policy(item["mirror_policy"])
         if "sources" in item:
             _mirrors(item["sources"])
-        if "built_for" in item:
-            _built_for(item["built_for"])
+        if "onnx_prebuilt" in item:
+            _onnx_prebuilt(item["onnx_prebuilt"])
         path = item["path"]
         if not isinstance(path, str) or not _repo_path(path):
             raise StageError(f"path {path!r} is not relative to the repo root", code="mdl")

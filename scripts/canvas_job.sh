@@ -145,7 +145,7 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 9
 fi
 
-uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.2.6-py3-none-any.whl"
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.3.1-py3-none-any.whl"
 uv pip install --python "$VENV" -e "$ROOT" --no-deps
 uv pip install --python "$VENV" --no-deps \
   "diffusers==0.41.0" \
