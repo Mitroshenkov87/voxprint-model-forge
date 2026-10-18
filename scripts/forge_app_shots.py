@@ -1,7 +1,8 @@
 """Grab each Model Forge step (Simple and Expert, en and ru) with a stub engine.
 
-Usage: QT_QPA_PLATFORM=offscreen python scripts/forge_app_shots.py OUT_DIR [--manual]
-Photos are generated neutral placeholders (no people). Nothing is trained and no GPU is used.
+Usage: QT_QPA_PLATFORM=offscreen python scripts/forge_app_shots.py OUT_DIR [--manual] [--photos DIR]
+Photos are generated neutral placeholders (no people), or the first 14 pictures in ``--photos DIR`` by file name,
+downscaled and saved again without metadata. Nothing is trained and no GPU is used.
 ``--manual`` writes only the pictures the user manual uses (docs/manual/img/) plus the model downloader.
 """
 
@@ -69,14 +70,44 @@ def placeholder_photos(folder: Path, count: int) -> list[Path]:
     return paths
 
 
-def demo_prepared(project: Path, photos: list[Path], drops: list[tuple[Path, str]]) -> None:
+def sample_photos(source: Path, folder: Path, count: int, side: int = 512) -> list[Path]:
+    """The first ``count`` pictures in ``source``, at most ``side`` px on the long edge, saved as PNG, no metadata."""
+    from PySide6 import QtCore, QtGui
+
+    folder.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in source.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})[:count]
+    if len(files) < count:
+        raise SystemExit(f"--photos needs at least {count} pictures, found {len(files)} in {source}")
+    paths = []
+    for index, file in enumerate(files):
+        image = QtGui.QImage(str(file))
+        if image.isNull():
+            raise SystemExit(f"cannot read {file}")
+        image = image.scaled(side, side, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                             QtCore.Qt.TransformationMode.SmoothTransformation)
+        clean = QtGui.QImage(image.size(), QtGui.QImage.Format.Format_RGB32)
+        painter = QtGui.QPainter(clean)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        path = folder / f"demo-{index + 1:02d}.png"
+        clean.save(str(path))
+        paths.append(path)
+    return paths
+
+
+def demo_prepared(project: Path, photos: list[Path], drops: list[tuple[Path, str]], samples: bool = False) -> None:
     """Like the test stub's ``write_prepared``, with descriptions that read naturally in the manual."""
     import json
 
     project.mkdir(parents=True, exist_ok=True)
-    rows = [{"id": f"p{i}", "file": str(photo), "long": f"mira_demo, placeholder picture {i + 1:02d}, a circle above "
-             "a rounded square on a soft background", "short": f"mira_demo, placeholder picture {i + 1:02d}",
-             "round": 0} for i, photo in enumerate(photos)]
+    if samples:
+        texts = [(f"mira_demo, sample photo {i + 1:02d}, a woman with long blonde hair",
+                  f"mira_demo, sample photo {i + 1:02d}") for i in range(len(photos))]
+    else:
+        texts = [(f"mira_demo, placeholder picture {i + 1:02d}, a circle above a rounded square on a soft background",
+                  f"mira_demo, placeholder picture {i + 1:02d}") for i in range(len(photos))]
+    rows = [{"id": f"p{i}", "file": str(photo), "long": texts[i][0], "short": texts[i][1], "round": 0}
+            for i, photo in enumerate(photos)]
     (project / "captions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     lines = [json.dumps({"id": f"d{i}", "name": path.name, "reason": reason}) for i, (path, reason) in enumerate(drops)]
     (project / "drops.jsonl").write_text("".join(line + "\n" for line in lines), encoding="utf-8")
@@ -98,7 +129,7 @@ def shot_downloader(out: Path, lang: str) -> None:
     grab_view(view_for(snapshot, mode="queue", focus_app="model-forge", lang=lang), out / f"{lang}-mdl-download.png")
 
 
-def main(out: Path, manual: bool = False) -> None:
+def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:
     home = Path(tempfile.mkdtemp(prefix="forge-shots-"))
     os.environ["VOXPRINT_HOME"] = str(home)
     from PySide6 import QtWidgets
@@ -111,7 +142,12 @@ def main(out: Path, manual: bool = False) -> None:
     from voxprint_forge.app.window import ForgeApp
 
     out.mkdir(parents=True, exist_ok=True)
-    photos = placeholder_photos(home / "photos", 14) if manual else make_photos(home / "photos", 14)
+    if samples is not None:
+        photos = sample_photos(samples, home / "photos", 14)
+    elif manual:
+        photos = placeholder_photos(home / "photos", 14)
+    else:
+        photos = make_photos(home / "photos", 14)
     for lang in ("en", "ru"):
         for expert in (False, True):
             set_language(lang)
@@ -124,8 +160,11 @@ def main(out: Path, manual: bool = False) -> None:
             })
             second = "lora.drop.duplicate" if manual else "lora.drop.safety"
             drops = [(photos[12], "lora.drop.blurry"), (photos[13], second)]
-            write = demo_prepared if manual else write_prepared
-            runner.effects["prepare"] = lambda project, write=write: write(project, photos[:12], drops)
+            if manual or samples is not None:
+                with_samples = samples is not None
+                runner.effects["prepare"] = lambda project: demo_prepared(project, photos[:12], drops, with_samples)
+            else:
+                runner.effects["prepare"] = lambda project: write_prepared(project, photos[:12], drops)
             forge = ForgeApp(runner=runner, home=home / f"state-{lang}-{expert}", commands=ALL_COMMANDS,
                              open_path=lambda _p: None, launch=lambda _a: None)
             forge.expert.set_enabled(expert)
@@ -223,4 +262,6 @@ def shot_open_base(forge, app, path: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), manual="--manual" in sys.argv[2:])
+    flags = sys.argv[2:]
+    given = Path(flags[flags.index("--photos") + 1]) if "--photos" in flags else None
+    main(Path(sys.argv[1]), manual="--manual" in flags, samples=given)
