@@ -3,7 +3,7 @@
 The pinned author snapshots are in ``REPOS``. ``load_pipeline`` builds each component from a
 local snapshot directory with ``local_files_only=True`` and ``use_safetensors=True`` under
 ``HF_HUB_OFFLINE=1``, so nothing is fetched and no repo code runs. diffusers/transformers are
-imported lazily: CI pins diffusers <0.38, which has no ``AutoencoderKLFlux2``.
+imported lazily, so importing this module needs neither.
 """
 
 from __future__ import annotations

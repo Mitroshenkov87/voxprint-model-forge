@@ -115,6 +115,7 @@ Each published model also gets `voxprint-model.json` (schema `voxprint-model/1`)
 | `VOXPRINT_BUILD` | Build number. Wins over `GITHUB_RUN_NUMBER` |
 | `VOXPRINT_MODELS_DIR` | Absolute path of the shared model-component directory. Default is the suite models folder |
 | `VOXPRINT_MODEL_CACHE` | Alternate absolute directory for model components |
+| `VOXPRINT_FORGE_MOSS_LORA` | `0` hides MOSS-Image Base as a LoRA base (app list and `lora train`). Default `1` (`MOSS_LORA_DEFAULT`) |
 | `GITHUB_RUN_NUMBER` | Added to `BUILD.json` `offset` for `forge --version`. Not used on its own |
 
 ## Model card

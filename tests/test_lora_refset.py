@@ -360,7 +360,7 @@ def test_refset_preflight_reports_each_requirement(tmp_path) -> None:
     from voxprint_forge.preflight import refset_preflight
 
     def run(**overrides):
-        args = dict(home=tmp_path, diffusers_version=lambda: "0.37.1", img2img=lambda: True,
+        args = dict(home=tmp_path, diffusers_version=lambda: "0.41.0", img2img=lambda: True,
                     installed=lambda _mdl: True, vram=lambda: 16 * 2**30, ram=lambda: 32 * 2**30,
                     mivolo=lambda _python: True)
         args.update(overrides)
@@ -371,7 +371,8 @@ def test_refset_preflight_reports_each_requirement(tmp_path) -> None:
     names = {check["name"] for check in report["checks"]}
     assert {"diffusers", "img2img", "model:z-image-turbo", "model:qwen3-vl-4b-instruct", "model:mivolo-v2",
             "mivolo-env", "model:dinov2-base", "cuda", "ram", "disk"} <= names
-    assert run(diffusers_version=lambda: "0.38.0")["ok"] is False
+    assert run(diffusers_version=lambda: "0.42.0")["ok"] is False
+    assert run(diffusers_version=lambda: "0.37.1")["ok"] is False
     assert run(diffusers_version=lambda: None)["ok"] is False
     assert run(vram=lambda: None)["ok"] is False
     assert run(vram=lambda: 12 * 2**30)["ok"] is False

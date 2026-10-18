@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
@@ -123,15 +124,30 @@ def available() -> list[BaseInfo]:
     return [cls.info for cls in _REGISTRY.values()]
 
 
+# MOSS-Image Base as a LoRA base. VOXPRINT_FORGE_MOSS_LORA=0 hides it (app list and ``lora train``).
+MOSS_LORA_DEFAULT = True
+
+
+def hidden() -> frozenset[str]:
+    """MDL ids switched off as LoRA bases in this build or by the environment."""
+    raw = os.environ.get("VOXPRINT_FORGE_MOSS_LORA", "").strip().lower()
+    shown = MOSS_LORA_DEFAULT if raw == "" else raw not in ("0", "false", "no", "off")
+    return frozenset() if shown else frozenset({"moss-image-base"})
+
+
 def trainable() -> list[BaseInfo]:
     """Registered bases this build can actually train on (what the app offers)."""
-    return [cls.info for cls in _REGISTRY.values() if cls.trainable]
+    off = hidden()
+    return [cls.info for cls in _REGISTRY.values() if cls.trainable and cls.info.mdl_id not in off]
 
 
-def get_adapter(mdl_id: str) -> BaseAdapter:
-    """A fresh adapter for ``mdl_id``. Unknown ids raise ``lora.err.base_missing``."""
+def get_adapter(mdl_id: str, *, training: bool = False) -> BaseAdapter:
+    """A fresh adapter for ``mdl_id``. Unknown ids, and hidden ones for ``training``, raise ``lora.err.base_missing``.
+
+    Export and other reads of an existing run still get a hidden base.
+    """
     cls = _REGISTRY.get(mdl_id)
-    if cls is None:
+    if cls is None or (training and mdl_id in hidden()):
         raise LoraUsageError("lora.err.base_missing")
     return cls()
 

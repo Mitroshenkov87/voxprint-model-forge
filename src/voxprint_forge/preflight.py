@@ -324,7 +324,7 @@ def run_preflight(
 
 
 # ----- Build a set from references (non-VM) --------------------------------------------------------
-REFSET_DIFFUSERS = ((0, 37, 1), (0, 38, 0))
+REFSET_DIFFUSERS = ((0, 41, 0), (0, 42, 0))
 REFSET_MIN_VRAM_GB = 16
 REFSET_MIN_RAM_GB = 32
 REFSET_MIN_DISK_GB = 2.0
@@ -371,7 +371,7 @@ def refset_preflight(
 ) -> dict[str, object]:
     """Seconds-long checks for "Build a set from references" on this computer (no GPU work, no downloads).
 
-    diffusers in [0.37.1, 0.38) with ``ZImageImg2ImgPipeline``; Z-Image-Turbo, the judge VLM, MiVOLO and the
+    diffusers in [0.41.0, 0.42) with ``ZImageImg2ImgPipeline``; Z-Image-Turbo, the judge VLM, MiVOLO and the
     face detector installed; the MiVOLO worker env imports; CUDA with at least 16 GB; at least 32 GB RAM
     (model CPU offload); disk for the rounds. DINOv2 is reported but optional (no near-duplicate marks).
     """
@@ -411,11 +411,11 @@ def refset_preflight(
     found = (diffusers_version or version)()
     low, high = REFSET_DIFFUSERS
     ok = found is not None and low <= _version_tuple(found) < high
-    add("diffusers", ok, f"diffusers {found or 'missing'} (need >=0.37.1,<0.38)",
-        'Install the app extras: pip install "diffusers>=0.37.1,<0.38".')
+    add("diffusers", ok, f"diffusers {found or 'missing'} (need >=0.41.0,<0.42)",
+        'Install the app extras: pip install "diffusers>=0.41.0,<0.42".')
     pipeline = ok and (img2img or has_img2img)()
     add("img2img", pipeline, f"ZImageImg2ImgPipeline {'found' if pipeline else 'missing'}",
-        "Reinstall diffusers 0.37.1.")
+        "Reinstall diffusers 0.41.0.")
     for mdl_id, label in ((refset.TEACHER_ID, "Z-Image-Turbo"), (JUDGE_ID, "judge VLM")):
         ready = present(mdl_id)
         add(f"model:{mdl_id}", ready, f"{label} ({mdl_id}) {'installed' if ready else 'missing'}",

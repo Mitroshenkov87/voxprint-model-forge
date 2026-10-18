@@ -12,7 +12,8 @@ dependencies = [
   "huggingface_hub>=0.26",
   "jinja2>=3.1",
   "torch>=2.5",
-  "transformers>=4.57",
+  # MOSS-Image (Qwen3.5 text encoder) needs transformers>=5.3.
+  "transformers>=5.3",
   "safetensors>=0.4",
   "accelerate>=1.0",
   "gguf>=0.10",
@@ -43,12 +44,12 @@ dev = [
   "mkdocs>=1.6",
   "mkdocs-material>=9.5",
   "mkdocstrings[python]>=0.26",
-  "diffusers>=0.37.1,<0.38",
+  "diffusers>=0.41.0,<0.42",
   "jsonschema>=4.23",
   "torchmetrics>=1.6",
 ]
 compare = [
-  "diffusers>=0.37.1,<0.38",
+  "diffusers>=0.41.0,<0.42",
   "torchmetrics>=1.6",
   "lpips",
   "torchvision",
