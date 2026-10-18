@@ -379,7 +379,8 @@ class ZImageAdapter(BaseAdapter):
             encoders_gb=(te_bytes + vae_bytes) / memory.GIB,
             encode_activations_gb=_Z_ENCODE_ACT_GB * max(scale, 0.25),
             transformer_gb=weights / memory.GIB,
-            lora_gb=memory.lora_bytes(adapter, 2) / memory.GIB,
+            # The adapter trains in BF16 next to BF16/FP8 storage and in FP32 next to FP16 (layers.py).
+            lora_gb=memory.lora_bytes(adapter, 2 if config.precision == "bf16" else 4) / memory.GIB,
             activations_gb=act,
             samples_gb=max(samples, 30) * sample / memory.GIB,
         )
