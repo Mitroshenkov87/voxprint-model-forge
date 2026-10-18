@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from pathlib import Path
 
 import gguf
@@ -89,7 +90,7 @@ def test_probe_keeps_ids_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     prompts = tmp_path / "p.txt"
     prompts.write_text("# private\nsecret prompt one\nsecret prompt two\n", encoding="utf-8")
     replies = iter(["I cannot help with that.", "Sure, here is how."])
-    monkeypatch.setattr(rc, "_chat", lambda server, text, *, max_tokens: next(replies))
+    monkeypatch.setattr(rc, "_chat", lambda server, text, *, max_tokens, raw_log=None: next(replies))
     out = tmp_path / "probe.json"
     assert (
         rc.main(
@@ -263,7 +264,7 @@ def test_probe_counts_empty_replies_and_refuses_an_empty_set(tmp_path: Path, mon
     prompts = tmp_path / "p.txt"
     prompts.write_text("one\ntwo\nthree\n", encoding="utf-8")
     replies = iter(["I cannot help.", "", "Sure."])
-    monkeypatch.setattr(rc, "_chat", lambda server, text, *, max_tokens: next(replies))
+    monkeypatch.setattr(rc, "_chat", lambda server, text, *, max_tokens, raw_log=None: next(replies))
     out = tmp_path / "probe.json"
     base = ["probe", "--server", "http://127.0.0.1:1", "--label", "s", "--out", str(out)]
     assert rc.main([*base, "--prompts", str(prompts)]) == 0
@@ -290,3 +291,97 @@ def test_verdict_fails_on_empty_replies_and_bad_pairs(tmp_path: Path) -> None:
     payload = rc._verdict(tmp_path, summary, json.loads(l2), [("Q4_K_M", "stock-Q4_K_M", "new-Q4_K_M")])
     assert payload["probe"]["Q4_K_M"]["problems"] == ["new-Q4_K_M: 3 empty replies"]  # type: ignore[index]
     assert rc.main([*args, "--pair", "Q4_K_M::new-Q4_K_M"]) == 2
+
+
+def _probe_file(tmp_path: Path, label: str, *, rate: float, empty: int, n: int = 24) -> None:
+    probe = {"model": label, "n": n, "empty": empty, "refusal_rate": rate}
+    (tmp_path / f"probe-{label}.json").write_text(json.dumps(probe), encoding="utf-8")
+
+
+def test_chat_body_turns_thinking_off_and_reads_content_not_reasoning() -> None:
+    body = rc.chat_body("x", max_tokens=192)
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert body["max_tokens"] == 192 and body["reasoning_format"] == "deepseek"
+    # The 07:29 failure: all 192 tokens in the thought channel, content empty, finish_reason length.
+    thought = {
+        "choices": [{"message": {"content": "", "reasoning_content": "Let me think"}, "finish_reason": "length"}],
+        "usage": {"completion_tokens": 192},
+    }
+    reply = rc.parse_reply(thought)
+    assert (reply.content, reply.finish_reason, reply.completion_tokens) == ("", "length", 192)
+    answer = {"choices": [{"message": {"content": "I cannot help."}, "finish_reason": "stop"}]}
+    assert rc.parse_reply(answer).content == "I cannot help."
+    with pytest.raises(rc.ProbeError):
+        rc.parse_reply({"choices": []})
+
+
+def test_probe_counts_thinking_only_and_writes_a_private_raw_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prompts = tmp_path / "p.txt"
+    prompts.write_text("secret one\nsecret two\n", encoding="utf-8")
+    payloads = iter(
+        [
+            {"choices": [{"message": {"content": "", "reasoning_content": "hmm"}, "finish_reason": "length"}]},
+            {"choices": [{"message": {"content": "I cannot do that."}, "finish_reason": "stop"}]},
+        ]
+    )
+
+    class Response:
+        def __init__(self, data: dict[str, object]) -> None:
+            self.data = json.dumps(data).encode("utf-8")
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.data
+
+    sent: list[dict[str, object]] = []
+
+    def fake_urlopen(request: object, timeout: int) -> Response:
+        sent.append(json.loads(request.data))  # type: ignore[attr-defined]
+        return Response(next(payloads))
+
+    monkeypatch.setattr(rc.urllib.request, "urlopen", fake_urlopen)
+    raw = tmp_path / "private" / "raw.jsonl"
+    out = tmp_path / "probe.json"
+    argv = ["probe", "--server", "http://127.0.0.1:1", "--prompts", str(prompts), "--label", "stock-Q4_K_M"]
+    assert rc.main([*argv, "--out", str(out), "--raw-log", str(raw)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert (data["empty"], data["thinking_only"], data["answered"], data["refusal_rate"]) == (1, 1, 1, 1.0)
+    assert data["finish_reasons"] == {"length": 1, "stop": 1}
+    assert "secret" not in out.read_text(encoding="utf-8")
+    assert all(item["chat_template_kwargs"] == {"enable_thinking": False} for item in sent)
+    if os.name != "nt":
+        assert raw.stat().st_mode & 0o777 == 0o600
+    lines = [json.loads(line) for line in raw.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 2 and lines[1]["response"]["choices"][0]["message"]["content"] == "I cannot do that."
+
+
+def test_stock_gate_exit_code(tmp_path: Path) -> None:
+    _probe_file(tmp_path, "stock-Q4_K_M", rate=0.5, empty=2)
+    assert rc.main(["stock-gate", "--probe", str(tmp_path / "probe-stock-Q4_K_M.json")]) == 0
+    _probe_file(tmp_path, "stock-Q4_K_M", rate=0.0, empty=24)
+    assert rc.main(["stock-gate", "--probe", str(tmp_path / "probe-stock-Q4_K_M.json")]) == rc.HARNESS_INVALID_EXIT
+
+
+def test_verdict_is_invalid_when_the_stock_arm_is_empty(tmp_path: Path) -> None:
+    (tmp_path / "tensor-diff.json").write_text(json.dumps({"pass": True}), encoding="utf-8")
+    _probe_file(tmp_path, "stock-Q4_K_M", rate=0.0, empty=24)
+    _probe_file(tmp_path, "new-Q4_K_M", rate=0.0, empty=24)
+    summary = tmp_path / "summary.json"
+    rows = [{"quant": "Q4_K_M", "kl_mean": 1.0, "top1_agreement_pct": 69.2}]
+    summary.write_text(json.dumps({"quants": rows}), encoding="utf-8")
+    l2 = json.dumps({"Q4_K_M": {"kl": 0.83, "top1": 68.4}})
+    args = ["verdict", "--results", str(tmp_path), "--kl-summary", str(summary), "--l2-kl", l2]
+    assert rc.main([*args, "--pair", "Q4_K_M:stock-Q4_K_M:new-Q4_K_M"]) == rc.HARNESS_INVALID_EXIT
+    payload = rc._verdict(tmp_path, summary, json.loads(l2), [("Q4_K_M", "stock-Q4_K_M", "new-Q4_K_M")])
+    assert payload["verdict"] == "INVALID"
+    assert "probe harness invalid" in payload["harness_invalid"][0]  # type: ignore[index]
+    # Empty replies on the new arm alone still fail the verdict (#84).
+    _probe_file(tmp_path, "stock-Q4_K_M", rate=0.5, empty=1)
+    assert rc.main([*args, "--pair", "Q4_K_M:stock-Q4_K_M:new-Q4_K_M"]) == 1
