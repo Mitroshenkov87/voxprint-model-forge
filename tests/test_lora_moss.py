@@ -102,7 +102,19 @@ def _install_pipe(monkeypatch) -> dict:
         seen["lora"] = path
         return pipe
 
+    def load_encoder_parts(root, **kwargs):
+        seen.setdefault("parts", []).append(kwargs.get("te_quant"))
+        pipe = _Pipe()
+        pipe.transformer = None
+        return pipe
+
+    def encode_staged(root, prompts, **kwargs):
+        pipe = _Pipe()
+        return {p: pipe.encode_prompt(p) for p in [*prompts, ""]}
+
     monkeypatch.setattr(moss, "load_pipeline", load_pipeline)
+    monkeypatch.setattr(moss, "load_encoder_parts", load_encoder_parts)
+    monkeypatch.setattr(moss, "encode_staged", encode_staged)
     monkeypatch.setattr(bases, "_moss_runtime_problems", lambda: [])
     return seen
 

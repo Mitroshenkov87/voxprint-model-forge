@@ -514,7 +514,9 @@ options:
 usage: forge lora train [-h] --project PROJECT
                         [--preset {balanced,best,quick}]
                         [--likeness {balanced,close,flexible}]
-                        [--vram {auto,16,24}] [--steps STEPS] [--lr LR]
+                        [--vram {auto,16,24}]
+                        [--te-quant {auto,none,int8,nf4}]
+                        [--te-device {gpu,cpu}] [--steps STEPS] [--lr LR]
                         [--scheduler {constant,cosine}] [--warmup WARMUP]
                         [--batch BATCH] [--grad-accum GRAD_ACCUM]
                         [--precision {bf16,fp16}]
@@ -537,6 +539,12 @@ options:
   --likeness {balanced,close,flexible}
                         How close to the photos.
   --vram {auto,16,24}   Graphics memory tier in GB.
+  --te-quant {auto,none,int8,nf4}
+                        MOSS text encoder format (Expert). Default auto: bf16
+                        on 24 GB, int8 on 16 GB.
+  --te-device {gpu,cpu}
+                        Where the MOSS text encoder runs (Expert). Default
+                        gpu; cpu is a slower fallback.
   --steps STEPS         Training steps (Expert).
   --lr LR               Learning rate (Expert).
   --scheduler {constant,cosine}
@@ -579,7 +587,9 @@ options:
 usage: forge lora extend [-h] --project PROJECT
                          [--preset {balanced,best,quick}]
                          [--likeness {balanced,close,flexible}]
-                         [--vram {auto,16,24}] [--steps STEPS] [--lr LR]
+                         [--vram {auto,16,24}]
+                         [--te-quant {auto,none,int8,nf4}]
+                         [--te-device {gpu,cpu}] [--steps STEPS] [--lr LR]
                          [--scheduler {constant,cosine}] [--warmup WARMUP]
                          [--batch BATCH] [--grad-accum GRAD_ACCUM]
                          [--precision {bf16,fp16}]
@@ -601,6 +611,12 @@ options:
   --likeness {balanced,close,flexible}
                         How close to the photos.
   --vram {auto,16,24}   Graphics memory tier in GB.
+  --te-quant {auto,none,int8,nf4}
+                        MOSS text encoder format (Expert). Default auto: bf16
+                        on 24 GB, int8 on 16 GB.
+  --te-device {gpu,cpu}
+                        Where the MOSS text encoder runs (Expert). Default
+                        gpu; cpu is a slower fallback.
   --steps STEPS         Training steps (Expert).
   --lr LR               Learning rate (Expert).
   --scheduler {constant,cosine}

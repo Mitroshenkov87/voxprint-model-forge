@@ -24,7 +24,7 @@ import torch.utils.checkpoint as checkpoint
 from torch import nn
 
 from voxprint_forge.diffusion import moss as moss_runtime
-from voxprint_forge.lora import memory
+from voxprint_forge.lora import memory, te_quant
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.presets import TrainConfig
 
@@ -558,7 +558,8 @@ class MossImageAdapter(BaseAdapter):
 
     The DiT trains in bf16 with the LoRA in fp32. 4-bit and FP8 storage break the
     MOSS forward (it reads ``weight.dtype`` and casts activations to it), so both
-    memory tiers keep the bf16 weights. The text encoder stays on the CPU. The
+    memory tiers keep the bf16 weights. The text encoder encodes on the card (bf16 on 24 GB, int8
+    on 16 GB) and is freed before the DiT is read; CPU encode is a fallback. The
     transformer stays on the CPU until :meth:`release_encoders`, the same parking
     the Z-Image adapter uses. Flow matching follows the reference: predict
     ``noise - x0`` at timestep ``sigma * 1000``.
@@ -591,8 +592,9 @@ class MossImageAdapter(BaseAdapter):
         self._plan: memory.MemoryPlan | None = None
         self._samples_bytes = 0
 
-    def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
-        """Load the bf16 transformer and return it, parked on the CPU. Encoders stay frozen."""
+    encodes_before_load = True
+
+    def _check(self, weights_dir: Path, config: TrainConfig) -> te_quant.TePlan:
         if config.train_text_encoder:
             raise LoraUsageError("lora.err.text_encoder")
         if weights_dir is None or not Path(weights_dir).is_dir():
@@ -600,9 +602,54 @@ class MossImageAdapter(BaseAdapter):
         problems = _moss_runtime_problems()
         if problems:
             raise LoraStageError("lora.err.base_runtime", need="; ".join(problems))
+        if not str(self.device).startswith("cuda"):
+            return te_quant.TePlan("none", "cpu", "no CUDA device")
+        return te_quant.plan(getattr(config, "te_quant", None), getattr(config, "te_device", None), config.vram)
+
+    def load_encoders(self, weights_dir: Path, config: TrainConfig, device: str) -> None:
+        """Read the tokenizer, text encoder and VAE only. The DiT is read by :meth:`load` after
+        :meth:`free_text_encoder`, so the bf16 encoder and the DiT are never in RAM together.
+
+        The encoder runs on the card (bf16 on the 24 GB tier, int8 on 16 GB; see
+        :func:`voxprint_forge.lora.te_quant.plan`). CPU encode is the fallback.
+        """
         self.device = device
+        choice = self._check(weights_dir, config)
         self._dtype = torch.bfloat16
-        self.pipe = moss_runtime.load_pipeline(Path(weights_dir), dtype=torch.bfloat16)
+        self._te = choice
+        self.pipe = moss_runtime.load_encoder_parts(Path(weights_dir), te_quant=choice.quant, te_device=choice.device)
+        self._staged = True
+
+    def free_text_encoder(self) -> None:
+        """Drop the text encoder (CPU bf16 or quantized on the card). Cached embeddings stay."""
+        if self.pipe is not None and getattr(self.pipe, "text_encoder", None) is not None:
+            self.pipe.text_encoder = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
+        """Load the bf16 transformer and return it, parked on the CPU. Encoders stay frozen.
+
+        After :meth:`load_encoders` and :meth:`free_text_encoder` the pipeline is built without a
+        text encoder. Called on its own it reads the whole pipeline, as before.
+        """
+        self.device = device
+        choice = self._check(weights_dir, config)
+        self._te = choice
+        self._dtype = torch.bfloat16
+        staged = getattr(self, "_staged", False)
+        self._staged = False
+        prior = self.pipe
+        self.pipe = moss_runtime.load_pipeline(
+            Path(weights_dir),
+            dtype=torch.bfloat16,
+            with_text_encoder=not staged,
+            te_quant=choice.quant,
+            te_device=choice.device,
+        )
+        if staged and prior.vae is not None:
+            self.pipe.vae = prior.vae
         transformer = self.pipe.transformer
         transformer.to(dtype=torch.bfloat16)
         transformer.to("cpu")
@@ -636,7 +683,7 @@ class MossImageAdapter(BaseAdapter):
         return samples
 
     def _encode_prompt(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
-        """One prompt's embedding and mask on the CPU. The text encoder is not moved to the card."""
+        """One prompt's embedding and mask on the CPU. The encoder runs where it was loaded."""
         pipe = self.pipe
         if getattr(pipe, "tokenizer", None) is not None and getattr(pipe, "text_encoder", None) is not None:
             embeds, mask = moss_runtime.encode_on_cpu(pipe, prompt)
@@ -664,7 +711,7 @@ class MossImageAdapter(BaseAdapter):
         """
         self.pipe.vae.to("cpu")
         if self.pipe.text_encoder is not None:
-            self.pipe.text_encoder.to("cpu")
+            self.pipe.text_encoder = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
