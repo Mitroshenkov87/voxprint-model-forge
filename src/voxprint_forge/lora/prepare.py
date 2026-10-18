@@ -1,4 +1,4 @@
-"""``lora prepare``: import, filter, safety gate, crop and caption (plan §4 step 3)."""
+"""``lora prepare``."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from voxprint_forge.lora.captioner import DEFAULT, Captioner
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import RULE_VERSION, Decision, Gate
+from voxprint_forge.lora.gate import AVG_MIN, RULE_VERSION, Decision, Gate, child_keyword
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
     DUP_THRESHOLD,
@@ -43,18 +43,15 @@ def prepare(
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
     release: Path | None = None,
-    trace: Path | None = None,
 ) -> dict[str, object]:
-    """Prepare new photos into ``project``. Photos already in the project keep their round.
-
-    ``trace`` (operator diagnostics) gets one JSON line per checked photo: id, path, reason codes and
-    each gate stage's result or exception type. No image content, file names or model text.
-    """
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
     warning = check_count(len(files), mode)
     if warning:
         progress.emit("prepare.count", warning, {"count": len(files)})
+    attested = subject.kind == "person" and subject.adult_confirmed and subject.consent_obtained
+    if subject.kind == "person" and not attested:
+        raise LoraUsageError("lora.err.no_consent")
     if not gate.available:
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
         raise LoraBlocked("lora.err.gate_missing")
@@ -90,8 +87,9 @@ def prepare(
         else:
             kept.append((pid, image))
     names = {photo_id(p): Path(p).name for p in files}
-    safe: list[tuple[str, object]] = []
-    minor = False
+    paths = {photo_id(p): Path(p) for p in files}
+    internal = bool(getattr(gate, "internal", False))
+    checked: list[tuple[str, object, Decision, str | None]] = []
     for index, (pid, image) in enumerate(kept, 1):
         progress.emit(
             "prepare.safety",
@@ -101,17 +99,27 @@ def prepare(
             done=index,
             total=len(kept),
         )
-        decision = gate.check(image)
-        if decision.shadow is not None:
-            _write_shadow(project, pid, decision)
-        _log_stage_errors(pid, decision)
-        if trace is not None:
-            _write_trace(trace, pid, decision)
-        if decision.keep:
+        decision = gate.check(image, attested=attested)
+        if child_keyword(names.get(pid, ""), *_metadata_text(paths.get(pid))):
+            decision = Decision(
+                (*decision.reasons, "child_keyword"),
+                True,
+                decision.path,
+                decision.trace,
+                decision.audit,
+                decision.shadow,
+            )
+        _log_stage_errors(decision)
+        key = _identity(gate, image) if not internal else None
+        checked.append((pid, image, decision, key))
+    safe: list[tuple[str, object]] = []
+    minor = False
+    for pid, image, keep, is_minor in _aggregate(checked, internal):
+        if keep:
             safe.append((pid, image))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
-            minor = minor or decision.minor
+            minor = minor or is_minor
     for backend in (gate.judge, gate.estimator):
         unload = getattr(backend, "unload", None)
         if callable(unload):
@@ -200,37 +208,62 @@ def _base(project: Project) -> dict[str, object]:
         return {}
 
 
-def _log_stage_errors(pid: str, decision: Decision) -> None:
-    """One stderr line per photo whose gate stage raised: id, stage and exception type only."""
+def _metadata_text(path: Path | None) -> list[str]:
+    out: list[str] = []
+    if path is None:
+        return out
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            out += [v for v in image.info.values() if isinstance(v, str)]
+            exif = image.getexif()
+            for tag in (0x010E, 0x9C9E, 0x9C9F, 0x9C9C):
+                value = exif.get(tag)
+                if isinstance(value, bytes):
+                    value = value.decode("utf-16-le", "ignore")
+                if isinstance(value, str):
+                    out.append(value)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _identity(gate: Gate, image: object) -> str | None:
+    identify = getattr(gate, "identify", None)
+    if not callable(identify):
+        return None
+    try:
+        return identify(image)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _aggregate(checked: list[tuple[str, object, Decision, str | None]], internal: bool):
+    groups: dict[str, list[float]] = {}
+    for _, _, decision, key in checked:
+        est = decision.trace.get("estimate")
+        if key is not None and isinstance(est, (int, float)):
+            groups.setdefault(key, []).append(float(est))
+    for pid, image, decision, key in checked:
+        if internal or key is None or key not in groups:
+            yield pid, image, decision.keep, decision.minor
+            continue
+        mean = sum(groups[key]) / len(groups[key])
+        others = [r for r in decision.reasons if r != "average_under_18"]
+        if mean < AVG_MIN:
+            yield pid, image, False, True
+        else:
+            yield pid, image, not others, decision.minor and bool(others) and others != ["single_under_16"]
+
+
+def _log_stage_errors(decision: Decision) -> None:
     import sys
 
     for part in ("judge", "estimator"):
         info = decision.trace.get(part, {})
         if isinstance(info, dict) and "error" in info:
-            code = f" code={info['code']}" if "code" in info else ""
-            print(f"safety gate {info.get('stage', part)} failed on {pid}: {info['error']}{code}", file=sys.stderr)
-
-
-def _write_trace(path: Path, pid: str, decision: Decision) -> None:
-    row = {
-        "id": pid,
-        "keep": decision.keep,
-        "minor": decision.minor,
-        "path": decision.path,
-        "reasons": list(decision.reasons),
-        **decision.trace,
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with Path(path).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def _write_shadow(project: Project, pid: str, decision: Decision) -> None:
-    """Shadow v3: what it would have decided next to the strict decision (sha12 id, codes, numbers; no image/text)."""
-    project.root.mkdir(parents=True, exist_ok=True)
-    row = {"id": pid, "strict_keep": decision.keep, "shadow": decision.shadow}
-    with (project.root / "gate_v3_shadow.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            print(f"safety gate {info.get('stage', part)} failed: {info['error']}", file=sys.stderr)
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:

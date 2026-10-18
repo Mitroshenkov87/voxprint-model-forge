@@ -1,4 +1,4 @@
-"""Subject and consent per kind (plan §1.6, §9.2). Only typed values are kept; nothing is collected."""
+"""Subject and consent per kind."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ CONSENT_METHODS = ("verbal", "file")
 
 @dataclass(frozen=True)
 class Subject:
-    """What the photos show and what the user confirmed."""
 
     kind: str
     name: str = ""
@@ -31,12 +30,10 @@ class Subject:
     adult_content: bool = False
 
     def to_dict(self) -> dict[str, object]:
-        """Plain dict for ``project.json``."""
         return asdict(self)
 
 
 def default_trigger(name: str, stage_name: str) -> str:
-    """The stage name if given, else the name: lower case, letters and digits joined by ``_``."""
     source = stage_name or name
     return re.sub(r"[^\w]+", "_", source.strip().lower(), flags=re.UNICODE).strip("_")
 
@@ -55,14 +52,6 @@ def check_subject(
     consent_method: str | None = None,
     adult_content: bool = False,
 ) -> Subject:
-    """Validate the inputs for ``kind`` and return the :class:`Subject`. The minors gate runs regardless.
-
-    A person's consent is recorded as ``verbal`` (no file) or ``file`` (a model
-    release is attached and only its hash is kept). Without ``consent_method``
-    it is ``file`` when a release is given, else ``verbal``. ``adult_content``
-    labels the dataset as adult material; it needs the 18+ confirmation and
-    changes nothing in the minors ban or the age gate.
-    """
     if kind not in KINDS:
         raise LoraUsageError("lora.err.no_name")
     name, stage_name = name.strip(), stage_name.strip()

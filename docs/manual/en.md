@@ -48,8 +48,8 @@ Model Forge needs some models before it can train. They are not inside the setup
 | --- | --- | --- | --- | --- |
 | Z-Image (base) | The picture model the LoRA is trained on | Tongyi-MAI/Z-Image | Apache-2.0 | 20.5 GB |
 | Qwen3-VL-4B-Instruct | Writes photo descriptions and checks every photo | Qwen/Qwen3-VL-4B-Instruct | Apache-2.0 | 8.9 GB |
-| MiVOLO v2 | Estimates age from faces (safety check) | iitolstykh/mivolo_v2 | Apache-2.0 | 0.1 GB |
-| YuNet (2023mar) | Finds faces for the age check | opencv/opencv_zoo | MIT | under 1 MB |
+| MiVOLO v2 | Safety check | iitolstykh/mivolo_v2 | Apache-2.0 | 0.1 GB |
+| YuNet (2023mar) | Finds faces (safety check) | opencv/opencv_zoo | MIT | under 1 MB |
 | Florence-2-large | Backup description writer | microsoft/Florence-2-large | MIT | 3.1 GB |
 | MOSS-Image Base | A second base model (optional, coming later) | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | 27.2 GB |
 
@@ -99,18 +99,12 @@ Enter a **Name** or a **Stage name** (one is enough). The **Trigger word** is th
 
 Train only on people who agreed to it, and only on photos you have the right to use.
 
-### 5.3 The minors and age check, and why photos are set aside
+### 5.3 The safety check, and why photos are set aside
 
-Model Forge never trains on minors. On every photo of every kind, two independent checks run before training:
-
-- a vision-language model (Qwen3-VL-4B-Instruct) looks for any sign that a person could be under 18;
-- an age estimator (MiVOLO v2 on faces found by YuNet) estimates the age of every face.
-
-A photo is used only if both checks agree that every visible person is clearly an adult (read as 20 or older). If either check is unsure, the photo is **set aside** with the reason "Set aside by the safety check". If a check finds a clear sign of a minor, the whole project is **blocked**. If the check models are not installed, preparation does not start.
-
-This check is always on. The checkboxes in step 2 do not change it, and there is no setting to turn it off. Some photos of adults are set aside too, for example a young-looking face, a face that is small or turned away, or poor light. This is on purpose: the check would rather drop a good photo than let a doubtful one through. Replace dropped photos with clearer ones of the same person.
-
-Photos can also be set aside because they are unreadable, too small, too blurry or almost the same as another photo.
+Model Forge never trains on minors. Every photo goes through a safety check before training. A person set needs the
+18+ and consent confirmations in step 2. Some photos may be set aside with the reason "Set aside by the safety check";
+replace them with other photos of the same person. In rare cases the whole project is **blocked**. If the check
+models are not installed, preparation does not start. The check is always on and cannot be switched off.
 
 ### 5.4 Captions and trigger word
 
@@ -208,9 +202,9 @@ Good to know:
 
 **Can I train on photos of someone I found online?** No. Train only on people who agreed to it and on photos you have the right to use.
 
-**Can I switch off the age check?** No. It is always on, in every mode.
+**Can I switch off the safety check?** No. It is always on, in every mode.
 
-**Why were good photos set aside?** The check drops any photo it is unsure about. See section 5.3.
+**Why were some photos set aside?** See section 5.3.
 
 **Does anything leave my computer?** No. Only the model downloads come from the internet.
 

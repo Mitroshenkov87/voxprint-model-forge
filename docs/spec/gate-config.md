@@ -1,0 +1,5 @@
+# Gate config
+
+Settings in `voxprint_forge/lora/gate.py`: `PRODUCT_RULE`, `INTERNAL_RULE`, `AVG_MIN`, `PHOTO_FLOOR`, `AGE_MIN`,
+`AGE_HARD_MIN`, `MIN_CONFIDENCE`, `INDICATORS`, `BODY_MARKERS`, `MINOR_SIGNALS`, `CHILD_WORDS`, `CHILD_STEMS`,
+`CHILD_WORDS_RU`.

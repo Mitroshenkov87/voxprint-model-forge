@@ -1,9 +1,4 @@
-"""Model backends for the safety gate and the captioner. Weights come from MDL; nothing is downloaded here.
-
-These run on the user's GPU; CI tests use fakes. A backend that cannot load
-returns ``None`` from its loader, which makes the gate unavailable and blocks
-the run (fail closed).
-"""
+"""Model backends for the gate and the captioner."""
 
 from __future__ import annotations
 
@@ -254,20 +249,19 @@ class MivoloEstimator:
 
 
 def load_gate(device: str = "cuda") -> Gate:
-    """The installed gate. A missing model or library leaves that part ``None`` (the run is then blocked)."""
     judge = estimator = None
     try:
         folder = installed_dir(JUDGE_ID)
         if folder is not None:
             judge = VlmJudge(folder, device)
-    except Exception as exc:  # noqa: BLE001 - an unloadable judge means no gate
+    except Exception as exc:  # noqa: BLE001
         _report("judge", exc)
         judge = None
     try:
         folder, detector = model_dir(ESTIMATOR_ID), model_dir(FACE_DETECTOR_ID) / "face_detection_yunet_2023mar.onnx"
         if folder.is_dir() and detector.is_file():
             estimator = MivoloEstimator(folder, detector, device)
-    except Exception as exc:  # noqa: BLE001 - an unloadable estimator means no gate
+    except Exception as exc:  # noqa: BLE001
         _report("estimator", exc)
         estimator = None
     return Gate(judge, estimator)
@@ -276,7 +270,7 @@ def load_gate(device: str = "cuda") -> Gate:
 def _report(part: str, exc: Exception) -> None:
     import sys
 
-    print(f"safety gate {part} did not load: {type(exc).__name__}: {exc}", file=sys.stderr)
+    print(f"safety gate {part} did not load: {type(exc).__name__}", file=sys.stderr)
 
 
 def _limit(image: Any) -> Any:

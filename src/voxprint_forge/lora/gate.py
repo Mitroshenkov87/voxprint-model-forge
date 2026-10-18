@@ -1,35 +1,19 @@
-"""Input safety gate for training photos: the minors ban and the age check (always on, fail closed).
-
-Ported from the forge age gate v3 and closeup_qc rules with the training cut-off
-of 20 and no soft path: any doubt drops the photo.
-
-* A visible face (or an unsure answer) sends the photo down the full path: the
-  VLM judge and the age estimator must both read every person as 20 or older.
-* Without a visible face the VLM judge alone decides, on the same age cues.
-* Any age cue answered present or unsure, a low confidence, a missing or failing
-  judge, or an incomplete answer drops the photo.
-* A clear minor signal blocks the whole run.
-
-There are no thresholds to configure and no override.
-
-Rule v1 (strict) always decides. Rule v3 runs only as a shadow (decision 01:24): its would-be result is
-recorded for measuring false refusals and never changes keep or drop.
-Shadow v3: a face-age estimate of 18 or more but under 20 no
-longer drops a face photo on its own. It passes only when the judge confirms an adult (clearly or youthful
-adult, confident, no "could be under 20") and every age cue is absent. Any estimate under 18 still drops
-and blocks. Each photo kept this way carries an ``audit`` record (id-free: estimates, verdict, cues).
-Photos without a face are judged exactly as in v1.
-"""
+"""LoRA input gate. Settings are the module constants."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RULES = ("v1", "v3")
-DEFAULT_RULE = "v1"
-RULE_VERSION = 1
+RULES = ("v1", "v3", "v4")
+PRODUCT_RULE = "v4"
+INTERNAL_RULE = "v1"
+DEFAULT_RULE = PRODUCT_RULE
+RULE_VERSION = 4
+AVG_MIN = 18.0
+PHOTO_FLOOR = 16.0
 SHADOW_RULE = "v3"
 ADULT_CODES = ("clearly_adult", "youthful_adult")
 RELAXABLE = ("youthful_adult", "under_20", "estimator_under_20")
@@ -49,13 +33,61 @@ INDICATORS = (
     "lacks_adult_features",
 )
 MINOR_SIGNALS = ("child_face", "child_body", "undeveloped_figure", "minor_age_text", "infant_or_putto")
+BODY_MARKERS = (
+    "child_body",
+    "undeveloped_figure",
+    "school_context",
+    "minor_age_text",
+    "infant_or_putto",
+    "childlike_body",
+    "lacks_adult_features",
+)
+CHILD_WORDS = (
+    "child",
+    "children",
+    "kid",
+    "kids",
+    "minor",
+    "minors",
+    "teen",
+    "teens",
+    "teenager",
+    "underage",
+    "preteen",
+    "schoolgirl",
+    "schoolboy",
+    "loli",
+    "lolita",
+    "shota",
+    "toddler",
+    "infant",
+    "putto",
+    "putti",
+    "cupid",
+    "cupids",
+    "cherub",
+    "cherubs",
+    "amorino",
+)
+CHILD_STEMS = (
+    "ребен",
+    "ребён",
+    "детск",
+    "подрост",
+    "школьн",
+    "несовершеннолет",
+    "малолет",
+    "путти",
+    "путто",
+    "купидон",
+)
+CHILD_WORDS_RU = ("дети", "детей", "амур", "амуры", "амурчик")
 TRI = ("present", "absent", "unsure")
 YES_NO = ("yes", "no", "unsure")
 
 
 @dataclass(frozen=True)
 class Verdict:
-    """What the VLM judge answered for one photo."""
 
     face_visible: str
     person: str
@@ -68,35 +100,29 @@ class Verdict:
 
 @dataclass(frozen=True)
 class AgeReading:
-    """Per-face ages from the age estimator."""
 
     n_faces: int
     ages: tuple[float | None, ...] = ()
 
 
 class Judge(Protocol):
-    """A VLM backend that answers the age-cue questions."""
 
     name: str
 
     def judge(self, image: Any) -> Verdict:
-        """Answer for one image."""
         ...
 
 
 class AgeEstimator(Protocol):
-    """An age backend that reads faces (MiVOLO v2 by default)."""
 
     name: str
 
     def estimate(self, image: Any) -> AgeReading:
-        """Ages for one image."""
         ...
 
 
 @dataclass(frozen=True)
 class Decision:
-    """Gate result for one photo. ``reasons`` empty means keep."""
 
     reasons: tuple[str, ...]
     minor: bool
@@ -107,18 +133,23 @@ class Decision:
 
     @property
     def keep(self) -> bool:
-        """True when the photo may be used."""
         return not self.reasons
 
 
 def decide(
-    verdict: Verdict | None, reading: AgeReading | None, *, estimator_ok: bool, rule: str = DEFAULT_RULE
+    verdict: Verdict | None,
+    reading: AgeReading | None,
+    *,
+    estimator_ok: bool,
+    rule: str = DEFAULT_RULE,
+    attested: bool = True,
 ) -> Decision:
-    """Apply the rules to one photo. ``estimator_ok`` is False when the estimator was missing or failed."""
     if rule not in RULES:
         raise ValueError(f"unknown gate rule {rule!r}")
     if verdict is None:
         return Decision(("judge_missing",), False, "none")
+    if rule == "v4":
+        return _decide_v4(verdict, reading, estimator_ok=estimator_ok, attested=attested)
     reasons: list[str] = []
     minor = False
     if (
@@ -194,24 +225,94 @@ def decide(
     return Decision(tuple(reasons), minor, path, audit=audit)
 
 
-class Gate:
-    """The judge plus the age estimator. A missing judge makes the gate unavailable."""
+def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bool, attested: bool) -> Decision:
+    reasons: list[str] = []
+    minor = False
+    if (
+        verdict.face_visible not in YES_NO
+        or verdict.person not in YES_NO
+        or set(verdict.indicators) != set(INDICATORS)
+        or any(value not in TRI for value in verdict.indicators.values())
+    ):
+        reasons.append("judge_incomplete")
+    face = verdict.face_visible == "yes" or (reading is not None and reading.n_faces > 0)
+    path = "full" if face else ("body" if verdict.person != "no" else "no_person")
+    if not attested and (face or verdict.person != "no"):
+        reasons.append("not_attested")
+    markers = INDICATORS if face else BODY_MARKERS
+    for key in markers:
+        if verdict.indicators.get(key) == "present":
+            reasons.append("markers")
+            minor = minor or key in MINOR_SIGNALS
+    if verdict.reason_code == "child_or_adolescent":
+        reasons.append("markers")
+        minor = True
+    estimate: float | None = None
+    if face:
+        judge_age = verdict.min_age
+        if not estimator_ok or reading is None:
+            reasons.append("estimator_missing")
+        elif not reading.ages or reading.n_faces < 1:
+            reasons.append("estimator_no_face")
+        elif any(not _num(a) for a in reading.ages):
+            reasons.append("estimator_age_missing")
+        elif not _num(judge_age):
+            reasons.append("age_missing")
+        else:
+            youngest = min(float(a) for a in reading.ages)  # type: ignore[arg-type]
+            estimate = (float(judge_age) + youngest) / 2.0  # type: ignore[arg-type]
+            if min(float(judge_age), youngest) < PHOTO_FLOOR:  # type: ignore[arg-type]
+                reasons.append("single_under_16")
+            if estimate < AVG_MIN:
+                reasons.append("average_under_18")
+                minor = True
+    reasons = list(dict.fromkeys(reasons))
+    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate})
 
-    def __init__(self, judge: Judge | None, estimator: AgeEstimator | None) -> None:
+
+def _num(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def child_keyword(*texts: str) -> bool:
+    for text in texts:
+        for token in re.split(r"[^a-zа-яё]+", str(text).lower()):
+            if token in CHILD_WORDS or token in CHILD_WORDS_RU or any(token.startswith(stem) for stem in CHILD_STEMS):
+                return True
+    return False
+
+
+class Gate:
+
+    def __init__(
+        self,
+        judge: Judge | None,
+        estimator: AgeEstimator | None,
+        *,
+        internal: bool = False,
+        identify: Callable[[Any], str | None] | None = None,
+    ) -> None:
         self.judge = judge
         self.estimator = estimator
+        self.internal = bool(internal)
+        self.identify = identify
+
+    @property
+    def rule(self) -> str:
+        return INTERNAL_RULE if self.internal else PRODUCT_RULE
+
+    def rule_for(self, attested: bool) -> str:
+        return self.rule
 
     @property
     def available(self) -> bool:
-        """False blocks the run before any photo is checked."""
         return self.judge is not None and self.estimator is not None
 
-    def check(self, image: Any) -> Decision:
-        """Judge one photo. Exceptions drop it (fail closed); the trace says which stage failed and how."""
+    def check(self, image: Any, *, attested: bool = False) -> Decision:
         trace: dict[str, Any] = {"judge": {"ok": False}, "estimator": {"ok": False}}
         try:
             verdict = self.judge.judge(image) if self.judge is not None else None
-        except Exception as exc:  # noqa: BLE001 - any judge failure drops the photo
+        except Exception as exc:  # noqa: BLE001
             trace["judge"] = {"ok": False, "stage": getattr(exc, "stage", "judge"), **error_info(exc)}
             trace["judge"].update(_stats(self.judge))
             trace["estimator"] = {"ok": False, "skipped": True}
@@ -225,24 +326,25 @@ class Gate:
             try:
                 reading = self.estimator.estimate(image)  # type: ignore[union-attr]
                 trace["estimator"] = {"ok": True, "n_faces": reading.n_faces, "ages": list(reading.ages)}
-            except Exception as exc:  # noqa: BLE001 - any estimator failure drops a face photo
+            except Exception as exc:  # noqa: BLE001
                 estimator_ok = False
                 trace["estimator"] = {"ok": False, "stage": getattr(exc, "stage", "estimator"), **error_info(exc)}
         else:
             trace["estimator"] = {"ok": False, "missing": True}
-        decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=DEFAULT_RULE)
+        decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=self.rule_for(attested), attested=attested)
+        if not self.internal:
+            trace["estimate"] = decision.trace.get("estimate")
+            return Decision(decision.reasons, decision.minor, decision.path, trace)
         shadow = shadow_record(verdict, reading, estimator_ok)
         return Decision(decision.reasons, decision.minor, decision.path, trace, shadow=shadow)
 
 
 def shadow_record(verdict: Verdict | None, reading: AgeReading | None, estimator_ok: bool) -> dict[str, Any]:
-    """What shadow v3 would have decided (codes and numbers only). Never used for keep/drop."""
     s = decide(verdict, reading, estimator_ok=estimator_ok, rule=SHADOW_RULE)
     return {"rule": SHADOW_RULE, "keep": s.keep, "reasons": list(s.reasons), "audit": s.audit}
 
 
 def error_info(exc: BaseException) -> dict[str, str]:
-    """Exception type and a short code, never the message text (it may hold paths or model output)."""
     info = {"error": type(exc).__name__}
     code = getattr(exc, "code", None)
     if isinstance(code, str) and code:
@@ -251,7 +353,6 @@ def error_info(exc: BaseException) -> dict[str, str]:
 
 
 def verdict_summary(verdict: Verdict) -> dict[str, Any]:
-    """The judge's answer as codes and numbers only."""
     return {
         "face_visible": _code(verdict.face_visible),
         "person": _code(verdict.person),
@@ -266,7 +367,6 @@ def verdict_summary(verdict: Verdict) -> dict[str, Any]:
 
 
 def _code(value: Any) -> Any:
-    """Short codes pass; free text is cut so a trace never carries a description of the image."""
     if value is None or isinstance(value, bool):
         return value
     return str(value)[:24]
@@ -278,5 +378,4 @@ def _stats(backend: Any) -> dict[str, Any]:
 
 
 def check_all(gate: Gate, images: Sequence[Any]) -> list[Decision]:
-    """Decisions for several images, in order."""
     return [gate.check(image) for image in images]
