@@ -1,6 +1,6 @@
 # Model Forge user manual
 
-*Version 0.2 (release candidate). [Русская версия](../ru/index.md).*
+*Version 0.1 (release candidate). [Русская версия](../ru/index.md).*
 
 Model Forge teaches a picture model something new from your own photos: a person, an object or a style. The result is a small add-on file called a LoRA. You can use it in VOXPrint AI Canvas to make new pictures of that person, object or style.
 

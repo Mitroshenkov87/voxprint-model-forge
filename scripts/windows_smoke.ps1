@@ -51,6 +51,12 @@ $Dir = Join-Path $env:ProgramFiles "VOXPrint AI Suite\Model Forge"
 $Cli = Join-Path $Dir "venv\Scripts\voxprint-forge-cli.exe"
 $Py = Join-Path $Dir "venv\Scripts\python.exe"
 $Menu = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\VOXPrint AI Model Forge.lnk"
+$GuideLinks = @(
+    (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\Model Forge guide (EN).lnk"),
+    (Join-Path $env:ProgramData ("Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\" + [string][char]0x0420 + [char]0x0443 +
+        [char]0x043A + [char]0x043E + [char]0x0432 + [char]0x043E + [char]0x0434 + [char]0x0441 + [char]0x0442 + [char]0x0432 + [char]0x043E +
+        " Model Forge (RU).lnk"))
+)
 $OldHome = Join-Path $env:LOCALAPPDATA "Voxprint"
 $NewHome = Join-Path $env:LOCALAPPDATA "VOXPrint AI Suite"
 $Dummy = "models\smoke-dummy\smoke-dummy-model.bin"
@@ -141,10 +147,12 @@ $installed = Invoke-Step "install" {
         throw "setup exited $($p.ExitCode); see install.log"
     }
     foreach ($f in @("venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe",
-            "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md", "unins000.exe")) {
+            "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md", "unins000.exe",
+            "docs\VOXPrint-Model-Forge-Guide-en.pdf", "docs\VOXPrint-Model-Forge-Guide-ru.pdf")) {
         if (-not (Test-Path (Join-Path $Dir $f))) { throw "missing $f" }
     }
     if (-not (Test-Path $Menu)) { throw "Start menu shortcut missing" }
+    foreach ($link in $GuideLinks) { if (-not (Test-Path -LiteralPath $link)) { throw "guide shortcut missing: $link" } }
     $key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId"
     if (-not (Test-Path $key)) { throw "uninstall entry missing" }
     $bundled = Get-ChildItem -Recurse -File (Join-Path $Dir "wheels") -Include $Weights -ErrorAction SilentlyContinue
@@ -284,6 +292,7 @@ if (-not $KeepInstalled -and (Test-Path (Join-Path $Dir "unins000.exe"))) {
         for ($i = 0; $i -lt 90 -and (Test-Path $Dir); $i++) { Start-Sleep 2 }
         if (Test-Path $Dir) { throw "uninstall left $Dir" }
         if (Test-Path $Menu) { throw "uninstall left the Start menu shortcut" }
+        foreach ($link in $GuideLinks) { if (Test-Path -LiteralPath $link) { throw "uninstall left $link" } }
         if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId") { throw "uninstall left the uninstall entry" }
         "program folder, shortcut and uninstall entry removed"
     })
