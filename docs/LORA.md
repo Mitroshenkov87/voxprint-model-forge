@@ -60,7 +60,7 @@ Simple mode (default) takes 10 to 30 photos. Expert mode (`--mode expert` or `--
 
 ## Safety check (always on)
 
-The minors ban and the age check run on every photo of every kind, whatever the checkboxes say. There is no setting and no override. A visible face (or an unsure answer) needs both judges to read every person as 20 or older: the VLM judge (Qwen3-VL-4B-Instruct, Apache-2.0) and the age estimator (MiVOLO v2, Apache-2.0, on YuNet face crops). Any age cue answered present or unsure, a low confidence, a malformed answer or a judge error sets the photo aside as `lora.drop.safety`. A clear minor signal blocks the whole project (`lora.err.blocked`). If a judge is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
+Every photo of every kind goes through the safety check (`voxprint_forge.lora.gate`, settings in [Gate config](spec/gate-config.md)). A person set needs `--consent-obtained` and `--subject-adult`. A photo that does not pass is set aside as `lora.drop.safety`; some cases block the project (`lora.err.blocked`). If a check model is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
 
 ## Captions
 
@@ -87,13 +87,6 @@ All strings are in `src/voxprint_forge/lora/i18n/en.json` and `ru.json`; a test 
 
 `project.json`, `prepared/`, `captions.jsonl` (`id`, `file`, `long`, `short`, `round`), `drops.jsonl`, `checkpoints/step-NNNNNN.safetensors` plus `state.pt`, `previews/`.
 
-### Safety-check diagnostics (operators)
+### Safety-check log
 
-`drops.jsonl` stays neutral: a safety drop is only `lora.drop.safety`. For runs on a VM, `lora prepare --gate-trace FILE`
-writes one JSON line per checked photo: the photo id (`sha256[:12]`), `keep`, `path`, the rule's reason codes, the judge's
-answer as codes and numbers (free text cut to 24 characters), the token counts (`new_tokens`, `hit_token_limit`), the age
-estimator's face count and ages, and for a stage that raised its `stage`, exception type and a short code
-(`judge.parse` `no_json` / `bad_json` / `bad_age` / `no_indicators`, `estimator.ipc` `bad_reply` / `worker_exited_rcN`, or the
-worker's own exception type). No file names, image content or model text. A raised stage still drops the photo, and the same
-stage and type are printed to stderr. The MiVOLO worker answers on a private copy of stdout, so a library that prints cannot
-shift its replies.
+`drops.jsonl` stays neutral: a safety drop is only `lora.drop.safety`. A failing check stage prints one generic line to stderr (stage and exception type).

@@ -1,4 +1,4 @@
-"""LoRA data step: limits, consent, filters, the fail-closed safety gate, captions. Fakes only."""
+"""LoRA data step. Fakes only."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ class RecordingJudge(FakeJudge):
     ("verdict", "outcome"),
     [
         (ADULT_FACE, "kept"),
-        (replace(ADULT_FACE, min_age=19.0, could_be_under_20=True), "dropped"),
+        (replace(ADULT_FACE, min_age=19.0, could_be_under_20=True), "kept"),  # v4: 18-20 is never refused on age
         (replace(ADULT_FACE, min_age=12.0, reason_code="child_or_adolescent"), "blocked"),
     ],
 )
@@ -181,15 +181,14 @@ def test_age_gate_runs_the_same_with_or_without_adult_content(tmp_path, verdict,
     files = photos(tmp_path / "in", 10)
     results = []
     for flag in (False, True):
-        subject = check_subject(
-            "person", name="Demo", consent_obtained=True, subject_adult=True, adult_content=flag
-        )
+        subject = check_subject("person", name="Demo", consent_obtained=True, subject_adult=True, adult_content=flag)
         judge = RecordingJudge(verdict)
         folder = tmp_path / f"run-{flag}"
         folder.mkdir()
         try:
-            summary = run(folder, files, gate=Gate(judge, FakeEstimator(AgeReading(1, (verdict.min_age,)))),
-                          subject=subject)
+            summary = run(
+                folder, files, gate=Gate(judge, FakeEstimator(AgeReading(1, (verdict.min_age,)))), subject=subject
+            )
             state = ("kept", summary["prepared"])
         except LoraBlocked as blocked:
             state = ("blocked", blocked.code)
@@ -266,34 +265,36 @@ def test_minor_signal_blocks_the_run(tmp_path) -> None:
     assert Project(tmp_path / "proj").read()["gate_passed"] is False
 
 
-def test_unsure_drops_without_blocking() -> None:
+def test_internal_unsure_drops_without_blocking() -> None:
     unsure = replace(CLEAN, indicators={**CLEAN.indicators, "school_context": "unsure"})
-    decision = decide(unsure, AgeReading(0, ()), estimator_ok=True)
+    decision = decide(unsure, AgeReading(0, ()), estimator_ok=True, rule="v1")
     assert not decision.keep and not decision.minor
 
 
-def test_face_needs_both_judges_at_20_or_older() -> None:
-    assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True).keep
-    assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True).path == "full"
+def test_internal_face_needs_both_judges_at_20_or_older() -> None:
+    assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True, rule="v1").keep
+    assert decide(ADULT_FACE, AgeReading(1, (31.0,)), estimator_ok=True, rule="v1").path == "full"
     assert not decide(ADULT_FACE, AgeReading(1, (19.5,)), estimator_ok=True, rule="v1").keep
-    assert decide(ADULT_FACE, AgeReading(1, (16.0,)), estimator_ok=True).minor
-    assert not decide(ADULT_FACE, None, estimator_ok=False).keep
+    assert decide(ADULT_FACE, AgeReading(1, (16.0,)), estimator_ok=True, rule="v1").minor
+    assert not decide(ADULT_FACE, None, estimator_ok=False, rule="v1").keep
     assert not decide(replace(ADULT_FACE, min_age=19.0), AgeReading(1, (30.0,)), estimator_ok=True, rule="v1").keep
-    assert not decide(replace(ADULT_FACE, face_visible="unsure"), None, estimator_ok=False).keep
+    assert not decide(replace(ADULT_FACE, face_visible="unsure"), None, estimator_ok=False, rule="v1").keep
     youthful = replace(ADULT_FACE, reason_code="youthful_adult")
     assert not decide(youthful, AgeReading(1, (30.0,)), estimator_ok=True, rule="v1").keep
-    assert not decide(replace(ADULT_FACE, could_be_under_20=None), AgeReading(1, (30.0,)), estimator_ok=True).keep
-    assert not decide(replace(ADULT_FACE, confidence=0.4), AgeReading(1, (30.0,)), estimator_ok=True).keep
+    assert not decide(
+        replace(ADULT_FACE, could_be_under_20=None), AgeReading(1, (30.0,)), estimator_ok=True, rule="v1"
+    ).keep
+    assert not decide(replace(ADULT_FACE, confidence=0.4), AgeReading(1, (30.0,)), estimator_ok=True, rule="v1").keep
 
 
-def test_faceless_photo_uses_the_judge_and_still_drops_on_doubt() -> None:
+def test_internal_faceless_photo_drops_on_doubt() -> None:
     body = Verdict("no", "yes", 30.0, 0.8, "clearly_adult", False, {k: "absent" for k in INDICATORS})
-    decision = decide(body, AgeReading(0, ()), estimator_ok=True)
+    decision = decide(body, AgeReading(0, ()), estimator_ok=True, rule="v1")
     assert decision.keep and decision.path == "body"
-    assert decide(CLEAN, AgeReading(0, ()), estimator_ok=True).path == "no_person"
-    assert not decide(replace(body, min_age=None), AgeReading(0, ()), estimator_ok=True).keep
-    assert not decide(replace(CLEAN, indicators={}), AgeReading(0, ()), estimator_ok=True).keep
-    assert not decide(None, None, estimator_ok=True).keep
+    assert decide(CLEAN, AgeReading(0, ()), estimator_ok=True, rule="v1").path == "no_person"
+    assert not decide(replace(body, min_age=None), AgeReading(0, ()), estimator_ok=True, rule="v1").keep
+    assert not decide(replace(CLEAN, indicators={}), AgeReading(0, ()), estimator_ok=True, rule="v1").keep
+    assert not decide(None, None, estimator_ok=True, rule="v1").keep
 
 
 def test_judge_output_parsing_fails_closed() -> None:

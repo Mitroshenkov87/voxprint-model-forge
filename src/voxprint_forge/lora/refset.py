@@ -257,6 +257,10 @@ def release_stage() -> None:
         torch.cuda.ipc_collect()
 
 
+def _attested(subject: Subject) -> bool:
+    return subject.kind == "person" and subject.adult_confirmed and subject.consent_obtained
+
+
 def _unload_gate(gate: Gate) -> None:
     for backend in (gate.judge, gate.estimator):
         unload = getattr(backend, "unload", None)
@@ -313,7 +317,7 @@ def check_refs(
         for index, (rid, image) in enumerate(images, 1):
             progress.emit("refset.refs", "lora.progress.refset_refs", {"n": index, "total": len(images)},
                           "lora.reason.refset_check", done=index, total=len(images))
-            if not gate.check(image).keep:
+            if not gate.check(image, attested=_attested(subject)).keep:
                 state["refs"] = [{"id": i} for i, _ in images]
                 raise _block(project, state, progress)
         for index, (rid, image) in enumerate(images, 1):
@@ -430,7 +434,9 @@ def run_round(
         generator.unload()
         generator = None
         release_stage()
-    shown = _gate_candidates(project, state, made, round_no, load_gate=load_gate, progress=progress)
+    shown = _gate_candidates(
+        project, state, made, round_no, load_gate=load_gate, progress=progress, attested=_attested(subject)
+    )
     shutil.rmtree(pending, ignore_errors=True)
     _near_duplicates(project, state, shown, load_embedder=load_embedder, progress=progress)
     state.setdefault("rounds", []).append({
@@ -457,6 +463,7 @@ def _gate_candidates(
     *,
     load_gate: Callable[[], Gate],
     progress: Progress,
+    attested: bool = False,
 ) -> list[dict[str, Any]]:
     """Gate every candidate before it can be shown. Non-passing ones are deleted; a minor signal blocks."""
     root = folder(project)
@@ -476,7 +483,7 @@ def _gate_candidates(
             progress.emit("refset.check", "lora.progress.refset_check", {"n": index, "total": len(made)},
                           "lora.reason.refset_check", done=index, total=len(made))
             image = open_photo(path)
-            decision = gate.check(image) if image is not None else None
+            decision = gate.check(image, attested=attested) if image is not None else None
             if decision is None or not decision.keep:
                 minor = minor or bool(decision is not None and decision.minor)
                 path.unlink(missing_ok=True)

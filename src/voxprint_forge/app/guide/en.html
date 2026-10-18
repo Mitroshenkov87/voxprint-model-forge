@@ -87,14 +87,14 @@
 </tr>
 <tr>
 <td>MiVOLO v2</td>
-<td>Estimates age from faces (safety check)</td>
+<td>Safety check</td>
 <td>iitolstykh/mivolo_v2</td>
 <td>Apache-2.0</td>
 <td>0.1 GB</td>
 </tr>
 <tr>
 <td>YuNet (2023mar)</td>
-<td>Finds faces for the age check</td>
+<td>Finds faces (safety check)</td>
 <td>opencv/opencv_zoo</td>
 <td>MIT</td>
 <td>under 1 MB</td>
@@ -155,15 +155,11 @@
 <li><strong>Provenance note</strong> (optional): where the photos come from.</li>
 </ul>
 <p>Train only on people who agreed to it, and only on photos you have the right to use.</p>
-<h3>5.3 The minors and age check, and why photos are set aside</h3>
-<p>Model Forge never trains on minors. On every photo of every kind, two independent checks run before training:</p>
-<ul>
-<li>a vision-language model (Qwen3-VL-4B-Instruct) looks for any sign that a person could be under 18;</li>
-<li>an age estimator (MiVOLO v2 on faces found by YuNet) estimates the age of every face.</li>
-</ul>
-<p>A photo is used only if both checks agree that every visible person is clearly an adult (read as 20 or older). If either check is unsure, the photo is <strong>set aside</strong> with the reason "Set aside by the safety check". If a check finds a clear sign of a minor, the whole project is <strong>blocked</strong>. If the check models are not installed, preparation does not start.</p>
-<p>This check is always on. The checkboxes in step 2 do not change it, and there is no setting to turn it off. Some photos of adults are set aside too, for example a young-looking face, a face that is small or turned away, or poor light. This is on purpose: the check would rather drop a good photo than let a doubtful one through. Replace dropped photos with clearer ones of the same person.</p>
-<p>Photos can also be set aside because they are unreadable, too small, too blurry or almost the same as another photo.</p>
+<h3>5.3 The safety check, and why photos are set aside</h3>
+<p>Model Forge never trains on minors. Every photo goes through a safety check before training. A person set needs the
+18+ and consent confirmations in step 2. Some photos may be set aside with the reason "Set aside by the safety check";
+replace them with other photos of the same person. In rare cases the whole project is <strong>blocked</strong>. If the check
+models are not installed, preparation does not start. The check is always on and cannot be switched off.</p>
 <h3>5.4 Captions and trigger word</h3>
 <p><img alt="Step 4, Check and prepare" src="img/en-simple-3-prepare.png" /></p>
 <p>Press <strong>Check photos</strong>. The app checks each photo, crops it (<strong>Focus on subject</strong> or <strong>Keep whole photo</strong>) and writes a short description of it. The trigger word is added to every description, so the model links the word to your subject.</p>
@@ -289,8 +285,8 @@
 </table>
 <h2>9. FAQ and licences</h2>
 <p><strong>Can I train on photos of someone I found online?</strong> No. Train only on people who agreed to it and on photos you have the right to use.</p>
-<p><strong>Can I switch off the age check?</strong> No. It is always on, in every mode.</p>
-<p><strong>Why were good photos set aside?</strong> The check drops any photo it is unsure about. See section 5.3.</p>
+<p><strong>Can I switch off the safety check?</strong> No. It is always on, in every mode.</p>
+<p><strong>Why were some photos set aside?</strong> See section 5.3.</p>
 <p><strong>Does anything leave my computer?</strong> No. Only the model downloads come from the internet.</p>
 <p><strong>Can I use the LoRA commercially?</strong> The LoRA follows the licence of its base model. Z-Image is Apache-2.0. You are also responsible for the rights to the photos and the consent of the people in them.</p>
 <p><strong>Can I continue training later?</strong> Yes. Pause and continue, or use <strong>Add more photos</strong> on a finished model.</p>

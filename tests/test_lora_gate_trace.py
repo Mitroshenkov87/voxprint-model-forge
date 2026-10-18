@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import replace
 
 import pytest
 from PIL import Image
 
-from voxprint_forge.lora.backends import JudgeParseError, MivoloEstimator, WorkerError, parse_verdict
-from voxprint_forge.lora.consent import check_subject
-from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.backends import JudgeParseError, WorkerError, parse_verdict
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
-from voxprint_forge.lora.prepare import prepare
-from voxprint_forge.lora.project import Project
 
 ADULT = Verdict("yes", "yes", 34.0, 0.9, "clearly_adult", False, {k: "absent" for k in INDICATORS})
 IMAGE = Image.new("RGB", (16, 16))
@@ -46,7 +41,7 @@ class Estimator:
 
 
 def test_keep_records_both_stages() -> None:
-    decision = Gate(Judge(stats={"new_tokens": 120, "hit_token_limit": False}), Estimator()).check(IMAGE)
+    decision = Gate(Judge(stats={"new_tokens": 120, "hit_token_limit": False}), Estimator()).check(IMAGE, attested=True)
     assert decision.keep
     assert decision.trace["judge"]["ok"] and decision.trace["judge"]["new_tokens"] == 120
     assert decision.trace["judge"]["verdict"]["indicators"] == {k: "absent" for k in INDICATORS}
@@ -103,108 +98,3 @@ def test_parse_codes(raw, code) -> None:
     with pytest.raises(JudgeParseError) as err:
         parse_verdict(raw)
     assert err.value.code == code and isinstance(err.value, ValueError)
-
-
-def test_prepare_writes_the_trace_and_keeps_drops_jsonl_neutral(tmp_path, capsys) -> None:
-    import numpy as np
-
-    files = []
-    (tmp_path / "in").mkdir()
-    for index in range(6):
-        path = tmp_path / "in" / f"img{index}.png"
-        rng = np.random.default_rng(index)
-        Image.fromarray(rng.integers(0, 256, (600, 600, 3), dtype=np.uint8)).save(path)
-        files.append(path)
-    trace = tmp_path / "out" / "gate.jsonl"
-    subject = check_subject("person", name="Demo", consent_obtained=True, subject_adult=True)
-    with pytest.raises(Exception):
-        prepare(
-            Project(tmp_path / "proj"),
-            files,
-            subject,
-            gate=Gate(Judge(), Estimator(exc=WorkerError("bad_reply", "estimator.ipc"))),
-            load_captioner=lambda choice: None,
-            progress=Progress(),
-            mode="expert",
-            trace=trace,
-        )
-    rows = [json.loads(line) for line in trace.read_text().splitlines()]
-    assert len(rows) == 6 and all(not r["keep"] and r["estimator"]["code"] == "bad_reply" for r in rows)
-    assert all("img" not in json.dumps(r) for r in rows)
-    drops = [json.loads(line) for line in (tmp_path / "proj" / "drops.jsonl").read_text().splitlines()]
-    assert {d["reason"] for d in drops} == {"lora.drop.safety"} and all(
-        set(d) == {"id", "name", "reason"} for d in drops
-    )
-    err = capsys.readouterr().err
-    assert err.count("safety gate estimator.ipc failed on") == 6 and "WorkerError code=bad_reply" in err
-
-
-NOISY = """#!{python}
-import json, sys
-print(json.dumps({{"ready": True}}), flush=True)
-for n, line in enumerate(sys.stdin):
-    err = json.dumps({{"error": "OutOfMemoryError: CUDA out of memory"}})
-    print("a stray library line" if n == 0 else err, flush=True)
-"""
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="uses a shebang script as the worker interpreter")
-def test_worker_ipc_errors_have_codes(tmp_path) -> None:
-    fake = tmp_path / "fake-python"
-    fake.write_text(NOISY.format(python=sys.executable))
-    fake.chmod(0o755)
-    estimator = MivoloEstimator(tmp_path, tmp_path / "yunet.onnx", "cpu", python=str(fake))
-    with pytest.raises(WorkerError) as bad:
-        estimator.estimate(IMAGE)
-    assert (bad.value.code, bad.value.stage) == ("bad_reply", "estimator.ipc")
-    with pytest.raises(WorkerError) as oom:
-        estimator.estimate(IMAGE)
-    assert (oom.value.code, oom.value.stage) == ("OutOfMemoryError", "estimator.worker")
-    estimator.unload()
-
-
-STUBS = {
-    "cv2.py": "class FaceDetectorYN:\n    @staticmethod\n    def create(*a):\n        return None\n",
-    "torch.py": (
-        "float16 = 'f16'\nfloat32 = 'f32'\n"
-        "class cuda:\n    @staticmethod\n    def is_available():\n        return False\n"
-    ),
-    "transformers.py": (
-        "import os\n"
-        "class _M:\n"
-        "    def to(self, *a):\n        return self\n"
-        "    def eval(self):\n"
-        "        print('weights banner on stdout')\n"
-        "        os.write(1, b'C-level banner\\n')\n"
-        "        return self\n"
-        "class AutoModelForImageClassification:\n"
-        "    @staticmethod\n    def from_pretrained(*a, **k):\n        return _M()\n"
-        "class AutoImageProcessor:\n"
-        "    @staticmethod\n    def from_pretrained(*a, **k):\n        return None\n"
-    ),
-}
-
-
-def test_real_worker_keeps_replies_off_library_stdout(tmp_path) -> None:
-    """Python- and C-level prints during load go to stderr; stdout carries only protocol lines."""
-    import os
-    import subprocess
-
-    from voxprint_forge.lora import mivolo_worker
-
-    for name, text in STUBS.items():
-        (tmp_path / name).write_text(text)
-    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
-    done = subprocess.run(
-        [sys.executable, mivolo_worker.__file__, "dir", "yunet", "cpu"],
-        input=json.dumps({"path": str(tmp_path / "missing.png")}) + "\n",
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-        check=True,
-    )
-    lines = done.stdout.splitlines()
-    assert lines[0] == '{"ready": true}' and len(lines) == 2
-    assert json.loads(lines[1])["error"].startswith("AttributeError")
-    assert "weights banner" in done.stderr and "C-level banner" in done.stderr

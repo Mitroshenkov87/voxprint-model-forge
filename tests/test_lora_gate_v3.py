@@ -1,4 +1,4 @@
-"""Strict gate decision table (v1 decides) and shadow v3 (logs only, decision 01:24)."""
+"""Gate config v1 and v3."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from voxprint_forge.lora.gate import DEFAULT_RULE, INDICATORS, AgeReading, Gate, Verdict, decide
+from voxprint_forge.lora.gate import DEFAULT_RULE, INDICATORS, INTERNAL_RULE, AgeReading, Gate, Verdict, decide
 
 MARKERS = ["child_body", "child_face", "undeveloped_figure", "school_context", "lacks_adult_features"]
 ABSENT = {k: "absent" for k in INDICATORS}
@@ -39,8 +39,10 @@ class E:
         return self.r
 
 
-def test_strict_is_default() -> None:
-    assert DEFAULT_RULE == "v1"
+def test_product_rule_is_default_and_strict_is_internal_only() -> None:
+    assert DEFAULT_RULE == "v4" and INTERNAL_RULE == "v1"
+    assert Gate(J(ADULT), E(face(30.0))).rule == "v4"
+    assert Gate(J(ADULT), E(face(30.0)), internal=True).rule == "v1"
 
 
 STRICT = [
@@ -61,32 +63,32 @@ STRICT = [
 
 @pytest.mark.parametrize(("verdict", "reading", "keep"), STRICT)
 def test_strict_table(verdict, reading, keep) -> None:
-    assert decide(verdict, reading, estimator_ok=True).keep is keep
+    assert decide(verdict, reading, estimator_ok=True, rule="v1").keep is keep
 
 
 def test_strict_minor_blocks() -> None:
-    assert decide(ADULT, face(16.0), estimator_ok=True).minor
+    assert decide(ADULT, face(16.0), estimator_ok=True, rule="v1").minor
 
 
 @pytest.mark.parametrize(("verdict", "reading", "keep"), STRICT)
 def test_shadow_never_changes_the_outcome(verdict, reading, keep) -> None:
-    d = Gate(J(verdict), E(reading)).check(object())
+    d = Gate(J(verdict), E(reading), internal=True).check(object())
     assert d.keep is keep
-    assert d.reasons == decide(verdict, reading, estimator_ok=True).reasons
+    assert d.reasons == decide(verdict, reading, estimator_ok=True, rule="v1").reasons
     assert d.shadow is not None and d.shadow["rule"] == "v3"
 
 
 def test_shadow_records_would_be_keep_for_youthful_adult() -> None:
-    d = Gate(J(ADULT), E(face(19.0))).check(object())
+    d = Gate(J(ADULT), E(face(19.0)), internal=True).check(object())
     assert not d.keep
     assert d.shadow["keep"] is True and d.shadow["audit"]["min_estimate"] == 19.0
     assert "prompt" not in json.dumps(d.shadow)
 
 
 def test_shadow_keeps_floor_and_markers() -> None:
-    assert Gate(J(ADULT), E(face(16.0))).check(object()).shadow["keep"] is False
+    assert Gate(J(ADULT), E(face(16.0)), internal=True).check(object()).shadow["keep"] is False
     bad = replace(ADULT, indicators={**ABSENT, "child_body": "present"})
-    assert Gate(J(bad), E(face(25.0))).check(object()).shadow["keep"] is False
+    assert Gate(J(bad), E(face(25.0)), internal=True).check(object()).shadow["keep"] is False
 
 
 def test_unknown_rule_rejected() -> None:

@@ -43,7 +43,7 @@ class FakeGate(Gate):
         self.fail_all = fail_all
         self.checked = 0
 
-    def check(self, image):
+    def check(self, image, *, attested=False):
         self.checked += 1
         pixel = image.getpixel((0, 0))
         if self.fail_all or pixel == (255, 0, 0):
