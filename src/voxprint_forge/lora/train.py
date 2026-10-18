@@ -18,6 +18,7 @@ from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
+from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.project import Item, Project
 
@@ -40,7 +41,7 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
     """Plan and ETA without training (``--dry-run``)."""
     _, items = _check_ready(project)
     seconds = adapter.seconds_per_step(config) * config.steps
-    return {
+    result: dict[str, object] = {
         "state": "dry-run",
         "base": adapter.info.mdl_id,
         "photos": len(items),
@@ -49,6 +50,14 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
         "vram_need_gb": adapter.vram_need_gb(config),
         "config": config.to_dict(),
     }
+    plan = adapter.memory_plan(config, len(items))
+    if plan is not None:
+        result["memory_plan"] = plan.to_dict()
+        cap = vram_cap_gb()
+        if cap is not None:
+            result["vram_cap_gb"] = cap
+            result["plan_fits_cap"] = plan.peak_gb <= cap - 1.0
+    return result
 
 
 def lora_base(path: Path) -> dict[str, str]:
@@ -69,33 +78,26 @@ def select_items(items: Sequence[Item], replay: float, rng: random.Random) -> li
     return new + (rng.sample(old, keep) if keep else [])
 
 
-def _device(adapter: BaseAdapter, config: TrainConfig) -> str:
+def _device(adapter: BaseAdapter, config: TrainConfig, plan: MemoryPlan | None = None) -> str:
     if not adapter.requires_gpu:
         return "cpu"
     if not torch.cuda.is_available():
         raise LoraStageError("lora.err.no_gpu")
-    have = torch.cuda.get_device_properties(0).total_memory / 2**30
+    card = torch.cuda.get_device_properties(0).total_memory / 2**30
+    have = card
     cap = vram_cap_gb()
     if cap is not None and cap < have:
         # Emulates a smaller card on a big one (calibration): the allocator stops at the cap.
         torch.cuda.set_per_process_memory_fraction(cap / have, 0)
         have = cap
+    if plan is not None:
+        # Fail fast: the projected peak must fit before any weight reaches the card.
+        check_plan(plan, cap, card)
+        return "cuda"
     need = adapter.vram_need_gb(config)
     if have + 0.5 < need:
         raise LoraStageError("lora.err.vram", have=int(have), need=int(math.ceil(need)))
     return "cuda"
-
-
-def vram_cap_gb() -> float | None:
-    """``FORGE_VRAM_CAP_GB`` (GiB), a test cap that makes a big card behave like a small one; unset means none."""
-    raw = os.environ.get("FORGE_VRAM_CAP_GB", "").strip()
-    if not raw:
-        return None
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    return value if value > 0 else None
 
 
 class VramPhases:
@@ -107,6 +109,7 @@ class VramPhases:
 
     def __init__(self) -> None:
         self.peaks: dict[str, dict[str, float]] = {}
+        self.plan: dict[str, float] | None = None
         self.phase = "load"
         self.on = torch.cuda.is_available()
         if self.on:
@@ -217,9 +220,13 @@ def train(
     rng = random.Random(config.seed)
     torch.manual_seed(config.seed)
     chosen = select_items(items, config.replay, rng) if from_lora is not None else list(items)
-    device = _device(adapter, config)
+    # Grow segments instead of fragmenting fixed blocks; only read when CUDA first allocates.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    plan = adapter.memory_plan(config, len(chosen), base_dir)
+    device = _device(adapter, config, plan)
 
     phases = VramPhases()
+    phases.plan = plan.to_dict() if plan is not None else None
     try:
         return _train(
             project,
@@ -239,7 +246,8 @@ def train(
         )
     except torch.OutOfMemoryError as exc:
         phases.mark(phases.phase, phases.phase)
-        raise torch.OutOfMemoryError(f"{exc} [phase={phases.phase} vram_phases={phases.peaks}]") from exc
+        planned = f" planned_peak_gb={phases.plan['peak_gb']}" if phases.plan else ""
+        raise torch.OutOfMemoryError(f"{exc} [phase={phases.phase} vram_phases={phases.peaks}{planned}]") from exc
 
 
 def _train(
@@ -377,6 +385,8 @@ def _finish(project, data, adapter, config, state, step, checkpoint, loss, from_
         )
         if phases is not None:
             result["vram_phases_gb"] = phases.peaks
+            if phases.plan is not None:
+                result["memory_plan"] = phases.plan
         cap = vram_cap_gb()
         if cap is not None:
             result["vram_cap_gb"] = cap
