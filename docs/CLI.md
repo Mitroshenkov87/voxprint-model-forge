@@ -40,6 +40,8 @@ pip install vendor/voxprint_common-0.4.0-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 
+The Windows installer ships the `te-quant` extra from `installer/windows/requirements-te-quant.txt`: bitsandbytes==0.50.2, the PyPI win_amd64 wheel, sha256 `c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d`.
+
 Model downloads through MDL honour `VOXPRINT_MDL_ROUTE=direct|system|auto` (default `auto`).
 
 ## Commands

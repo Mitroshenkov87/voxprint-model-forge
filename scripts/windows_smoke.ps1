@@ -19,6 +19,7 @@ Steps and pass rules:
   1 install    silent setup exits 0; venv, venv-mivolo, CLI, GUI exe, uv.exe, LICENSE, Start menu shortcut exist;
                the setup holds no model weights (*.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt).
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
+  2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
                MiVOLO env pass. Missing models are listed, not failed (a fresh install has none).
   4 lora       a 12-picture stub project; lora train --dry-run --base z-image --vram 24 returns state dry-run.
@@ -199,6 +200,15 @@ if ($installed) {
         if ($r.code -ne 0) { throw "--version exited $($r.code)" }
         if ($r.out -notmatch [regex]::Escape($want)) { throw "--version printed '$($r.out.Trim())', want $want" }
         $r.out.Trim()
+    })
+
+    [void](Invoke-Step "te-quant" {
+        # stderr stays in the log. Windows PowerShell 5.1 turns native stderr into error records.
+        $ErrorActionPreference = "Continue"
+        $err = Join-Path $Results "bitsandbytes-stderr.txt"
+        & $Py -c "import bitsandbytes; raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)" 2>> $err
+        if ($LASTEXITCODE -ne 0) { throw "import bitsandbytes 0.50.2 failed" }
+        "bitsandbytes 0.50.2"
     })
 
     [void](Invoke-Step "preflight" {
