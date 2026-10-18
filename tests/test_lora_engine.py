@@ -290,7 +290,9 @@ class _FakePipe:
         self.calls = []
 
     def on_card(self):
-        return {p.name for p in (self.vae, self.text_encoder, self.transformer) if p.device == "cuda"}
+        # The adapter hides the parked text encoder (None) while a preview runs (CALIB-R4).
+        parts = (self.vae, self.text_encoder, self.transformer)
+        return {p.name for p in parts if p is not None and p.device == "cuda"}
 
     def encode_prompt(self, prompt, device, do_classifier_free_guidance):
         assert self.on_card() == {"vae", "te"}

@@ -198,5 +198,6 @@
  "lora.train.start.tip": "Start training on your graphics card. You can pause at any time.",
  "lora.train.stop.tip": "Stop now and keep the best checkpoint so far.",
  "lora.vram": "Graphics card memory",
- "lora.warn.count": "{count} photos is outside the recommended {rec_low}–{rec_high}; results may be less predictable."
+ "lora.warn.count": "{count} photos is outside the recommended {rec_low}–{rec_high}; results may be less predictable.",
+ "lora.err.preview_device": "The preview could not run on the graphics card (devices {devices}). Training is saved; please report this."
 }

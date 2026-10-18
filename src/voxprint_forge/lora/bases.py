@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import random
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -327,14 +328,21 @@ class ZImageAdapter(BaseAdapter):
         if hasattr(self.pipe.vae, "enable_tiling"):
             self.pipe.vae.enable_tiling()
         try:
-            generator = torch.Generator(self.device).manual_seed(seed)
-            return self.pipe(
-                prompt_embeds=[self._prompts[prompt].to(self.device)],
-                negative_prompt_embeds=[self._prompts[""].to(self.device)],
-                height=config.resolution,
-                width=config.resolution,
-                generator=generator,
-            ).images[0]
+            # CALIB-R4: the pipeline infers its execution device from the first module in sorted
+            # order, which is the offloaded text encoder (CPU), so latents were drawn on the CPU
+            # with a CUDA generator. Hide the parked encoder for the call and seed a CPU generator:
+            # ``randn_tensor`` draws on the CPU and moves to any device, so the noise is the same on
+            # every card and can never mismatch the generator.
+            generator = torch.Generator("cpu").manual_seed(seed)
+            with _encoder_parked(self.pipe):
+                _check_execution_device(self.pipe, self.device)
+                return self.pipe(
+                    prompt_embeds=[self._prompts[prompt].to(self.device)],
+                    negative_prompt_embeds=[self._prompts[""].to(self.device)],
+                    height=config.resolution,
+                    width=config.resolution,
+                    generator=generator,
+                ).images[0]
         finally:
             self.pipe.vae.to("cpu")
             if torch.cuda.is_available():
@@ -385,6 +393,29 @@ class ZImageAdapter(BaseAdapter):
             lora_gb=memory.lora_bytes(adapter, 2 if config.precision == "bf16" else 4) / memory.GIB,
             activations_gb=act,
             samples_gb=max(samples, 30) * sample / memory.GIB,
+        )
+
+
+@contextmanager
+def _encoder_parked(pipe: Any) -> Iterator[None]:
+    """Hide the text encoder from device inference while previews run on precomputed embeddings."""
+    encoder = getattr(pipe, "text_encoder", None)
+    # object.__setattr__: DiffusionPipeline.__setattr__ would also rewrite the pipeline config.
+    object.__setattr__(pipe, "text_encoder", None)
+    try:
+        yield
+    finally:
+        object.__setattr__(pipe, "text_encoder", encoder)
+
+
+def _check_execution_device(pipe: Any, device: str | torch.device) -> None:
+    """Stop with a named error instead of a deep generator/device mismatch inside the pipeline."""
+    found = getattr(pipe, "_execution_device", None)
+    if found is None:
+        return
+    if torch.device(found).type != torch.device(device).type:
+        raise LoraStageError(
+            "lora.err.preview_device", devices=f"{torch.device(found).type}->{torch.device(device).type}"
         )
 
 
