@@ -78,10 +78,19 @@ official MSI (sha256 checked); if you decline or it fails, the setup continues w
 Windows PowerShell 5.1. A silent setup (`/VERYSILENT`) never prompts. The installer
 workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 
+`install.ps1` runs its final checks one Python process per step (`import voxprint_forge`,
+`import torch`, `torch.cuda init`, `import bitsandbytes`, `import mivolo env`), with stdin
+from an empty file, stdout and stderr to `setup-work\step-*.txt`, Windows error dialogs off and a
+120 s timeout that kills the process tree. A failed or timed-out step fails the setup with an
+en/ru message naming the step; `torch.cuda init` and `import bitsandbytes` only log a warning
+(`--te-quant auto` falls back without bitsandbytes). `migrate-home.ps1` runs its work in a child
+process with the same 120 s timeout.
+
 | Step | Passes when |
 |---|---|
 | home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
 | install | the silent setup exits 0; both venvs, the CLI and GUI exes, the Start menu shortcut and the uninstall entry exist; no weights |
+| import-steps | `setup-work\install.log` shows each `install.ps1` import step (voxprint_forge, torch, torch.cuda init, bitsandbytes, MiVOLO env) `ok` within its 120 s timeout |
 | te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
 | version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |

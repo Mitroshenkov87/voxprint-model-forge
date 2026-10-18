@@ -54,6 +54,8 @@ english.PwshDeclined=Setup continues with Windows PowerShell 5.1. We recommend i
 russian.PwshDeclined=Установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 english.PwshFailed=PowerShell 7 could not be installed, so setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 russian.PwshFailed=Не удалось установить PowerShell 7, поэтому установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
+english.InstallFailed=VOXPrint AI Model Forge setup failed at this step: %1%n%nThe log is %2.
+russian.InstallFailed=Не удалось установить VOXPrint AI Model Forge. Шаг: %1%n%nЖурнал: %2.
 
 [Files]
 Source: "staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -198,6 +200,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  Step: AnsiString;
 begin
   if CurStep <> ssPostInstall then
     Exit;
@@ -208,7 +211,11 @@ begin
     ResultCode := 1;
   if ResultCode <> 0 then
   begin
-    SuppressibleMsgBox('VOXPrint AI Model Forge setup failed. The log is ' + ExpandConstant('{app}\setup-work\install.log') + '.', mbError, MB_OK, IDOK);
+    // install.ps1 writes the failed step (for example "step 'import torch' timed out after 120 s") here.
+    if not LoadStringFromFile(ExpandConstant('{app}\setup-work\install-error.txt'), Step) then
+      Step := 'install.ps1';
+    SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [Trim(String(Step)),
+      ExpandConstant('{app}\setup-work\install.log')]), mbError, MB_OK, IDOK);
     ExitProcess(ResultCode);
   end;
 end;

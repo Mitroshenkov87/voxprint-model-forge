@@ -19,6 +19,8 @@ Steps and pass rules:
   0 home       (with -MigrationTest on a clean profile) a fake %LOCALAPPDATA%\Voxprint\models\smoke-dummy file.
   1 install    silent setup exits 0; venv, venv-mivolo, CLI, GUI exe, uv.exe, LICENSE, Start menu shortcut exist;
                the setup holds no model weights (*.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt).
+  1a import-steps install.log shows each install.ps1 import step (voxprint_forge, torch, torch.cuda init,
+               bitsandbytes, MiVOLO env) finished "ok" within its 120 s timeout.
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
@@ -46,6 +48,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# A click in this console must not pause the run (QuickEdit selection mode).
+try {
+    Add-Type -Namespace VoxprintSmoke -Name Console -MemberDefinition @"
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetStdHandle(int handle);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(System.IntPtr handle, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(System.IntPtr handle, uint mode);
+"@
+    $stdin = [VoxprintSmoke.Console]::GetStdHandle(-10)
+    $mode = [uint32]0
+    if ([VoxprintSmoke.Console]::GetConsoleMode($stdin, [ref]$mode)) {
+        if ($mode -band 0x40) { $mode = $mode - 0x40 }
+        [void][VoxprintSmoke.Console]::SetConsoleMode($stdin, [uint32]($mode -bor 0x80))
+    }
+} catch { }
 $AppId = "{CB5C2217-6254-48EA-99F6-BC3D52260BAB}_is1"
 $Dir = Join-Path $env:ProgramFiles "VOXPrint AI Suite\Model Forge"
 $Cli = Join-Path $Dir "venv\Scripts\voxprint-forge-cli.exe"
@@ -152,6 +169,25 @@ $installed = Invoke-Step "install" {
     & $Py -c "from voxprint_forge.lora.backends import mivolo_python; import sys; sys.exit(0 if 'venv-mivolo' in mivolo_python() else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app does not find venv-mivolo" }
     "installed to $Dir; uninstall entry $((Get-ItemProperty $key).DisplayName) $((Get-ItemProperty $key).DisplayVersion)"
+}
+
+if ($installed) {
+    [void](Invoke-Step "import-steps" {
+        $installLog = Join-Path $Dir "setup-work\install.log"
+        if (-not (Test-Path -LiteralPath $installLog)) { throw "no install.log" }
+        Copy-Item -LiteralPath $installLog (Join-Path $Results "install.log") -Force
+        $text = Get-Content -LiteralPath $installLog
+        $seen = @()
+        foreach ($name in @("import voxprint_forge", "import torch", "torch.cuda init", "import bitsandbytes", "import mivolo env")) {
+            $hit = $text | Where-Object { $_ -match ("^step " + [regex]::Escape($name) + ": ok in ([0-9.,]+) s") } | Select-Object -First 1
+            if (-not $hit) { throw "install.log has no 'step ${name}: ok' line" }
+            $null = $hit -match ": ok in ([0-9.,]+) s"
+            $sec = [double]($Matches[1] -replace ",", ".")
+            if ($sec -ge 120) { throw "step $name took $sec s (timeout 120 s)" }
+            $seen += "$name $sec s"
+        }
+        $seen -join "; "
+    })
 }
 
 function Get-MigrationLog {
