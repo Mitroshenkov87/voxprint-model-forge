@@ -24,7 +24,7 @@ Steps and pass rules:
   4 lora       a 12-picture stub project; lora train --dry-run --base z-image --vram 24 returns state dry-run.
   4a migration the setup moved %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite before any Python ran:
                the old folder is gone, the dummy sits under paths.models_dir() with the same sha256
-               (checked on disk first, then through voxprint_common), and a second silent install
+               (checked right after the setup: on disk first, then through voxprint_common), and a second silent install
                exits 0, logs "no-op" and changes nothing. Without -MigrationTest only the move rule is
                checked against the folders that were there before the install.
   5 uninstall  unins000.exe removes the program folder, the shortcut and the uninstall entry.
@@ -152,6 +152,43 @@ $installed = Invoke-Step "install" {
     "installed to $Dir; uninstall entry $((Get-ItemProperty $key).DisplayName) $((Get-ItemProperty $key).DisplayVersion)"
 }
 
+function Get-MigrationLog {
+    $log = Join-Path $NewHome "logs\home-migration.log"
+    if (Test-Path -LiteralPath $log) { return @(Get-Content -LiteralPath $log) }
+    $tmp = Join-Path $env:TEMP "voxprint-home-migration.log"
+    if (Test-Path -LiteralPath $tmp) { return @(Get-Content -LiteralPath $tmp) }
+    return @()
+}
+
+# Right after the setup, before the smoke runs the app.
+if ($installed) {
+    [void](Invoke-Step "home-migration" {
+        if ($Before.old -and -not $Before.new) {
+            if (Test-Path -LiteralPath $OldHome) { throw "the old home $OldHome is still there" }
+            if (-not (Test-Path -LiteralPath $NewHome)) { throw "the new home $NewHome is missing" }
+        } elseif ($Before.old -and $Before.new) {
+            if (-not (Test-Path -LiteralPath $OldHome)) { throw "both homes existed, but the old one was changed" }
+        }
+        $detail = "before old=$($Before.old) new=$($Before.new); after old=$(Test-Path -LiteralPath $OldHome) new=$(Test-Path -LiteralPath $NewHome)"
+        if ($Planted) {
+            # On disk first. Only migrate-home.ps1 writes the "moved" line, so it proves the setup did the move.
+            $moved = Join-Path $NewHome $Dummy
+            if (-not (Test-Path -LiteralPath $moved)) { throw "the dummy model is not at $moved" }
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLower() -ne $script:DummySha) { throw "the dummy model changed" }
+            if (-not (Get-MigrationLog | Where-Object { $_ -match " moved " })) { throw "home-migration.log has no move line" }
+            # Then through voxprint_common: models_dir() must be <new home>\models.
+            $saved = @{}
+            foreach ($n in @("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR")) { $saved[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $null) }
+            $md = (& $Py -c "from voxprint_common.paths import models_dir; print(models_dir())" | Out-String).Trim()
+            foreach ($n in $saved.Keys) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+            if ($md -ne (Join-Path $NewHome "models")) { throw "paths.models_dir() is '$md', want $(Join-Path $NewHome 'models')" }
+            if (-not (Test-Path -LiteralPath (Join-Path $md "smoke-dummy\smoke-dummy-model.bin"))) { throw "the dummy is not under models_dir()" }
+            $detail += "; dummy under models_dir() $md, sha256 unchanged"
+        }
+        $detail
+    })
+}
+
 if ($installed) {
     [void](Invoke-Step "version" {
         $want = (Get-Content -Raw (Join-Path $Dir "BUILD.json") | ConvertFrom-Json).version
@@ -206,41 +243,7 @@ project.write({"kind": "object", "mode": "simple", "gate_passed": True,
     })
 }
 
-function Get-MigrationLog {
-    $log = Join-Path $NewHome "logs\home-migration.log"
-    if (Test-Path -LiteralPath $log) { return @(Get-Content -LiteralPath $log) }
-    $tmp = Join-Path $env:TEMP "voxprint-home-migration.log"
-    if (Test-Path -LiteralPath $tmp) { return @(Get-Content -LiteralPath $tmp) }
-    return @()
-}
-
 if ($installed) {
-    [void](Invoke-Step "home-migration" {
-        if ($Before.old -and -not $Before.new) {
-            if (Test-Path -LiteralPath $OldHome) { throw "the old home $OldHome is still there" }
-            if (-not (Test-Path -LiteralPath $NewHome)) { throw "the new home $NewHome is missing" }
-        } elseif ($Before.old -and $Before.new) {
-            if (-not (Test-Path -LiteralPath $OldHome)) { throw "both homes existed, but the old one was changed" }
-        }
-        $detail = "before old=$($Before.old) new=$($Before.new); after old=$(Test-Path -LiteralPath $OldHome) new=$(Test-Path -LiteralPath $NewHome)"
-        if ($Planted) {
-            # On disk first: no Python has run against the data home yet.
-            $moved = Join-Path $NewHome $Dummy
-            if (-not (Test-Path -LiteralPath $moved)) { throw "the dummy model is not at $moved" }
-            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLower() -ne $script:DummySha) { throw "the dummy model changed" }
-            if (-not (Get-MigrationLog | Where-Object { $_ -match " moved " })) { throw "home-migration.log has no move line" }
-            # Then through voxprint_common: models_dir() must be <new home>\models.
-            $saved = @{}
-            foreach ($n in @("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR")) { $saved[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $null) }
-            $md = (& $Py -c "from voxprint_common.paths import models_dir; print(models_dir())" | Out-String).Trim()
-            foreach ($n in $saved.Keys) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-            if ($md -ne (Join-Path $NewHome "models")) { throw "paths.models_dir() is '$md', want $(Join-Path $NewHome 'models')" }
-            if (-not (Test-Path -LiteralPath (Join-Path $md "smoke-dummy\smoke-dummy-model.bin"))) { throw "the dummy is not under models_dir()" }
-            $detail += "; dummy under models_dir() $md, sha256 unchanged"
-        }
-        $detail
-    })
-
     if ($Planted) {
         [void](Invoke-Step "reinstall-noop" {
             $before = @(Get-ChildItem -LiteralPath $NewHome -Recurse -Force -File | Where-Object { $_.FullName -notlike "*\logs\*" } |
