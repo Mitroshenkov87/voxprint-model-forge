@@ -85,8 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument(
         "--refset",
         action="store_true",
-        help="Check this computer for Build a set from references: diffusers img2img, Z-Image-Turbo, the safety "
-        "check models and env, DINOv2, CUDA 16 GB+, 32 GB RAM and disk. Exit 6 on a missing requirement.",
+        help="Check this computer for Build a set from references: diffusers img2img, Z-Image-Turbo, the photo "
+        "preparation models and env, DINOv2, CUDA 16 GB+, 32 GB RAM and disk. Exit 6 on a missing requirement.",
     )
     sub.add_parser("status", help="Read status.json and report stalled or failed work.")
     accounts = sub.add_parser("accounts", help="Store Hugging Face, Kaggle, and Drive credentials in the OS keyring.")
