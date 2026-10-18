@@ -91,6 +91,26 @@ preflight() {
   elif [[ "$(git -C "$FORGE_LLAMA_SRC" rev-parse HEAD 2>/dev/null)" != "$LLAMA_COMMIT" ]]; then log "FORGE_LLAMA_SRC is not $LLAMA_COMMIT"; bad=1
   else log "llama.cpp: build 11476 binaries and convert script at ${LLAMA_COMMIT:0:9}"; fi
   [[ -x "$PY" && -x "$VENV/bin/forge" ]] || { log "forge venv missing at $VENV"; bad=1; }
+  # The same CUDA arch check forge kl runs first: libggml-cuda.so (shared build) or the binary (static build).
+  if ! "$PY" - "${FORGE_LLAMA_BIN:-}/llama-perplexity" <<'EOF' 2>&1 | tee -a "$RES/run.log"; then bad=1; fi
+import sys
+from pathlib import Path
+import torch
+from voxprint_forge.errors import ToolMissingError
+from voxprint_forge.kl.preflight import cuda_backend, require_llama_arch
+binary = Path(sys.argv[1])
+if not torch.cuda.is_available():
+    print("llama arch: no CUDA device visible to torch"); sys.exit(1)
+cap = tuple(int(x) for x in torch.cuda.get_device_capability())
+try:
+    warning = require_llama_arch(binary, capability=cap)
+except ToolMissingError as exc:
+    print(f"llama arch: {exc}"); sys.exit(1)
+if warning:
+    print(f"llama arch: {warning}"); sys.exit(1)
+target, how = cuda_backend(binary)
+print(f"llama arch: sm_{cap[0]}{cap[1]} SASS in {target.name} ({how})")
+EOF
   if ! "$PY" - <<'EOF' 2>&1 | tee -a "$RES/run.log"; then bad=1; fi
 import importlib.metadata as m, sys
 need = {"protobuf": "5.29.6"}
