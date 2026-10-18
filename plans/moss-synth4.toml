@@ -17,6 +17,11 @@ uncond_skip_layers = [22]
 seeds = [0]
 warmup = 1
 caps_gb = [16.0, 24.0]
+# expandable_segments lets the caching allocator grow segments in place, so blocks freed by
+# denoise are reused by the VAE decode instead of leaving fragmented reserved memory
+# (#82, bf16-te-offload at 16: alloc 14.30 GB, reserved 16.36 GB).
+alloc_conf = "expandable_segments:True"
+memprobe_steps = 6
 prompts = [
   "A lighthouse on a rocky coast at dusk, warm light in the window, long exposure sea.",
   "A bowl of ramen on a wooden counter, steam rising, shallow depth of field.",
@@ -50,6 +55,10 @@ weights = "snapshot"
 # 16 GB: prompts encoded with the text encoder on CPU, so it never touches the GPU.
 # 24 GB: diffusers model CPU offload (text_encoder -> transformer -> vae).
 te_mode = { "16" = "cpu", "24" = "swap" }
+# 16 GB: denoise to latents, empty the cache, then decode untiled (alloc_conf above). The fp32
+# FLUX.2 decode at 1024x1024 needs about 3.2 GB on top of the resident 10.2 GB transformer.
+# decode_evict = { "16" = true } moves the transformer to CPU for the decode (fallback, slower).
+reserved_target_gb = { "16" = 15.2 }
 note = "Default candidate on 16/24 GB, as for Z-Image-Turbo."
 
 [[arms]]
@@ -58,6 +67,7 @@ role = "candidate"
 engine = "diffusers"
 weights = "env:FORGE_MOSS_FP8_DIR"
 te_mode = { "16" = "cpu", "24" = "swap" }
+reserved_target_gb = { "16" = 15.2 }
 note = "FP8 storage (voxprint-fp8-v1), BF16 compute after dequant at load. No weights built yet. The arm is skipped while FORGE_MOSS_FP8_DIR is unset, and the log says so."
 
 [[arms]]

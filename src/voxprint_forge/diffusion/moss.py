@@ -256,3 +256,27 @@ def encode_on_cpu(pipe: object, prompt: str, max_sequence_length: int = 4096) ->
             row = pipe.text_encoder(**inputs, use_cache=False, return_dict=True).last_hidden_state
     mask = torch.ones(row.shape[:2], dtype=torch.bool, device=row.device)
     return row, mask
+
+
+
+def decode_latents(pipe: object, latents: object) -> object:
+    """The vendored ``__call__`` post-processing for ``output_type="latent"`` results, then PIL images.
+
+    Same math as the pipeline after its denoise loop: batch-norm de-normalisation, 2x2 unpatchify,
+    ``vae.decode`` (untiled), clamp, postprocess. Called after the denoise working set is released,
+    so the decode does not stack on cached denoise blocks. Tiled decode is not offered: on the pinned
+    FLUX.2 VAE, 512 px tiles give 23.3 dB PSNR against the untiled decode at 1024x1024 (global colour
+    shift from the mid-block attention and group norms seeing one tile).
+    """
+    import torch
+
+    vae = pipe.vae  # type: ignore[attr-defined]
+    with torch.no_grad():
+        z = latents.to(dtype=vae.dtype)  # type: ignore[attr-defined]
+        bn = vae.bn
+        eps = vae.config.batch_norm_eps
+        z = z * (bn.running_var + eps).sqrt().to(z).view(1, -1, 1, 1) + bn.running_mean.to(z).view(1, -1, 1, 1)
+        b, c, h, w = z.shape
+        z = z.reshape(b, c // 4, 2, 2, h, w).permute(0, 1, 4, 2, 5, 3).reshape(b, c // 4, 2 * h, 2 * w)
+        images = vae.decode(z, return_dict=False)[0].clamp(-1, 1)
+    return pipe.image_processor.postprocess(images, output_type="pil")  # type: ignore[attr-defined]

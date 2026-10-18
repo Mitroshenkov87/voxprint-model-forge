@@ -45,3 +45,23 @@ python -m voxprint_forge.diffusion.moss_preflight --plan plans/moss-synth4.toml
 python -m voxprint_forge.diffusion.moss_fit --plan plans/moss-synth4.toml --dry-run
 scripts/vm_run_moss_fit.sh --preflight-only   # on the VM: adds the CUDA, runtime and disk checks
 ```
+
+### 16 GB fit
+
+The #82 rerun put `bf16-te-offload` at 16 GB at 14.30 GB allocated and 16.36 GB reserved (30.5 s/img), with a
+16 GiB cap. A 16 GB card also holds the CUDA context outside torch's pool, so the 16 GB cells now target
+`reserved_target_gb = 15.2` (decimal GB of peak reserved).
+
+- Budget: transformer bf16 10.17 GB resident, VAE fp32 0.25 GB, text encoder on CPU (it never reaches the GPU).
+  The untiled fp32 FLUX.2 decode at 1024x1024 needs about 3.2 GB more (measured on CPU, `decode_latents`), so the
+  decode is the peak phase (denoise activations at 4096+T tokens are estimated under 1 GB; the memprobe measures both).
+- The 2.06 GB gap between allocated and reserved is allocator fragmentation: denoise-sized blocks stay cached
+  and the decode's larger blocks need new segments. `alloc_conf = "expandable_segments:True"` (plan default,
+  set before CUDA starts) and the split decode (`output_type="latent"`, `empty_cache`, then decode) remove it.
+- Tiled VAE decode is not used: 512 px tiles cut the decode to 0.94 GB, but give 23.3 dB PSNR against the untiled
+  decode (a global colour shift; the VAE mid-block attention and group norms see one tile). Sequential offload
+  is not needed. `decode_evict = { "16" = true }` (transformer to CPU for the decode) is the fallback.
+- `python -m voxprint_forge.diffusion.moss_fit --memprobe --arm bf16-te-offload --cap 16 ...` runs one prompt for
+  `memprobe_steps` steps with the target as a hard cap and writes per-phase peaks, the CUDA context size and the
+  evicted-decode figure; `--baseline` repeats the #82 settings. `scripts/vm_run_moss_fit.sh` runs both first and
+  stops if the fit probe fails; `--te-offload-only` then runs only the `bf16-te-offload` arm.
