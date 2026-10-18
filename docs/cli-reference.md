@@ -81,9 +81,9 @@ options:
   --min-free-gb MIN_FREE_GB
                         Disk needed for --vm. Default: 150.
   --refset              Check this computer for Build a set from references:
-                        diffusers img2img, Z-Image-Turbo, the safety check
-                        models and env, DINOv2, CUDA 16 GB+, 32 GB RAM and
-                        disk. Exit 6 on a missing requirement.
+                        diffusers img2img, Z-Image-Turbo, the photo
+                        preparation models and env, DINOv2, CUDA 16 GB+, 32 GB
+                        RAM and disk. Exit 6 on a missing requirement.
 ```
 
 ## `forge status`
