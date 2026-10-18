@@ -27,6 +27,8 @@ from voxprint_forge.diffusion.alias import alias_key as _alias_key
 from voxprint_forge.diffusion.controlnet_link import swap_controlnet
 from voxprint_forge.diffusion.controlnet_union import places_for_count, union_config
 from voxprint_forge.diffusion.fp8 import dequant_state
+from voxprint_forge.diffusion.moss import generate as _moss_generate
+from voxprint_forge.diffusion.moss import main as _moss_main
 from voxprint_forge.diffusion.policy import (
     CLIP_DROP_MAX,
     LPIPS_MAX,
@@ -690,4 +692,41 @@ def _inpaint(
     del pipe
     torch.cuda.empty_cache()
     return refs, cands, prompts, seeds
+
+
+def generate_moss(
+    snapshot: Path,
+    prompt: str,
+    *,
+    seed: int = 0,
+    steps: int = 50,
+    height: int = 1024,
+    width: int = 1024,
+    guidance: float = 3.0,
+    lora_path: Path | None = None,
+    lora_scale: float = 1.0,
+    out: Path | None = None,
+) -> object:
+    """One MOSS-Image picture. ``lora_path`` is a LoRA export; ``lora_scale`` multiplies it."""
+    return _moss_generate(
+        snapshot,
+        prompt,
+        seed=seed,
+        steps=steps,
+        height=height,
+        width=width,
+        guidance=guidance,
+        lora_path=lora_path,
+        lora_scale=lora_scale,
+        out=out,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Same CLI as ``python -m voxprint_forge.diffusion.moss`` (``--lora`` and ``--lora-scale``)."""
+    return _moss_main(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 

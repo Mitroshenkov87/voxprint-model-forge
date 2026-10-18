@@ -387,8 +387,10 @@ def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp
     combo = app.window.findChild(QtWidgets.QComboBox, "forge.train.base")
     ids = [combo.itemData(i) for i in range(combo.count())]
     assert ids == [info.mdl_id for info in bases.trainable()]
-    assert "z-image" in ids and "moss-image-base" not in ids
+    assert ids[0] == "z-image" and "moss-image-base" in ids
     assert combo.itemText(0) == "Z-Image" and combo.width() <= basepicker.MAX_WIDTH
+    moss = combo.itemData(ids.index("moss-image-base"), basepicker.DETAIL_ROLE)
+    assert tr("forge.app.base.moss-image-base.note") in moss
     detail = combo.itemData(0, basepicker.DETAIL_ROLE)
     assert detail == f"{tr('forge.app.base.z-image.note')} · {tr('forge.app.base.vram_tier', gb=16)}"
     tip = combo.itemData(0, QtCore.Qt.ItemDataRole.ToolTipRole)

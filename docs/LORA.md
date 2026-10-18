@@ -73,7 +73,7 @@ The base is chosen by MDL id (`--base`, default `z-image`). MDL installs it in `
 | MDL id | Source | Licence | State |
 | --- | --- | --- | --- |
 | `z-image` | Tongyi-MAI/Z-Image | Apache-2.0 | Default. LoRAs are for Z-Image; loading on Z-Image-Turbo is untested until a Canvas test. |
-| `moss-image-base` | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | Registered; the training loader lands after GPU calibration. |
+| `moss-image-base` | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | Trains in bf16 with an fp32 LoRA. The 16 GB and 24 GB presets both keep the bf16 DiT. |
 
 A new base is a `BaseAdapter` subclass registered with `voxprint_forge.lora.bases.register`. The CLI does not change.
 

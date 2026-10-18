@@ -7,6 +7,7 @@
   "forge.app.base.option.tip": "{name} ({repo}), лицензия {licence}.\n{detail}\n{memory}",
   "forge.app.base.vram_measured": "пик {gb} ГБ",
   "forge.app.base.vram_measured.tip": "Видеопамять: {vram}, измерено при калибровке.",
+  "forge.app.base.moss-image-base.note": "Быстрее и помещается на карту 16 ГБ",
   "forge.app.base.vram_tier": "от {gb} ГБ",
   "forge.app.base.z-image.note": "Лучше всего для максимального качества; медленнее",
   "forge.app.check.base_missing": "{name}: не установлена",

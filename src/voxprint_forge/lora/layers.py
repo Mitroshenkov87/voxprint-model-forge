@@ -12,7 +12,7 @@ from torch import nn
 class LoRALinear(nn.Module):
     """``base(x) + scale * B(A(x))``. ``B`` starts at zero, so training starts from the base."""
 
-    def __init__(self, base: nn.Linear, rank: int, alpha: int) -> None:
+    def __init__(self, base: nn.Linear, rank: int, alpha: int, dtype: torch.dtype | None = None) -> None:
         super().__init__()
         self.base = base
         self.rank = rank
@@ -22,11 +22,17 @@ class LoRALinear(nn.Module):
         nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
         nn.init.zeros_(self.lora_B.weight)
         weight = base.weight
-        dtype = weight.dtype if weight.dtype in (torch.bfloat16, torch.float32) else None
-        # FP16 and FP8 storage (16 GB tier) keep the adapter in a trainable dtype.
-        dtype = dtype or (torch.float32 if weight.dtype == torch.float16 else torch.bfloat16)
+        if dtype is None:
+            dtype = weight.dtype if weight.dtype in (torch.bfloat16, torch.float32) else None
+            # FP16 and FP8 storage (16 GB tier) keep the adapter in a trainable dtype.
+            dtype = dtype or (torch.float32 if weight.dtype == torch.float16 else torch.bfloat16)
         self.lora_A.to(device=weight.device, dtype=dtype)
         self.lora_B.to(device=weight.device, dtype=self.lora_A.weight.dtype)
+
+    @property
+    def weight(self) -> torch.Tensor:
+        """The frozen base weight. Callers that read ``linear.weight`` keep working."""
+        return self.base.weight
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Base output plus the scaled low-rank update."""
@@ -35,7 +41,9 @@ class LoRALinear(nn.Module):
         return out + delta.to(out.dtype)
 
 
-def inject(model: nn.Module, targets: Iterable[str], rank: int, alpha: int) -> dict[str, LoRALinear]:
+def inject(
+    model: nn.Module, targets: Iterable[str], rank: int, alpha: int, dtype: torch.dtype | None = None
+) -> dict[str, LoRALinear]:
     """Wrap every ``nn.Linear`` whose name ends with a target suffix. Freezes the base weights."""
     suffixes = tuple(targets)
     for parameter in model.parameters():
@@ -49,7 +57,7 @@ def inject(model: nn.Module, targets: Iterable[str], rank: int, alpha: int) -> d
     for name in wanted:
         parent_name, _, child = name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
-        layer = LoRALinear(getattr(parent, child), rank, alpha)
+        layer = LoRALinear(getattr(parent, child), rank, alpha, dtype=dtype)
         setattr(parent, child, layer)
         wrapped[name] = layer
     if not wrapped:

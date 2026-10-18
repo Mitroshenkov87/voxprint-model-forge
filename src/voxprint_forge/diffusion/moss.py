@@ -8,16 +8,22 @@ imported lazily: CI pins diffusers <0.38, which has no ``AutoencoderKLFlux2``.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import hashlib
 import inspect
 import json
+import math
 import os
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+import torch
+from safetensors import safe_open
+from torch import nn
 
 from voxprint_forge.errors import ChecksumError, StageError
 
@@ -167,8 +173,14 @@ def load_pipeline(
     dtype: object | None = None,
     vae_dtype: object | None = None,
     importer: Callable[[], object] = import_vendored,
+    lora_path: Path | None = None,
+    lora_scale: float = 1.0,
 ) -> object:
-    """Build MOSSImagePipeline from a local snapshot. Offline, safetensors only, no remote code."""
+    """Build MOSSImagePipeline from a local snapshot. Offline, safetensors only, no remote code.
+
+    ``lora_path`` is a ``lora export`` safetensors file. ``lora_scale`` multiplies the
+    trained adapter (alpha / rank, or 1 when the file has no rank). 1 keeps that scale.
+    """
     import torch
     from diffusers import AutoencoderKLFlux2
     from transformers import AutoModel, AutoTokenizer
@@ -189,7 +201,174 @@ def load_pipeline(
     ).eval()
     vae = AutoencoderKLFlux2.from_pretrained(root / "vae", torch_dtype=vae_dtype, use_safetensors=True, **common).eval()
     scheduler = mod.MOSSImageScheduler.from_pretrained(root / "scheduler", **common)
-    return mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
+    pipe = mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
+    if lora_path is not None:
+        apply_lora(pipe.transformer, lora_path, lora_scale)
+    return pipe
+
+
+def pack_latents(vae: object, latents: object) -> object:
+    """VAE sample ``[B, 32, H/8, W/8]`` to the normalized DiT latent ``[B, 128, H/16, W/16]``.
+
+    The inverse of the unpacking in :func:`decode_latents`: patchify 2x2, then the VAE batch-norm.
+    """
+    zc = latents
+    b, c, height2, width2 = zc.shape  # type: ignore[attr-defined]
+    height, width = height2 // 2, width2 // 2
+    z = zc.reshape(b, c, height, 2, width, 2).permute(0, 1, 3, 5, 2, 4).reshape(b, c * 4, height, width)
+    bn = vae.bn  # type: ignore[attr-defined]
+    eps = vae.config.batch_norm_eps  # type: ignore[attr-defined]
+    mean = bn.running_mean.to(z).view(1, -1, 1, 1)
+    scale = (bn.running_var + eps).sqrt().to(z).view(1, -1, 1, 1)
+    return ((z - mean) / scale).float()
+
+
+def encode_image(vae: object, image_bchw_m1p1: object) -> object:
+    """``image`` in ``[-1, 1]``, ``[B, 3, H, W]``, to the packed DiT latent."""
+    device = next(vae.parameters()).device  # type: ignore[attr-defined]
+    dtype = getattr(vae, "dtype", None)
+    if not isinstance(dtype, torch.dtype):
+        dtype = next(vae.parameters()).dtype  # type: ignore[attr-defined]
+    posterior = vae.encode(image_bchw_m1p1.to(device=device, dtype=dtype))  # type: ignore[attr-defined]
+    return pack_latents(vae, posterior.latent_dist.sample())
+
+
+_LORA_PREFIXES = ("base_model.model.", "transformer.")
+
+
+def _lora_module(key: str) -> tuple[str, str] | None:
+    """``(module name, "A"|"B")`` for a Forge or PEFT LoRA key, else ``None``."""
+    part = ""
+    name = ""
+    if key.endswith(".lora_A.weight"):
+        name, part = key[: -len(".lora_A.weight")], "A"
+    elif key.endswith(".lora_B.weight"):
+        name, part = key[: -len(".lora_B.weight")], "B"
+    else:
+        return None
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _LORA_PREFIXES:
+            if name.startswith(prefix):
+                name = name[len(prefix) :]
+                changed = True
+    return name, part
+
+
+def _trained_scale(metadata: dict[str, str] | None, scale: float) -> float:
+    if not math.isfinite(scale):
+        raise StageError("LoRA scale must be a finite number", code="moss_lora")
+    meta = metadata or {}
+    rank, alpha = meta.get("voxprint.lora.rank"), meta.get("voxprint.lora.alpha")
+    trained = 1.0
+    if rank not in (None, "") and alpha not in (None, ""):
+        trained = float(alpha) / float(rank)
+    return float(scale) * trained
+
+
+def apply_lora(module: object, path: Path, scale: float = 1.0) -> int:
+    """Merge a ``lora export`` file into ``module`` (a MOSS transformer). Returns how many linears changed.
+
+    The merge is ``W + scale * (alpha / rank) * B @ A``, which is what training adds on the forward.
+    The modules stay ``nn.Linear``, so the vendored forward can still read ``weight.dtype``.
+    """
+    groups: dict[str, dict[str, torch.Tensor]] = {}
+    with safe_open(str(path), framework="pt") as handle:
+        factor = _trained_scale(handle.metadata(), scale)
+        for key in handle.keys():
+            parsed = _lora_module(key)
+            if parsed is None:
+                continue
+            name, part = parsed
+            groups.setdefault(name, {})[part] = handle.get_tensor(key)
+    if not groups:
+        raise StageError(f"{path.name} has no LoRA tensors", code="moss_lora")
+    updated = 0
+    for name, parts in groups.items():
+        if "A" not in parts or "B" not in parts:
+            raise StageError(f"{path.name} is missing a LoRA half for {name}", code="moss_lora")
+        try:
+            linear = module.get_submodule(name)  # type: ignore[attr-defined]
+        except AttributeError as exc:
+            raise StageError(f"{path.name} does not match this MOSS transformer ({name})", code="moss_lora") from exc
+        if not isinstance(linear, nn.Linear):
+            raise StageError(f"{path.name} does not match this MOSS transformer ({name})", code="moss_lora")
+        delta = parts["B"].float() @ parts["A"].float()
+        if tuple(delta.shape) != tuple(linear.weight.shape):
+            raise StageError(f"{path.name} does not match this MOSS transformer ({name})", code="moss_lora")
+        with torch.no_grad():
+            linear.weight.add_(delta.to(dtype=linear.weight.dtype, device=linear.weight.device) * factor)
+        updated += 1
+    return updated
+
+
+def generate(
+    snapshot: Path,
+    prompt: str,
+    *,
+    seed: int = 0,
+    steps: int = 50,
+    height: int = 1024,
+    width: int = 1024,
+    guidance: float = 3.0,
+    lora_path: Path | None = None,
+    lora_scale: float = 1.0,
+    out: Path | None = None,
+) -> object:
+    """One MOSS image from a local snapshot. ``lora_path`` is optional; ``lora_scale`` multiplies it."""
+    pipe = load_pipeline(snapshot, lora_path=lora_path, lora_scale=lora_scale)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    pipe.transformer.to(device)
+    if pipe.vae is not None:
+        pipe.vae.to(device)
+    generator = torch.Generator(device="cpu").manual_seed(int(seed))
+    image = pipe(
+        prompt,
+        height=height,
+        width=width,
+        num_inference_steps=steps,
+        guidance_scale=guidance,
+        generator=generator,
+    ).images[0]
+    if out is not None:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        image.save(out)
+    return image
+
+
+def generation_parser() -> argparse.ArgumentParser:
+    """CLI for one MOSS image. ``--lora`` and ``--lora-scale`` are optional."""
+    parser = argparse.ArgumentParser(prog="python -m voxprint_forge.diffusion.moss")
+    parser.add_argument("--snapshot", type=Path, required=True, help="Local MOSS snapshot directory.")
+    parser.add_argument("--prompt", required=True, help="Caption already written out. No extra tags are added.")
+    parser.add_argument("--out", type=Path, required=True, help="Where to write the picture.")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--steps", type=int, default=50)
+    parser.add_argument("--height", type=int, default=1024)
+    parser.add_argument("--width", type=int, default=1024)
+    parser.add_argument("--guidance", type=float, default=3.0)
+    parser.add_argument("--lora", type=Path, default=None, help="LoRA .safetensors written by lora export.")
+    parser.add_argument("--lora-scale", type=float, default=1.0, help="Multiplier on the trained LoRA. 1 keeps it.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Generate one image. Same flags as :func:`generation_parser`."""
+    args = generation_parser().parse_args(argv)
+    generate(
+        args.snapshot,
+        args.prompt,
+        seed=args.seed,
+        steps=args.steps,
+        height=args.height,
+        width=args.width,
+        guidance=args.guidance,
+        lora_path=args.lora,
+        lora_scale=args.lora_scale,
+        out=args.out,
+    )
+    return 0
 
 
 # Module-level kernels in transformers' Qwen3.5 linear-attention layers. With causal-conv1d or
@@ -280,3 +459,7 @@ def decode_latents(pipe: object, latents: object) -> object:
         z = z.reshape(b, c // 4, 2, 2, h, w).permute(0, 1, 4, 2, 5, 3).reshape(b, c // 4, 2 * h, 2 * w)
         images = vae.decode(z, return_dict=False)[0].clamp(-1, 1)
     return pipe.image_processor.postprocess(images, output_type="pil")  # type: ignore[attr-defined]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
