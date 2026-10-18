@@ -200,5 +200,7 @@
  "lora.train.stop.tip": "Stop now and keep the best checkpoint so far.",
  "lora.vram": "Graphics card memory",
  "lora.warn.count": "{count} photos is outside the recommended {rec_low}–{rec_high}; results may be less predictable.",
- "lora.err.preview_device": "The preview could not run on the graphics card (devices {devices}). Training is saved; please report this."
+ "lora.err.preview_device": "The preview could not run on the graphics card (devices {devices}). Training is saved; please report this.",
+ "lora.err.te_quant_mode": "Unknown text encoder quantization \"{mode}\"; use one of: {modes}.",
+ "lora.err.te_quant_missing": "Text encoder quantization \"{mode}\" needs the bitsandbytes package. Install the te-quant extra or use none."
 }

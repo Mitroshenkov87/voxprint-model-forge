@@ -65,6 +65,10 @@ moss = [
   "safetensors>=0.4",
   "Pillow",
 ]
+# Optional MOSS text encoder quantization (--te-quant int8|nf4). Wheels for win_amd64 include CUDA 13.
+te-quant = [
+  "bitsandbytes>=0.50.2,<0.51",
+]
 gui = [
   "voxprint-common[ui]==0.3.1",
   "PySide6>=6.8",

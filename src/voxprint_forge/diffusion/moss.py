@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 from safetensors import safe_open
@@ -167,6 +168,36 @@ def import_vendored() -> object:
     return pipeline_moss_image
 
 
+def load_text_encoder(
+    root: Path, *, dtype: object | None = None, te_quant: str = "none", device: str = "cpu"
+) -> tuple[object, object]:
+    """Tokenizer and text encoder from a local snapshot. Offline, safetensors only.
+
+    ``device`` ``cuda`` loads the weights straight onto the card (bf16, or quantized with
+    ``te_quant`` ``int8``/``nf4``, see :mod:`voxprint_forge.lora.te_quant`); ``cpu`` keeps bf16 in RAM.
+    """
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+
+    from voxprint_forge.lora import te_quant as quant
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    dtype = dtype or torch.bfloat16
+    common = {"local_files_only": True}
+    tokenizer = AutoTokenizer.from_pretrained(root / "tokenizer", trust_remote_code=False, **common)
+    extra: dict[str, object] = {"low_cpu_mem_usage": True}
+    qc = quant.quant_config(te_quant) if device == "cuda" else None
+    if qc is not None:
+        extra["quantization_config"] = qc
+    if device == "cuda":
+        extra["device_map"] = {"": "cuda"}
+    text_encoder = AutoModel.from_pretrained(
+        root / "text_encoder", dtype=dtype, use_safetensors=True, trust_remote_code=False, **common, **extra
+    ).eval()
+    return tokenizer, text_encoder
+
+
 def load_pipeline(
     root: Path,
     *,
@@ -175,15 +206,20 @@ def load_pipeline(
     importer: Callable[[], object] = import_vendored,
     lora_path: Path | None = None,
     lora_scale: float = 1.0,
+    with_text_encoder: bool = True,
+    te_quant: str = "none",
+    te_device: str = "cpu",
 ) -> object:
     """Build MOSSImagePipeline from a local snapshot. Offline, safetensors only, no remote code.
 
     ``lora_path`` is a ``lora export`` safetensors file. ``lora_scale`` multiplies the
     trained adapter (alpha / rank, or 1 when the file has no rank). 1 keeps that scale.
+    ``with_text_encoder=False`` builds the pipeline with the tokenizer only, for callers that
+    encode first and free the encoder before the DiT is read (see :func:`encode_staged`).
     """
     import torch
     from diffusers import AutoencoderKLFlux2
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoTokenizer
 
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -192,12 +228,13 @@ def load_pipeline(
     dtype = dtype or torch.bfloat16
     vae_dtype = vae_dtype or torch.float32
     common = {"local_files_only": True}
+    if with_text_encoder:
+        tokenizer, text_encoder = load_text_encoder(root, dtype=dtype, te_quant=te_quant, device=te_device)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(root / "tokenizer", trust_remote_code=False, **common)
+        text_encoder = None
     transformer = mod.MOSSImageTransformer.from_pretrained(
-        root / "transformer", torch_dtype=dtype, use_safetensors=True, **common
-    ).eval()
-    tokenizer = AutoTokenizer.from_pretrained(root / "tokenizer", trust_remote_code=False, **common)
-    text_encoder = AutoModel.from_pretrained(
-        root / "text_encoder", dtype=dtype, use_safetensors=True, trust_remote_code=False, **common
+        root / "transformer", torch_dtype=dtype, use_safetensors=True, low_cpu_mem_usage=True, **common
     ).eval()
     vae = AutoencoderKLFlux2.from_pretrained(root / "vae", torch_dtype=vae_dtype, use_safetensors=True, **common).eval()
     scheduler = mod.MOSSImageScheduler.from_pretrained(root / "scheduler", **common)
@@ -205,6 +242,60 @@ def load_pipeline(
     if lora_path is not None:
         apply_lora(pipe.transformer, lora_path, lora_scale)
     return pipe
+
+
+def load_encoder_parts(root: Path, *, te_quant: str = "none", te_device: str = "cpu") -> object:
+    """Tokenizer, text encoder and VAE, frozen, without the DiT. ``transformer`` is ``None``."""
+    import torch
+    from diffusers import AutoencoderKLFlux2
+
+    check_snapshot(root)
+    tokenizer, text_encoder = load_text_encoder(root, te_quant=te_quant, device=te_device)
+    vae = AutoencoderKLFlux2.from_pretrained(
+        root / "vae", torch_dtype=torch.float32, use_safetensors=True, local_files_only=True
+    ).eval()
+    for part in (text_encoder, vae):
+        part.requires_grad_(False)  # type: ignore[attr-defined]
+    return SimpleNamespace(tokenizer=tokenizer, text_encoder=text_encoder, vae=vae, transformer=None)
+
+
+def free_module(module: object | None) -> None:
+    """Drop the last reference the caller handed over, then collect and empty the CUDA cache."""
+    import gc
+
+    import torch
+
+    del module
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def encode_staged(
+    root: Path,
+    prompts: list[str],
+    *,
+    te_quant: str = "none",
+    te_device: str = "cpu",
+    loader: Callable[..., tuple[object, object]] | None = None,
+) -> dict[str, tuple[object, object]]:
+    """Encode ``prompts`` (and the empty negative) with only the text encoder resident, then free it.
+
+    Returns CPU ``(embeds, mask)`` per prompt, batch dim kept. The DiT is not read until this returns,
+    so the bf16 encoder (~18 GB) and the DiT (~10 GB) are never in RAM together.
+    """
+    tokenizer, text_encoder = (loader or load_text_encoder)(root, te_quant=te_quant, device=te_device)
+    holder = SimpleNamespace(tokenizer=tokenizer, text_encoder=text_encoder)
+    out: dict[str, tuple[object, object]] = {}
+    try:
+        for prompt in dict.fromkeys([*prompts, ""]):
+            emb, mask = encode_on_cpu(holder, prompt)
+            out[prompt] = (emb.detach().to("cpu"), mask.detach().to("cpu"))  # type: ignore[attr-defined]
+    finally:
+        holder.text_encoder = None
+        del text_encoder
+        free_module(None)
+    return out
 
 
 def pack_latents(vae: object, latents: object) -> object:
@@ -315,16 +406,33 @@ def generate(
     lora_path: Path | None = None,
     lora_scale: float = 1.0,
     out: Path | None = None,
+    te_quant: str | None = None,
+    te_device: str | None = None,
 ) -> object:
-    """One MOSS image from a local snapshot. ``lora_path`` is optional; ``lora_scale`` multiplies it."""
-    pipe = load_pipeline(snapshot, lora_path=lora_path, lora_scale=lora_scale)
+    """One MOSS image from a local snapshot. ``lora_path`` is optional; ``lora_scale`` multiplies it.
+
+    The prompt is encoded on the card first and the text encoder freed before the DiT is read (see
+    :func:`encode_staged`). ``te_quant`` (``auto``, ``none``, ``int8``, ``nf4``) and ``te_device``
+    (``gpu``, ``cpu``) follow :func:`voxprint_forge.lora.te_quant.plan` for the detected tier.
+    """
+    from voxprint_forge.lora import te_quant as quant
+    from voxprint_forge.lora.presets import detect_vram_gb
+
+    tier = detect_vram_gb() if quant.resolve(te_quant) == "auto" else 24
+    choice = quant.plan(te_quant, te_device, tier)
+    embeds = encode_staged(snapshot, [prompt], te_quant=choice.quant, te_device=choice.device)
+    pipe = load_pipeline(snapshot, lora_path=lora_path, lora_scale=lora_scale, with_text_encoder=False)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pipe.transformer.to(device)
     if pipe.vae is not None:
         pipe.vae.to(device)
     generator = torch.Generator(device="cpu").manual_seed(int(seed))
+    positive, negative = embeds[prompt], embeds[""]
     image = pipe(
-        prompt,
+        prompt_embeds=positive[0].to(device),
+        prompt_attention_mask=positive[1].to(device),
+        negative_prompt_embeds=negative[0].to(device),
+        negative_prompt_attention_mask=negative[1].to(device),
         height=height,
         width=width,
         num_inference_steps=steps,
@@ -350,6 +458,14 @@ def generation_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guidance", type=float, default=3.0)
     parser.add_argument("--lora", type=Path, default=None, help="LoRA .safetensors written by lora export.")
     parser.add_argument("--lora-scale", type=float, default=1.0, help="Multiplier on the trained LoRA. 1 keeps it.")
+    parser.add_argument(
+        "--te-quant", choices=("auto", "none", "int8", "nf4"), default=None,
+        help="Text encoder format. Default: VOXPRINT_FORGE_TE_QUANT or auto (by graphics memory).",
+    )
+    parser.add_argument(
+        "--te-device", choices=("gpu", "cpu"), default=None,
+        help="Where the text encoder runs. Default: VOXPRINT_FORGE_TE_DEVICE or gpu; cpu is slower.",
+    )
     return parser
 
 
@@ -367,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
         lora_path=args.lora,
         lora_scale=args.lora_scale,
         out=args.out,
+        te_quant=args.te_quant,
+        te_device=args.te_device,
     )
     return 0
 

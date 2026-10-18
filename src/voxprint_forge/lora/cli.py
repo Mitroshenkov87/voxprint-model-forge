@@ -123,6 +123,14 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--preset", choices=sorted(PRESETS), default="balanced", help="Ready-made settings.")
     command.add_argument("--likeness", choices=sorted(LIKENESS), default="balanced", help="How close to the photos.")
     command.add_argument("--vram", choices=("auto", "16", "24"), default="auto", help="Graphics memory tier in GB.")
+    command.add_argument(
+        "--te-quant", choices=("auto", "none", "int8", "nf4"), default=None,
+        help="MOSS text encoder format (Expert). Default auto: bf16 on 24 GB, int8 on 16 GB.",
+    )
+    command.add_argument(
+        "--te-device", choices=("gpu", "cpu"), default=None,
+        help="Where the MOSS text encoder runs (Expert). Default gpu; cpu is a slower fallback.",
+    )
     command.add_argument("--steps", type=int, default=None, help="Training steps (Expert).")
     command.add_argument("--lr", type=float, default=None, help="Learning rate (Expert).")
     command.add_argument("--scheduler", choices=SCHEDULERS, default=None, help="Learning-rate schedule (Expert).")
@@ -147,7 +155,7 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
 
 _CONFIG_FLAGS = (
     "rank alpha steps lr scheduler warmup batch grad_accum resolution precision grad_checkpointing "
-    "train_text_encoder caption_mode caption_dropout seed save_every previews preview_every replay"
+    "train_text_encoder caption_mode caption_dropout seed save_every previews preview_every replay te_quant te_device"
 ).split()
 
 

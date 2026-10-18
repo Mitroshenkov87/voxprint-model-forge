@@ -267,15 +267,31 @@ def _train(
     phases: VramPhases,
 ) -> dict[str, object]:
     progress.emit("train.load_base", "lora.progress.load_base", reason_key="lora.reason.load_base")
-    model = adapter.load(base_dir or weights_dir(adapter.info.mdl_id), config, device)
-    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
-    if from_lora is not None:
-        load_lora_state(layers, load_file(str(from_lora)))
-    images = _images(project, chosen, config.resolution)
-    phases.mark("load", "encode")
-    samples = adapter.encode(images, [{"long": i.long, "short": i.short} for i in chosen], config)
-    if config.previews and preview_prompts:
-        adapter.prepare_previews(list(preview_prompts))
+    base = base_dir or weights_dir(adapter.info.mdl_id)
+    captions = [{"long": i.long, "short": i.short} for i in chosen]
+    if getattr(adapter, "encodes_before_load", False):
+        # Encoders first, then free the text encoder, then read the DiT: keeps RAM to one big model.
+        adapter.load_encoders(base, config, device)
+        images = _images(project, chosen, config.resolution)
+        phases.mark("load", "encode")
+        samples = adapter.encode(images, captions, config)
+        if config.previews and preview_prompts:
+            adapter.prepare_previews(list(preview_prompts))
+        adapter.free_text_encoder()
+        model = adapter.load(base, config, device)
+        layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+        if from_lora is not None:
+            load_lora_state(layers, load_file(str(from_lora)))
+    else:
+        model = adapter.load(base, config, device)
+        layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+        if from_lora is not None:
+            load_lora_state(layers, load_file(str(from_lora)))
+        images = _images(project, chosen, config.resolution)
+        phases.mark("load", "encode")
+        samples = adapter.encode(images, captions, config)
+        if config.previews and preview_prompts:
+            adapter.prepare_previews(list(preview_prompts))
     phases.mark("encode", "resident")
     adapter.release_encoders()
     phases.mark("resident", "step")

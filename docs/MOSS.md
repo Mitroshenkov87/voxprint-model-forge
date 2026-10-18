@@ -28,7 +28,13 @@ It needs diffusers>=0.38 and transformers>=5.3. The app venv has diffusers 0.41 
 
 ## LoRA
 
-`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The DiT stays bf16 and the LoRA stays fp32. 4-bit and FP8 storage break the MOSS forward (it casts activations to `weight.dtype`), so both memory presets keep the bf16 weights. The text encoder stays on the CPU; the transformer moves onto the card only after the VAE latents and prompt embeddings are cached.
+`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The DiT stays bf16 and the LoRA stays fp32. 4-bit and FP8 storage break the MOSS forward (it casts activations to `weight.dtype`), so both memory presets keep the bf16 weights. The text encoder runs on the card while the DiT waits in RAM; after the VAE latents and prompt embeddings are cached the encoder is freed and only then is the DiT read and moved onto the card, so the two large models are never in RAM together.
+
+Text encoder options (`lora train` and `python -m voxprint_forge.diffusion.moss`):
+
+- `--te-quant auto|none|int8|nf4` (env `VOXPRINT_FORGE_TE_QUANT`, default `auto`): `auto` is bf16 on the 24 GB tier and bitsandbytes LLM.int8 on the 16 GB tier. `nf4` is bitsandbytes 4-bit. The DiT is never quantized.
+- `--te-device gpu|cpu` (env `VOXPRINT_FORGE_TE_DEVICE`, default `gpu`). CPU encode is a slower fallback; `auto` also falls back to it, with a warning, when bitsandbytes is missing. An explicit `int8`/`nf4` without bitsandbytes stops with `lora.err.te_quant_missing`.
+- bitsandbytes is the optional `te-quant` extra (`pip install "voxprint-forge[te-quant]"`); its win_amd64 wheel ships CUDA 13 binaries. It is not in the installer.
 
 A `lora export` safetensors file loads at generation time. The adapter is merged into the transformer linears (`W + scale * (alpha / rank) * B @ A`):
 

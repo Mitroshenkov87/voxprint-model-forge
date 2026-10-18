@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, fields, replace
 
 PRESETS: dict[str, dict[str, object]] = {
@@ -47,6 +48,8 @@ class TrainConfig:
     previews: bool = True
     preview_every: int = 250
     replay: float = 0.25
+    te_quant: str = "auto"
+    te_device: str = "gpu"
 
     def to_dict(self) -> dict[str, object]:
         """Plain dict for project files."""
@@ -70,6 +73,9 @@ def detect_vram_gb() -> int:
     except Exception:  # noqa: BLE001 - detection is best effort
         pass
     return 16
+
+
+TE_QUANT_MODES = ("auto", "none", "int8", "nf4")
 
 
 def build_config(
@@ -113,6 +119,10 @@ def build_config(
         preview_every=max(1, steps // 6),
     )
     clean = {key: value for key, value in overrides.items() if value is not None}
+    if "te_quant" not in clean and os.environ.get("VOXPRINT_FORGE_TE_QUANT", "").strip():
+        clean["te_quant"] = os.environ["VOXPRINT_FORGE_TE_QUANT"].strip().lower()
+    if "te_device" not in clean and os.environ.get("VOXPRINT_FORGE_TE_DEVICE", "").strip():
+        clean["te_device"] = os.environ["VOXPRINT_FORGE_TE_DEVICE"].strip().lower()
     config = replace(config, **clean)  # type: ignore[arg-type]
     check_config(config)
     return config
@@ -132,5 +142,9 @@ def check_config(config: TrainConfig) -> None:
         raise ValueError("precision must be bf16 or fp16")
     if not 0 <= config.caption_dropout < 1 or not 0 <= config.replay <= 1:
         raise ValueError("caption_dropout must be in [0, 1) and replay in [0, 1]")
+    if config.te_quant not in TE_QUANT_MODES:
+        raise ValueError("te_quant must be auto, none, int8 or nf4")
+    if config.te_device not in ("gpu", "cpu"):
+        raise ValueError("te_device must be gpu or cpu")
     if config.save_every < 1 or config.preview_every < 1 or config.warmup < 0:
         raise ValueError("save_every and preview_every must be at least 1")
