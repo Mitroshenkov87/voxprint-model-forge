@@ -1,4 +1,4 @@
-"""Render docs/manual/{en,ru}.md into the offline guide shipped with the app.
+"""Render docs/manual/{en,ru}/*.md into the offline guide shipped with the app (one page per language).
 
 Output: src/voxprint_forge/app/guide/{index,en,ru}.html plus img/. The installer's
 wheel carries it (package-data), so More -> Open guide works without a network.
@@ -21,6 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MANUAL = ROOT / "docs" / "manual"
 GUIDE = ROOT / "src" / "voxprint_forge" / "app" / "guide"
 LANGS = ("en", "ru")
+# Manual pages in reading order (the mkdocs nav order). Each becomes a section of one offline page.
+PAGES = ("index", "install", "models", "project", "presets", "training", "export", "compression", "memory",
+         "troubleshooting")
+SITE = "https://mitroshenkov87.github.io/voxprint-model-forge/"
 STYLE = (
     "body{font-family:system-ui,'Segoe UI',sans-serif;max-width:860px;margin:2em auto;padding:0 1em;"
     "line-height:1.5;color:#e8e6e3;background:#1e1e24}a{color:#f6d365}img{max-width:100%;border-radius:6px}"
@@ -36,15 +40,32 @@ def page(title: str, body: str, lang: str) -> str:
     )
 
 
+def manual_text(lang: str) -> str:
+    """The pages of one language joined in :data:`PAGES` order, with links rewritten for one offline page.
+
+    ``../img/x.png`` becomes ``img/x.png``; ``page.md`` and ``page.md#anchor`` become in-page anchors;
+    the other language's index becomes its HTML file; links to the rest of the docs site become site URLs.
+    """
+    parts = []
+    for name in PAGES:
+        text = (MANUAL / lang / f"{name}.md").read_text(encoding="utf-8")
+        text = text.replace("](../img/", "](img/")
+        text = re.sub(r"\]\(\.\./(en|ru)/index\.md\)", r"](\1.html)", text)
+        text = re.sub(r"\]\(\.\./\.\./([\w./-]+)\.md\)", lambda m: f"]({SITE}{m.group(1)}/)", text)
+        text = re.sub(r"\]\((\w+)\.md#([\w-]+)\)", r"](#\2)", text)
+        text = re.sub(r"\]\((\w+)\.md\)", r"](#page-\1)", text)
+        parts.append(f'<a id="page-{name}"></a>\n\n{text}')
+    return "\n\n".join(parts)
+
+
 def render() -> dict[str, bytes]:
     """Every guide file by relative path."""
     files: dict[str, bytes] = {}
     links = []
     for lang in LANGS:
-        text = (MANUAL / f"{lang}.md").read_text(encoding="utf-8")
-        text = re.sub(r"\]\((en|ru)\.md\)", r"](\1.html)", text)
-        title = text.splitlines()[0].lstrip("# ").strip()
-        body = markdown.markdown(text, extensions=["tables", "sane_lists"])
+        text = manual_text(lang)
+        title = next(line for line in text.splitlines() if line.startswith("# ")).lstrip("# ").strip()
+        body = markdown.markdown(text, extensions=["tables", "sane_lists", "fenced_code", "toc"])
         files[f"{lang}.html"] = page(title, body, lang).encode("utf-8")
         links.append(f'<p><a href="{lang}.html">{html.escape(title)}</a></p>')
     files["index.html"] = page("VOXPrint AI Model Forge", "\n".join(links), "en").encode("utf-8")

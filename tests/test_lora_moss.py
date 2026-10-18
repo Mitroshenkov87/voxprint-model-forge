@@ -229,14 +229,20 @@ def test_dry_run_prints_a_plan(monkeypatch, tmp_path, capsys) -> None:
     assert code == 0
     assert plan["state"] == "dry-run" and plan["base"] == "moss-image-base"
     assert plan["memory_plan"]["peak_gb"] == pytest.approx(11.8, abs=0.05)
-    assert plan["vram_need_gb"] < 16
+    # moss-memprobe v2 train24: the bf16 text encoder on the card peaks at 18.5 GiB reserved.
+    assert plan["vram_need_gb"] == pytest.approx(18.5)
 
 
 def test_memory_plan_matches_the_measured_4090_run(monkeypatch) -> None:
     monkeypatch.setattr(bases, "_moss_weights_dir", lambda: None)
     adapter = MossImageAdapter()
     anchor = build_config("balanced", "balanced", 24, batch=1, grad_accum=1)
-    assert adapter.seconds_per_step(anchor) == pytest.approx(0.7)
+    assert adapter.seconds_per_step(anchor) == pytest.approx(4.90 / 2)
+    # moss-memprobe v2: Balanced, 1024 px, batch 1 x accum 2 measured 4.89 s (16 GB) and 4.90 s (24 GB) per step.
+    assert adapter.seconds_per_step(build_config("balanced", "balanced", 16)) == pytest.approx(4.89)
+    assert adapter.seconds_per_step(build_config("balanced", "balanced", 24)) == pytest.approx(4.90)
+    assert adapter.vram_need_gb(build_config("balanced", "balanced", 16)) == pytest.approx(13.6)
+    assert adapter.vram_need_gb(build_config("balanced", "balanced", 24)) == pytest.approx(18.5)
     peak = adapter.memory_plan(build_config("balanced", "balanced", 24)).peak_gb
     assert peak == pytest.approx(11.8, abs=0.05)
     assert adapter.memory_plan(build_config("balanced", "balanced", 16)).peak_gb == pytest.approx(peak, abs=0.01)

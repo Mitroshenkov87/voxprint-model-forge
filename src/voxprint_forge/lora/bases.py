@@ -26,7 +26,7 @@ from torch import nn
 from voxprint_forge.diffusion import moss as moss_runtime
 from voxprint_forge.lora import memory, te_quant
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
-from voxprint_forge.lora.presets import TrainConfig
+from voxprint_forge.lora.presets import TrainConfig, measured
 
 PERMISSIVE = frozenset({"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"})
 
@@ -467,7 +467,8 @@ _M_VAE_BYTES = int(0.25 * 10**9)
 # bf16 DiT, fp32 LoRA, manual per-block checkpointing).
 _M_CHECKPOINT_UNITS = 1.3
 _M_BLOCK_UNITS = 20  # activations kept per block when checkpointing is off
-# RTX 4090, one image, one optimizer step, 1024 px, rank 32.
+# Seconds per micro-batch (one image) at 1024 px, rank 32, when a tier has no measurement:
+# the first RTX 4090 run with the text encoder on the CPU. Measured tiers use presets.MEASURED.
 _M_SECONDS = 0.7
 
 
@@ -769,13 +770,21 @@ class MossImageAdapter(BaseAdapter):
                 torch.cuda.empty_cache()
 
     def seconds_per_step(self, config: TrainConfig) -> float:
-        """About 0.7 s on an RTX 4090 at 1024 px, batch 1, one accumulation, rank 32."""
-        return _M_SECONDS * (config.resolution / 1024) ** 2 * config.batch * config.grad_accum
+        """Measured time per micro-batch on the chosen tier (:data:`presets.MEASURED`), scaled to ``config``.
+
+        moss-memprobe v2: 4.89 s (16 GB) and 4.90 s (24 GB) per optimizer step at 1024 px, batch 1 x
+        accum 2, so about 2.45 s per image. An unmeasured tier falls back to :data:`_M_SECONDS`.
+        """
+        run = measured(self.info.mdl_id, config.vram)
+        per = run.s_per_step / run.micro_batches if run is not None else _M_SECONDS
+        return per * (config.resolution / 1024) ** 2 * config.batch * config.grad_accum
 
     def vram_need_gb(self, config: TrainConfig) -> float:
-        """What the card must have: the projected peak plus the budget headroom."""
+        """What the card must have: the projected peak plus the headroom, never below the measured peak."""
         plan = self.memory_plan(config)
-        return round(plan.peak_gb + memory.HEADROOM_GB, 1)
+        need = round(plan.peak_gb + memory.HEADROOM_GB, 1)
+        run = measured(self.info.mdl_id, config.vram)
+        return max(need, run.peak_reserved_gb) if run is not None else need
 
     def memory_plan(
         self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None
