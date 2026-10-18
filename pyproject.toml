@@ -23,9 +23,11 @@ dependencies = [
   # protobuf 4.25.9 (what llama.cpp asks for, <5) crashes on Python 3.14 (synth4 L1/L2);
   # 5.29.6 from PyPI imports and reads the sentencepiece model there.
   "protobuf==5.29.6",
-  # Not on PyPI. CI, the VM scripts and the installer install
-  # vendor/voxprint_common-0.2.6-py3-none-any.whl, tag v0.2.6
-  # (75860fb6d786a6a99c0ea5fa746a350372856b11). preflight --vm checks this pin.
+  # Not on PyPI. CI, the VM scripts and the installer install the official
+  # v0.2.6 release asset vendor/voxprint_common-0.2.6-py3-none-any.whl
+  # (75860fb6d786a6a99c0ea5fa746a350372856b11;
+  # sha256 aeb2b180025967a02a81e206dfa0dd01c3d77a2aa20447485288496123851505).
+  # preflight --vm checks this pin.
   "voxprint-common==0.2.6",
 ]
 
