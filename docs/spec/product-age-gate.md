@@ -69,8 +69,8 @@ Inputs, as aggregate numbers only:
 
 - **Shadow v3 logs** from the internal runs: per frame, the strict decision, the shadow decision, every estimate and
   the rubric answers. They are replayed through this spec and compared with the strict decision.
-- **Internal synthetic run, 15 frames** (one fictional adult identity at a stated age of 28; 5 non-explicit,
-  10 flagged `adult_content`): the strict gate kept 15 of 15. MiVOLO read 26.5-30.6 on the 14 frames with one person.
+- **Internal synthetic run, 15 frames** (one fictional adult identity, anchored at a stated age of 28, prompted
+  at 20, 30 and 35; 5 non-explicit, 10 flagged `adult_content`): the strict gate kept 15 of 15. MiVOLO read 26.5-30.6 on the 14 frames with one person.
   The VLM apparent age was 25 on all 5 non-explicit frames and on 5 of the 10 `adult_content` frames, and **20 on 5 of
   the 10**, where MiVOLO read 27.3-29.6. MiVOLO alone would have passed those 5; under this spec they are set aside
   (rule 2), and the 7-10 year gap between the judges counts as disagreement (rule 1).
