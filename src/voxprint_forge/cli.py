@@ -349,6 +349,8 @@ def _dispatch(args: argparse.Namespace) -> object:
         from voxprint_forge.preflight import refset_preflight
 
         return refset_preflight()
+    if args.command == "lora":
+        return execute_lora(args)
     root = _repo_root(args.root)
     if args.command == "accounts":
         return execute_accounts(args)
@@ -378,8 +380,6 @@ def _dispatch(args: argparse.Namespace) -> object:
         return inspect_status(forge_out)
     if args.command == "diffusion-int4":
         return perform_int4(args, root)
-    if args.command == "lora":
-        return execute_lora(args)
     if args.command == "compare":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))
         return execute_compare(
