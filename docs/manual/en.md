@@ -51,7 +51,7 @@ Model Forge needs some models before it can train. They are not inside the setup
 | MiVOLO v2 | Safety check | iitolstykh/mivolo_v2 | Apache-2.0 | 0.1 GB |
 | YuNet (2023mar) | Finds faces (safety check) | opencv/opencv_zoo | MIT | under 1 MB |
 | Florence-2-large | Backup description writer | microsoft/Florence-2-large | MIT | 3.1 GB |
-| MOSS-Image Base | A second base model (optional, coming later) | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | 27.2 GB |
+| MOSS-Image Base | A second base model. Faster, and fits a 16 GB card | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | 27.2 GB |
 
 - **Sources.** Every model is downloaded from its author's official page, at a fixed version. The downloader checks each file against its published checksum before it is used.
 - **Licences.** Each model keeps its own licence. Read it in Manage models before you use the model. Your LoRA inherits the licence of the base model it was trained on.
@@ -121,7 +121,7 @@ You can read the crops, the descriptions and the reasons for set-aside photos, a
 - **Preset:** **Quick test** (a fast first look), **Balanced** (recommended) or **Best quality** (slower).
 - **Likeness:** **Flexible** (easier to put in new scenes), **Balanced** or **Close** (looks more like the photos).
 - **Graphics card memory:** **Auto**, **16 GB** or **24 GB**. Auto reads your card.
-- **Base model:** the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on; today that is **Z-Image** (best for maximum quality; slower; 16 GB+). The list opens below the field. The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option, or open **Details ▸**, for more. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.
+- **Base model:** the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on: **Z-Image** (best for maximum quality; slower; 16 GB+) and **MOSS-Image Base** (faster, and fits a 16 GB card; 16 GB+). The list opens below the field. The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option, or open **Details ▸**, for more. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.
 
   ![Base model list open](img/en-simple-4-train-base-open.png)
 

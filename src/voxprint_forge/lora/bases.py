@@ -1,12 +1,14 @@
 """Base-model adapters. The engine talks only to :class:`BaseAdapter`; the base is picked by MDL id.
 
 Built in: Z-Image (``z-image``, the Canvas hand-off base, default) and
-MOSS-Image Base (``moss-image-base``, internal). Both are Apache-2.0. A
-restrictive base may only be an optional MDL link to its official source.
+MOSS-Image Base (``moss-image-base``). Both are Apache-2.0 and both can train.
+A restrictive base may only be an optional MDL link to its official source.
 """
 
 from __future__ import annotations
 
+import gc
+import json
 import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
@@ -15,9 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
+import torch.utils.checkpoint as checkpoint
 from torch import nn
 
+from voxprint_forge.diffusion import moss as moss_runtime
 from voxprint_forge.lora import memory
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.presets import TrainConfig
@@ -57,6 +62,7 @@ class BaseAdapter(ABC):
     target_modules: tuple[str, ...] = ()
     requires_gpu: bool = True
     trainable: bool = True  # False while the adapter has no training loader yet
+    lora_dtype: torch.dtype | None = None  # None: the adapter dtype follows the base weight
 
     @abstractmethod
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
@@ -431,11 +437,102 @@ def _installed() -> Path | None:
     return folder if folder.is_dir() else None
 
 
-class MossImageAdapter(BaseAdapter):
-    """MOSS-Image Base (OpenMOSS-Team/MOSS-Image-Base, Apache-2.0), the internal base.
+# MOSS-Image Base at the pinned revision. Shapes match the vendored transformer; byte sizes are the
+# resident bf16 DiT (10.17 GB) and the fp32 FLUX.2 VAE (0.25 GB). The Qwen3.5-9B text encoder stays
+# on the CPU: it does not fit beside the DiT on a 16 GB card.
+_M_DIM, _M_FFN, _M_LAYERS = 3072, 8192, 42
+_M_LATENT_CHANNELS = 128
+_M_TEXT_DIM = 4096
+_M_CAPTION_TOKENS = 128
+_M_TRANSFORMER_BYTES = int(10.17 * 10**9)
+_M_VAE_BYTES = int(0.25 * 10**9)
+# Checkpointed activations, in units of one bf16 [tokens, dim] buffer. 1.3 of those, at rank 32,
+# 1024 px and batch 1, is the amount that puts the plan on the measured 11.8 GiB peak (RTX 4090,
+# bf16 DiT, fp32 LoRA, manual per-block checkpointing).
+_M_CHECKPOINT_UNITS = 1.3
+_M_BLOCK_UNITS = 20  # activations kept per block when checkpointing is off
+# RTX 4090, one image, one optimizer step, 1024 px, rank 32.
+_M_SECONDS = 0.7
 
-    Registered so it can be chosen by MDL id. Its training loader lands with
-    the GPU calibration run; until then loading raises ``lora.err.base_missing``.
+
+def _moss_shapes(weights_dir: Path | None) -> tuple[int, int, int, int, int]:
+    """dim, ffn, layers, transformer bytes, VAE bytes; from the snapshot when it is installed."""
+    dim, ffn, layers = _M_DIM, _M_FFN, _M_LAYERS
+    sizes = [_M_TRANSFORMER_BYTES, _M_VAE_BYTES]
+    if weights_dir is not None and weights_dir.is_dir():
+        try:
+            cfg = json.loads((weights_dir / "transformer" / "config.json").read_text(encoding="utf-8"))
+            dim = int(cfg.get("dim", dim))
+            ffn = int(cfg.get("ffn_dim", ffn))
+            layers = int(cfg.get("num_layers", layers))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        try:
+            index_file = json.loads(
+                (weights_dir / "transformer" / "diffusion_pytorch_model.safetensors.index.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            sizes[0] = int(index_file["metadata"]["total_size"])
+        except (OSError, ValueError, KeyError, TypeError):
+            single = weights_dir / "transformer" / "diffusion_pytorch_model.safetensors"
+            if single.is_file():
+                sizes[0] = single.stat().st_size
+        vae = weights_dir / "vae" / "diffusion_pytorch_model.safetensors"
+        if vae.is_file():
+            sizes[1] = vae.stat().st_size
+    return dim, ffn, layers, sizes[0], sizes[1]
+
+
+def _moss_weights_dir() -> Path | None:
+    try:
+        folder = weights_dir("moss-image-base")
+    except Exception:  # noqa: BLE001 - no models dir configured: use the pinned shapes
+        return None
+    return folder if folder.is_dir() else None
+
+
+def _checkpoint_blocks(blocks: Sequence[nn.Module]) -> None:
+    """Recompute each block on the backward. The MOSS transformer has no checkpointing switch."""
+    for block in blocks:
+        forward = block.forward
+
+        def wrapped(*args: object, _forward: Any = forward, **kwargs: object) -> object:
+            return checkpoint.checkpoint(_forward, *args, use_reentrant=False, **kwargs)
+
+        block.forward = wrapped  # type: ignore[method-assign]
+
+
+def _pad_text(
+    pairs: Sequence[tuple[torch.Tensor, torch.Tensor]], device: str, dtype: torch.dtype
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Stack prompt rows that may differ in length. Padding is masked off."""
+    length = max(int(emb.shape[0]) for emb, _mask in pairs)
+    width = int(pairs[0][0].shape[-1])
+    embeds = torch.zeros(len(pairs), length, width, device=device, dtype=dtype)
+    mask = torch.zeros(len(pairs), length, device=device, dtype=torch.bool)
+    for index, (emb, bits) in enumerate(pairs):
+        count = int(emb.shape[0])
+        embeds[index, :count] = emb.to(device=device, dtype=dtype)
+        mask[index, : int(bits.shape[0])] = bits.to(device=device).bool()
+    return embeds, mask
+
+
+def _pixels(image: Any) -> torch.Tensor:
+    """RGB picture to a ``[1, 3, H, W]`` tensor in ``[-1, 1]``, the VAE's range."""
+    array = np.asarray(image.convert("RGB"), dtype=np.float32) / 127.5 - 1.0
+    return torch.from_numpy(np.ascontiguousarray(array)).permute(2, 0, 1)[None]
+
+
+class MossImageAdapter(BaseAdapter):
+    """MOSS-Image Base (OpenMOSS-Team/MOSS-Image-Base, Apache-2.0).
+
+    The DiT trains in bf16 with the LoRA in fp32. 4-bit and FP8 storage break the
+    MOSS forward (it reads ``weight.dtype`` and casts activations to it), so both
+    memory tiers keep the bf16 weights. The text encoder stays on the CPU. The
+    transformer stays on the CPU until :meth:`release_encoders`, the same parking
+    the Z-Image adapter uses. Flow matching follows the reference: predict
+    ``noise - x0`` at timestep ``sigma * 1000``.
     """
 
     info = BaseInfo(
@@ -445,29 +542,193 @@ class MossImageAdapter(BaseAdapter):
         "Apache-2.0",
         "MOSS-Image Base",
     )
-    trainable = False
+    target_modules = (
+        "proj.q",
+        "proj.k",
+        "proj.v",
+        "proj.o",
+        "proj.ffn_up_gate",
+        "proj.ffn_down",
+    )
+    trainable = True
+    lora_dtype = torch.float32
+
+    def __init__(self) -> None:
+        self.pipe: Any = None
+        self.device = "cuda"
+        self._dtype = torch.bfloat16
+        self._empty: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._prompts: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._plan: memory.MemoryPlan | None = None
+        self._samples_bytes = 0
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
-        """Not available in this release."""
-        raise LoraStageError("lora.err.base_missing")
+        """Load the bf16 transformer and return it, parked on the CPU. Encoders stay frozen."""
+        if config.train_text_encoder:
+            raise LoraUsageError("lora.err.text_encoder")
+        if weights_dir is None or not Path(weights_dir).is_dir():
+            raise LoraStageError("lora.err.base_missing")
+        self.device = device
+        self._dtype = torch.bfloat16
+        self.pipe = moss_runtime.load_pipeline(Path(weights_dir), dtype=torch.bfloat16)
+        transformer = self.pipe.transformer
+        transformer.to(dtype=torch.bfloat16)
+        transformer.to("cpu")
+        for part in (self.pipe.text_encoder, self.pipe.vae):
+            if part is None:
+                continue
+            part.requires_grad_(False)
+            part.eval()
+        self._plan = self.memory_plan(config, 0, Path(weights_dir))
+        if config.grad_checkpointing:
+            _checkpoint_blocks(transformer.layers)
+        return transformer
 
+    @torch.no_grad()
     def encode(self, images: Sequence[Any], captions: Sequence[dict[str, str]], config: TrainConfig) -> list[Sample]:
-        """Not available in this release."""
-        raise LoraStageError("lora.err.base_missing")
+        """Cached packed VAE latents plus one ``encode_prompt`` embedding and mask per caption."""
+        pipe = self.pipe
+        pipe.vae.to(self.device)
+        self._empty = self._on_device(self._encode_prompt(""))
+        samples: list[Sample] = []
+        for image, caption in zip(images, captions, strict=True):
+            latents = moss_runtime.encode_image(pipe.vae, _pixels(image))[0].detach()
+            encoded = {key: self._on_device(self._encode_prompt(value)) for key, value in caption.items() if value}
+            samples.append(Sample(latents, encoded))
+        self._samples_bytes = sum(
+            _nbytes(item.latents) + sum(_nbytes(part) for pair in item.captions.values() for part in pair)
+            for item in samples
+        )
+        if self._empty is not None:
+            self._samples_bytes += _nbytes(self._empty[0]) + _nbytes(self._empty[1])
+        return samples
+
+    def _encode_prompt(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
+        """One prompt's embedding and mask on the CPU. The text encoder is not moved to the card."""
+        pipe = self.pipe
+        if getattr(pipe, "tokenizer", None) is not None and getattr(pipe, "text_encoder", None) is not None:
+            embeds, mask = moss_runtime.encode_on_cpu(pipe, prompt)
+        else:
+            embeds, mask = pipe.encode_prompt(prompt)
+        return embeds[0].detach().to("cpu"), mask[0].detach().to("cpu").bool()
+
+    def _on_device(self, pair: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        emb, mask = pair
+        return emb.to(self.device), mask.to(self.device)
+
+    def prepare_previews(self, prompts: Sequence[str]) -> None:
+        """Encode each test prompt and the empty negative once, on the CPU text encoder."""
+        for prompt in prompts:
+            if prompt not in self._prompts:
+                self._prompts[prompt] = self._encode_prompt(prompt)
+        if prompts and "" not in self._prompts:
+            self._prompts[""] = self._encode_prompt("")
+
+    def release_encoders(self) -> None:
+        """Move the VAE and text encoder off the card, then the transformer onto it.
+
+        The text encoder was never on the card. The residual check is the same one Z-Image uses:
+        anything still allocated beyond the cached samples means an encoder is pinned.
+        """
+        self.pipe.vae.to("cpu")
+        if self.pipe.text_encoder is not None:
+            self.pipe.text_encoder.to("cpu")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            residual = torch.cuda.memory_allocated() / memory.GIB
+            budget = memory.budget_gb(memory.vram_cap_gb(), memory.card_gb())
+            memory.check_residual(residual, self._samples_bytes / memory.GIB, self._plan, budget)
+        self.pipe.transformer.to(self.device)
 
     def loss(
         self, model: nn.Module, batch: Sequence[Sample], caption_keys: Sequence[str], rng: random.Random
     ) -> torch.Tensor:
-        """Not available in this release."""
-        raise LoraStageError("lora.err.base_missing")
+        """Flow matching: ``x_t = (1 - σ) x0 + σ noise``; the model predicts ``noise - x0``."""
+        if self._empty is None:
+            raise LoraStageError("lora.err.base_missing")
+        x0 = torch.stack([item.latents for item in batch]).to(device=self.device, dtype=torch.float32)
+        pairs = []
+        for item, key in zip(batch, caption_keys, strict=True):
+            packed = item.captions.get(key) if key else None
+            pairs.append(self._empty if packed is None else packed)
+        embeds, mask = _pad_text(pairs, self.device, self._dtype)
+        noise = torch.randn_like(x0)
+        sigma = torch.sigmoid(torch.randn(x0.shape[0], device=x0.device)).view(-1, 1, 1, 1)
+        xt = (1 - sigma) * x0 + sigma * noise
+        # requires_grad so per-block checkpointing has an input to track; the LoRA is what trains.
+        hidden = xt.to(dtype=self._dtype).requires_grad_(True)
+        pred = model(hidden, sigma.view(-1) * 1000.0, embeds, mask).sample.float()
+        return torch.nn.functional.mse_loss(pred, (noise - x0).float())
+
+    @torch.no_grad()
+    def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
+        """Draw one test picture. The text encoder stays parked; noise comes from a CPU generator."""
+        if prompt not in self._prompts or "" not in self._prompts:
+            self.prepare_previews([prompt])
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self.pipe.vae.to(self.device)
+        try:
+            positive = self._prompts[prompt]
+            negative = self._prompts[""]
+            generator = torch.Generator("cpu").manual_seed(seed)
+            with _encoder_parked(self.pipe):
+                _check_execution_device(self.pipe, self.device)
+                return self.pipe(
+                    prompt_embeds=positive[0].unsqueeze(0).to(self.device),
+                    prompt_attention_mask=positive[1].unsqueeze(0).to(self.device),
+                    negative_prompt_embeds=negative[0].unsqueeze(0).to(self.device),
+                    negative_prompt_attention_mask=negative[1].unsqueeze(0).to(self.device),
+                    height=config.resolution,
+                    width=config.resolution,
+                    generator=generator,
+                ).images[0]
+        finally:
+            self.pipe.vae.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def seconds_per_step(self, config: TrainConfig) -> float:
-        """[U] Same order as Z-Image."""
-        return ZImageAdapter().seconds_per_step(config)
+        """About 0.7 s on an RTX 4090 at 1024 px, batch 1, one accumulation, rank 32."""
+        return _M_SECONDS * (config.resolution / 1024) ** 2 * config.batch * config.grad_accum
 
     def vram_need_gb(self, config: TrainConfig) -> float:
-        """[U] Same order as Z-Image."""
-        return ZImageAdapter().vram_need_gb(config)
+        """What the card must have: the projected peak plus the budget headroom."""
+        plan = self.memory_plan(config)
+        return round(plan.peak_gb + memory.HEADROOM_GB, 1)
+
+    def memory_plan(
+        self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None
+    ) -> memory.MemoryPlan:
+        """Projected GiB. Both tiers keep the bf16 DiT: FP8 and 4-bit break the MOSS forward.
+
+        Encode is the VAE only (the text encoder stays on the CPU). Train is the DiT, the fp32
+        LoRA with its gradients and AdamW moments, one micro-batch of activations and the cache.
+        At rank 32, 1024 px and batch 1 the peak is the measured 11.8 GiB.
+        """
+        dim, ffn, layers, t_bytes, vae_bytes = _moss_shapes(
+            weights_dir if weights_dir is not None else _moss_weights_dir()
+        )
+        shapes = ((dim, dim),) * 4 + ((dim, 2 * ffn), (ffn, dim))
+        adapter = memory.lora_params(layers, shapes, config.rank)
+        side = config.resolution // 16
+        tokens = config.batch * (side * side + _M_CAPTION_TOKENS)
+        unit = tokens * dim * 2 / memory.GIB
+        if config.grad_checkpointing:
+            act = _M_CHECKPOINT_UNITS * unit * (layers / _M_LAYERS)
+        else:
+            act = layers * _M_BLOCK_UNITS * unit
+        sample = _M_LATENT_CHANNELS * side * side * 2 + 3 * (_M_CAPTION_TOKENS * _M_TEXT_DIM * 2 + _M_CAPTION_TOKENS)
+        scale = (config.resolution / 1024) ** 2
+        return memory.MemoryPlan(
+            encoders_gb=vae_bytes / memory.GIB,
+            encode_activations_gb=max(scale, 0.25),
+            transformer_gb=t_bytes / memory.GIB,
+            lora_gb=memory.lora_bytes(adapter, 4) / memory.GIB,
+            activations_gb=act,
+            samples_gb=max(samples, 30) * sample / memory.GIB,
+        )
 
 
 register(ZImageAdapter)

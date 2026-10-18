@@ -268,7 +268,7 @@ def _train(
 ) -> dict[str, object]:
     progress.emit("train.load_base", "lora.progress.load_base", reason_key="lora.reason.load_base")
     model = adapter.load(base_dir or weights_dir(adapter.info.mdl_id), config, device)
-    layers = inject(model, adapter.target_modules, config.rank, config.alpha)
+    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
     if from_lora is not None:
         load_lora_state(layers, load_file(str(from_lora)))
     images = _images(project, chosen, config.resolution)

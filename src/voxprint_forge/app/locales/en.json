@@ -7,6 +7,7 @@
   "forge.app.base.option.tip": "{name} ({repo}), licence {licence}.\n{detail}\n{memory}",
   "forge.app.base.vram_measured": "{gb} GB peak",
   "forge.app.base.vram_measured.tip": "Video memory: {vram}, measured in a calibration run.",
+  "forge.app.base.moss-image-base.note": "Faster, and fits a 16 GB card",
   "forge.app.base.vram_tier": "{gb} GB+",
   "forge.app.base.z-image.note": "Best for maximum quality; slower",
   "forge.app.check.base_missing": "{name}: not installed",

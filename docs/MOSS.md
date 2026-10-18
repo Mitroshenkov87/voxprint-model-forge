@@ -26,6 +26,18 @@ The pipeline file is vendored verbatim at `src/voxprint_forge/vendored/moss_imag
 
 It needs diffusers>=0.38 and transformers>=5.3, which is the `moss` extra. The forge venv still pins diffusers<0.38, so the fit job uses its own venv.
 
+## LoRA
+
+`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The DiT stays bf16 and the LoRA stays fp32. 4-bit and FP8 storage break the MOSS forward (it casts activations to `weight.dtype`), so both memory presets keep the bf16 weights. The text encoder stays on the CPU; the transformer moves onto the card only after the VAE latents and prompt embeddings are cached.
+
+A `lora export` safetensors file loads at generation time. The adapter is merged into the transformer linears (`W + scale * (alpha / rank) * B @ A`):
+
+```bash
+python -m voxprint_forge.diffusion.moss --snapshot SNAPSHOT --prompt "a red cube" --out out.png --lora export.safetensors --lora-scale 1
+```
+
+`load_pipeline(..., lora_path=..., lora_scale=1.0)`, `generate(...)` and `diffusion.generate.generate_moss(...)` take the same arguments.
+
 ## Fit job (synth4)
 
 `plans/moss-synth4.toml` and `scripts/vm_run_moss_fit.sh` run the SFT model at 1024², 50 steps, CFG 3, with memory caps of 16 and 24 GB:
