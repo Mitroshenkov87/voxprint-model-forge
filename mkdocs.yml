@@ -24,6 +24,7 @@ nav:
   - KL: KL.md
   - KV and spec bench: KV.md
   - LoRA trainer: LORA.md
+  - Age gate spec (draft): spec/product-age-gate.md
   - GUI feature map: ui/FEATURE-MAP.md
   - Model manifest: MODEL-MANIFEST.md
   - Index key rotation: KEY-ROTATION.md
