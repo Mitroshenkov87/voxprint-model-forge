@@ -14,7 +14,7 @@ GOOD = {
     "torch": "2.14.1+cu130",
     "torchmetrics": "1.6.3",
     "diffusers": "0.37.1",
-    "voxprint-common": "0.3.0",
+    "voxprint-common": "0.3.1",
 }
 
 
@@ -23,7 +23,7 @@ def fake_root(tmp_path: Path, *, llama: str | None = "abc") -> Path:
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "llama.rev").write_text("abc\n")
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "x"\nversion = "0"\ndependencies = ["torch>=2.5", "voxprint-common==0.3.0"]\n'
+        '[project]\nname = "x"\nversion = "0"\ndependencies = ["torch>=2.5", "voxprint-common==0.3.1"]\n'
         '[project.optional-dependencies]\ncompare = ["diffusers>=0.37.1,<0.38", "torchmetrics>=1.6"]\n'
     )
     (tmp_path / "vendor").mkdir()
@@ -127,11 +127,11 @@ def test_cli_exit_code_and_output(tmp_path, capsys, monkeypatch, json_mode) -> N
 
 def test_wheel_check_follows_the_pinned_version(tmp_path: Path) -> None:
     root = fake_root(tmp_path)
-    assert vmcheck.pinned_common(root) == "0.3.0"
+    assert vmcheck.pinned_common(root) == "0.3.1"
     assert by_name(run_vm_checks(root, tmp_path, probe()))["voxprint_common"]["ok"]
     stale = by_name(run_vm_checks(root, tmp_path, probe(versions={"voxprint-common": "0.1.1"})))["voxprint_common"]
     assert not stale["ok"]
-    assert "vendor/voxprint_common-0.3.0-py3-none-any.whl" in stale["fix"]
+    assert "vendor/voxprint_common-0.3.1-py3-none-any.whl" in stale["fix"]
 
 
 def test_lora_scope_skips_build_tools_and_llama(tmp_path: Path) -> None:
