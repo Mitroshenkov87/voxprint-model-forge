@@ -25,11 +25,11 @@ dependencies = [
   # 5.29.6 from PyPI imports and reads the sentencepiece model there.
   "protobuf==5.29.6",
   # Not on PyPI. CI, the VM scripts and the installer install the official
-  # v0.3.1 release asset vendor/voxprint_common-0.3.1-py3-none-any.whl
-  # (faa9a1239db864c4f759927838aece38b38866e8;
-  # sha256 f14036fc70db07e40e5e5376427cea28c3173a94f1d031997a3259ed0afc91fd).
+  # v0.4.0 release asset vendor/voxprint_common-0.4.0-py3-none-any.whl
+  # (eb5df2386564b302174b6fb66b2e6683a458e06e;
+  # sha256 97a055750f4765d76567c110f50171afebfe5a541f90887105466c2f9bd6a63a).
   # preflight --vm checks this pin.
-  "voxprint-common==0.3.1",
+  "voxprint-common==0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -70,7 +70,7 @@ te-quant = [
   "bitsandbytes>=0.50.2,<0.51",
 ]
 gui = [
-  "voxprint-common[ui]==0.3.1",
+  "voxprint-common[ui]==0.4.0",
   "PySide6>=6.8",
   "keyring>=25",
   "nvidia-ml-py>=12",
