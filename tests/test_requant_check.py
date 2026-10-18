@@ -12,6 +12,10 @@ import pytest
 
 from tests.test_kl_reference import Logs, _bins, _job, write_tiny
 from voxprint_forge import requant_check as rc
+from voxprint_forge.errors import PlanError, StageError
+from voxprint_forge.hashing import sha256_file
+from voxprint_forge.kl.cli import _quant_spec
+from voxprint_forge.kl.plan import load_kl_plan, local_revision
 from voxprint_forge.kl.run import run_kl
 from voxprint_forge.llama import Runner
 
@@ -109,7 +113,8 @@ def test_probe_threshold(stock: float, new: float, passed: bool) -> None:
 def test_verdict(tmp_path: Path) -> None:
     (tmp_path / "tensor-diff.json").write_text(json.dumps({"pass": True}), encoding="utf-8")
     for label, rate in (("stock-Q4_K_M", 0.5), ("new-Q4_K_M", 0.0)):
-        (tmp_path / f"probe-{label}.json").write_text(json.dumps({"refusal_rate": rate}), encoding="utf-8")
+        probe = {"model": label, "n": 4, "empty": 0, "refusal_rate": rate}
+        (tmp_path / f"probe-{label}.json").write_text(json.dumps(probe), encoding="utf-8")
     summary = tmp_path / "summary.json"
     rows = [{"quant": "Q4_K_M", "kl_mean": 0.9, "top1_agreement_pct": 66.0}]
     summary.write_text(json.dumps({"quants": rows}), encoding="utf-8")
@@ -151,3 +156,136 @@ def test_local_reference_is_used_in_place(tmp_path: Path, monkeypatch: pytest.Mo
     missing = dataclasses.replace(job, f16_file=str(tmp_path / "gone.gguf"))
     with pytest.raises(Exception, match="missing"):
         run_kl(missing, tmp_path / "work2", corpus=corpus, runner=Logs(9.0, 9.0, 9.5), fetch=fetch, convert=convert)
+
+
+def _local_build(tmp_path: Path) -> tuple[Path, Path, list[Path], Path]:
+    out = tmp_path / "out"
+    out.mkdir()
+    f16 = out / "gemma4-31b-requant-F16.gguf"
+    write_tiny(f16, name="Gemma 4 31B It")
+    tiers = []
+    for tier in ("IQ3_XXS", "Q4_K_M"):
+        path = out / f"{tier}.gguf"
+        write_tiny(path, name="Gemma 4 31B It")
+        with path.open("ab") as handle:
+            handle.write(tier.encode())  # distinct content, distinct revision
+        tiers.append(path)
+    sums = tmp_path / "new-files.sha256"
+    sums.write_text("".join(f"{sha256_file(p)}  {p.name}\n" for p in [f16, *tiers]), encoding="utf-8")
+    return out, f16, tiers, sums
+
+
+def _plan_args(f16: Path, tiers: list[Path], sums: Path, plan: Path) -> list[str]:
+    args = ["kl-plan", "--job", "G4R", "--author-repo", "a/b", "--author-rev", "2491ee58", "--f16", str(f16)]
+    for path in tiers:
+        args += ["--tier", f"{path.stem}={path}"]
+    return [*args, "--sha256-file", str(sums), "--note", "local re-quant", "--plan-out", str(plan)]
+
+
+def test_local_quant_kl_plan_has_content_revisions_and_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bins(tmp_path / "bin", monkeypatch)
+    _out, f16, tiers, sums = _local_build(tmp_path)
+    plan_path = tmp_path / "kl-g4r.toml"
+    assert rc.main(_plan_args(f16, tiers, sums, plan_path)) == 0
+    text = plan_path.read_text(encoding="utf-8")
+    assert 'revision = ""' not in text and 'repo = "local"' not in text
+    job = load_kl_plan(plan_path).job("G4R")
+    assert job.f16_file == str(f16) and job.sha256 == sha256_file(f16)
+    for quant, path in zip(job.quants, tiers, strict=True):
+        assert quant.source == "local" and quant.repo == ""
+        assert quant.revision == "local-sha256:" + sha256_file(path)[:12]
+        assert quant.pattern == str(path)
+    assert job.quants[0].revision != job.quants[1].revision
+
+    def fetch(repo: str, revision: str, dest: Path, patterns: list[str] | None) -> None:
+        raise AssertionError("local quants are never downloaded")
+
+    corpus = tmp_path / "ppl.txt"
+    corpus.write_text("public\n", encoding="utf-8")
+    report = run_kl(job, tmp_path / "work", corpus=corpus, runner=Logs(9.0, 9.0, 9.5), fetch=fetch)
+    rows = report["quants"]
+    assert [(r["source"], r["revision"]) for r in rows] == [(q.source, q.revision) for q in job.quants]  # type: ignore[index, union-attr]
+    assert f16.is_file() and all(path.is_file() for path in tiers)
+
+    with tiers[1].open("ab") as handle:
+        handle.write(b"changed after the plan")
+    with pytest.raises(StageError, match="sha256 mismatch"):
+        run_kl(job, tmp_path / "work2", corpus=corpus, runner=Logs(9.0, 9.0, 9.5), fetch=fetch)
+
+
+def test_kl_plan_fails_when_a_tier_has_no_digest(tmp_path: Path) -> None:
+    _out, f16, tiers, sums = _local_build(tmp_path)
+    sums.write_text(sums.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")
+    plan_path = tmp_path / "kl.toml"
+    assert rc.main(_plan_args(f16, tiers, sums, plan_path)) == 1
+    assert not plan_path.exists()
+
+
+DIGEST = "ab" * 32
+
+
+@pytest.mark.parametrize(
+    ("quant", "message"),
+    [
+        ('source = "local"\nrevision = ""\npattern = "/x/Q4.gguf"\n', "missing revision"),
+        ('source = "local"\nrevision = "local-sha256:xyz"\npattern = "/x/Q4.gguf"\n', "local-sha256:<12 hex>"),
+        ('source = "local"\nrevision = "local-sha256:abababababab"\npattern = "Q4.gguf"\n', "absolute .gguf"),
+        ('source = "local"\nrepo = "a/q"\nrevision = "local-sha256:abababababab"\npattern = "/x/Q4.gguf"\n', "no repo"),
+        (
+            f'source = "local"\nrevision = "local-sha256:000000000000"\npattern = "/x/Q4.gguf"\nsha256 = "{DIGEST}"\n',
+            "does not match its sha256",
+        ),
+        ('repo = "local"\nrevision = "x"\npattern = "/x/Q4.gguf"\n', 'set source = "local"'),
+        ('repo = "a/q"\nrevision = ""\npattern = "*.gguf"\n', "missing revision"),
+        ('source = "disk"\nrepo = "a/q"\nrevision = "d"\npattern = "*.gguf"\n', "source must be one of"),
+    ],
+)
+def test_plan_validates_local_and_remote_quants(tmp_path: Path, quant: str, message: str) -> None:
+    path = tmp_path / "kl.toml"
+    path.write_text(
+        '[[jobs]]\nid = "L9"\nbf16_repo = "a/b"\nbf16_revision = "c"\n[[jobs.quants]]\nquant = "Q4_K_M"\n' + quant,
+        encoding="utf-8",
+    )
+    with pytest.raises(PlanError, match=message):
+        load_kl_plan(path)
+
+
+def test_cli_local_quant_gets_a_content_revision(tmp_path: Path) -> None:
+    path = tmp_path / "Q4_K_M.gguf"
+    write_tiny(path)
+    ref = _quant_spec(str(path))
+    assert (ref.source, ref.repo) == ("local", "")
+    assert ref.revision == local_revision(sha256_file(path))
+
+
+def test_probe_counts_empty_replies_and_refuses_an_empty_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts = tmp_path / "p.txt"
+    prompts.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    replies = iter(["I cannot help.", "", "Sure."])
+    monkeypatch.setattr(rc, "_chat", lambda server, text, *, max_tokens: next(replies))
+    out = tmp_path / "probe.json"
+    base = ["probe", "--server", "http://127.0.0.1:1", "--label", "s", "--out", str(out)]
+    assert rc.main([*base, "--prompts", str(prompts)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert (data["n"], data["answered"], data["empty"], data["refusal_rate"]) == (3, 2, 1, 0.5)
+    empty = tmp_path / "none.txt"
+    empty.write_text("# only a comment\n", encoding="utf-8")
+    out.unlink()
+    assert rc.main([*base, "--prompts", str(empty)]) == 1
+    assert not out.exists()
+
+
+def test_verdict_fails_on_empty_replies_and_bad_pairs(tmp_path: Path) -> None:
+    (tmp_path / "tensor-diff.json").write_text(json.dumps({"pass": True}), encoding="utf-8")
+    for label, rate, empty in (("stock-Q4_K_M", 0.5, 0), ("new-Q4_K_M", 0.0, 3)):
+        probe = {"model": label, "n": 4, "empty": empty, "refusal_rate": rate}
+        (tmp_path / f"probe-{label}.json").write_text(json.dumps(probe), encoding="utf-8")
+    summary = tmp_path / "summary.json"
+    rows = [{"quant": "Q4_K_M", "kl_mean": 0.9, "top1_agreement_pct": 66.0}, {"quant": "IQ3_XXS", "kl_mean": None}]
+    summary.write_text(json.dumps({"quants": rows}), encoding="utf-8")
+    l2 = json.dumps({"Q4_K_M": {"kl": 0.83, "top1": 68.4}})
+    args = ["verdict", "--results", str(tmp_path), "--kl-summary", str(summary), "--l2-kl", l2]
+    assert rc.main([*args, "--pair", "Q4_K_M:stock-Q4_K_M:new-Q4_K_M"]) == 1
+    payload = rc._verdict(tmp_path, summary, json.loads(l2), [("Q4_K_M", "stock-Q4_K_M", "new-Q4_K_M")])
+    assert payload["probe"]["Q4_K_M"]["problems"] == ["new-Q4_K_M: 3 empty replies"]  # type: ignore[index]
+    assert rc.main([*args, "--pair", "Q4_K_M::new-Q4_K_M"]) == 2

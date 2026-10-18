@@ -25,7 +25,7 @@ from voxprint_forge.kl.arch import (
     source_mtp_layers,
 )
 from voxprint_forge.kl.parse import parse_kl, tokens_per_second
-from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat
+from voxprint_forge.kl.plan import KlJob, QuantRef, SourceFormat, local_revision
 from voxprint_forge.kl.preflight import require_llama_arch
 from voxprint_forge.kl.recover import recover_ablation
 from voxprint_forge.llama import Runner, convert_argv, convert_script, kl_argv, server_argv, tool
@@ -332,6 +332,8 @@ def _ablation_ref(job: KlJob) -> QuantRef:
 
 
 def _fetch_quant(job: KlJob, quant: QuantRef, work: Path, fetch: FetchFn) -> Path:
+    if quant.source == "local":
+        return _local_quant(job, quant)
     if Path(quant.pattern).is_file():
         path = Path(quant.pattern)
     else:
@@ -339,6 +341,20 @@ def _fetch_quant(job: KlJob, quant: QuantRef, work: Path, fetch: FetchFn) -> Pat
         fetch(quant.repo, quant.revision, folder, [quant.pattern])
         path = select_quant_file(folder, quant.pattern, quant.quant)
     _check_sha256(path, quant.sha256, f"{job.id} {quant.quant}")
+    return path
+
+
+def _local_quant(job: KlJob, quant: QuantRef) -> Path:
+    """A GGUF built on this machine: never downloaded; its content must match the plan's revision."""
+    path = Path(quant.pattern)
+    label = f"{job.id} {quant.quant}"
+    if not path.is_file():
+        raise StageError(f"{label} local file {path.name} is missing", code="kl_quant")
+    digest = sha256_file(path)
+    if quant.sha256 and digest != quant.sha256:
+        raise StageError(f"{label} sha256 mismatch", code="kl_download")
+    if local_revision(digest) != quant.revision:
+        raise StageError(f"{label} content does not match revision {quant.revision}", code="kl_download")
     return path
 
 
@@ -402,6 +418,7 @@ def _one_quant(
     measured = parse_buffers(server.stdout + server.stderr)
     return {
         "quant": quant.quant,
+        "source": quant.source,
         "repo": quant.repo,
         "revision": quant.revision,
         "ours": quant.ours,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,11 +15,27 @@ SourceFormat = Literal["safetensors", "gguf"]
 _FORMATS = ("safetensors", "gguf")
 Reference = Literal["upstream", "recover-ablation"]
 _REFERENCES = ("upstream", "recover-ablation")
+QuantSource = Literal["hf", "local"]
+_SOURCES = ("hf", "local")
+LOCAL_REVISION_PREFIX = "local-sha256:"
+_LOCAL_REVISION = re.compile(r"^local-sha256:[0-9a-f]{12}$")
+
+
+def local_revision(digest: str) -> str:
+    """Content-derived revision of a local GGUF: ``local-sha256:`` plus the first 12 hex of its sha256."""
+    if not is_sha256(digest):
+        raise PlanError("a local revision needs a 64-hex sha256", code="kl_plan")
+    return LOCAL_REVISION_PREFIX + digest[:12]
 
 
 @dataclass(frozen=True)
 class QuantRef:
     """One GGUF to score against the F16 base.
+
+    ``source = "hf"`` (the default) downloads ``pattern`` from ``repo`` at ``revision``.
+    ``source = "local"`` is a file built on this machine: ``pattern`` is its absolute path,
+    ``repo`` is empty and ``revision`` is ``local-sha256:<first 12 hex of its sha256>``,
+    checked against the file before llama.cpp runs.
 
     ``sha256`` is optional. When set, the file is checked after download.
     """
@@ -29,6 +46,7 @@ class QuantRef:
     pattern: str
     ours: bool
     sha256: str = ""
+    source: QuantSource = "hf"
 
 
 @dataclass(frozen=True)
@@ -165,14 +183,45 @@ def _quant(raw: object, job_id: str) -> QuantRef:
     ours = raw.get("ours", True)
     if not isinstance(ours, bool):
         raise PlanError(f"{job_id} {label} ours is not a boolean", code="kl_plan")
+    name = f"{job_id} {label}"
+    source = _source(raw.get("source", "hf"), name)
+    digest = _optional_sha(raw, name)
+    if source == "local":
+        return _local_quant(raw, name, label, ours, digest)
+    repo = _str(raw, "repo")
+    revision = _str(raw, "revision")
+    if repo == "local" or revision.startswith(LOCAL_REVISION_PREFIX):
+        raise PlanError(f'{name} is a local file: set source = "local"', code="kl_plan")
     return QuantRef(
         quant=label,
-        repo=_str(raw, "repo"),
-        revision=_str(raw, "revision"),
+        repo=repo,
+        revision=revision,
         pattern=_str(raw, "pattern"),
         ours=ours,
-        sha256=_optional_sha(raw, f"{job_id} {label}"),
+        sha256=digest,
     )
+
+
+def _local_quant(raw: dict[str, object], name: str, label: str, ours: bool, digest: str) -> QuantRef:
+    if str(raw.get("repo", "")).strip():
+        raise PlanError(f"{name} local source takes no repo", code="kl_plan")
+    path = _str(raw, "pattern")
+    if not Path(path).is_absolute() or not path.endswith(".gguf"):
+        raise PlanError(f"{name} local source needs an absolute .gguf path in pattern", code="kl_plan")
+    revision = _str(raw, "revision")
+    if _LOCAL_REVISION.fullmatch(revision) is None:
+        raise PlanError(f"{name} local revision must be local-sha256:<12 hex>", code="kl_plan")
+    if digest and local_revision(digest) != revision:
+        raise PlanError(f"{name} local revision does not match its sha256", code="kl_plan")
+    return QuantRef(quant=label, repo="", revision=revision, pattern=path, ours=ours, sha256=digest, source="local")
+
+
+def _source(value: object, label: str) -> QuantSource:
+    if value == "hf":
+        return "hf"
+    if value == "local":
+        return "local"
+    raise PlanError(f"{label} source must be one of {', '.join(_SOURCES)}", code="kl_plan")
 
 
 def _optional_sha(raw: dict[str, object], label: str) -> str:
