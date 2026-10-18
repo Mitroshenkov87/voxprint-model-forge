@@ -73,11 +73,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -S
 
 | Step | Passes when |
 |---|---|
+| home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
 | install | the silent setup exits 0; both venvs, the CLI and GUI exes, the Start menu shortcut and the uninstall entry exist; no weights |
 | version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
 | lora-dry-run | `lora train --dry-run --base z-image --vram 24` on a 12-picture stub project returns `dry-run` |
-| uninstall | the program folder, shortcut and uninstall entry are gone; `%LOCALAPPDATA%\Voxprint` stays |
+| home-migration | the setup moved `%LOCALAPPDATA%\Voxprint` to `%LOCALAPPDATA%\VOXPrint AI Suite` before any Python ran: the old folder is gone and the dummy is under `paths.models_dir()` with the same sha256 |
+| reinstall-noop | with `-MigrationTest`: a second silent install exits 0, logs `no-op` and leaves the data home unchanged |
+| uninstall | the program folder, shortcut and uninstall entry are gone; `%LOCALAPPDATA%\VOXPrint AI Suite` stays |
 
 Results go to `%LOCALAPPDATA%\VoxprintForgeSmoke\windows\<timestamp>\result.json`.
 It downloads no models and needs no token. Exit 0 means every step passed.

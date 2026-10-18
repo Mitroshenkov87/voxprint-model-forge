@@ -80,7 +80,8 @@ voxprint-model-forge = "voxprint_forge.app.__main__:main"
 
 # Display names and install paths. installer/windows builds the Windows setup.
 # An upgrade moves an older program folder here, updates shortcuts and PATH,
-# and leaves %LOCALAPPDATA%\Voxprint and ~/.local/share/voxprint in place.
+# and leaves the user data in place. The setup moves a legacy %LOCALAPPDATA%\Voxprint to
+# %LOCALAPPDATA%\VOXPrint AI Suite once, before any Python runs (installer/windows/migrate-home.ps1).
 [tool.voxprint.install]
 display-name = "VOXPrint AI Model Forge"
 start-menu-folder = "VOXPrint AI Suite"
@@ -89,8 +90,8 @@ windows-dir = 'C:\Program Files\VOXPrint AI Suite\Model Forge'
 linux-dir = "/opt/voxprint-ai-suite/model-forge"
 gui-exe = "voxprint-model-forge.exe"
 cli-exe = "voxprint-forge-cli.exe"
-user-data = '%LOCALAPPDATA%\Voxprint'
-linux-data = "~/.local/share/voxprint"
+user-data = '%LOCALAPPDATA%\VOXPrint AI Suite'
+linux-data = "~/.local/share/voxprint-ai-suite"
 
 [build-system]
 requires = ["setuptools>=69"]

@@ -41,6 +41,8 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
 Source: "staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Extracted to {tmp} by PrepareToInstall only; not installed.
+Source: "migrate-home.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\venv\Scripts\voxprint-model-forge.exe"; WorkingDir: "{app}"
@@ -58,6 +60,37 @@ Type: dirifempty; Name: "{autopf}\{#MySuiteName}"
 [Code]
 procedure ExitProcess(uExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
+
+// One-time move of %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite (voxprint-common 0.2.5).
+// It runs before any file is copied and before install.ps1 starts Python, as the signed-in user
+// (whose LOCALAPPDATA it is). See migrate-home.ps1 for the rules; exit 10 (both folders exist) is
+// a warning, any other non-zero code stops the setup with nothing changed.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  Script: String;
+begin
+  Result := '';
+  ExtractTemporaryFile('migrate-home.ps1');
+  Script := ExpandConstant('{tmp}\migrate-home.ps1');
+  if not ExecAsOriginalUser(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -AppDir "' + ExpandConstant('{app}') + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    ResultCode := 3;
+  Log(Format('home migration exit code %d', [ResultCode]));
+  case ResultCode of
+    0: ;
+    10: SuppressibleMsgBox('Both %LOCALAPPDATA%\Voxprint and %LOCALAPPDATA%\VOXPrint AI Suite exist. ' +
+          'Nothing was moved or merged; the apps use VOXPrint AI Suite. Review the old folder and move what you still need.',
+          mbInformation, MB_OK, IDOK);
+    2: Result := 'Close all VOXPrint programs, then run the setup again. Your data was not moved.';
+    4: Result := '%LOCALAPPDATA%\VOXPrint AI Suite is not a plain folder. Nothing was moved.';
+  else
+    Result := 'Moving %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite failed; the old folder is unchanged. ' +
+      'See %LOCALAPPDATA%\VOXPrint AI Suite\logs\home-migration.log or %TEMP%\voxprint-home-migration.log.';
+  end;
+end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var

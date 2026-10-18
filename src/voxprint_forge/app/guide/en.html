@@ -118,7 +118,7 @@
 <ul>
 <li><strong>Sources.</strong> Every model is downloaded from its author's official page, at a fixed version. The downloader checks each file against its published checksum before it is used.</li>
 <li><strong>Licences.</strong> Each model keeps its own licence. Read it in Manage models before you use the model. Your LoRA inherits the licence of the base model it was trained on.</li>
-<li><strong>Disk.</strong> Models go to the shared VOXPrint models folder, by default <code>%LOCALAPPDATA%\Voxprint\models</code>. Other VOXPrint apps use the same folder, so a model is downloaded only once. Downloads continue in the background if you close the downloader window, and they resume after an interruption.</li>
+<li><strong>Disk.</strong> Models go to the shared VOXPrint models folder, by default <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>. Other VOXPrint apps use the same folder, so a model is downloaded only once. Downloads continue in the background if you close the downloader window, and they resume after an interruption.</li>
 </ul>
 <blockquote>
 <p><strong>Screenshot placeholder:</strong> Manage models with the Model Forge models.</p>
@@ -218,9 +218,9 @@
 <h2>6. Managing models</h2>
 <ul>
 <li><strong>Manage models</strong> (in <strong>Check this computer</strong>) opens the VOXPrint model downloader. There you can see installed models, their size and licence, download missing ones and remove ones you no longer need.</li>
-<li>LoRAs sent with <strong>Open in Canvas</strong> are stored in <code>%LOCALAPPDATA%\Voxprint\models\user-models\lora\&lt;name&gt;\</code>.</li>
+<li>LoRAs sent with <strong>Open in Canvas</strong> are stored in <code>%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\&lt;name&gt;\</code>.</li>
 <li><strong>More → Open project…</strong> opens an earlier project; <strong>Open folder</strong> shows the project's photos, versions and test pictures.</li>
-<li>Projects are in <code>%LOCALAPPDATA%\Voxprint\state\model-forge\lora\</code>. Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.</li>
+<li>Projects are in <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\</code>. Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.</li>
 </ul>
 <blockquote>
 <p><strong>Screenshot placeholder:</strong> Manage models, installed models.</p>
@@ -230,7 +230,7 @@
 <li>Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.</li>
 <li>The internet is used only to download the app libraries and models from their official sources.</li>
 <li>A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</li>
-<li>Uninstalling the app keeps your data. To remove everything, also delete <code>%LOCALAPPDATA%\Voxprint\state\model-forge</code> and, if no other VOXPrint app uses them, the models in <code>%LOCALAPPDATA%\Voxprint\models</code>.</li>
+<li>Uninstalling the app keeps your data. To remove everything, also delete <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge</code> and, if no other VOXPrint app uses them, the models in <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>.</li>
 </ul>
 <h2>8. Troubleshooting</h2>
 <table>
@@ -271,7 +271,7 @@
 </tr>
 <tr>
 <td>Not enough disk space</td>
-<td>Free space on the drive that holds <code>%LOCALAPPDATA%\Voxprint</code>, or remove models you no longer need in Manage models.</td>
+<td>Free space on the drive that holds <code>%LOCALAPPDATA%\VOXPrint AI Suite</code>, or remove models you no longer need in Manage models.</td>
 </tr>
 <tr>
 <td>The setup failed</td>

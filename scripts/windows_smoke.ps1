@@ -11,16 +11,24 @@ Run from an elevated PowerShell (the setup installs to Program Files):
 -Setup        The setup exe (CI artifact). Default: dist\VoxprintModelForgeSetup.exe, then the script folder.
 -RequireGpu   Also require the preflight CUDA check (use on the laptop; CI has no GPU).
 -KeepInstalled  Skip the uninstall step.
+-MigrationTest  CI only: when neither data home exists, plant a fake %LOCALAPPDATA%\Voxprint with a dummy
+               model first, then check the setup moved it and that a second install is a no-op.
 
 Steps and pass rules:
+  0 home       (with -MigrationTest on a clean profile) a fake %LOCALAPPDATA%\Voxprint\models\smoke-dummy file.
   1 install    silent setup exits 0; venv, venv-mivolo, CLI, GUI exe, uv.exe, LICENSE, Start menu shortcut exist;
                the setup holds no model weights (*.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt).
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
                MiVOLO env pass. Missing models are listed, not failed (a fresh install has none).
   4 lora       a 12-picture stub project; lora train --dry-run --base z-image --vram 24 returns state dry-run.
+  4a migration the setup moved %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite before any Python ran:
+               the old folder is gone, the dummy sits under paths.models_dir() with the same sha256
+               (checked on disk first, then through voxprint_common), and a second silent install
+               exits 0, logs "no-op" and changes nothing. Without -MigrationTest only the move rule is
+               checked against the folders that were there before the install.
   5 uninstall  unins000.exe removes the program folder, the shortcut and the uninstall entry.
-               %LOCALAPPDATA%\Voxprint (user data, models) is left in place by design.
+               %LOCALAPPDATA%\VOXPrint AI Suite (user data, models) is left in place by design.
 
 Results: %LOCALAPPDATA%\VoxprintForgeSmoke\windows\<timestamp>\result.json and smoke.log.
 Exit 0 when every step passes, 1 otherwise, 2 when it cannot start.
@@ -30,6 +38,7 @@ param(
     [string]$Setup = "",
     [switch]$RequireGpu,
     [switch]$KeepInstalled,
+    [switch]$MigrationTest,
     [string]$Results = ""
 )
 
@@ -40,6 +49,9 @@ $Dir = Join-Path $env:ProgramFiles "VOXPrint AI Suite\Model Forge"
 $Cli = Join-Path $Dir "venv\Scripts\voxprint-forge-cli.exe"
 $Py = Join-Path $Dir "venv\Scripts\python.exe"
 $Menu = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\VOXPrint AI Model Forge.lnk"
+$OldHome = Join-Path $env:LOCALAPPDATA "Voxprint"
+$NewHome = Join-Path $env:LOCALAPPDATA "VOXPrint AI Suite"
+$Dummy = "models\smoke-dummy\smoke-dummy-model.bin"
 $Weights = @("*.safetensors", "*.gguf", "*.bin", "*.pt", "*.pth", "*.onnx", "*.ckpt")
 
 if (-not $Results) {
@@ -101,6 +113,22 @@ try {
     exit 2
 }
 Write-Log "setup $SetupExe ($([math]::Round((Get-Item $SetupExe).Length / 1MB, 1)) MB) results $Results"
+
+$Before = @{ old = (Test-Path -LiteralPath $OldHome); new = (Test-Path -LiteralPath $NewHome) }
+$Planted = $false
+if ($MigrationTest -and -not $Before.old -and -not $Before.new) {
+    [void](Invoke-Step "home-plant" {
+        $file = Join-Path $OldHome $Dummy
+        New-Item -ItemType Directory -Force (Split-Path -Parent $file) | Out-Null
+        [IO.File]::WriteAllText($file, "voxprint smoke dummy model, not a real weight file`n")
+        $script:DummySha = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
+        $script:Planted = $true
+        $Before.old = $true
+        "planted $file"
+    })
+} elseif ($MigrationTest) {
+    Write-Log "home-plant skipped: a data home already exists (old=$($Before.old) new=$($Before.new)); real data is never touched"
+}
 
 $installed = Invoke-Step "install" {
     $p = Start-Process $SetupExe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
@@ -176,6 +204,60 @@ project.write({"kind": "object", "mode": "simple", "gate_passed": True,
         if ($res.state -ne "dry-run" -or $res.photos -ne 12) { throw "unexpected result: state=$($res.state) photos=$($res.photos)" }
         "state dry-run, 12 photos, 4 steps, eta $($res.eta_seconds) s, vram need $($res.vram_need_gb) GB"
     })
+}
+
+function Get-MigrationLog {
+    $log = Join-Path $NewHome "logs\home-migration.log"
+    if (Test-Path -LiteralPath $log) { return @(Get-Content -LiteralPath $log) }
+    $tmp = Join-Path $env:TEMP "voxprint-home-migration.log"
+    if (Test-Path -LiteralPath $tmp) { return @(Get-Content -LiteralPath $tmp) }
+    return @()
+}
+
+if ($installed) {
+    [void](Invoke-Step "home-migration" {
+        if ($Before.old -and -not $Before.new) {
+            if (Test-Path -LiteralPath $OldHome) { throw "the old home $OldHome is still there" }
+            if (-not (Test-Path -LiteralPath $NewHome)) { throw "the new home $NewHome is missing" }
+        } elseif ($Before.old -and $Before.new) {
+            if (-not (Test-Path -LiteralPath $OldHome)) { throw "both homes existed, but the old one was changed" }
+        }
+        $detail = "before old=$($Before.old) new=$($Before.new); after old=$(Test-Path -LiteralPath $OldHome) new=$(Test-Path -LiteralPath $NewHome)"
+        if ($Planted) {
+            # On disk first: no Python has run against the data home yet.
+            $moved = Join-Path $NewHome $Dummy
+            if (-not (Test-Path -LiteralPath $moved)) { throw "the dummy model is not at $moved" }
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLower() -ne $script:DummySha) { throw "the dummy model changed" }
+            if (-not (Get-MigrationLog | Where-Object { $_ -match " moved " })) { throw "home-migration.log has no move line" }
+            # Then through voxprint_common: models_dir() must be <new home>\models.
+            $saved = @{}
+            foreach ($n in @("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR")) { $saved[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $null) }
+            $md = (& $Py -c "from voxprint_common.paths import models_dir; print(models_dir())" | Out-String).Trim()
+            foreach ($n in $saved.Keys) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+            if ($md -ne (Join-Path $NewHome "models")) { throw "paths.models_dir() is '$md', want $(Join-Path $NewHome 'models')" }
+            if (-not (Test-Path -LiteralPath (Join-Path $md "smoke-dummy\smoke-dummy-model.bin"))) { throw "the dummy is not under models_dir()" }
+            $detail += "; dummy under models_dir() $md, sha256 unchanged"
+        }
+        $detail
+    })
+
+    if ($Planted) {
+        [void](Invoke-Step "reinstall-noop" {
+            $before = @(Get-ChildItem -LiteralPath $NewHome -Recurse -Force -File | Where-Object { $_.FullName -notlike "*\logs\*" } |
+                ForEach-Object { "$($_.FullName)|$($_.Length)" })
+            $p = Start-Process $SetupExe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+                "/LOG=`"$(Join-Path $Results 'setup-2.log')`"" -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "the second install exited $($p.ExitCode)" }
+            if (Test-Path -LiteralPath $OldHome) { throw "the old home reappeared" }
+            $after = @(Get-ChildItem -LiteralPath $NewHome -Recurse -Force -File | Where-Object { $_.FullName -notlike "*\logs\*" } |
+                ForEach-Object { "$($_.FullName)|$($_.Length)" })
+            if (Compare-Object $before $after) { throw "the second install changed the data home" }
+            $last = @(Get-MigrationLog | Where-Object { $_ -match "no-op|moved|REFUSED|FAILED" }) | Select-Object -Last 1
+            if ($last -notmatch "no-op") { throw "the second install did not log a no-op: $last" }
+            "second install exit 0; data home unchanged; log: $($last.Substring($last.IndexOf(' ') + 1))"
+        })
+        Remove-Item -LiteralPath (Join-Path $NewHome "models\smoke-dummy") -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if (-not $KeepInstalled -and (Test-Path (Join-Path $Dir "unins000.exe"))) {

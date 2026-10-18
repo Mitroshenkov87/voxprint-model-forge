@@ -14,6 +14,7 @@ on:
       - "pyproject.toml"
       - "BUILD.json"
       - "scripts/windows_smoke.ps1"
+      - "src/voxprint_forge/lora/export.py"
   workflow_dispatch:
 permissions:
   contents: read
@@ -79,7 +80,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 30
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup dist\VoxprintModelForgeSetup.exe -Results "$env:RUNNER_TEMP\smoke"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup dist\VoxprintModelForgeSetup.exe -MigrationTest -Results "$env:RUNNER_TEMP\smoke"
           if ($LASTEXITCODE -ne 0) { throw "windows_smoke.ps1 exited $LASTEXITCODE" }
       - uses: actions/upload-artifact@v4
         if: always()

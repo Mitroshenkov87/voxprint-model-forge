@@ -119,9 +119,11 @@ def test_person_export_records_consent_method_and_adult_content(tmp_path, extra,
 
 def test_install_goes_to_user_models_lora_id(tmp_path, monkeypatch) -> None:
     project = trained(tmp_path)
-    monkeypatch.setenv("VOXPRINT_USER_MODELS_DIR", str(tmp_path / "um"))
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("VOXPRINT_USER_MODELS_DIR", str(tmp_path / "ignored"))  # no Forge-only override
     result = export(project, Progress(), out=tmp_path / "keep" / "mine.safetensors", install_to_mdl=True)
-    folder = tmp_path / "um" / "lora" / result["id"]
+    folder = tmp_path / "models" / "user-models" / "lora" / result["id"]
+    assert not (tmp_path / "ignored").exists()
     sidecar = json.loads((folder / "voxprint-model.json").read_text())
     assert sidecar["file"] == f"{result['id']}.safetensors"
     assert hashlib.sha256((folder / sidecar["file"]).read_bytes()).hexdigest() == sidecar["sha256"]
