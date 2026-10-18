@@ -9,10 +9,74 @@ $App = Split-Path -Parent $PSCommandPath
 $Work = Join-Path $App "setup-work"
 New-Item -ItemType Directory -Force $Work | Out-Null
 Start-Transcript -Path (Join-Path $Work "install.log") -Force | Out-Null
+$ErrorFile = Join-Path $Work "install-error.txt"
+Remove-Item -LiteralPath $ErrorFile -Force -ErrorAction SilentlyContinue
+$StepTimeoutSec = 120
+
+# No Windows error dialogs (child processes inherit the mode) and no QuickEdit pause in a console.
+try {
+    Add-Type -Namespace VoxprintSetup -Name Native -MemberDefinition @"
+[DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetStdHandle(int handle);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(System.IntPtr handle, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(System.IntPtr handle, uint mode);
+"@
+    [void][VoxprintSetup.Native]::SetErrorMode(0x8003)
+    $stdin = [VoxprintSetup.Native]::GetStdHandle(-10)
+    $mode = [uint32]0
+    if ([VoxprintSetup.Native]::GetConsoleMode($stdin, [ref]$mode)) {
+        if ($mode -band 0x40) { $mode = $mode - 0x40 }
+        [void][VoxprintSetup.Native]::SetConsoleMode($stdin, [uint32]($mode -bor 0x80))
+    }
+} catch {
+    Write-Host "error mode / console mode not set: $($_.Exception.Message)"
+}
 
 function Invoke-Uv([string[]]$ArgList) {
     & $script:Uv @ArgList
     if ($LASTEXITCODE -ne 0) { throw "uv $($ArgList[0..1] -join ' ') failed ($LASTEXITCODE)" }
+}
+
+# One Python check in its own process: stdin from an empty file, stdout and stderr to files, a hard
+# timeout that kills the process tree. Logs "step <name>: ok in <s> s" or the failure.
+# A failed -Optional step is logged as a warning and the setup continues.
+function Invoke-PyStep([string]$Python, [string]$Name, [string]$Code, [switch]$Optional) {
+    $slug = $Name -replace '[^A-Za-z0-9]+', '-'
+    $file = Join-Path $Work "step-$slug.py"
+    $out = Join-Path $Work "step-$slug.out.txt"
+    $err = Join-Path $Work "step-$slug.err.txt"
+    $none = Join-Path $Work "stdin-empty.txt"
+    Set-Content -LiteralPath $file -Value $Code -Encoding ascii
+    [IO.File]::WriteAllText($none, "")
+    $env:PYTHONFAULTHANDLER = "1"
+    $env:PYTHONUNBUFFERED = "1"
+    Write-Host "step ${Name}: start (timeout $StepTimeoutSec s)"
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $p = Start-Process -FilePath $Python -ArgumentList "-X faulthandler -u `"$file`"" -NoNewWindow -PassThru `
+        -RedirectStandardInput $none -RedirectStandardOutput $out -RedirectStandardError $err
+    [void]$p.Handle
+    $problem = ""
+    if (-not $p.WaitForExit($StepTimeoutSec * 1000)) {
+        Start-Process -FilePath (Join-Path $env:SystemRoot "System32\taskkill.exe") -ArgumentList "/T /F /PID $($p.Id)" -NoNewWindow -Wait
+        $problem = "timed out after $StepTimeoutSec s (process tree killed)"
+    } else {
+        $p.WaitForExit()
+        if ($p.ExitCode -ne 0) { $problem = "exited $($p.ExitCode)" }
+    }
+    $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+    foreach ($part in @($out, $err)) {
+        if (Test-Path -LiteralPath $part) { Get-Content -LiteralPath $part | ForEach-Object { Write-Host "  $_" } }
+    }
+    if (-not $problem) {
+        Write-Host "step ${Name}: ok in $seconds s"
+        return $true
+    }
+    if ($Optional) {
+        Write-Host "step ${Name}: WARNING $problem after $seconds s (optional, setup continues)"
+        return $false
+    }
+    Write-Host "step ${Name}: FAILED $problem after $seconds s"
+    throw "step '$Name' $problem"
 }
 
 try {
@@ -69,15 +133,20 @@ try {
     Invoke-Uv @("pip", "install", "--python", $MPy, "--no-deps", "--no-build-isolation",
         "mivolo @ https://github.com/WildChlamydia/MiVOLO/archive/37475e3f8818b5f22448003feec3e64b01bfb188.zip")
 
-    & $Py -c "import voxprint_forge, torch, bitsandbytes; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"
-    if ($LASTEXITCODE -ne 0) { throw "the app environment does not import" }
-    & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
-    if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }
+    [void](Invoke-PyStep $Py "import voxprint_forge" "import voxprint_forge`nprint('voxprint_forge', voxprint_forge.__file__)")
+    [void](Invoke-PyStep $Py "import torch" "import torch`nprint('torch', torch.__version__, 'cuda build', torch.version.cuda)")
+    [void](Invoke-PyStep $Py "torch.cuda init" -Optional ("import torch`nok = torch.cuda.is_available()`nprint('cuda available', ok)`n" +
+        "if ok:`n    torch.zeros(1, device='cuda')`n    print('device', torch.cuda.get_device_name(0))"))
+    # Optional: --te-quant auto falls back when bitsandbytes does not load.
+    [void](Invoke-PyStep $Py "import bitsandbytes" -Optional ("import bitsandbytes`nprint('bitsandbytes', bitsandbytes.__version__)`n" +
+        "raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"))
+    [void](Invoke-PyStep $MPy "import mivolo env" "import mivolo, transformers, cv2`nprint('mivolo env ok', transformers.__version__)")
     Remove-Item -Recurse -Force $env:UV_CACHE_DIR -ErrorAction SilentlyContinue
     Write-Host "Model Forge setup finished."
     $code = 0
 } catch {
     Write-Host "Model Forge setup failed: $_"
+    try { Set-Content -LiteralPath $ErrorFile -Value "$($_.Exception.Message)" -Encoding ascii } catch { }
     $code = 1
 } finally {
     Stop-Transcript | Out-Null

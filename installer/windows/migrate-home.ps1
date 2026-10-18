@@ -14,9 +14,10 @@
 #   an app or Python is running from the old home or the program folder -> exit 2, nothing moved
 #   the rename fails           -> exit 3, old folder unchanged
 #   new is a file or a link    -> exit 4, nothing moved
+#   the move does not finish within -TimeoutSec (120 s) -> exit 3, process tree killed
 # Running it again after a move is a no-op. Log: <new home>\logs\home-migration.log, or
 # %TEMP%\voxprint-home-migration.log while no new home exists.
-param([string]$AppDir = "")
+param([string]$AppDir = "", [switch]$Inner, [int]$TimeoutSec = 120)
 
 $ErrorActionPreference = "Stop"
 $Old = Join-Path $env:LOCALAPPDATA "Voxprint"
@@ -41,6 +42,29 @@ function Finish([int]$Code) {
 function Test-Link([string]$Path) {
     $item = Get-Item -LiteralPath $Path -Force
     return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+# The work runs in a child process (-Inner) with stdin from an empty file and a hard timeout.
+if (-not $Inner) {
+    try {
+        $hostExe = (Get-Process -Id $PID).Path
+        $none = Join-Path $env:TEMP "voxprint-home-migration-stdin.txt"
+        [IO.File]::WriteAllText($none, "")
+        $argLine = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Inner"
+        if ($AppDir) { $argLine += " -AppDir `"$AppDir`"" }
+        $p = Start-Process -FilePath $hostExe -ArgumentList $argLine -NoNewWindow -PassThru -RedirectStandardInput $none
+        [void]$p.Handle
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+            Start-Process -FilePath (Join-Path $env:SystemRoot "System32\taskkill.exe") -ArgumentList "/T /F /PID $($p.Id)" -NoNewWindow -Wait
+            Say "FAILED: home migration did not finish within $TimeoutSec s; process tree killed"
+            Finish 3
+        }
+        $p.WaitForExit()
+        exit $p.ExitCode
+    } catch {
+        Say "FAILED: could not run the home migration: $($_.Exception.Message)"
+        Finish 3
+    }
 }
 
 try {
