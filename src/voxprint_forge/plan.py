@@ -61,6 +61,7 @@ class ModelPlan:
     moe_layers: int = 0
     expert_fraction: float = 0.0
     encoder_gib: float = 0.0
+    refusal_verified: bool = False  # set only after the refusal probe passes
 
     def source_files(self) -> tuple[PinnedFile, ...]:
         """Pinned files whose role is source."""
@@ -211,6 +212,7 @@ def _model(raw: object) -> ModelPlan:
         moe_layers=int(raw.get("moe_layers", 0)),
         expert_fraction=float(raw.get("expert_fraction", 0)),
         encoder_gib=float(raw.get("encoder_gib", 0)),
+        refusal_verified=bool(raw.get("refusal_verified", False)),
     )
 
 

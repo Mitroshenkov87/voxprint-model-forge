@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voxprint-app-models/1",
+  "title": "Per-app required and optional models (voxprint-app-models/1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "app", "required", "optional", "models"],
+  "properties": {
+    "schema": {"const": "voxprint-app-models/1"},
+    "app": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "required": {"type": "array", "items": {"$ref": "#/$defs/id"}, "minItems": 1, "uniqueItems": true},
+    "optional": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "models": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/model"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "revision", "license", "size", "files"],
+      "oneOf": [{"required": ["repo"]}, {"required": ["url"]}],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "display_name": {"type": "string", "minLength": 1},
+        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "url": {"type": "string", "pattern": "^https://.+/$"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "license": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 1},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "size", "sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"$ref": "#/$defs/sha"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

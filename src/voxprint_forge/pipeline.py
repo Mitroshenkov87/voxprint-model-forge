@@ -1150,7 +1150,8 @@ def _with_manifest(
     date: str,
 ) -> list[Artifact]:
     budgets = [float(tier["min_vram_gb"]) for tier in tiers]
-    flags = ("least-censored",) if model.mode == "ablate" or model.already_abliterated else ()
+    # A name or an upstream claim is not evidence: the flag needs a passed refusal probe.
+    flags = ("least-censored",) if model.refusal_verified else ()
     document = build_document(
         model_id=model.id,
         display_name=hub_title(model.id),

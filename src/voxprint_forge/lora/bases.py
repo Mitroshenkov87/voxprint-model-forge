@@ -193,7 +193,9 @@ class ZImageAdapter(BaseAdapter):
     covers the engine with a tiny stand-in.
     """
 
-    info = BaseInfo("z-image", "Tongyi-MAI/Z-Image", "main", "Apache-2.0", "Z-Image")
+    info = BaseInfo(
+        "z-image", "Tongyi-MAI/Z-Image", "04cc4abb7c5069926f75c9bfde9ef43d49423021", "Apache-2.0", "Z-Image"
+    )
     target_modules = (
         "attention.to_q",
         "attention.to_k",
@@ -405,7 +407,13 @@ class MossImageAdapter(BaseAdapter):
     the GPU calibration run; until then loading raises ``lora.err.base_missing``.
     """
 
-    info = BaseInfo("moss-image-base", "OpenMOSS-Team/MOSS-Image-Base", "main", "Apache-2.0", "MOSS-Image Base")
+    info = BaseInfo(
+        "moss-image-base",
+        "OpenMOSS-Team/MOSS-Image-Base",
+        "1ceede80badddd6a7812069619edaa5633587192",
+        "Apache-2.0",
+        "MOSS-Image Base",
+    )
     trainable = False
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:

@@ -421,7 +421,7 @@ def document_from_repo(repo: RemoteRepo, *, date: str = "") -> dict[str, object]
         for item in repo.files
         if item.path != MANIFEST_NAME
     ]
-    flags = repo.flags or (("least-censored",) if "abliterat" in repo.repo_id.lower() else ())
+    flags = repo.flags  # never inferred from a repo name; see docs/MODEL-MANIFEST.md
     return build_document(
         model_id=model_id,
         display_name=repo.display_name or hub_title(model_id),
@@ -949,7 +949,6 @@ def _snapshot(api: HfApi, info: object) -> RemoteRepo:
         files=tuple(files),
         base_model=_card_text(card, "base_model"),
         task=task,
-        flags=("least-censored",) if "abliterat" in repo_id.lower() else (),
     )
 
 

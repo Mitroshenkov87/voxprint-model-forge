@@ -306,7 +306,7 @@ def test_run_all_uploads_private_and_skips_huge_reuse(tmp_path: Path, llama_bin:
     assert mdl_doc["license"] == "apache-2.0"
     assert mdl_doc["id"] == "tiny"
     assert mdl_doc["runtime"] == {"engine": "llama.cpp", "version_req": "b11476"}
-    assert "least-censored" in mdl_doc["flags"]
+    assert mdl_doc["flags"] == []  # already_abliterated is an upstream claim, not a verified one
     assert mdl_doc["on_demand"] is True
     assert "voxprint-model.json" not in {item["path"] for item in mdl_doc["files"]}
     assert {item["kind"] for item in mdl_doc["mirrors"]} == {"hf", "kaggle"}

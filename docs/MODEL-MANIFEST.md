@@ -48,7 +48,7 @@ Every field is required. The SPDX key is `license`.
 | `runtime` | `engine` is `llama.cpp`, `diffusers`, or `nunchaku`, plus `version_req`. |
 | `base_model` | Upstream repo id. Empty when a dry-run backfill could not read one. |
 | `card_url` | `https://huggingface.co/<repo>` for the mirror that holds this file. An `hf` mirror with `ours` set, or the single `Mitroshenkov87` mirror, wins over an upstream author listed first. One `hf` mirror is that repo. Empty when there is no `hf` mirror. |
-| `flags` | Includes `least-censored` when the plan ablates or the base was already abliterated. |
+| `flags` | Includes `least-censored` only when the plan sets `refusal_verified = true` after the refusal probe passed. A repo name, `mode = "ablate"` or `already_abliterated` is not enough, and backfill never infers it. |
 | `on_demand` | `true` for these downloadable weights. |
 | `build` | `forge_version`, `tag`, `date`. `tag` is `""` until a release tag is passed in. |
 
@@ -168,3 +168,15 @@ Without the pin, `index build` asks the Hub for the last commit that touches
 validate built documents against it. Publish also checks the same required
 shape in process, so a bad document is not uploaded when the schema package
 is absent.
+
+## App models
+
+`manifests/model-forge.models.json` (`voxprint-app-models/1`) is the per-app list.
+Required: Z-Image base BF16 (`Tongyi-MAI/Z-Image@04cc4abb`), Qwen3-VL-4B-Instruct
+(`@ebb281ec`), MiVOLO v2 (`iitolstykh/mivolo_v2@53393526`) and YuNet 2023mar
+(opencv_zoo `@47534e27`). Optional: Florence-2-large (`@21a599d4`), MOSS-Image Base
+(`@1ceede80`), Z-Image-Turbo (`@f332072a`) and DINOv2-base (`@f9e44c81`). Every
+entry has a full commit, the file list with size and sha256, and the licence; all
+are permissive. `voxprint_forge.app_models.missing_required()` reads this file. The
+LoRA bases in `lora/bases.py` use the same commits. `scripts/gen_app_models.py`
+regenerates it from the Hugging Face API without a token.
