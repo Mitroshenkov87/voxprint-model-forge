@@ -747,3 +747,22 @@ def test_per_file_sources_put_the_author_first_only_where_the_bytes_match() -> N
         assert {key: after[key] for key in ("path", "size", "sha256")} == before
     with pytest.raises(StageError):
         per_file_sources(document, ["missing.gguf"])
+
+
+def test_an_abliterated_name_is_not_a_least_censored_claim() -> None:
+    import dataclasses
+
+    from voxprint_forge.mdl import document_from_repo
+
+    repo = RemoteRepo(
+        repo_id="Mitroshenkov87/voxprint-example-abliterated",
+        revision="abc123",
+        license="apache-2.0",
+        files=(RemoteFile("model.gguf", 3, "cd" * 32),),
+        base_model="org/example-abliterated",
+        task="text-generation",
+    )
+    assert document_from_repo(repo)["flags"] == []
+    verified = dataclasses.replace(repo, flags=("least-censored",))
+    assert document_from_repo(verified)["flags"] == ["least-censored"]
+

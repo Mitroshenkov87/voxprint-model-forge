@@ -93,8 +93,10 @@ def what_changed(model: ModelPlan, ablation: dict[str, object] | None) -> str:
     """Card paragraph describing the requant or the refusal-direction ablation."""
     if model.mode == "requant" or model.already_abliterated:
         return (
-            f"Requant of upstream abliterated {model.repo} at revision {model.revision}. "
-            "Forge does not repeat that ablation. The 24 GB tier reuses a pinned "
+            f"Requant of {model.repo} at revision {model.revision}, which its author "
+            "publishes as abliterated. Forge does not repeat that ablation"
+            + ("." if model.refusal_verified else " and has not verified it yet.")
+            + " The 24 GB tier reuses a pinned "
             "upstream GGUF when one fits; the 16 GB tier is quantized here."
         )
     if model.mode == "ablate":

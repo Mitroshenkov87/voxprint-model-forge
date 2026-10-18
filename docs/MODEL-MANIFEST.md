@@ -48,7 +48,7 @@ Every field is required. The SPDX key is `license`.
 | `runtime` | `engine` is `llama.cpp`, `diffusers`, or `nunchaku`, plus `version_req`. |
 | `base_model` | Upstream repo id. Empty when a dry-run backfill could not read one. |
 | `card_url` | `https://huggingface.co/<repo>` for the mirror that holds this file. An `hf` mirror with `ours` set, or the single `Mitroshenkov87` mirror, wins over an upstream author listed first. One `hf` mirror is that repo. Empty when there is no `hf` mirror. |
-| `flags` | Includes `least-censored` when the plan ablates or the base was already abliterated. |
+| `flags` | Includes `least-censored` only when the plan sets `refusal_verified = true` after the refusal probe passed. A repo name, `mode = "ablate"` or `already_abliterated` is not enough, and backfill never infers it. |
 | `on_demand` | `true` for these downloadable weights. |
 | `build` | `forge_version`, `tag`, `date`. `tag` is `""` until a release tag is passed in. |
 
