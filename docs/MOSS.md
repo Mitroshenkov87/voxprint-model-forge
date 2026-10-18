@@ -24,7 +24,7 @@ The pipeline file is vendored verbatim at `src/voxprint_forge/vendored/moss_imag
 - `trust_remote_code=False`;
 - no `custom_pipeline`.
 
-It needs diffusers>=0.38 and transformers>=5.3, which is the `moss` extra. The forge venv still pins diffusers<0.38, so the fit job uses its own venv.
+It needs diffusers>=0.38 and transformers>=5.3. The app venv has diffusers 0.41 and transformers 5.3 or newer; the fit job keeps its own venv (the `moss` extra).
 
 ## LoRA
 

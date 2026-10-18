@@ -20,7 +20,7 @@ from voxprint_forge.diffusion import moss
 from voxprint_forge.errors import StageError
 from voxprint_forge.lora import bases
 from voxprint_forge.lora.bases import MossImageAdapter
-from voxprint_forge.lora.errors import LoraStageError
+from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.export import export
 from voxprint_forge.lora.layers import LoRALinear
@@ -334,3 +334,15 @@ def test_old_runtime_stops_with_a_named_error(monkeypatch, tmp_path) -> None:
     with pytest.raises(LoraStageError) as caught:
         MossImageAdapter().load(tmp_path, build_config("balanced", "balanced", 24), "cpu")
     assert caught.value.key == "lora.err.base_runtime" and "0.37.1" in str(caught.value)
+
+
+def test_moss_lora_can_be_hidden(monkeypatch) -> None:
+    monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
+    assert "moss-image-base" in {info.mdl_id for info in bases.trainable()}
+    monkeypatch.setenv("VOXPRINT_FORGE_MOSS_LORA", "0")
+    assert [info.mdl_id for info in bases.trainable()] == ["z-image"]
+    assert "moss-image-base" in {info.mdl_id for info in bases.available()}
+    with pytest.raises(LoraUsageError) as caught:
+        bases.get_adapter("moss-image-base")
+    assert caught.value.key == "lora.err.base_missing"
+    assert bases.get_adapter("z-image").info.mdl_id == "z-image"
