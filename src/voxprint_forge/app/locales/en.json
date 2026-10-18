@@ -211,6 +211,8 @@
   "forge.app.step.train.short": "Pick a preset and start training.",
   "forge.app.subject.adult": "Subject is 18+",
   "forge.app.subject.adult_content": "Dataset contains adult content (18+)",
+  "forge.app.subject.attr": "Subject attribute",
+  "forge.app.subject.attr.tip": "Optional whole number from 18 to 99.",
   "forge.app.subject.choose_kind": "Choose what the photos show in step 1 first.",
   "forge.app.subject.consent": "Consent obtained",
   "forge.app.subject.name": "Name",

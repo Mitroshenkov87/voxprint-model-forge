@@ -45,6 +45,7 @@
  "lora.err.refset_strength": "Choose a variation strength from {low} to {high}.",
  "lora.err.refset_teacher_missing": "The picture model Z-Image-Turbo is not installed. Install it in Manage models.",
  "lora.err.refset_unreadable": "A reference could not be read or is smaller than 512 pixels.",
+ "lora.err.subject_attr": "Enter a whole number from 18 to 99, and only for a person confirmed as 18 or older.",
  "lora.err.text_encoder": "This base model cannot train its text encoder.",
  "lora.err.too_few": {
   "by": "need",

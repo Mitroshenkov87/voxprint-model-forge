@@ -82,6 +82,12 @@ def _subject_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--trigger", default="", help="Word that calls the model in a prompt.")
     command.add_argument("--consent-obtained", action="store_true", help="Person: consent was obtained.")
     command.add_argument("--subject-adult", action="store_true", help="Person: the subject is 18 or older.")
+    command.add_argument(
+        "--subject-age",
+        type=int,
+        default=None,
+        help="Optional whole number from 18 to 99. Only for a person confirmed as 18 or older.",
+    )
     command.add_argument("--rights-confirmed", action="store_true", help="Object or style: you have the rights.")
     command.add_argument("--release", type=Path, default=None, help="Optional model release file.")
     command.add_argument(
@@ -290,6 +296,7 @@ def subject_from(args: argparse.Namespace) -> Subject:
         release=args.release,
         consent_method=args.consent_method,
         adult_content=args.adult_content,
+        subject_age=args.subject_age,
     )
 
 

@@ -174,6 +174,23 @@ def test_adult_content_shows_right_of_18_only_when_ticked(make_app, tmp_path) ->
     assert not content.isVisibleTo(app.window) and not content.isChecked() and not app.draft.adult_content
 
 
+def test_subject_attr_is_disabled_and_cleared_when_18_is_unticked(make_app, tmp_path) -> None:
+    app = make_app()
+    _subject_step(app, tmp_path)
+    field = app.window.findChild(QtWidgets.QLineEdit, "forge.subject.attr")
+    adult = _box(app, "adult")
+    assert field is not None and not field.isEnabled() and field.text() == "" and app.draft.attr is None
+    adult.click()
+    assert field.isEnabled()
+    field.setText("42")
+    QtWidgets.QApplication.processEvents()
+    assert app.draft.attr == 42 and field.text() == "42"
+    adult.click()
+    QtWidgets.QApplication.processEvents()
+    assert not field.isEnabled() and field.text() == "" and app.draft.attr is None
+    assert not app.draft.adult_content
+
+
 @pytest.mark.parametrize("lang", ["en", "ru"])
 def test_subject_rows_wrap_without_clipping_in_a_narrow_window(make_app, tmp_path, lang) -> None:
     app = make_app(lang=lang)
