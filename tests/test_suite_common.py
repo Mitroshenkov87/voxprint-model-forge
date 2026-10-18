@@ -153,3 +153,27 @@ def test_model_components_stay_under_the_shared_root(tmp_path: Path, monkeypatch
         resolve_model_component("/tmp/outside/weights.gguf")
     monkeypatch.delenv("VOXPRINT_MODEL_CACHE")
     assert resolve_model_component("model-forge/llm/weights.gguf").is_relative_to(models_dir())
+
+
+def test_legacy_home_moves_on_first_use(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """voxprint-common 0.4.0: read_home() stops reading the legacy home, home() still moves it."""
+    from voxprint_common import paths
+
+    for name in ("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    legacy = paths.legacy_home()
+    (legacy / "models" / "dummy").mkdir(parents=True)
+    (legacy / "models" / "dummy" / "w.bin").write_bytes(b"x")
+    assert paths.read_home() == paths.final_home()
+    assert models_dir() == paths.final_home() / "models"
+    assert (paths.final_home() / "models" / "dummy" / "w.bin").read_bytes() == b"x"
+    assert not legacy.exists()
+
+
+def test_forge_never_reads_the_home_without_migrating() -> None:
+    """Forge goes through home()-based helpers only, so a legacy home is moved, never skipped."""
+    src = Path(__file__).resolve().parents[1] / "src" / "voxprint_forge"
+    users = [p.name for p in src.rglob("*.py") if "read_home" in p.read_text(encoding="utf-8")]
+    assert users == []
