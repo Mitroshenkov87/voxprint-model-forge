@@ -82,3 +82,41 @@ The loader rejects an empty `revision` for both kinds, `repo = "local"` on an `h
 revision on an `hf` entry. `forge kl --quant /path/file.gguf` builds the same entry. `python -m
 voxprint_forge.requant_check kl-plan` writes the GEMMA4-REQUANT plan from the quant stage's `new-files.sha256` and
 loads it back before any GPU work.
+
+## G4R rerun (probe and KL)
+
+The 2026-10-18 07:29 MSK G4R resume returned 24/24 empty probe replies on all four arms, stock included. Root cause:
+Gemma 4's chat template supports thinking and `llama-server` b11476 with `--jinja` turns it on by default
+(`--reasoning auto`). Each reply opened a thought channel, which the server moves to `message.reasoning_content`. All
+192 requested tokens went into the thought, so `message.content`, the only field the probe read, was empty. The server
+logs show every request generating exactly 192 tokens. The probe now sends `chat_template_kwargs.enable_thinking =
+false`, and the server is started with `--reasoning off`. It scores `content` only, and records `finish_reason`,
+token counts and `thinking_only` (an empty answer whose tokens went to the thought channel) without any text.
+`--raw-log` appends every request and response, text included, to an owner-only file outside the results directory.
+
+The stock arm is the control. If it has more than 2 empty replies out of 24, `requant_check stock-gate` and the
+verdict exit 3 (`probe harness invalid`), and the quant arms are not run. Empty replies on a quant arm still fail
+the verdict (#84).
+
+`forge kl` now keeps the full llama-perplexity output as `perplexity-<name>.log` next to `summary.json`.
+
+`python -m voxprint_forge.g4r_rerun` runs KL, then the probe, then the verdict on the existing tiers, with no
+re-quant. The reference is either the synth4 F16 (`--reference f16-local`, sha256 pinned) or a Q8_0 rebuilt from
+the author's safetensors at the pinned revision (`--reference q8_0-upstream`). The rebuild checks all 10 author
+files and uses the pinned `convert_hf_to_gguf.py`. The reference and every tier run through one binary with one
+corpus, chunk count and ctx, and every run's stdout is kept with its argv and sha256s. The reference check fails the
+stage when the tiers read different reference logits or the reference is not the pinned file. Entry points:
+
+- `scripts/vm_g4r_rerun.sh`: Linux, synth4 layout.
+- `scripts/win_g4r_rerun.ps1`: Windows, 24 GB. It sets up the pinned llama.cpp b11476 CUDA 12.4 release, cudart
+  and source zips, and uses `--fit on` because a Q8_0 31B does not fit in VRAM.
+
+Both accept `--dry-run` / `-DryRun`.
+
+On the KL magnitude: Gemma 4 instruct models scored on raw prose (`ppl.txt`, 3 to 4 chunks of 512) are far from
+their chat distribution. The 31B base PPL was about 50,900, and many target tokens sit more than 16 nats below the
+top token. Mean KL is therefore dominated by the tail. A local check on gemma-4-E2B-it (b11476, CPU, same corpus)
+gives Q4_K_M against Q8_0 a mean KLD of 0.46 and a top-1 agreement of 73.5%. Published Gemma-4-31B-it figures give
+Q4_K_M against Q8_0 a top-1 agreement of 74.2% on wikitext. The 0.01 to 0.1 and >90% figures are for base models on
+in-distribution text, and they do not apply here. The verdict compares each tier with L2, which was measured by the
+same harness, and it does not use absolute thresholds.

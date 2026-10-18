@@ -111,6 +111,7 @@ def run_kl(
             )
         )
         base_log = base_done.stdout + base_done.stderr
+        keep_log(work, "base", base_done.argv, base_log)
         quants = [
             _one_quant(job, quant, work, text, logits, arch, active, fetch_fn, str(reference["name"]))
             for quant in job.quants
@@ -140,6 +141,13 @@ def run_kl(
         reclaim_base(source, f16, logits)
         if ablated.exists():
             shutil.rmtree(ablated)
+
+
+def keep_log(work: Path, name: str, argv: Sequence[str], text: str) -> Path:
+    """Full llama-perplexity output next to summary.json (G4R 07:29 kept only the parsed figures)."""
+    path = work / f"perplexity-{name}.log"
+    path.write_text("# argv: " + " ".join(str(item) for item in argv) + "\n" + text, encoding="utf-8")
+    return path
 
 
 def mark_ppl_validity(payload: dict[str, object]) -> None:
@@ -410,6 +418,7 @@ def _one_quant(
             compare=True,
         )
     )
+    keep_log(work, quant.quant, done.argv, done.stdout + done.stderr)
     stats = parse_kl(done.stdout + done.stderr)
     server = runner.capture_until(
         server_argv(tool("llama-server"), path, ctx=job.fit_ctx, port=8088, cache=job.kv_cache),
