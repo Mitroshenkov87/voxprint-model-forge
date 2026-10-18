@@ -36,6 +36,7 @@ from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
 from voxprint_forge.lora import refset
+from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.limits import expert_range_differs
 
 APP_ID = "model-forge"
@@ -536,12 +537,16 @@ class ForgeApp:
             verbal = self._box("forge.app.subject.verbal", "lora.subject.verbal.tip", "verbal", self._set_verbal)
             content = self._box("forge.app.subject.adult_content", "lora.subject.adult_content.tip", "adult_content")
             content.setVisible(self.draft.adult)
+            attr = _attr_edit(self.draft, self._gate)
             adult = self._box(
                 "forge.app.subject.adult", "lora.subject.adult.tip", "adult",
-                lambda checked: self._set_adult(checked, content),
+                lambda checked: self._set_adult(checked, content, attr),
             )
             column.addWidget(_flow_row("forge.subject.consent_row", consent, verbal))
             column.addWidget(_flow_row("forge.subject.adult_row", adult, content))
+            attr_form = QtWidgets.QFormLayout()
+            attr_form.addRow(tr("forge.app.subject.attr"), attr)
+            column.addLayout(attr_form)
         elif kind == "object":
             column.addWidget(self._box("lora.subject.rights_object", "lora.subject.rights_object.tip", "rights"))
         elif kind == "style":
@@ -574,7 +579,7 @@ class ForgeApp:
         column.addLayout(release_row)
         details = {
             "person": ("lora.subject.consent.tip", "lora.subject.verbal.tip", "lora.subject.release.tip",
-                       "lora.subject.adult.tip", "lora.subject.adult_content.tip"),
+                       "lora.subject.adult.tip", "lora.subject.adult_content.tip", "forge.app.subject.attr.tip"),
             "object": ("lora.subject.rights_object.tip", "lora.subject.release.tip"),
             "style": ("lora.subject.rights_style", "lora.subject.rights_style.tip", "lora.subject.release.tip"),
         }.get(kind)
@@ -603,12 +608,14 @@ class ForgeApp:
         self.draft.set_verbal(checked)
         QtCore.QTimer.singleShot(0, self.repaint)  # the release row changes; rebuild after this signal
 
-    def _set_adult(self, checked: bool, content: QtWidgets.QCheckBox) -> None:
-        """The adult-content box sits right of 18 or older and shows only while that is ticked."""
+    def _set_adult(self, checked: bool, content: QtWidgets.QCheckBox, attr: QtWidgets.QLineEdit) -> None:
+        """The adult-content box shows only while 18 or older is ticked; the attribute field is enabled only then."""
         self.draft.set_adult(checked)
         if not checked:
             content.setChecked(False)
+            attr.clear()
         content.setVisible(checked)
+        attr.setEnabled(checked)
         row = content.parentWidget()
         if isinstance(row, FlowRow):
             row.relayout()
@@ -1074,6 +1081,7 @@ class ForgeApp:
             self.draft.kind = kind
             self.draft.consent = self.draft.adult = self.draft.rights = False
             self.draft.verbal = self.draft.adult_content = False
+            self.draft.attr = None
             self.draft.prepared = None
         self._gate()
 
@@ -1531,6 +1539,32 @@ def _edit(text: str, tip: str, name: str) -> QtWidgets.QLineEdit:
     edit = QtWidgets.QLineEdit(text)
     edit.setObjectName(name)
     edit.setToolTip(tr(tip))
+    return edit
+
+
+def _attr_edit(draft: Draft, on_change: Callable[[], None]) -> QtWidgets.QLineEdit:
+    """Optional whole number, enabled only while 18 or older is ticked."""
+    edit = QtWidgets.QLineEdit()
+    edit.setObjectName("forge.subject.attr")
+    edit.setToolTip(tr("forge.app.subject.attr.tip"))
+    edit.setPlaceholderText("18-99")
+    edit.setValidator(QtGui.QIntValidator(LOW, HIGH, edit))
+    edit.setEnabled(draft.adult)
+    if draft.adult and accepted(draft.attr) is not None:
+        edit.setText(str(draft.attr))
+
+    def changed(text: str) -> None:
+        stripped = text.strip()
+        if not stripped:
+            draft.attr = None
+        else:
+            try:
+                draft.attr = int(stripped)
+            except ValueError:
+                draft.attr = None
+        on_change()
+
+    edit.textChanged.connect(changed)
     return edit
 
 

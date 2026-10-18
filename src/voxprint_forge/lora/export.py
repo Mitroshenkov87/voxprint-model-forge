@@ -39,8 +39,13 @@ def gate_like(key: str) -> bool:
     return any(token in RESERVED_TOKENS for token in re.split(r"[._\-]", key.lower()))
 
 
-def header_metadata(data: dict[str, object]) -> dict[str, str]:
+def header_metadata(
+    data: dict[str, object], tensors: dict[str, torch.Tensor] | None = None
+) -> dict[str, str]:
     """The ``voxprint.subject.*`` and ``voxprint.lora.*`` header for a trained project."""
+    # Circular: attr.encode calls tensors_digest in this module.
+    from voxprint_forge.lora import attr as subject_attr
+
     subject = dict(data.get("subject") or {})  # type: ignore[call-overload]
     train = dict(data.get("train") or {})  # type: ignore[call-overload]
     config = dict(train.get("config") or {})
@@ -67,6 +72,10 @@ def header_metadata(data: dict[str, object]) -> dict[str, str]:
         meta["voxprint.subject.consent_method"] = consent_method(subject)
     if kind in ("object", "style"):
         meta["voxprint.subject.rights_confirmed"] = _flag(subject.get("rights_confirmed"))
+    if tensors is not None:
+        encoded = subject_attr.encode(subject.get("attr"), tensors)
+        if encoded is not None:
+            meta[subject_attr.KEY] = encoded
     for key in meta:
         if gate_like(key):
             raise AssertionError(f"gate-like key {key}")
@@ -144,7 +153,7 @@ def export(
         progress.emit("export.licence", "lora.err.base_restrictive")
     tensors = {key: value.detach().cpu().contiguous() for key, value in load_file(str(source)).items()}
     mid = model_id(data, tensors_digest(tensors))
-    meta = header_metadata({**data, "train": {**train, "step": _step(name)}})
+    meta = header_metadata({**data, "train": {**train, "step": _step(name)}}, tensors)
     target = Path(out) if out is not None else project.root / "export" / f"{mid}.safetensors"
     if target.suffix != ".safetensors":
         raise LoraUsageError("lora.err.no_checkpoint")

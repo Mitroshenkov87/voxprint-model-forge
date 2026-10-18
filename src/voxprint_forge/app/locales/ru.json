@@ -215,6 +215,8 @@
   "forge.app.step.train.short": "Выберите предустановку и начните обучение.",
   "forge.app.subject.adult": "Человеку 18 лет или больше",
   "forge.app.subject.adult_content": "Данные содержат материалы для взрослых (18+)",
+  "forge.app.subject.attr": "Атрибут субъекта",
+  "forge.app.subject.attr.tip": "Необязательное целое число от 18 до 99.",
   "forge.app.subject.choose_kind": "Сначала выберите на шаге 1, что изображено на фото.",
   "forge.app.subject.consent": "Согласие получено",
   "forge.app.subject.name": "Имя",

@@ -442,8 +442,9 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--kind {person,object,style}] [--name NAME]
                           [--stage-name STAGE_NAME] [--trigger TRIGGER]
                           [--consent-obtained] [--subject-adult]
-                          [--rights-confirmed] [--release RELEASE]
-                          [--consent-method {verbal,file}] [--adult-content]
+                          [--subject-age SUBJECT_AGE] [--rights-confirmed]
+                          [--release RELEASE] [--consent-method {verbal,file}]
+                          [--adult-content]
                           [--provenance-note PROVENANCE_NOTE]
                           [--mode {simple,expert}]
                           [--allow-count-outside-range]
@@ -467,6 +468,9 @@ options:
   --trigger TRIGGER     Word that calls the model in a prompt.
   --consent-obtained    Person: consent was obtained.
   --subject-adult       Person: the subject is 18 or older.
+  --subject-age SUBJECT_AGE
+                        Optional whole number from 18 to 99. Only for a person
+                        confirmed as 18 or older.
   --rights-confirmed    Object or style: you have the rights.
   --release RELEASE     Optional model release file.
   --consent-method {verbal,file}
@@ -672,6 +676,7 @@ usage: forge lora refset round [-h] --project PROJECT [--ref REF]
                                [--kind {person,object,style}] [--name NAME]
                                [--stage-name STAGE_NAME] [--trigger TRIGGER]
                                [--consent-obtained] [--subject-adult]
+                               [--subject-age SUBJECT_AGE]
                                [--rights-confirmed] [--release RELEASE]
                                [--consent-method {verbal,file}]
                                [--adult-content]
@@ -691,6 +696,9 @@ options:
   --trigger TRIGGER     Word that calls the model in a prompt.
   --consent-obtained    Person: consent was obtained.
   --subject-adult       Person: the subject is 18 or older.
+  --subject-age SUBJECT_AGE
+                        Optional whole number from 18 to 99. Only for a person
+                        confirmed as 18 or older.
   --rights-confirmed    Object or style: you have the rights.
   --release RELEASE     Optional model release file.
   --consent-method {verbal,file}

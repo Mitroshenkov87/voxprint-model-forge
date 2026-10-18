@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from voxprint_forge.lora.attr import accepted
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, RECOMMENDED_RANGE
 from voxprint_forge.lora.refset import REF_RANGE
 
@@ -60,6 +61,7 @@ class Draft:
     verbal: bool = False
     adult: bool = False
     adult_content: bool = False
+    attr: int | None = None
     rights: bool = False
     release: Path | None = None
     note: str = ""
@@ -126,10 +128,11 @@ class Draft:
             self.release = None
 
     def set_adult(self, adult: bool) -> None:
-        """Unticking 18 or older also clears the adult-content label."""
+        """Unticking 18 or older also clears the adult-content label and the optional subject attribute."""
         self.adult = bool(adult)
         if not self.adult:
             self.adult_content = False
+            self.attr = None
 
     def consent_method(self) -> str:
         """``verbal`` or ``file`` for a person, else empty."""
@@ -167,11 +170,16 @@ class Draft:
 
         A person needs Consent obtained plus either Verbal or an attached
         release, and 18 or older. Adult content is a label only.
+        An optional subject attribute is a whole number from 18 to 99.
         """
         if not (self.name or self.stage_name):
             return Check(False, "lora.err.no_name")
         if not self.trigger.strip():
             return Check(False, "forge.app.err.no_trigger")
+        if self.kind == "person" and self.attr is not None and accepted(self.attr) is None:
+            return Check(False, "lora.err.subject_attr")
+        if self.kind == "person" and self.attr is not None and not self.adult:
+            return Check(False, "lora.err.subject_attr")
         if self.kind == "person" and not (self.consent and self.adult):
             return Check(False, "lora.err.no_consent")
         if self.kind == "person" and not (self.verbal or self.release is not None):

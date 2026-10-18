@@ -209,6 +209,8 @@ def _subject_args(draft: Draft) -> list[str]:
             args.append("--subject-adult")
             if draft.adult_content:
                 args.append("--adult-content")
+            if isinstance(draft.attr, int) and not isinstance(draft.attr, bool):
+                args += ["--subject-age", str(draft.attr)]
     elif draft.rights:
         args.append("--rights-confirmed")
     if draft.release is not None and not (draft.kind == "person" and draft.verbal):

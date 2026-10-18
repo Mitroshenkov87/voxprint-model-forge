@@ -7,6 +7,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from voxprint_forge.lora.attr import accepted
 from voxprint_forge.lora.errors import LoraUsageError
 
 KINDS = ("person", "object", "style")
@@ -28,6 +29,7 @@ class Subject:
     release_sha256: str = ""
     consent_method: str = ""
     adult_content: bool = False
+    attr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -51,12 +53,14 @@ def check_subject(
     release: Path | None = None,
     consent_method: str | None = None,
     adult_content: bool = False,
+    subject_age: object = None,
 ) -> Subject:
     if kind not in KINDS:
         raise LoraUsageError("lora.err.no_name")
     name, stage_name = name.strip(), stage_name.strip()
     if not name and not stage_name:
         raise LoraUsageError("lora.err.no_name")
+    declared = _declared_attr(kind, subject_adult, subject_age)
     if adult_content and not (kind == "person" and subject_adult):
         raise LoraUsageError("lora.err.adult_content")
     if kind == "person" and not (consent_obtained and subject_adult):
@@ -88,4 +92,14 @@ def check_subject(
         release_sha256=digest,
         consent_method=method,
         adult_content=bool(adult_content),
+        attr=declared,
     )
+
+
+def _declared_attr(kind: str, subject_adult: bool, subject_age: object) -> int | None:
+    if kind != "person" or subject_age is None:
+        return None
+    number = accepted(subject_age)
+    if number is None or not subject_adult:
+        raise LoraUsageError("lora.err.subject_attr")
+    return number
