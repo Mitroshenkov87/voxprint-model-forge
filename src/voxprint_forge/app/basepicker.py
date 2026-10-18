@@ -10,13 +10,14 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from voxprint_forge.app.text import tr
-from voxprint_forge.lora.presets import VRAM_TIERS
+from voxprint_forge.lora.presets import MEASURED, VRAM_TIERS
 
-# Peak training memory in GB per base and tier, from LORA-CALIB (``train16`` / ``train24`` peak_vram_gb).
-# TODO(lora-calib): LORA-CALIB has not produced training numbers yet (the 17 Oct run stopped at prepare).
-# Fill this from its summary.json, e.g. {"z-image": {16: <peak>, 24: <peak>}}; until then the list shows
-# the preset tier ("16 GB+"), never a guessed figure, and Details and the tooltip have no memory line.
-MEASURED_PEAK_GB: dict[str, dict[int, float]] = {}
+# Peak training memory in GB per base and tier: the peak reserved memory of the measured runs in
+# ``presets.MEASURED`` (MOSS-Image Base: moss-memprobe v2 train16 13.6, train24 18.5). A base with no
+# measurement (Z-Image so far) shows the preset tier ("16 GB+"), never a guessed figure.
+MEASURED_PEAK_GB: dict[str, dict[int, float]] = {
+    mdl_id: {tier: run.peak_reserved_gb for tier, run in tiers.items()} for mdl_id, tiers in MEASURED.items()
+}
 
 DETAIL_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 MIN_WIDTH = 220  # px, the closed picker
@@ -47,9 +48,14 @@ def vram_text(mdl_id: str) -> str:
 
 def memory_details() -> str | None:
     """The measured video memory sentence for Details, or None (no line at all) until calibration has run."""
-    if not MEASURED_PEAK_GB:
+    from voxprint_forge.lora.bases import available
+
+    names = {info.mdl_id: info.display_name for info in available()}
+    measured = [mdl_id for mdl_id in MEASURED_PEAK_GB if MEASURED_PEAK_GB[mdl_id]]
+    if not measured:
         return None
-    return tr("forge.app.base.vram_measured.tip", vram=", ".join(vram_text(mdl_id) for mdl_id in MEASURED_PEAK_GB))
+    return tr("forge.app.base.vram_measured.tip",
+              vram=", ".join(f"{names.get(mdl_id, mdl_id)} {vram_text(mdl_id)}" for mdl_id in measured))
 
 
 def detail_line(mdl_id: str) -> str:

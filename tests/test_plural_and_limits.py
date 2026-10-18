@@ -125,7 +125,9 @@ def test_the_manual_uses_the_constant_ranges() -> None:
     allowed = {limits.RECOMMENDED_RANGE, limits.EXPERT_RANGE, (1, 10), (15, 20)}  # (15, 20): the "usually enough" tip
     for lang, recommended, expert in (("en", "Recommended: {} to {}", "Allowed in Expert: {} to {}"),
                                       ("ru", "от {} до {}", "Допустимо в режиме эксперта: от {} до {}")):
-        manual = (ROOT / "docs" / "manual" / f"{lang}.md").read_text(encoding="utf-8")
+        manual = "\n".join(page.read_text(encoding="utf-8")
+                           for page in sorted((ROOT / "docs" / "manual" / lang).glob("*.md")))
+        assert manual
         assert recommended.format(*limits.RECOMMENDED_RANGE) in manual
         if limits.expert_range_differs():
             assert expert.format(*limits.EXPERT_RANGE) in manual

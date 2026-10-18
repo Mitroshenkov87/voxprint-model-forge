@@ -2,19 +2,38 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>VOXPrint AI Model Forge: user manual</title>
+<title>Model Forge user manual</title>
 <style>body{font-family:system-ui,'Segoe UI',sans-serif;max-width:860px;margin:2em auto;padding:0 1em;line-height:1.5;color:#e8e6e3;background:#1e1e24}a{color:#f6d365}img{max-width:100%;border-radius:6px}table{border-collapse:collapse}td,th{border:1px solid #444;padding:4px 8px}code{background:#2a2a33;padding:0 3px}</style>
 </head>
 <body>
-<h1>VOXPrint AI Model Forge: user manual</h1>
-<p><em>Version 0.1. <a href="ru.html">Русская версия</a>.</em></p>
-<p>Pictures marked <strong>Screenshot placeholder</strong> will be added later.</p>
-<h2>1. What Model Forge is</h2>
+<p><a id="page-index"></a></p>
+<h1 id="model-forge-user-manual">Model Forge user manual</h1>
+<p><em>Version 0.2 (release candidate). <a href="ru.html">Русская версия</a>.</em></p>
 <p>Model Forge teaches a picture model something new from your own photos: a person, an object or a style. The result is a small add-on file called a LoRA. You can use it in VOXPrint AI Canvas to make new pictures of that person, object or style.</p>
 <p>Everything happens on your computer. Your photos, the descriptions and the trained model are not uploaded anywhere.</p>
-<p>Model Forge has a few more tools for advanced users (model conversion, measurements). This manual covers training a LoRA.</p>
-<h2>2. Requirements and install</h2>
-<p><strong>Requirements</strong></p>
+<h2 id="contents">Contents</h2>
+<ol>
+<li><a href="#page-install">Install</a>: requirements, setup and removal.</li>
+<li><a href="#page-models">Model download</a>: the VOXPrint model downloader (MDL), sources, licences and disk space.</li>
+<li><a href="#page-project">Creating a LoRA project</a>: photos, names, consent, the 18+ confirmation and the optional release file.</li>
+<li><a href="#page-presets">Presets</a>: Quick test, Balanced and Best quality, likeness, graphics card tiers and the measured figures.</li>
+<li><a href="#page-training">Training</a>: checking and preparing photos, settings, progress, pause and stop.</li>
+<li><a href="#page-export">Export</a>: choosing a version, saving the LoRA and using it in Canvas.</li>
+<li><a href="#page-compression">Compression tests</a>: how compressed model parts are tested before the app uses them.</li>
+<li><a href="#page-memory">Computer memory (RAM) tiers</a>: what 32, 64 and 96 GB mean.</li>
+<li><a href="#page-troubleshooting">Troubleshooting, privacy and licences</a>.</li>
+</ol>
+<h2 id="simple-and-expert-mode">Simple and Expert mode</h2>
+<ul>
+<li><strong>Simple mode</strong> (the default) guides you through six steps with safe default settings. You choose a preset and the app picks the numbers.</li>
+<li><strong>Expert mode</strong> (the <strong>Expert mode</strong> button, top right) shows every training setting in a side panel on the right.</li>
+</ul>
+<p><img alt="Expert mode on the Train step" src="img/en-expert-5-train.png" /></p>
+<p>The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Each step shows one short line; <strong>Details ▸</strong> under it opens the full explanation.</p>
+<p>The screenshots in this manual use a demo project with neutral placeholder pictures.</p>
+<p><a id="page-install"></a></p>
+<h1 id="install">Install</h1>
+<h2 id="requirements">Requirements</h2>
 <table>
 <thead>
 <tr>
@@ -36,8 +55,12 @@
 <td>A current NVIDIA driver</td>
 </tr>
 <tr>
+<td>Computer memory (RAM)</td>
+<td>32 GB. See <a href="#page-memory">RAM tiers</a>.</td>
+</tr>
+<tr>
 <td>Disk</td>
-<td>About 45 GB free: about 35 GB for the models, plus the app and your projects</td>
+<td>About 45 GB free: about 35 GB for the models, plus the app and your projects. With MOSS-Image Base as well, add about 27 GB.</td>
 </tr>
 <tr>
 <td>Internet</td>
@@ -45,21 +68,22 @@
 </tr>
 </tbody>
 </table>
-<p>The figures for memory and time will be updated after the final GPU tests.</p>
-<p><strong>Install on Windows</strong></p>
+<h2 id="install-on-windows">Install on Windows</h2>
 <ol>
 <li>Run <code>VoxprintModelForgeSetup.exe</code> and confirm the administrator prompt.</li>
 <li>The setup copies the app to <code>C:\Program Files\VOXPrint AI Suite\Model Forge</code>, then downloads Python and the libraries it needs. This takes a few minutes. Keep the computer online.</li>
 <li>When it finishes, open <strong>VOXPrint AI Model Forge</strong> from the Start menu folder <strong>VOXPrint AI Suite</strong>.</li>
 </ol>
-<p>If the setup fails, it shows the path to its log: <code>C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log</code>.</p>
-<blockquote>
-<p><strong>Screenshot placeholder:</strong> the setup window while it installs.</p>
-</blockquote>
-<p>To remove the app, use <strong>Uninstall VOXPrint AI Model Forge</strong> in the same Start menu folder, or Windows Settings. Your projects and downloaded models stay in place (see section 7).</p>
-<h2>3. First launch: model download, sources, licences, disk</h2>
-<p>Model Forge needs some models before it can train. They are not inside the setup, so it stays small. On the first launch, open <strong>Check this computer</strong> and press <strong>Manage models</strong>. The VOXPrint model downloader (MDL) opens and lists what is missing.</p>
-<p><img alt="Check this computer" src="img/en-simple-6-check.png" /></p>
+<p>If the setup fails, it shows the path to its log: <code>C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log</code>. Check the internet connection and run the setup again.</p>
+<h2 id="first-launch">First launch</h2>
+<p>Open the <strong>Check this computer</strong> tab. It lists the graphics card, the computer memory, the free disk space and which models are missing. Press <strong>Manage models</strong> to download them (see <a href="#page-models">Model download</a>), then <strong>Check again</strong>.</p>
+<p><img alt="Check this computer" src="img/en-simple-check.png" /></p>
+<h2 id="remove-the-app">Remove the app</h2>
+<p>Use <strong>Uninstall VOXPrint AI Model Forge</strong> in the same Start menu folder, or Windows Settings. Your projects and downloaded models stay in place. To remove them as well, see <a href="#privacy">Privacy</a>.</p>
+<p><a id="page-models"></a></p>
+<h1 id="model-download-mdl">Model download (MDL)</h1>
+<p>Model Forge needs some models before it can train. They are not inside the setup, so the setup stays small. On the first launch, open <strong>Check this computer</strong> and press <strong>Manage models</strong>. The VOXPrint model downloader (MDL) opens and downloads what is missing.</p>
+<p><img alt="The model downloader with the Model Forge models" src="img/en-mdl-download.png" /></p>
 <table>
 <thead>
 <tr>
@@ -80,21 +104,21 @@
 </tr>
 <tr>
 <td>Qwen3-VL-4B-Instruct</td>
-<td>Writes photo descriptions and checks every photo</td>
+<td>Writes photo descriptions; required for preparing photos</td>
 <td>Qwen/Qwen3-VL-4B-Instruct</td>
 <td>Apache-2.0</td>
 <td>8.9 GB</td>
 </tr>
 <tr>
 <td>MiVOLO v2</td>
-<td>Safety check</td>
+<td>Required for preparing photos</td>
 <td>iitolstykh/mivolo_v2</td>
 <td>Apache-2.0</td>
 <td>0.1 GB</td>
 </tr>
 <tr>
 <td>YuNet (2023mar)</td>
-<td>Finds faces (safety check)</td>
+<td>Finds faces; required for preparing photos</td>
 <td>opencv/opencv_zoo</td>
 <td>MIT</td>
 <td>under 1 MB</td>
@@ -104,7 +128,7 @@
 <td>Backup description writer</td>
 <td>microsoft/Florence-2-large</td>
 <td>MIT</td>
-<td>3.1 GB</td>
+<td>1.6 GB</td>
 </tr>
 <tr>
 <td>MOSS-Image Base</td>
@@ -113,122 +137,333 @@
 <td>Apache-2.0</td>
 <td>27.2 GB</td>
 </tr>
+<tr>
+<td>Z-Image-Turbo</td>
+<td>Draws the pictures in <strong>Build a set</strong> (optional)</td>
+<td>Tongyi-MAI/Z-Image-Turbo</td>
+<td>Apache-2.0</td>
+<td>32.9 GB</td>
+</tr>
+<tr>
+<td>DINOv2 base</td>
+<td>Marks near-duplicate pictures in <strong>Build a set</strong> (optional)</td>
+<td>facebook/dinov2-base</td>
+<td>Apache-2.0</td>
+<td>0.4 GB</td>
+</tr>
 </tbody>
 </table>
 <ul>
 <li><strong>Sources.</strong> Every model is downloaded from its author's official page, at a fixed version. The downloader checks each file against its published checksum before it is used.</li>
 <li><strong>Licences.</strong> Each model keeps its own licence. Read it in Manage models before you use the model. Your LoRA inherits the licence of the base model it was trained on.</li>
-<li><strong>Disk.</strong> Models go to the shared VOXPrint models folder, by default <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>. Other VOXPrint apps use the same folder, so a model is downloaded only once. Downloads continue in the background if you close the downloader window, and they resume after an interruption.</li>
+<li><strong>Disk.</strong> Models go to the shared VOXPrint models folder, by default <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>. Other VOXPrint apps use the same folder, so a model is downloaded only once.</li>
+<li><strong>Background and resume.</strong> Downloads continue in the background if you close the downloader window, and they resume after an interruption. <strong>Pause</strong> and <strong>Cancel</strong> are at the bottom of the window.</li>
 </ul>
-<blockquote>
-<p><strong>Screenshot placeholder:</strong> Manage models with the Model Forge models.</p>
-</blockquote>
-<h2>4. Simple and Expert mode</h2>
-<ul>
-<li><strong>Simple mode</strong> (default) guides you through six steps with safe default settings. You choose a preset; the app picks the numbers.</li>
-<li><strong>Expert mode</strong> (the <strong>Expert mode</strong> button, top right) shows every training setting in a side panel. Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.</li>
-</ul>
-<p><img alt="Expert mode" src="img/en-expert-4-train-running.png" /></p>
-<p>The safety check (section 5.3) works the same in both modes. Expert mode has no safety settings.</p>
-<h2>5. Training a LoRA: person, object, style</h2>
-<p>Start with <strong>More → New model</strong>. The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Step 3 is used only when you build the set from references (section 5.7); with your own photos it is passed on its own. Each step shows one short line. <strong>Details ▸</strong> under it opens the full explanation; it starts closed. The subject and base-model choices have their own <strong>Details ▸</strong>.</p>
-<h3>5.1 Photos</h3>
+<p>To remove a model you no longer need, open <strong>Manage models</strong> again: it lists installed models with their size and licence.</p>
+<p><a id="page-project"></a></p>
+<h1 id="creating-a-lora-project">Creating a LoRA project</h1>
+<p>Start with <strong>More → New model</strong>. A project keeps your photos, their descriptions, the training versions and the test pictures in one folder.</p>
+<h2 id="step-1-photos">Step 1: Photos</h2>
 <p><img alt="Step 1, Photos" src="img/en-simple-1-photos.png" /></p>
 <ol>
 <li>Press <strong>Add photos</strong> or <strong>Add a folder</strong> (JPG, PNG or WebP), or drop photos into the window.</li>
 <li>Choose what the photos show: <strong>Person</strong>, <strong>Object</strong> or <strong>Style</strong>.</li>
+<li>Under <strong>Train on</strong>, keep <strong>My photos</strong>, or choose <strong>Build a set from references</strong> (see below).</li>
 </ol>
 <p>Good photos make a good model:</p>
 <ul>
-<li>15 to 20 sharp photos are usually enough (recommended: 10 to 30 photos).</li>
+<li>15 to 20 sharp photos are usually enough. Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.</li>
 <li>Vary the angle, light, background and clothing.</li>
 <li>One subject per photo. Avoid group shots, heavy filters and near-duplicates.</li>
 <li>For a style, use pictures that share the style but show different things.</li>
 </ul>
-<h3>5.2 Consent, rights and 18+</h3>
+<h2 id="step-2-subject-and-consent">Step 2: Subject and consent</h2>
 <p><img alt="Step 2, Subject and consent" src="img/en-simple-2-subject.png" /></p>
-<p>Enter a <strong>Name</strong> or a <strong>Stage name</strong> (one is enough). The <strong>Trigger word</strong> is the word you will later type in Canvas to call the model; the app suggests one.</p>
 <ul>
-<li><strong>Person:</strong> tick <strong>Consent obtained</strong> (the person agreed to this use). Then either tick <strong>Verbal</strong>, right next to it, if consent was given in words, or attach a model release. With <strong>Verbal</strong> no file is needed; the model file records the consent as verbal. An attached release stays in your project; only a note that it exists and its fingerprint go into the model file. Also tick <strong>Subject is 18+</strong>.</li>
-<li><strong>Dataset contains adult content (18+):</strong> appears to the right of <strong>Subject is 18+</strong> once that box is ticked. It is off by default. Tick it if the photos contain adult content; apps such as Canvas use this label to sort and filter models. Unticking <strong>Subject is 18+</strong> clears it.</li>
-<li><strong>Object</strong> or <strong>Style:</strong> confirm that you have the right to use these photos. A style must not be presented as the work of a named living artist.</li>
+<li><strong>Name</strong> or <strong>Stage name</strong>: enter one of them; one is enough. The <strong>Trigger word</strong> is the word you will later type in Canvas to call the model; the app suggests one. If you enter a stage name, it becomes the trigger word; you can change it.</li>
+<li><strong>Consent obtained</strong> (for a person): tick it when the person agreed to this use. Then either tick <strong>Verbal</strong>, right next to it, if consent was given in words, or press <strong>Attach model release</strong> to add a release file. With <strong>Verbal</strong> no file is needed.</li>
+<li><strong>Release file</strong> (optional): an attached release stays in your project folder. Only a note that it exists and its fingerprint go into the model file.</li>
+<li><strong>Subject is 18+</strong>: tick it to confirm that the person is an adult. A person project cannot continue without it.</li>
+<li><strong>Dataset contains adult content (18+)</strong>: appears next to <strong>Subject is 18+</strong> once that box is ticked. It is off by default. Tick it if the photos contain adult content; apps such as Canvas use this label to sort and filter models.</li>
+<li><strong>Subject attribute</strong> (optional): leave it empty unless you need it. The tooltip shows which values it accepts.</li>
+<li><strong>Object</strong> or <strong>Style</strong>: confirm that you have the right to use these photos. A style must not be presented as the work of a named living artist.</li>
 <li><strong>Provenance note</strong> (optional): where the photos come from.</li>
 </ul>
-<p>Train only on people who agreed to it, and only on photos you have the right to use.</p>
-<h3>5.3 The safety check, and why photos are set aside</h3>
-<p>Model Forge never trains on minors. Every photo goes through a safety check before training. A person set needs the
-18+ and consent confirmations in step 2. Some photos may be set aside with the reason "Set aside by the safety check";
-replace them with other photos of the same person. In rare cases the whole project is <strong>blocked</strong>. If the check
-models are not installed, preparation does not start. The check is always on and cannot be switched off.</p>
-<h3>5.4 Captions and trigger word</h3>
-<p><img alt="Step 4, Check and prepare" src="img/en-simple-3-prepare.png" /></p>
-<p>Press <strong>Check photos</strong>. The app checks each photo, crops it (<strong>Focus on subject</strong> or <strong>Keep whole photo</strong>) and writes a short description of it. The trigger word is added to every description, so the model links the word to your subject.</p>
-<p>You can read the crops, the descriptions and the reasons for set-aside photos, and remove any photo before training.</p>
-<h3>5.5 Settings and progress</h3>
-<p><img alt="Step 5, Train" src="img/en-simple-4-train-running.png" /></p>
+<p>Every photo must show consenting adults, and you must have the right to use it. Some photos may be refused during preparation; replace them with other photos of the same subject.</p>
+<h2 id="step-3-build-a-set-optional">Step 3: Build a set (optional)</h2>
+<p><img alt="Step 3, Build a set" src="img/en-simple-3-build.png" /></p>
+<p>With your own photos this step only says so; press <strong>Next</strong>. Have only a few good pictures? Choose <strong>Build a set from references</strong> on step 1, or press <strong>Build from references instead</strong> here, and use 1 to 10 references of one subject. Then:</p>
+<ol>
+<li>Press <strong>Make pictures</strong>. The app draws a round of new pictures from your references with Z-Image-Turbo.</li>
+<li>Tick each picture that looks right (or click it). Unticked pictures are not used.</li>
+<li>Press <strong>Next round</strong> to draw again from the kept pictures and your references. Repeat until the set looks right.</li>
+<li>Press <strong>This is it</strong>. The references and the kept pictures become the training set.</li>
+</ol>
+<p>Simple mode draws 24 pictures per round. Expert mode shows <strong>Pictures per round</strong>, <strong>Variation strength</strong> and <strong>Steps</strong> in the Expert panel. Pictures marked <strong>≈ very similar to another</strong> look almost the same as another one; keep only one of them. Some pictures may be refused and are not shown. <strong>Start over</strong> forgets the rounds and keeps the references.</p>
+<p>Next: <a href="#page-presets">Presets</a> and <a href="#page-training">Training</a>.</p>
+<p><a id="page-presets"></a></p>
+<h1 id="presets">Presets</h1>
+<p>On the <strong>Train</strong> step you choose a preset, a likeness and the graphics card memory. The app turns them into the training numbers. In Expert mode every number can be changed in the Expert panel.</p>
+<p><img alt="Step 5, Train" src="img/en-simple-5-train.png" /></p>
+<h2 id="preset">Preset</h2>
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th>Steps</th>
+<th>LoRA rank</th>
+<th>Learning rate</th>
+<th>Picture size</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Quick test</strong></td>
+<td>600</td>
+<td>16</td>
+<td>0.0001</td>
+<td>768 px</td>
+<td>A fast first look at your photos</td>
+</tr>
+<tr>
+<td><strong>Balanced</strong> (recommended)</td>
+<td>1500</td>
+<td>32</td>
+<td>0.0001</td>
+<td>1024 px</td>
+<td>Most projects</td>
+</tr>
+<tr>
+<td><strong>Best quality</strong></td>
+<td>3000</td>
+<td>32</td>
+<td>0.00008</td>
+<td>1024 px</td>
+<td>The final model, when time is not a concern</td>
+</tr>
+</tbody>
+</table>
+<h2 id="likeness">Likeness</h2>
+<p>Likeness changes the number of steps and how often a description is left out during training.</p>
+<table>
+<thead>
+<tr>
+<th>Likeness</th>
+<th>Steps</th>
+<th>Use it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Flexible</strong></td>
+<td>0.7 × the preset</td>
+<td>The subject should be easy to put in new scenes</td>
+</tr>
+<tr>
+<td><strong>Balanced</strong></td>
+<td>as the preset</td>
+<td>Most projects</td>
+</tr>
+<tr>
+<td><strong>Close</strong></td>
+<td>1.3 × the preset</td>
+<td>The pictures should look more like your photos</td>
+</tr>
+</tbody>
+</table>
+<h2 id="graphics-card-memory-16-gb-and-24-gb">Graphics card memory: 16 GB and 24 GB</h2>
+<p><strong>Auto</strong> reads your card: under 20 GB is the 16 GB tier, otherwise the 24 GB tier. You can also pick <strong>16 GB</strong> or <strong>24 GB</strong> yourself.</p>
 <ul>
-<li><strong>Preset:</strong> <strong>Quick test</strong> (a fast first look), <strong>Balanced</strong> (recommended) or <strong>Best quality</strong> (slower).</li>
-<li><strong>Likeness:</strong> <strong>Flexible</strong> (easier to put in new scenes), <strong>Balanced</strong> or <strong>Close</strong> (looks more like the photos).</li>
-<li><strong>Graphics card memory:</strong> <strong>Auto</strong>, <strong>16 GB</strong> or <strong>24 GB</strong>. Auto reads your card.</li>
-<li><strong>Base model:</strong> the picture model whose weights the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. The list shows only bases this version can train on: <strong>Z-Image</strong> (best for maximum quality; slower; 16 GB+) and <strong>MOSS-Image Base</strong> (faster, and fits a 16 GB card; 16 GB+). The list opens below the field. The second line of each option says what the base is best for and how much graphics memory it needs. Hover over an option, or open <strong>Details ▸</strong>, for more. "16 GB+" is the smallest card the presets are set up for; measured figures will replace it after the calibration run.</li>
+<li>Both tiers train one picture at a time with gradient checkpointing on. Balanced and Best quality add two pictures up before each step; Quick test does one.</li>
+<li><strong>Z-Image</strong>, 16 GB tier: the base model is stored in a compact 8-bit form to fit the card. 24 GB tier: full precision.</li>
+<li><strong>MOSS-Image Base</strong>: the picture model stays in full precision on both tiers. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see <a href="#page-compression">Compression tests</a>).</li>
 </ul>
-<p><img alt="Base model list open" src="img/en-simple-4-train-base-open.png" /></p>
-<p><img alt="Step 5 with Details open" src="img/en-simple-4-train-details-open.png" />
-- <strong>Show test pictures:</strong> draws a few pictures during training so you can see progress.</p>
+<h2 id="measured-figures">Measured figures</h2>
+<p>These come from a calibration run of the Balanced preset (1024 px, rank 32, one picture and two accumulations per step) on an RTX 4090, with its memory limited to 16 GB or 22.5 GB to stand in for each card.</p>
+<table>
+<thead>
+<tr>
+<th>Base model</th>
+<th>Tier</th>
+<th>Text encoder</th>
+<th>Time per step</th>
+<th>Peak video memory</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MOSS-Image Base</td>
+<td>16 GB</td>
+<td>8-bit, on the card</td>
+<td>4.89 s</td>
+<td>13.6 GB</td>
+</tr>
+<tr>
+<td>MOSS-Image Base</td>
+<td>24 GB</td>
+<td>full precision, on the card</td>
+<td>4.90 s</td>
+<td>18.5 GB</td>
+</tr>
+<tr>
+<td>Z-Image</td>
+<td>16 GB and 24 GB</td>
+<td>full precision</td>
+<td>not measured yet</td>
+<td>not measured yet</td>
+</tr>
+</tbody>
+</table>
+<p>So a Balanced run on MOSS-Image Base (1500 steps) takes about 2 hours of training on such a card, plus a few minutes to load. The base model list on the Train step shows the measured peak for MOSS-Image Base; for Z-Image it shows the smallest card the presets target (16 GB+). <strong>Estimate time</strong> gives the forecast for your settings.</p>
+<p><a id="page-training"></a></p>
+<h1 id="training">Training</h1>
+<h2 id="step-4-check-and-prepare">Step 4: Check and prepare</h2>
+<p><img alt="Step 4, Check and prepare" src="img/en-simple-4-prepare.png" /></p>
+<ol>
+<li>Choose the crop: <strong>Focus on subject</strong> or <strong>Keep whole photo</strong>.</li>
+<li>Press <strong>Check photos</strong>. The app checks each photo, crops it and writes a short description of it. The trigger word is added to every description, so the model links the word to your subject.</li>
+<li>Read the list. <strong>Ready for training</strong> shows the photos that will be used with their descriptions. <strong>Set aside</strong> lists the photos that will not be used, each with a reason (for example, too blurry or almost the same as another photo).</li>
+</ol>
+<p>You can remove any photo before training. If too few photos are left, add more on step 1.</p>
+<h2 id="step-5-train">Step 5: Train</h2>
+<p>Choose a preset, a likeness and the graphics card memory (see <a href="#page-presets">Presets</a>), and the base model:</p>
+<ul>
+<li><strong>Base model</strong> is the picture model the LoRA is trained on. The LoRA works only with this base, so pick the same one in Canvas. <strong>Z-Image</strong> is best for maximum quality and is slower. <strong>MOSS-Image Base</strong> is faster and fits a 16 GB card. The second line of each option shows what it is best for and its video memory.</li>
+</ul>
+<p><img alt="The base model list open" src="img/en-simple-5-train-base-open.png" /></p>
+<ul>
+<li><strong>Details ▸</strong> under each setting explains it. The base model details include the measured video memory.</li>
+</ul>
+<p><img alt="Step 5 with Details open" src="img/en-simple-5-train-details-open.png" /></p>
+<ul>
+<li><strong>Show test pictures</strong> draws a few pictures during training so you can see progress.</li>
+</ul>
 <p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. The bar shows the step, what is happening and the time left (after the first few steps).</p>
+<p><img alt="Training in progress" src="img/en-simple-5-train-running.png" /></p>
 <ul>
-<li><strong>Pause</strong> saves a version and stops. Press <strong>Start training</strong> later to continue from that version.</li>
+<li><strong>Pause</strong> saves a version and stops. Press <strong>Continue</strong> later to go on from that version.</li>
 <li><strong>Stop</strong> ends the run. The versions saved so far are kept.</li>
+<li>The app saves a version six times during a run, so you can compare them on the next step.</li>
 </ul>
-<h3>5.6 Result and use in Canvas</h3>
-<p><img alt="Step 6, Result" src="img/en-simple-5-result.png" /></p>
+<h2 id="expert-settings">Expert settings</h2>
+<p>In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Learning rate, Scheduler, Warm-up steps, Batch size, Gradient accumulation, Resolution, Precision, Gradient checkpointing, Train the text encoder, Descriptions, Description model, Caption dropout, Seed, Save every N steps and Test picture every N steps. The reset button next to the presets puts back the values of the chosen preset.</p>
+<p><img alt="Expert mode while training" src="img/en-expert-5-train-running.png" /></p>
+<p>Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.</p>
+<p><a id="page-export"></a></p>
+<h1 id="export">Export</h1>
+<h2 id="step-6-result">Step 6: Result</h2>
+<p><img alt="Step 6, Result" src="img/en-simple-6-result.png" /></p>
 <ol>
 <li>Look at the test pictures and choose a <strong>Version</strong>. A later version is not always better; pick the one you like.</li>
 <li><strong>Save</strong> writes one <code>.safetensors</code> file with its description file (<code>voxprint-model.json</code>), licence and notice. You can keep it or share it under the base model's licence.</li>
 <li><strong>Open in Canvas</strong> adds it to your models. In Canvas, choose the LoRA, type the trigger word in your prompt, and set the strength (0.8 is a good start).</li>
 </ol>
-<blockquote>
-<p><strong>Screenshot placeholder:</strong> the LoRA in Canvas with the strength slider.</p>
-</blockquote>
 <p>To improve a model later, press <strong>Add more photos</strong> on this step. Training continues from the model with the new photos and a share of the old ones.</p>
-<h3>5.7 Build a set from references</h3>
-<p>Have only a few good pictures? Model Forge can build the training set with you.</p>
-<ol>
-<li>On step 1 choose <strong>Build a set from references</strong> under <strong>Train on</strong> and add 1 to 10 references of one subject.</li>
-<li>Fill in step 2 as usual: names, <strong>Consent obtained</strong>, <strong>Verbal</strong> or a release, <strong>Subject is 18+</strong> and, if it applies, <strong>Dataset contains adult content (18+)</strong>.</li>
-<li>On step 3, <strong>Build a set</strong>, press <strong>Make pictures</strong>. The references are checked first, then the app draws a round of new pictures from them with Z-Image-Turbo and writes a description for each reference.</li>
-<li>Tick the checkmark on each picture that looks right (or click the picture). Leave the rest unticked; they are not used.</li>
-<li>Press <strong>Next round</strong>. It starts from the pictures you kept plus your references. Repeat until the set looks exactly as you see it.</li>
-<li>Press <strong>This is it</strong> (next to <strong>Make pictures</strong>). <strong>Next</strong> stays unavailable until you do. The references and the kept pictures become the training set, and the usual steps follow: step 4 <strong>Check photos</strong>, step 5 training and step 6 the result.</li>
-</ol>
-<p>Good to know:</p>
+<h2 id="where-the-files-go">Where the files go</h2>
 <ul>
-<li>Simple mode draws 24 pictures per round with medium variation. Expert mode shows <strong>Pictures per round</strong> (8 to 64), <strong>Variation strength</strong> (0.25 to 0.90; higher moves further from the source) and <strong>Steps</strong> (4 to 16) in the Expert settings panel on the right, under <strong>Build a set</strong>; there you can also edit the <strong>Descriptions</strong> after the first round.</li>
-<li>The references and every new picture go through the same check as your photos (section 5.3) before they are used or shown. Pictures that do not pass are not shown. If a reference does not pass, the set cannot be built from these references.</li>
-<li>Pictures marked <strong>≈ very similar to another</strong> look almost the same as another one; keep only one of them.</li>
-<li>Recommended set size: 10 to 30 pictures, references included. Allowed in Expert: 5 to 60 pictures. <strong>Kept … of …. Training needs …</strong> above the pictures shows how many you have kept; in Expert mode it reads <strong>Kept … of …. Recommended: …. Allowed in Expert: …</strong>.</li>
-<li>Each model is unloaded before the next one starts; the step is set up for a 16 GB graphics card. Memory use and time per round will be added after the calibration run.</li>
-<li>The project records the rounds, seeds, settings, the base model and the picture model with its licence (Z-Image-Turbo, Apache-2.0). Descriptions stay in your project folder.</li>
-<li><strong>Start over</strong> forgets the rounds and keeps the references.</li>
+<li>LoRAs sent with <strong>Open in Canvas</strong>: <code>%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\&lt;name&gt;\</code>.</li>
+<li>Projects: <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\</code>. <strong>More → Open project…</strong> opens an earlier project; <strong>Open folder</strong> shows its photos, versions and test pictures.</li>
+<li>Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.</li>
 </ul>
-<h2>6. Managing models</h2>
+<h2 id="what-the-model-file-contains">What the model file contains</h2>
+<p>The names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</p>
+<h2 id="command-line">Command line</h2>
+<p>The same export is available from the command line:</p>
+<pre><code class="language-text">voxprint-forge-cli lora export --project &lt;project folder&gt; [--checkpoint &lt;step&gt;] [--out &lt;file.safetensors&gt;] [--install-to-mdl]
+</code></pre>
+<p><code>--install-to-mdl</code> also adds the LoRA to your models for Canvas. See the <a href="https://mitroshenkov87.github.io/voxprint-model-forge/cli-reference/">CLI reference</a>.</p>
+<p><a id="page-compression"></a></p>
+<h1 id="compression-tests">Compression tests</h1>
+<p>Some model parts can run in a compressed (quantized) form that needs less video memory. Model Forge uses a compressed part only after it has been tested against the original, and the results are published here.</p>
+<h2 id="moss-image-base-text-encoder">MOSS-Image Base text encoder</h2>
+<p>The text encoder turns your prompt and descriptions into numbers for the picture model. On the 16 GB tier it runs on the graphics card in 8-bit form (int8); on the 24 GB tier it runs in full precision (bf16). The picture model itself is never compressed.</p>
+<p>Test: 8 prompts, each drawn with the full-precision encoder and with each compressed one, same seed; then the pictures were scored for how well they match the prompt (CLIP score, higher is better) and how much they differ from the full-precision picture (LPIPS, lower is closer).</p>
+<table>
+<thead>
+<tr>
+<th>Text encoder</th>
+<th>Video memory while encoding</th>
+<th>Prompt match (CLIP)</th>
+<th>Difference from full precision (LPIPS, mean)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full precision (bf16)</td>
+<td>15.7 GB</td>
+<td>28.38</td>
+<td>—</td>
+</tr>
+<tr>
+<td>8-bit (int8), the 16 GB default</td>
+<td>8.9 GB</td>
+<td>28.43</td>
+<td>0.134</td>
+</tr>
+<tr>
+<td>4-bit (nf4)</td>
+<td>5.9 GB</td>
+<td>28.50</td>
+<td>0.167</td>
+</tr>
+</tbody>
+</table>
+<p>The 8-bit encoder matches the prompts as well as the full-precision one while using about half the memory, so it is the default on 16 GB cards. The 4-bit encoder also matches the prompts, but its pictures move further from the original, so it is offered only as an option.</p>
+<p>The choice can be changed on the command line with <code>--te-quant auto|none|int8|nf4</code> on <code>lora train</code> (<code>auto</code> is the tier default). See <a href="https://mitroshenkov87.github.io/voxprint-model-forge/MOSS/">MOSS-Image</a>.</p>
+<h2 id="training-on-each-tier">Training on each tier</h2>
+<p>Training was measured with the default encoder of each tier; see <a href="#measured-figures">Presets → Measured figures</a>.</p>
+<h2 id="tests-for-advanced-users">Tests for advanced users</h2>
+<p>The command-line tool also scores compressed language and picture models against their originals. These tests need an NVIDIA graphics card and are meant for advanced users:</p>
 <ul>
-<li><strong>Manage models</strong> (in <strong>Check this computer</strong>) opens the VOXPrint model downloader. There you can see installed models, their size and licence, download missing ones and remove ones you no longer need.</li>
-<li>LoRAs sent with <strong>Open in Canvas</strong> are stored in <code>%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\&lt;name&gt;\</code>.</li>
-<li><strong>More → Open project…</strong> opens an earlier project; <strong>Open folder</strong> shows the project's photos, versions and test pictures.</li>
-<li>Projects are in <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\</code>. Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.</li>
+<li><code>voxprint-forge-cli kl</code> compares compressed language models with the original: <a href="https://mitroshenkov87.github.io/voxprint-model-forge/KL/">KL</a>.</li>
+<li><code>voxprint-forge-cli compare</code> compares compressed picture models with the original: <a href="https://mitroshenkov87.github.io/voxprint-model-forge/COMPARE/">Compare</a>.</li>
 </ul>
-<blockquote>
-<p><strong>Screenshot placeholder:</strong> Manage models, installed models.</p>
-</blockquote>
-<h2>7. Privacy</h2>
+<p><a id="page-memory"></a></p>
+<h1 id="computer-memory-ram-tiers">Computer memory (RAM) tiers</h1>
+<p>VOXPrint AI Suite sorts computers into three memory tiers by the installed RAM. The tier is shared by all VOXPrint apps.</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>RAM that Windows reports</th>
+<th>Typical computer</th>
+<th>What the suite does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>32 GB</strong></td>
+<td>under 44 GB</td>
+<td>32 GB</td>
+<td>Models are read from disk each time they are needed and are not kept in memory.</td>
+</tr>
+<tr>
+<td><strong>64 GB</strong></td>
+<td>44 GB to under 88 GB</td>
+<td>48 or 64 GB</td>
+<td>Models stay in memory between jobs, and the main ones are prepared for fast transfer to the graphics card. The next model can be loaded in advance.</td>
+</tr>
+<tr>
+<td><strong>96 GB</strong></td>
+<td>88 GB and more</td>
+<td>96 GB or more</td>
+<td>All models stay in memory and are prepared for fast transfer to the graphics card.</td>
+</tr>
+</tbody>
+</table>
+<p>A computer reports a little less than its installed memory (a 32 GB computer reports about 31.7 GB), which is why the limits are below the round numbers.</p>
+<p>By default the tier follows the installed memory. Advanced users can set it with <code>memory.ram_mode</code> (<code>auto</code>, <code>ram32</code>, <code>ram64</code> or <code>ram96</code>) in the suite settings file, or with the <code>VOXPRINT_RAM_MODE</code> environment variable.</p>
+<h2 id="model-forge">Model Forge</h2>
 <ul>
-<li>Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.</li>
-<li>The internet is used only to download the app libraries and models from their official sources.</li>
-<li>A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</li>
-<li>Uninstalling the app keeps your data. To remove everything, also delete <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge</code> and, if no other VOXPrint app uses them, the models in <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>.</li>
+<li>Model Forge needs at least <strong>32 GB</strong>. <strong>Build a set</strong> checks for it before it starts, because the models wait in memory between stages.</li>
+<li>In this version Model Forge training works the same on all three tiers. A larger tier helps when other VOXPrint apps run on the same computer.</li>
+<li>In the calibration run on a 32 GB computer, training MOSS-Image Base used at most about 7.6 GB of RAM. If the text encoder has to run on the processor instead of the graphics card (a fallback, see <a href="#page-compression">Compression tests</a>), it needs about 18 GB of RAM.</li>
+<li><strong>Check this computer</strong> shows the free and total computer memory.</li>
 </ul>
-<h2>8. Troubleshooting</h2>
+<p><a id="page-troubleshooting"></a></p>
+<h1 id="troubleshooting-privacy-and-licences">Troubleshooting, privacy and licences</h1>
+<h2 id="troubleshooting">Troubleshooting</h2>
 <table>
 <thead>
 <tr>
@@ -246,20 +481,20 @@ models are not installed, preparation does not start. The check is always on and
 <td>Press <strong>Manage models</strong> and download the missing models.</td>
 </tr>
 <tr>
-<td>"The safety check is not available, so training cannot start"</td>
+<td>Preparation does not start because models are missing</td>
 <td>Download Qwen3-VL-4B-Instruct, MiVOLO v2 and YuNet in Manage models.</td>
 </tr>
 <tr>
 <td>"Add at least N more photos"</td>
-<td>Many photos were set aside. Add clearer photos (section 5.3) or use Expert mode (minimum 5).</td>
+<td>Many photos were set aside. Add more clear photos, or use Expert mode.</td>
 </tr>
 <tr>
-<td>"These photos cannot be used for training" (the project is blocked)</td>
-<td>A check found a sign of a minor. This cannot be overridden. Start a new project with different photos.</td>
+<td>"These photos cannot be used for training"</td>
+<td>Some photos were refused and this project cannot continue. Start a new project with other photos of consenting adults.</td>
 </tr>
 <tr>
 <td>"A PAUSE file is still in the project folder"</td>
-<td>Press <strong>Start training</strong> again in the app. If it repeats, delete the file named <code>PAUSE</code> in the project folder.</td>
+<td>Press <strong>Continue</strong> in the app. If it repeats, delete the file named <code>PAUSE</code> in the project folder.</td>
 </tr>
 <tr>
 <td>Out of video memory</td>
@@ -283,14 +518,19 @@ models are not installed, preparation does not start. The check is always on and
 </tr>
 </tbody>
 </table>
-<h2>9. FAQ and licences</h2>
-<p><strong>Can I train on photos of someone I found online?</strong> No. Train only on people who agreed to it and on photos you have the right to use.</p>
-<p><strong>Can I switch off the safety check?</strong> No. It is always on, in every mode.</p>
-<p><strong>Why were some photos set aside?</strong> See section 5.3.</p>
-<p><strong>Does anything leave my computer?</strong> No. Only the model downloads come from the internet.</p>
-<p><strong>Can I use the LoRA commercially?</strong> The LoRA follows the licence of its base model. Z-Image is Apache-2.0. You are also responsible for the rights to the photos and the consent of the people in them.</p>
+<h2 id="faq">FAQ</h2>
+<p><strong>Can I train on photos of someone I found online?</strong> No. Train only on consenting adults and on photos you have the right to use.</p>
+<p><strong>Why were some photos set aside or refused?</strong> Step 4 shows a reason for each photo that is set aside. Some photos may be refused; replace them with other photos.</p>
+<p><strong>Does anything leave my computer?</strong> No. Only the app libraries and the models are downloaded from the internet.</p>
+<p><strong>Can I use the LoRA commercially?</strong> The LoRA follows the licence of its base model. Z-Image and MOSS-Image Base are Apache-2.0. You are also responsible for the rights to the photos and the consent of the people in them.</p>
 <p><strong>Can I continue training later?</strong> Yes. Pause and continue, or use <strong>Add more photos</strong> on a finished model.</p>
-<p><strong>Licences</strong></p>
+<h2 id="privacy">Privacy</h2>
+<ul>
+<li>Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.</li>
+<li>The internet is used only to download the app libraries and models from their official sources.</li>
+<li>Uninstalling the app keeps your data. To remove everything, also delete <code>%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge</code> and, if no other VOXPrint app uses them, the models in <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>.</li>
+</ul>
+<h2 id="licences">Licences</h2>
 <table>
 <thead>
 <tr>
@@ -304,7 +544,7 @@ models are not installed, preparation does not start. The check is always on and
 <td>Apache-2.0</td>
 </tr>
 <tr>
-<td>Z-Image</td>
+<td>Z-Image, Z-Image-Turbo</td>
 <td>Apache-2.0</td>
 </tr>
 <tr>
@@ -326,6 +566,10 @@ models are not installed, preparation does not start. The check is always on and
 <tr>
 <td>YuNet</td>
 <td>MIT</td>
+</tr>
+<tr>
+<td>DINOv2 base</td>
+<td>Apache-2.0</td>
 </tr>
 </tbody>
 </table>

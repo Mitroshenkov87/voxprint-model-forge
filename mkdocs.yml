@@ -14,8 +14,28 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Manual:
-      - English: manual/en.md
-      - Русский: manual/ru.md
+      - English:
+          - Overview: manual/en/index.md
+          - Install: manual/en/install.md
+          - Model download: manual/en/models.md
+          - Creating a LoRA project: manual/en/project.md
+          - Presets: manual/en/presets.md
+          - Training: manual/en/training.md
+          - Export: manual/en/export.md
+          - Compression tests: manual/en/compression.md
+          - RAM tiers: manual/en/memory.md
+          - Troubleshooting: manual/en/troubleshooting.md
+      - Русский:
+          - Обзор: manual/ru/index.md
+          - Установка: manual/ru/install.md
+          - Загрузка моделей: manual/ru/models.md
+          - Создание проекта LoRA: manual/ru/project.md
+          - Предустановки: manual/ru/presets.md
+          - Обучение: manual/ru/training.md
+          - Экспорт: manual/ru/export.md
+          - Тесты сжатия: manual/ru/compression.md
+          - Уровни оперативной памяти: manual/ru/memory.md
+          - Решение проблем: manual/ru/troubleshooting.md
   - Roadmap: roadmap.md
   - Testing: TESTING.md
   - CLI: cli-reference.md

@@ -1,4 +1,8 @@
-"""Training presets, likeness and memory tiers (plan §2). Values are [U] until GPU calibration."""
+"""Training presets, likeness and memory tiers (plan §2).
+
+Preset values are [U] until GPU calibration. :data:`MEASURED` holds the per-base, per-tier figures
+that a calibration run actually measured; a base or tier that is missing there has not been measured.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,39 @@ LIKENESS: dict[str, tuple[float, float]] = {
     "close": (1.3, 0.05),
 }
 VRAM_TIERS = (16, 24)
+
+
+@dataclass(frozen=True)
+class Measured:
+    """One measured training run: seconds per optimizer step and peak reserved graphics memory (GiB).
+
+    ``micro_batches`` is batch x grad_accum of that run, so adapters can scale the time to another config.
+    ``te_quant`` is the text-encoder mode the tier default resolved to. ``source`` names the run.
+    """
+
+    s_per_step: float
+    peak_reserved_gb: float
+    micro_batches: int
+    resolution: int
+    te_quant: str
+    source: str
+
+
+# Measured on an RTX 4090 (24 GiB) with FORGE_VRAM_CAP_GB 16 (16 GB tier) or 22.5 (24 GB tier):
+# Balanced preset, rank 32, 1024 px, batch 1 x accum 2, 40 steps, Forge 73c2250a (moss-memprobe v2,
+# 18 Oct 2026, summary.json train16/train24 s_per_step and peak_reserved_gb). Z-Image has no
+# completed per-tier training measurement yet, so it is not listed and keeps the planned figures.
+MEASURED: dict[str, dict[int, Measured]] = {
+    "moss-image-base": {
+        16: Measured(4.89, 13.6, 2, 1024, "int8", "moss-memprobe v2 train16"),
+        24: Measured(4.90, 18.5, 2, 1024, "none", "moss-memprobe v2 train24"),
+    },
+}
+
+
+def measured(mdl_id: str, tier: int) -> Measured | None:
+    """The measured run for ``mdl_id`` on memory tier ``tier``, or ``None`` when it was not measured."""
+    return MEASURED.get(mdl_id, {}).get(int(tier))
 SCHEDULERS = ("constant", "cosine")
 CAPTION_MODES = ("long", "short", "both")
 PRECISIONS = ("bf16", "fp16")
