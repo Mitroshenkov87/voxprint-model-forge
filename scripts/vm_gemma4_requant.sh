@@ -40,7 +40,9 @@ CONTROLS=(blk.58.attn_output.weight blk.58.ffn_down.weight blk.59.attn_q.weight)
 L2_KL='{"IQ3_XXS": {"kl": 2.293518, "top1": 44.314}, "Q4_K_M": {"kl": 0.827463, "top1": 68.366}}'
 # Disk: author folder 62.58 GB (deleted after conversion) + new F16 61.4 + new tiers 30.8 + shipped tiers 30.8
 # + KL base logits up to 27 + 10% slack. The peak is after conversion, about 150 GB; require 200 GB as asked.
+# A resume after the quant stage already holds the F16 and tiers: it needs the shipped tiers + logits + slack.
 NEED_GB=200
+RESUME_NEED_GB=70
 
 PROMPTS=""
 DRY=0
@@ -77,6 +79,7 @@ EOF
 preflight() {
   local bad=0 free bin
   free=$(df -BG --output=avail "$W" | tail -1 | tr -dc 0-9)
+  if done_ quant; then NEED_GB=$RESUME_NEED_GB; log "resume: quant stage done, F16 and tiers on disk"; fi
   if (( free < NEED_GB )); then log "disk: ${free} GB free under $W, need ${NEED_GB}"; bad=1; else log "disk: ${free} GB free (need ${NEED_GB})"; fi
   for bin in llama-imatrix llama-quantize llama-perplexity llama-server; do
     if [[ ! -x "${FORGE_LLAMA_BIN:-}/$bin" ]]; then log "binary missing: $bin"; bad=1; continue; fi
@@ -185,15 +188,16 @@ fi
 if ! done_ kl; then
   log "KL/top-1 of the new tiers against the new F16"
   PLAN="$W/kl-g4r.toml"
-  {
-    printf '[defaults]\nchunks = 100\nctx = 512\nfit_ctx = 8192\nkv_cache = "q8_0"\nheadroom_gb = 3.0\nbudgets_gb = [16.0, 24.0]\n\n'
-    printf '[[jobs]]\nid = "G4R"\nbf16_repo = "%s"\nbf16_revision = "%s"\nsource_format = "gguf"\n' "$AUTHOR_REPO" "$AUTHOR_REV"
-    printf 'f16_file = "%s"\nexpect_mtp = false\n' "$F16"
-    printf 'note = "Re-quant from the author safetensors at %s, scored against its own F16. PPL is not meaningful for Gemma 4 instruct on raw prose; use KL and top-1."\n' "${AUTHOR_REV:0:8}"
-    for tier in "${TIERS[@]}"; do
-      printf '\n[[jobs.quants]]\nquant = "%s"\nrepo = "local"\nrevision = ""\npattern = "%s"\nours = true\n' "$tier" "$OUT/$tier.gguf"
-    done
-  } > "$PLAN"
+  # Local tiers carry source = "local" and a content revision (local-sha256:<12 hex>) from new-files.sha256;
+  # the plan is loaded back by the KL loader here, before any GPU work.
+  [[ -s "$RES/new-files.sha256" ]] || die "new-files.sha256 missing; rerun the quant stage"
+  TIER_ARGS=()
+  for tier in "${TIERS[@]}"; do TIER_ARGS+=(--tier "$tier=$OUT/$tier.gguf"); done
+  "$PY" -m voxprint_forge.requant_check kl-plan --job G4R --author-repo "$AUTHOR_REPO" --author-rev "$AUTHOR_REV" \
+    --f16 "$F16" "${TIER_ARGS[@]}" --sha256-file "$RES/new-files.sha256" --plan-out "$PLAN" \
+    --note "Re-quant from the author safetensors at ${AUTHOR_REV:0:8}, scored against its own F16. PPL is not meaningful for Gemma 4 instruct on raw prose; use KL and top-1." \
+    2>&1 | tee -a "$RES/run.log" || die "kl plan"
+  cp "$PLAN" "$RES/kl-g4r.toml"
   "$VENV/bin/forge" --root "$ROOT" --forge-out "$FORGE_OUT" kl --job G4R --plan "$PLAN" >"$RES/kl.log" 2>&1 || die "kl (see kl.log)"
   cp "$FORGE_OUT/results/kl/G4R/summary.json" "$RES/kl-summary.json"
   cp "$FORGE_OUT/results/kl/G4R/summary.md" "$RES/kl-summary.md"
@@ -211,6 +215,7 @@ fi
 serve_probe() {  # label model
   local label="$1" model="$2" pid ok=0
   done_ "probe-$label" && return 0
+  [[ -n "$label" && -s "$model" ]] || die "probe ${label:-?}: model file missing"
   "$FORGE_LLAMA_BIN/llama-server" -m "$model" -c 8192 -ngl 99 -fa on -ctk q8_0 -ctv q8_0 --jinja \
     --host 127.0.0.1 --port "$PORT" >"$RES/server-$label.log" 2>&1 &
   pid=$!
@@ -225,8 +230,8 @@ serve_probe() {  # label model
   fi
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  (( ok )) || die "probe $label (see server-$label.log)"
-  log "probe $label: refusal rate $("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["refusal_rate"])' "$RES/probe-$label.json")"
+  (( ok )) || die "probe $label (see server-$label.log; an empty probe set fails here)"
+  log "probe $label: $("$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("refusal rate %s, %s/%s answered, %s empty" % (d["refusal_rate"], d["answered"], d["n"], d["empty"]))' "$RES/probe-$label.json")"
   mark "probe-$label"
 }
 serve_probe stock-IQ3_XXS "$W/shipped/IQ3_XXS.gguf"
@@ -239,6 +244,8 @@ set +e
   --pair IQ3_XXS:stock-IQ3_XXS:new-IQ3_XXS --pair Q4_K_M:stock-Q4_K_M:new-Q4_K_M > "$RES/verdict.json"
 status=$?
 set -e
-log "verdict: $("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict"])' "$RES/verdict.json")"
+verdict=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict") or "")' "$RES/verdict.json" 2>/dev/null || true)
+[[ -n "$verdict" ]] || die "verdict did not write verdict.json (exit $status)"
+log "verdict: $verdict"
 log "new GGUFs kept in $OUT (not uploaded); sync $RES back"
 exit $status

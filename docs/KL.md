@@ -61,3 +61,24 @@ A `gguf` job whose `f16_file` is an absolute path uses that file in place: it is
 afterwards. `scripts/vm_gemma4_requant.sh` (GEMMA4-REQUANT) uses this to score its re-quantised tiers against the F16
 it converted from the author's safetensors. Its other checks (tensor diff against stock, private refusal probe,
 verdict) are in `python -m voxprint_forge.requant_check`.
+
+## Local quants
+
+A quant built on this machine sets `source = "local"` (the default is `"hf"`). `pattern` is the absolute path of the
+`.gguf`, `repo` is left out, and `revision` is content-derived: `local-sha256:` plus the first 12 hex digits of the
+file's sha256. A `sha256` field, when set, must agree with that revision. Before llama.cpp runs, the file is hashed and
+must match. It is never downloaded or deleted.
+
+```toml
+[[jobs.quants]]
+quant = "Q4_K_M"
+source = "local"
+revision = "local-sha256:0123456789ab"
+pattern = "/abs/path/Q4_K_M.gguf"
+sha256 = "0123456789ab..."
+```
+
+The loader rejects an empty `revision` for both kinds, `repo = "local"` on an `hf` entry, and a `local-sha256:`
+revision on an `hf` entry. `forge kl --quant /path/file.gguf` builds the same entry. `python -m
+voxprint_forge.requant_check kl-plan` writes the GEMMA4-REQUANT plan from the quant stage's `new-files.sha256` and
+loads it back before any GPU work.

@@ -7,7 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from voxprint_forge.errors import UsageError
-from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan
+from voxprint_forge.hashing import sha256_file
+from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan, local_revision
 from voxprint_forge.kl.run import rerender, run_kl
 
 
@@ -118,7 +119,16 @@ def _repo_rev(text: str) -> tuple[str, str]:
 def _quant_spec(text: str) -> QuantRef:
     path = Path(text)
     if path.is_file():
-        return QuantRef(quant=path.stem, repo="", revision="", pattern=str(path), ours=True)
+        digest = sha256_file(path)
+        return QuantRef(
+            quant=path.stem,
+            repo="",
+            revision=local_revision(digest),
+            pattern=str(path.resolve()),
+            ours=True,
+            sha256=digest,
+            source="local",
+        )
     if "@" not in text or ":" not in text.split("@", 1)[-1]:
         raise UsageError("--quant must be a local .gguf or repo@revision:pattern", code="usage")
     repo_rev, pattern = text.rsplit(":", 1)

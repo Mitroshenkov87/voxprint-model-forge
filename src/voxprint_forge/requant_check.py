@@ -1,6 +1,6 @@
 """Checks for a re-quant of an upstream ablation: tensor diff, refusal probe, verdict.
 
-``python -m voxprint_forge.requant_check`` has three subcommands:
+``python -m voxprint_forge.requant_check`` has four subcommands:
 
 * ``tensor-diff``: compare tensors of a local GGUF with the same tensors of a pinned stock GGUF on the Hub, read by HTTP
   range so the stock file is never downloaded whole. Tensors the ablation changed must differ by more than a noise
@@ -8,6 +8,10 @@
 * ``probe``: send a private prompt file to a running ``llama-server`` and record, per prompt id (sha256[:12] of the
   prompt), whether the reply is a refusal. Prompt and reply text are never written.
 * ``verdict``: read the JSON the other steps wrote and print PASS or FAIL per check with the thresholds used.
+* ``kl-plan``: write the KL plan for tiers built on this machine (``source = "local"``, content-derived revisions
+  from the ``sha256sum`` file the quant stage wrote) and load it back with the plan loader before anything runs.
+
+Every field these steps write is checked non-empty; a missing value fails the step instead of landing as ``""``.
 """
 
 from __future__ import annotations
@@ -23,6 +27,9 @@ from pathlib import Path
 import gguf
 import numpy as np
 from gguf.quants import dequantize
+
+from voxprint_forge.errors import PlanError
+from voxprint_forge.kl.plan import load_kl_plan, local_revision
 
 # Relative L2 change: an ablated matrix must move by more than MODIFIED_MIN; an untouched one by less than CONTROL_MAX.
 # Layer 59 o_proj/down_proj of paperscarecrow vs google: 0.0113 / 0.0120. Identical BF16 stored as F16: about 0.
@@ -226,18 +233,67 @@ def _chat(server: str, prompt: str, *, max_tokens: int) -> str:
     return str(message.get("content") or "")
 
 
+class ProbeError(RuntimeError):
+    """The probe or its inputs cannot give a usable refusal rate."""
+
+
 def probe(server: str, prompts: list[str], label: str, *, max_tokens: int = 192) -> dict[str, object]:
-    """Refusal flags per prompt id for one model. No text is kept."""
-    flags = {prompt_id(text): is_refusal(_chat(server, text, max_tokens=max_tokens)) for text in prompts}
+    """Refusal flags per prompt id for one model. No text is kept.
+
+    An empty reply is neither a refusal nor a compliance: it is counted in ``empty`` and the verdict fails on it.
+    """
+    if not label.strip():
+        raise ProbeError("probe needs a label")
+    if not prompts:
+        raise ProbeError("probe set has no prompts")
+    flags: dict[str, bool] = {}
+    empty: list[str] = []
+    for text in prompts:
+        reply = _chat(server, text, max_tokens=max_tokens)
+        key = prompt_id(text)
+        if not reply.strip():
+            empty.append(key)
+            continue
+        flags[key] = is_refusal(reply)
     rate = sum(flags.values()) / len(flags) if flags else 0.0
-    return {"check": "probe", "model": label, "n": len(flags), "refusal_rate": rate, "refused": flags}
+    return {
+        "check": "probe",
+        "model": label,
+        "n": len(prompts),
+        "answered": len(flags),
+        "empty": len(empty),
+        "empty_ids": empty,
+        "refusal_rate": rate,
+        "refused": flags,
+    }
 
 
-def probe_verdict(stock: float, new: float) -> dict[str, object]:
-    """PASS when stock refuses at least STOCK_MIN_RATE and the re-quant drops clearly."""
-    informative = stock >= STOCK_MIN_RATE
+def probe_verdict(stock: float, new: float, *, problems: list[str] | None = None) -> dict[str, object]:
+    """PASS when stock refuses at least STOCK_MIN_RATE and the re-quant drops clearly, with no probe problems."""
+    issues = list(problems or [])
+    informative = stock >= STOCK_MIN_RATE and not issues
     passed = informative and new <= stock - ABS_DROP_MIN and new <= stock * REL_KEEP_MAX
-    return {"stock": stock, "new": new, "informative": informative, "pass": passed}
+    return {"stock": stock, "new": new, "informative": informative, "problems": issues, "pass": passed}
+
+
+def _probe_rate(results: Path, label: str, problems: list[str]) -> float:
+    path = results / f"probe-{label}.json"
+    if not path.is_file():
+        problems.append(f"{label}: no probe file")
+        return 0.0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rate = data.get("refusal_rate")
+    n = data.get("n")
+    if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+        problems.append(f"{label}: no refusal_rate")
+        return 0.0
+    if not isinstance(n, int) or n <= 0:
+        problems.append(f"{label}: no prompts scored")
+    if data.get("model") != label:
+        problems.append(f"{label}: file is labelled {data.get('model')!r}")
+    if data.get("empty", 0):
+        problems.append(f"{label}: {data.get('empty')} empty replies")
+    return float(rate)
 
 
 def kl_verdict(new: dict[str, dict[str, float]], old: dict[str, dict[str, float]]) -> dict[str, object]:
@@ -253,23 +309,115 @@ def kl_verdict(new: dict[str, dict[str, float]], old: dict[str, dict[str, float]
     return {"rows": rows, "pass": bool(rows) and all(row["ok"] for row in rows.values())}
 
 
+def parse_pair(text: str) -> tuple[str, str, str]:
+    """``tier:stock_label:new_label``, all three non-empty."""
+    parts = text.split(":")
+    if len(parts) != 3 or not all(part.strip() for part in parts):
+        raise ValueError(f"--pair must be tier:stock_label:new_label, got {text!r}")
+    return parts[0], parts[1], parts[2]
+
+
+def _kl_rows(summary: dict[str, object]) -> dict[str, dict[str, float]]:
+    rows: dict[str, dict[str, float]] = {}
+    quants = summary.get("quants")
+    for row in quants if isinstance(quants, list) else []:
+        if not isinstance(row, dict) or not row.get("quant"):
+            continue
+        kl, top1 = row.get("kl_mean"), row.get("top1_agreement_pct")
+        if isinstance(kl, (int, float)) and isinstance(top1, (int, float)):
+            rows[str(row["quant"])] = {"kl": float(kl), "top1": float(top1)}
+    return rows
+
+
 def _verdict(
     results: Path, kl_summary: Path, l2_kl: dict[str, dict[str, float]], pairs: list[tuple[str, str, str]]
 ) -> dict[str, object]:
+    if not pairs:
+        raise ValueError("verdict needs at least one --pair")
     diff = json.loads((results / "tensor-diff.json").read_text(encoding="utf-8"))
     probes = {}
     for tier, stock_label, new_label in pairs:
-        stock = json.loads((results / f"probe-{stock_label}.json").read_text(encoding="utf-8"))["refusal_rate"]
-        new = json.loads((results / f"probe-{new_label}.json").read_text(encoding="utf-8"))["refusal_rate"]
-        probes[tier] = probe_verdict(float(stock), float(new))
+        problems: list[str] = []
+        stock = _probe_rate(results, stock_label, problems)
+        new = _probe_rate(results, new_label, problems)
+        probes[tier] = probe_verdict(stock, new, problems=problems)
     summary = json.loads(kl_summary.read_text(encoding="utf-8"))
-    new_kl = {
-        str(row["quant"]): {"kl": float(row["kl_mean"]), "top1": float(row["top1_agreement_pct"])}
-        for row in summary["quants"]
-    }
-    kl = kl_verdict(new_kl, l2_kl)
-    passed = bool(diff["pass"]) and all(item["pass"] for item in probes.values()) and bool(kl["pass"])
-    return {"tensor_diff": diff["pass"], "probe": probes, "kl": kl, "verdict": "PASS" if passed else "FAIL"}
+    kl = kl_verdict(_kl_rows(summary if isinstance(summary, dict) else {}), l2_kl)
+    passed = diff.get("pass") is True and all(item["pass"] for item in probes.values()) and bool(kl["pass"])
+    return {"tensor_diff": diff.get("pass") is True, "probe": probes, "kl": kl, "verdict": "PASS" if passed else "FAIL"}
+
+
+def _sha256_lines(path: Path) -> dict[str, str]:
+    """``sha256sum`` output: file name to digest."""
+    digests: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2:
+            digests[parts[1].lstrip("*").strip()] = parts[0]
+    return digests
+
+
+def _toml_text(value: str) -> str:
+    if not value or "\n" in value:
+        raise ValueError("a KL plan string is empty or multi-line")
+    return json.dumps(value)
+
+
+def kl_plan(
+    *,
+    job_id: str,
+    author_repo: str,
+    author_rev: str,
+    f16: Path,
+    tiers: list[tuple[str, Path]],
+    sha256_file: Path,
+    note: str,
+) -> str:
+    """TOML for one local-reference KL job over local tiers. Every revision comes from the file's sha256."""
+    digests = _sha256_lines(sha256_file)
+    if not tiers:
+        raise ValueError("kl-plan needs at least one --tier")
+
+    def digest(path: Path) -> str:
+        if not path.is_absolute():
+            raise ValueError(f"{path.name} must be an absolute path")
+        value = digests.get(path.name, "")
+        if not value:
+            raise ValueError(f"{sha256_file.name} has no sha256 for {path.name}")
+        return value
+
+    lines = [
+        "[defaults]",
+        "chunks = 100",
+        "ctx = 512",
+        "fit_ctx = 8192",
+        'kv_cache = "q8_0"',
+        "headroom_gb = 3.0",
+        "budgets_gb = [16.0, 24.0]",
+        "",
+        "[[jobs]]",
+        f"id = {_toml_text(job_id)}",
+        f"bf16_repo = {_toml_text(author_repo)}",
+        f"bf16_revision = {_toml_text(author_rev)}",
+        'source_format = "gguf"',
+        f"f16_file = {_toml_text(str(f16))}",
+        f"sha256 = {_toml_text(digest(f16))}",
+        "expect_mtp = false",
+        f"note = {_toml_text(note)}",
+    ]
+    for tier, path in tiers:
+        value = digest(path)
+        lines += [
+            "",
+            "[[jobs.quants]]",
+            f"quant = {_toml_text(tier)}",
+            'source = "local"',
+            f"revision = {_toml_text(local_revision(value))}",
+            f"pattern = {_toml_text(str(path))}",
+            f"sha256 = {_toml_text(value)}",
+            "ours = true",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -292,14 +440,33 @@ def main(argv: list[str] | None = None) -> int:
     final.add_argument("--kl-summary", type=Path, required=True)
     final.add_argument("--l2-kl", required=True, help='JSON: {"QUANT": {"kl": L2 kl_mean, "top1": L2 top-1 %%}}')
     final.add_argument("--pair", action="append", required=True, help="tier:stock_label:new_label")
+    plan = sub.add_parser("kl-plan")
+    plan.add_argument("--job", required=True)
+    plan.add_argument("--author-repo", required=True)
+    plan.add_argument("--author-rev", required=True)
+    plan.add_argument("--f16", type=Path, required=True)
+    plan.add_argument("--tier", action="append", required=True, help="QUANT=/abs/path.gguf")
+    plan.add_argument("--sha256-file", type=Path, required=True, help="sha256sum output naming the F16 and tiers")
+    plan.add_argument("--note", required=True)
+    plan.add_argument("--plan-out", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.command == "kl-plan":
+        return _write_plan(args)
     if args.command == "tensor-diff":
         payload = tensor_diff(args.local, args.stock_url, args.modified, args.controls)
     elif args.command == "probe":
-        payload = probe(args.server, read_prompts(args.prompts), args.label)
+        try:
+            payload = probe(args.server, read_prompts(args.prompts), args.label)
+        except ProbeError as exc:
+            print(f"probe: {exc}", file=sys.stderr)
+            return 1
     else:
-        pairs = [tuple(item.split(":", 2)) for item in args.pair]
-        payload = _verdict(args.results, args.kl_summary, json.loads(args.l2_kl), pairs)  # type: ignore[arg-type]
+        try:
+            pairs = [parse_pair(item) for item in args.pair]
+        except ValueError as exc:
+            print(f"verdict: {exc}", file=sys.stderr)
+            return 2
+        payload = _verdict(args.results, args.kl_summary, json.loads(args.l2_kl), pairs)
     text = json.dumps(payload, indent=2, sort_keys=True)
     out = getattr(args, "out", None)
     if out is not None:
@@ -308,6 +475,38 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     ok = payload.get("pass", payload.get("verdict") == "PASS")
     return 0 if ok or args.command == "probe" else 1
+
+
+def _write_plan(args: argparse.Namespace) -> int:
+    try:
+        tiers = []
+        for item in args.tier:
+            label, _, path = item.partition("=")
+            if not label or not path:
+                raise ValueError(f"--tier must be QUANT=/abs/path.gguf, got {item!r}")
+            tiers.append((label, Path(path)))
+        text = kl_plan(
+            job_id=args.job,
+            author_repo=args.author_repo,
+            author_rev=args.author_rev,
+            f16=args.f16,
+            tiers=tiers,
+            sha256_file=args.sha256_file,
+            note=args.note,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"kl-plan: {exc}", file=sys.stderr)
+        return 1
+    args.plan_out.parent.mkdir(parents=True, exist_ok=True)
+    args.plan_out.write_text(text, encoding="utf-8")
+    try:
+        loaded = load_kl_plan(args.plan_out).job(args.job)
+    except PlanError as exc:
+        print(f"kl-plan: {exc}", file=sys.stderr)
+        return 1
+    for quant in loaded.quants:
+        print(f"{loaded.id} {quant.quant} {quant.source} {quant.revision}")
+    return 0
 
 
 if __name__ == "__main__":
