@@ -258,7 +258,7 @@ def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkey
 
 
 def test_index_serial_follows_the_published_one() -> None:
-    # voxprint-common 0.2.6 bundles serial 9, so nothing below 10 is published.
+    # voxprint-common 0.3.0 bundles serial 9, so nothing below 10 is published.
     assert next_serial(None) == 10
     assert next_serial(1) == 10
     assert next_serial(9) == 10
@@ -268,17 +268,103 @@ def test_index_serial_follows_the_published_one() -> None:
 def test_strict_priority_sources_and_030_fields_are_accepted() -> None:
     document = _sample()
     ours = {"kind": "hf", "ref": "Mitroshenkov87/voxprint-t-lite-it-2.1", "revision": "ab" * 20}
+    digest = "ab" * 32
     document["mirror_policy"] = "strict-priority"
     document["files"][0]["sources"] = [{"kind": "hf", "ref": "author/repo", "revision": "cd" * 20}, ours]
-    document["files"][0]["built_for"] = {"onnxruntime": "1.22", "opset": 17}
     document["file_groups"] = [{"paths": ["a.gguf"], "mirror_policy": "race", "sources": [ours]}]
-    document["prebuilt"] = [{"path": "a.onnx", "built_for": {"onnxruntime": "1.22", "opset": 17}}]
-    document["post_install"] = {"steps": []}
+    document["files"][0]["onnx_prebuilt"] = {
+        "path": "a.onnx",
+        "sha256": digest,
+        "size": 12,
+        "url": "https://example.com/a.onnx",
+        "built_for": {"onnxruntime": "1.22", "opset": 17},
+    }
+    document["prebuilt"] = [
+        {
+            "id": "fallback-a",
+            "role": "fallback",
+            "replaces": "a.gguf",
+            "files": [{"path": "fallback/a.gguf", "size": 3, "sha256": digest}],
+        }
+    ]
+    document["post_install"] = {
+        "cli": "voxprint-forge-cli",
+        "args": ["--prepare-model", "{id}"],
+        "timeout_s": 60,
+        "outputs": [{"path": "ready.flag"}],
+    }
     document["runtime"]["engine"] = "onnxruntime"
     check_document(document)
+    _schema(document)
     document["mirror_policy"] = "fastest"
     with pytest.raises(StageError):
         check_document(document)
+
+
+def test_build_document_emits_onnx_prebuilt() -> None:
+    digest = "ab" * 32
+    artifact = {
+        "path": "weights.onnx",
+        "size": 8,
+        "sha256": digest,
+        "onnx_prebuilt": {
+            "path": "weights.prebuilt.onnx",
+            "sha256": digest,
+            "url": "https://example.com/weights.prebuilt.onnx",
+            "built_for": {"onnxruntime": ">=1.22", "opset": 17},
+        },
+    }
+    document = build_document(
+        model_id="onnx-demo",
+        display_name="ONNX demo",
+        app_ids=["model-forge"],
+        task="image-to-image",
+        license="apache-2.0",
+        files=[artifact],
+        mirrors=[{"kind": "hf", "ref": "Mitroshenkov87/voxprint-onnx-demo", "revision": "ab" * 20}],
+        min_vram_gb=4,
+        recommended_vram_gb=8,
+        gpu_min_cc=8.0,
+        engine="onnxruntime",
+        version_req=">=1.22",
+        base_model="org/example",
+        card_url="",
+        onnx_prebuilt={
+            "path": "model.onnx",
+            "sha256": digest,
+            "url": "https://example.com/model.onnx",
+            "built_for": {"onnxruntime": "1.22.0", "opset": 18},
+        },
+        post_install={"cli": "voxprint-forge-cli", "args": ["mdl", "prepare", "{id}", "{model_dir}"]},
+    )
+    assert "onnx_prebuilt" in document["files"][0]
+    assert document["files"][0]["onnx_prebuilt"]["path"] == "weights.prebuilt.onnx"
+    assert document["onnx_prebuilt"]["path"] == "model.onnx"
+    assert document["post_install"]["cli"] == "voxprint-forge-cli"
+    _schema(document)
+
+
+def test_bundled_serial_nine_index_still_parses() -> None:
+    import hashlib
+    from importlib import resources
+
+    from voxprint_common.mdl.index import load_index
+
+    pin = json.loads(
+        resources.files("voxprint_common.mdl.data").joinpath("model-index.pin.json").read_text(encoding="utf-8")
+    )
+    raw = resources.files("voxprint_common.mdl.data").joinpath("model-index.json").read_bytes()
+    document = json.loads(raw.decode("utf-8"))
+    assert pin["serial"] == 9
+    assert document["serial"] == 9
+    assert document["head"] == pin["head"]
+    assert document["generated_at"] == pin["generated_at"]
+    assert isinstance(document["models"], list) and document["models"]
+    assert hashlib.sha256(raw).hexdigest() == pin["sha256"]
+    bundled = load_index(remote=False)
+    assert bundled.source == "bundled"
+    assert bundled.serial == 9
+    assert len(bundled.entries) == len(document["models"])
 
 
 def test_backfill_writes_local_files_and_does_not_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

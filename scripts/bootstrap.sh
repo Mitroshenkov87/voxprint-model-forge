@@ -192,7 +192,7 @@ if ! install_torch 3.14; then
     install_torch 3.12
   fi
 fi
-uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.2.6-py3-none-any.whl"
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.3.0-py3-none-any.whl"
 # Torch came from the cu130 index above; everything else comes from PyPI only.
 # Mixing the torch index in here makes uv resolve index-first and pick old
 # packages. The constraint keeps the CUDA torch build.
