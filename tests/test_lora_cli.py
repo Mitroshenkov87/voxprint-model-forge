@@ -62,3 +62,19 @@ def test_unprepared_project_is_a_usage_error(tmp_path, capsys) -> None:
     code = main(["--json", "lora", "train", "--project", str(tmp_path / "none"), *ARGS])
     payload = json.loads(capsys.readouterr().out)
     assert code == 2 and payload["error"]["code"] == "lora.err.not_prepared"
+
+
+def test_dry_run_works_without_a_source_checkout(tmp_path, capsys, monkeypatch) -> None:
+    from voxprint_forge import cli
+
+    def no_checkout(explicit):
+        raise cli.UsageError("cannot find the forge repo; pass --root", code="root")
+
+    monkeypatch.setattr(cli, "_repo_root", no_checkout)
+    monkeypatch.delenv("FORGE_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project"
+    make_project(project)
+    code = main(["--json", "lora", "train", "--project", str(project), "--dry-run", *ARGS])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["result"]["state"] == "dry-run"

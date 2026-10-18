@@ -97,8 +97,12 @@ function Invoke-Cli([string[]]$ArgList) {
     # stderr into error records, so this call must not run under "Stop".
     $ErrorActionPreference = "Continue"
     $err = Join-Path $Results "stderr.txt"
-    $out = & $Cli @ArgList 2>> $err | Out-String
-    $code = $LASTEXITCODE
+    # Run outside any source checkout, as an installed app does.
+    Push-Location ([System.IO.Path]::GetTempPath())
+    try {
+        $out = & $Cli @ArgList 2>> $err | Out-String
+        $code = $LASTEXITCODE
+    } finally { Pop-Location }
     Add-Content -LiteralPath $Log -Value ("> voxprint-forge-cli " + ($ArgList -join " ") + "`n" + $out) -Encoding utf8
     return @{ code = $code; out = $out }
 }
