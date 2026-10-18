@@ -7,6 +7,7 @@ name: installer
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     paths:
       - "installer/**"
@@ -16,6 +17,9 @@ on:
       - "scripts/windows_smoke.ps1"
       - "src/voxprint_forge/lora/export.py"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
