@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # MOSS-Image fit job (synth4). Arms x caps from plans/moss-synth4.toml.
-# Usage: scripts/vm_run_moss_fit.sh [--preflight-only]
+# Usage: scripts/vm_run_moss_fit.sh [--preflight-only | --te-offload-only]
+#   --te-offload-only  16 GB memprobe (baseline + fit), then only the bf16-te-offload arm (no c-dq, no ComfyUI).
 # Separate venv: the vendored pipeline needs diffusers>=0.38, transformers>=5.3 (the forge venv pins <0.38).
 # Downloads: the author SFT snapshot at the pinned revision (27.2 GB) and three Comfy-Org reference files (15.5 GB).
 # Results: $FORGE_OUT/moss-fit/<arm>/<cap>/result.json + PNGs named by prompt sha256[:12]. No tokens or hosts printed.
@@ -17,8 +18,9 @@ TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu130}"
 export PATH="${HOME}/.local/bin:${PATH}"
 export HF_HOME="${HF_HOME:-$FORGE_OUT/hf-home}"
 export HF_HUB_DISABLE_TELEMETRY=1 PYTHONUNBUFFERED=1 PYTHONPATH="$ROOT/src"
-PREFLIGHT_ONLY=0
+PREFLIGHT_ONLY=0 TE_ONLY=0
 [[ "${1:-}" == "--preflight-only" ]] && PREFLIGHT_ONLY=1
+[[ "${1:-}" == "--te-offload-only" ]] && TE_ONLY=1
 
 mkdir -p "$OUT" "$HF_HOME"
 if [[ ! -x "$VENV/bin/python" ]]; then
@@ -46,7 +48,19 @@ snapshot_download("OpenMOSS-Team/MOSS-Image-SFT", revision="fc5de0d56fc910cbca6f
                   local_dir=sys.argv[1], allow_patterns=["*.json", "*.jinja", "*.safetensors", "LICENSE"])
 PY
 
+# 16 GB memprobe: one prompt, a few steps. The baseline repeats the #82 settings (default allocator, one-shot
+# call, 16 GiB cap); the fit run uses the plan settings with reserved_target_gb (15.2 GB) as a hard cap.
+# Separate processes: the allocator setting is fixed when CUDA starts. A failed fit probe stops the job.
+env -u PYTORCH_CUDA_ALLOC_CONF "$VENV/bin/python" -m voxprint_forge.diffusion.moss_fit --plan "$PLAN" --memprobe \
+  --baseline --arm bf16-te-offload --cap 16 --snapshot "$SNAP" --out "$OUT"
+"$VENV/bin/python" -m voxprint_forge.diffusion.moss_fit --plan "$PLAN" --memprobe \
+  --arm bf16-te-offload --cap 16 --snapshot "$SNAP" --out "$OUT" || { echo "memprobe: 16 GB fit FAILED"; exit 1; }
 "$VENV/bin/python" -m voxprint_forge.diffusion.moss_fit --plan "$PLAN" --arm bf16-te-offload --snapshot "$SNAP" --out "$OUT"
+if [[ "$TE_ONLY" -eq 1 ]]; then
+  nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader > "$OUT/gpu.txt"
+  echo "moss-fit te-offload done: $OUT"
+  exit 0
+fi
 "$VENV/bin/python" -m voxprint_forge.diffusion.moss_fit --plan "$PLAN" --arm c-dq --snapshot "$SNAP" --out "$OUT"
 
 # Comfy INT8 reference: ComfyUI at the pinned commit, its own venv, files sha-checked.

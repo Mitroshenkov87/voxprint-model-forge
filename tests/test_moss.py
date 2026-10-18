@@ -140,8 +140,12 @@ def test_preflight_passes_with_pinned_listing() -> None:
     plan = moss_fit.load_plan(PLAN)
     pins = {"torch": "2.14.1", "diffusers": "0.41.0", "transformers": "5.20.1"}
     checks = moss_preflight.run(
-        plan, lister=_lister(plan), versions=lambda d: pins.get(d, "1.0"), cuda=lambda: "H100",
-        disk_free_gb=lambda: 200.0, vm=True,
+        plan,
+        lister=_lister(plan),
+        versions=lambda d: pins.get(d, "1.0"),
+        cuda=lambda: "H100",
+        disk_free_gb=lambda: 200.0,
+        vm=True,
     )
     assert all(c["ok"] for c in checks if c["required"]), checks
 
@@ -149,8 +153,12 @@ def test_preflight_passes_with_pinned_listing() -> None:
 def test_preflight_fails_on_sha_mismatch_and_old_diffusers() -> None:
     plan = moss_fit.load_plan(PLAN)
     checks = moss_preflight.run(
-        plan, lister=_lister(plan, corrupt=True), versions=lambda d: "0.37.1" if d == "diffusers" else "9.0",
-        cuda=lambda: "", disk_free_gb=lambda: 10.0, vm=True,
+        plan,
+        lister=_lister(plan, corrupt=True),
+        versions=lambda d: "0.37.1" if d == "diffusers" else "9.0",
+        cuda=lambda: "",
+        disk_free_gb=lambda: 10.0,
+        vm=True,
     )
     failed = {c["check"] for c in checks if c["required"] and not c["ok"]}
     assert {"runtime versions", "cuda", "disk"} <= failed
@@ -245,3 +253,191 @@ def test_encode_on_cpu_keeps_embeds_and_mask_on_the_encoder_device() -> None:
     assert row.device.type == "cpu" and mask.device == row.device
     assert mask.dtype == torch.bool and tuple(mask.shape) == (1, 5)
     assert tuple(row.shape) == (1, 5, 3)
+
+
+def test_plan_16gb_fit_settings() -> None:
+    plan = moss_fit.load_plan(PLAN)
+    assert plan.alloc_conf == "expandable_segments:True"
+    arm = next(a for a in plan.arms if a.id == "bf16-te-offload")
+    sixteen = moss_fit.fit_options(plan, arm, 16.0)
+    assert (sixteen["te_mode"], sixteen["split_decode"], sixteen["decode_evict"]) == ("cpu", True, False)
+    assert sixteen["reserved_target_gb"] == 15.2
+    twenty_four = moss_fit.fit_options(plan, arm, 24.0)
+    got = (twenty_four["te_mode"], twenty_four["split_decode"], twenty_four["reserved_target_gb"])
+    assert got == ("swap", False, None)
+
+
+def test_reserved_target_needs_a_te_mode(tmp_path: Path) -> None:
+    text = PLAN.read_text(encoding="utf-8")
+    text = text.replace('reserved_target_gb = { "16" = 15.2 }', 'reserved_target_gb = { "12" = 11.0 }', 1)
+    path = tmp_path / "plan.toml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(Exception, match="reserved_target_gb"):
+        moss_fit.load_plan(path)
+
+
+def test_decode_latents_is_the_pipeline_post_processing() -> None:
+    torch = pytest.importorskip("torch")
+
+    class BN:
+        running_mean = torch.arange(128, dtype=torch.float32) / 100
+        running_var = torch.full((128,), 4.0)
+
+    class Cfg:
+        batch_norm_eps = 0.0
+
+    class VAE:
+        dtype = torch.float32
+        bn, config = BN(), Cfg()
+        seen: list[object] = []
+
+        def decode(self, z, return_dict=False):  # noqa: ANN001, ANN201
+            self.seen.append(z)
+            return (z[:, :3].clamp(-1, 1),)
+
+    class Proc:
+        def postprocess(self, images, output_type="pil"):  # noqa: ANN001, ANN201
+            assert output_type == "pil"
+            return [images]
+
+    class Pipe:
+        vae, image_processor = VAE(), Proc()
+
+    z = torch.randn(1, 32, 8, 8)
+    b, c, h, w = z.shape
+    patched = z.reshape(b, c, h // 2, 2, w // 2, 2).permute(0, 1, 3, 5, 2, 4).reshape(b, c * 4, h // 2, w // 2)
+    latents = (patched - BN.running_mean.view(1, -1, 1, 1)) / BN.running_var.sqrt().view(1, -1, 1, 1)
+    out = moss.decode_latents(Pipe(), latents)[0]
+    assert torch.allclose(Pipe.vae.seen[0], z, atol=1e-5)
+    assert torch.allclose(out, z[:, :3].clamp(-1, 1), atol=1e-5)
+
+
+def test_peaks_keep_per_phase_and_overall_maxima() -> None:
+    values = iter([(5e9, 6e9), (9e9, 9.5e9), (4e9, 7e9)])
+
+    class Cuda:
+        current = (0.0, 0.0)
+
+        def reset_peak_memory_stats(self) -> None:
+            self.current = next(values)
+
+        def max_memory_allocated(self) -> float:
+            return self.current[0]
+
+        def max_memory_reserved(self) -> float:
+            return self.current[1]
+
+    class Torch:
+        cuda = Cuda()
+
+    peaks = moss_fit.Peaks(Torch())
+    for name in ("load", "denoise", "denoise"):
+        peaks.start()
+        peaks.stop(name)
+    assert peaks.phases == {
+        "load": {"alloc_gb": 5.0, "reserved_gb": 6.0},
+        "denoise": {"alloc_gb": 9.0, "reserved_gb": 9.5},
+    }
+    assert (peaks.alloc, peaks.reserved) == (9e9 / 1e9, 9.5e9 / 1e9)
+
+
+def test_memprobe_baseline_refuses_a_custom_allocator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    args = [
+        "--plan",
+        str(PLAN),
+        "--memprobe",
+        "--baseline",
+        "--arm",
+        "bf16-te-offload",
+        "--cap",
+        "16",
+        "--snapshot",
+        str(tmp_path),
+        "--out",
+        str(tmp_path),
+    ]
+    with pytest.raises(SystemExit):
+        moss_fit.main(args)
+    with pytest.raises(SystemExit):
+        moss_fit.main(["--plan", str(PLAN), "--memprobe", "--arm", "comfy-int8", "--cap", "16"])
+
+
+def _fake_gpu(monkeypatch: pytest.MonkeyPatch, peak_reserved: float):  # type: ignore[no-untyped-def]
+    torch = pytest.importorskip("torch")
+    from PIL import Image
+
+    caps: list[float] = []
+
+    class Props:
+        total_memory = 95 * 1024**3
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda i: Props())
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", lambda f: caps.append(f * Props.total_memory))
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda: None)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: peak_reserved - 0.1e9)
+    monkeypatch.setattr(torch.cuda, "max_memory_reserved", lambda: peak_reserved)
+    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda: 10.5e9)
+    real_generator = torch.Generator
+    monkeypatch.setattr(torch, "Generator", lambda device=None: real_generator())
+
+    class Module:
+        def __init__(self) -> None:
+            self.device = "cuda"
+
+        def to(self, device: str) -> "Module":
+            self.device = device
+            return self
+
+    class Out:
+        def __init__(self, images: object) -> None:
+            self.images = images
+
+    class Embeds:
+        def to(self, device: str) -> "Embeds":
+            return self
+
+    class Pipe:
+        transformer, vae = Module(), Module()
+        calls: list[dict[str, object]] = []
+
+        def __call__(self, **kw: object) -> Out:
+            self.calls.append(kw)
+            return Out(torch.zeros(1, 128, 64, 64) if kw.get("output_type") == "latent" else [Image.new("RGB", (8, 8))])
+
+    pipe = Pipe()
+    monkeypatch.setattr(moss_fit, "_load", lambda snapshot, arm, mode: (pipe, 1.0))
+    monkeypatch.setattr(moss, "encode_on_cpu", lambda p, text: (Embeds(), Embeds()))
+    monkeypatch.setattr(moss, "decode_latents", lambda p, latents: [Image.new("RGB", (8, 8))])
+    monkeypatch.setattr(moss_fit, "process_used_gb", lambda: 11.0)
+    return pipe, caps
+
+
+def test_memprobe_fit_uses_the_target_as_a_hard_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pipe, caps = _fake_gpu(monkeypatch, 14.6e9)
+    plan = moss_fit.load_plan(PLAN)
+    arm = next(a for a in plan.arms if a.id == "bf16-te-offload")
+    row = moss_fit.run_memprobe(plan, arm, 16.0, tmp_path, tmp_path, baseline=False)
+    assert caps[0] == pytest.approx(15.2e9)
+    assert row["status"] == "ok" and row["pass"] is True and row["fits_reserved_target"] is True
+    assert set(row["phases"]) == {"load", "denoise", "decode"}  # type: ignore[arg-type]
+    assert "decode_evicted" in row and pipe.transformer.device == "cuda"
+    assert pipe.calls[0]["output_type"] == "latent" and pipe.calls[0]["num_inference_steps"] == plan.memprobe_steps
+    assert row["gpu_end"] == {"process_used_gb": 11.0, "torch_reserved_gb": 10.5, "cuda_context_gb": 0.5}
+    over = moss_fit.run_memprobe(plan, arm, 16.0, tmp_path, tmp_path, baseline=False)
+    assert over["pass"] is True
+    _fake_gpu(monkeypatch, 15.3e9)
+    assert moss_fit.run_memprobe(plan, arm, 16.0, tmp_path, tmp_path, baseline=False)["pass"] is False
+
+
+def test_memprobe_baseline_and_cell_keep_the_old_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pipe, caps = _fake_gpu(monkeypatch, 16.36e9)
+    plan = moss_fit.load_plan(PLAN)
+    arm = next(a for a in plan.arms if a.id == "bf16-te-offload")
+    row = moss_fit.run_memprobe(plan, arm, 16.0, tmp_path, tmp_path, baseline=True)
+    assert caps[-1] == pytest.approx(16 * 1024**3) and "output_type" not in pipe.calls[-1]
+    assert set(row["phases"]) == {"load", "generate"} and "pass" not in row  # type: ignore[arg-type]
+    cell = moss_fit.run_diffusers(plan, arm, 16.0, tmp_path, tmp_path)
+    assert cell["status"] == "ok" and cell["fits_reserved_target"] is False and cell["peak_reserved_gb"] == 16.36
+    assert len(list(tmp_path.glob("*.png"))) == len(plan.prompts) + 1
