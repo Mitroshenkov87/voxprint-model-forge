@@ -38,11 +38,12 @@ INDEX_KEY_ENV = "VOXPRINT_MDL_INDEX_KEY_FILE"
 # repo is this string (the Hub URL prefix of the dataset).
 HOSTED_REPO = f"datasets/{INDEX_REPO}"
 HOSTED_DIR = "descriptors"
-# Serial and head of the index bundled in voxprint-common 0.2.5. A published
-# index must be newer, so the first signed one is serial 2.
-BUNDLED_INDEX_SERIAL = 1
-BUNDLED_INDEX_HEAD = "d2325ed8de2eec808b22a88381bfb35055f84203"
-INDEX_MIN_GENERATED_AT = "2026-10-17T10:42:07Z"
+# Serial, head and generated_at of the signed index bundled in voxprint-common
+# 0.2.6 (model-index.pin.json). Apps refuse a remote index older than that pin,
+# so the next one we publish is serial 10.
+BUNDLED_INDEX_SERIAL = 9
+BUNDLED_INDEX_HEAD = "15edeab0f7a874c27d2b38ef6ecb69106ff94df8"
+INDEX_MIN_GENERATED_AT = "2026-10-18T04:09:36Z"
 HF_AUTHOR = "Mitroshenkov87"
 DIFFUSERS_VERSION_REQ = ">=0.37.1,<0.38"
 NUNCHAKU_VERSION_REQ = ">=1.0"

@@ -1,4 +1,4 @@
-"""The Model Forge window on the shared Yitro shell (voxprint-common v0.2.5).
+"""The Model Forge window on the shared Yitro shell (voxprint-common v0.2.6).
 
 Surface ``model-forge`` (tool type). Two sections: "Train a model" with the
 five-step wizard (photos, subject and consent, check and prepare, train,
@@ -7,7 +7,7 @@ the step title and counter, Back and Next, the overflow menu and the Expert
 panel. This module fills each step's body, gates Next with a plain reason and
 feeds the engine's progress sentences into the step.
 
-v0.2.5 has no public hook for a custom wizard body, so :class:`ForgeWidget`
+v0.2.5 and v0.2.6 have no public hook for a custom wizard body, so :class:`ForgeWidget`
 reaches a few documented-nowhere attributes of ``SimpleImageWidget``. They
 are all read in :meth:`ForgeWidget._parts`; a test fails if the pinned shell
 changes them.
@@ -92,7 +92,7 @@ class ForgeWidget(SimpleImageWidget):
             self.after_refresh()
 
     def _parts(self) -> dict[str, object]:
-        """The shell widgets this app extends (pinned to v0.2.5)."""
+        """The shell widgets this app extends (pinned to v0.2.6; unchanged since v0.2.5)."""
         return {
             "body": self._wizard_body,  # type: ignore[attr-defined]
             "signature": self._wizard_signature,  # type: ignore[attr-defined]

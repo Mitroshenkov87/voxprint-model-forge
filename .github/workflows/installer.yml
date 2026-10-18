@@ -39,7 +39,7 @@ jobs:
           Copy-Item BUILD.json src\voxprint_forge\BUILD.json
           python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
           if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
-          $common = "vendor\voxprint_common-0.2.5-py3-none-any.whl"
+          $common = "vendor\voxprint_common-0.2.6-py3-none-any.whl"
           $want = (Get-Content "$common.sha256").Split(" ")[0].Trim().ToLower()
           if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
           Copy-Item $common "$stage\wheels\"

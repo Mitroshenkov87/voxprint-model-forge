@@ -24,9 +24,9 @@ dependencies = [
   # 5.29.6 from PyPI imports and reads the sentencepiece model there.
   "protobuf==5.29.6",
   # Not on PyPI. CI, the VM scripts and the installer install
-  # vendor/voxprint_common-0.2.5-py3-none-any.whl, the Yitro tag v0.2.5
-  # (8a94b531cb4f3526425a80a86a1e64624b5de606). preflight --vm checks this pin.
-  "voxprint-common==0.2.5",
+  # vendor/voxprint_common-0.2.6-py3-none-any.whl, tag v0.2.6
+  # (75860fb6d786a6a99c0ea5fa746a350372856b11). preflight --vm checks this pin.
+  "voxprint-common==0.2.6",
 ]
 
 [project.optional-dependencies]
@@ -63,7 +63,7 @@ moss = [
   "Pillow",
 ]
 gui = [
-  "voxprint-common[ui]==0.2.5",
+  "voxprint-common[ui]==0.2.6",
   "PySide6>=6.8",
   "keyring>=25",
   "nvidia-ml-py>=12",

@@ -54,8 +54,8 @@ def _schema(document: dict[str, object]) -> None:
 
 @pytest.fixture(autouse=True)
 def _published_index(monkeypatch: pytest.MonkeyPatch) -> None:
-    head = "d2325ed8de2eec808b22a88381bfb35055f84203"
-    monkeypatch.setattr("voxprint_forge.mdl.published_index_state", lambda: (1, head))
+    head = "15edeab0f7a874c27d2b38ef6ecb69106ff94df8"
+    monkeypatch.setattr("voxprint_forge.mdl.published_index_state", lambda: (9, head))
 
 
 def _sample(*, engine: str = "llama.cpp", min_gb: float = 16, rec_gb: float = 24) -> dict[str, object]:
@@ -210,7 +210,7 @@ def test_unresolved_descriptor_commit_writes_nothing(tmp_path: Path, monkeypatch
     assert not dest.exists()
 
 
-def _signed_fixture(tmp_path: Path, serial: int = 2) -> tuple[Path, Path, bytes]:
+def _signed_fixture(tmp_path: Path, serial: int = 10) -> tuple[Path, Path, bytes]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
@@ -219,7 +219,7 @@ def _signed_fixture(tmp_path: Path, serial: int = 2) -> tuple[Path, Path, bytes]
     key_file.write_bytes(key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
     row = {"id": "tiny", "repo": "Mitroshenkov87/voxprint-tiny", "revision": "ab" * 20, "sha256": "cd" * 32}
     index = tmp_path / "index.json"
-    document = index_document([row], serial=serial, head="d2325ed", generated_at="2026-10-17T12:00:00Z")
+    document = index_document([row], serial=serial, head="15edeab", generated_at="2026-10-18T05:00:00Z")
     index.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     from cryptography.hazmat.primitives.serialization import PublicFormat
 
@@ -247,9 +247,9 @@ def test_index_push_requires_the_flag(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[str] = []
     monkeypatch.setattr("voxprint_forge.mdl._upload_index", lambda repo, path, sig: called.append(repo))
-    index, key_file, _ = _signed_fixture(tmp_path, serial=3)
+    index, key_file, _ = _signed_fixture(tmp_path, serial=11)
     with pytest.raises(StageError):
-        push_index(index, key_file=key_file, published_serial=3)
+        push_index(index, key_file=key_file, published_serial=11)
     index.write_text("[]\n", encoding="utf-8")
     with pytest.raises(StageError):
         push_index(index, key_file=key_file, published_serial=None)
@@ -258,9 +258,11 @@ def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkey
 
 
 def test_index_serial_follows_the_published_one() -> None:
-    assert next_serial(None) == 2
-    assert next_serial(1) == 2
-    assert next_serial(7) == 8
+    # voxprint-common 0.2.6 bundles serial 9, so nothing below 10 is published.
+    assert next_serial(None) == 10
+    assert next_serial(1) == 10
+    assert next_serial(9) == 10
+    assert next_serial(12) == 13
 
 
 def test_strict_priority_sources_and_030_fields_are_accepted() -> None:
@@ -564,7 +566,7 @@ def test_author_only_descriptor_is_hosted_in_the_index_dataset(tmp_path: Path) -
         asked.append(repo)
         return "cd" * 20
 
-    rows = write_index([path], tmp_path / "index.json", commits=lookup, serial=3, head="ab" * 20)
+    rows = write_index([path], tmp_path / "index.json", commits=lookup, serial=11, head="ab" * 20)
     assert rows == [
         {
             "id": "t-lite-it-2.1",
@@ -587,7 +589,7 @@ def test_hosted_rows_take_one_dataset_pin(tmp_path: Path) -> None:
         tmp_path / "index.json",
         revisions={HOSTED_REPO: "ef" * 20},
         commits=forbid,
-        serial=3,
+        serial=11,
         head="ab" * 20,
     )
     assert [(row["id"], row["repo"], row["revision"]) for row in rows] == [
@@ -603,7 +605,7 @@ def test_unresolved_hosted_descriptor_writes_nothing(tmp_path: Path) -> None:
         raise StageError(f"{repo} descriptor commit could not be resolved", code="mdl")
 
     with pytest.raises(StageError) as caught:
-        write_index([path], tmp_path / "index.json", commits=missing, serial=3, head="ab" * 20)
+        write_index([path], tmp_path / "index.json", commits=missing, serial=11, head="ab" * 20)
     assert caught.value.code == "mdl"
     assert not (tmp_path / "index.json").exists()
 

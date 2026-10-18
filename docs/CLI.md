@@ -33,10 +33,10 @@ On failure the object also has `error.code` and `error.message`.
 
 Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
 
-`voxprint-common` is not on PyPI yet. The Yitro wheel v0.2.5 (tag commit 8a94b531) is vendored at `vendor/voxprint_common-0.2.5-py3-none-any.whl` (release https://github.com/Mitroshenkov87/voxprint-common/releases/tag/v0.2.5). Install that wheel, then the project. The core pin is `voxprint-common>=0.1.1,<0.3`; the `gui` extra needs `voxprint-common[ui]==0.2.5`. The v0.1.1 wheel stays in `vendor/` for the VM bootstrap scripts.
+`voxprint-common` is not on PyPI yet. The wheel v0.2.6 (tag commit 75860fb6) is vendored at `vendor/voxprint_common-0.2.6-py3-none-any.whl` (release https://github.com/Mitroshenkov87/voxprint-common/releases/tag/v0.2.6). Install that wheel, then the project. The core pin is `voxprint-common>=0.1.1,<0.3`; the `gui` extra needs `voxprint-common[ui]==0.2.6`. The v0.1.1 wheel stays in `vendor/` for the VM bootstrap scripts.
 
 ```bash
-pip install vendor/voxprint_common-0.2.5-py3-none-any.whl
+pip install vendor/voxprint_common-0.2.6-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 

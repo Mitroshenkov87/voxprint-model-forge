@@ -1,6 +1,6 @@
 """A minimal "Details" / «Подробнее» expander: one disclosure button and a body that starts collapsed.
 
-voxprint-common 0.2.5 has no expander widget, only the ``QPushButton#disclosure``
+voxprint-common 0.2.5 and 0.2.6 have no expander widget, only the ``QPushButton#disclosure``
 style (used by Manage models for its own details). This reuses that style.
 """
 
