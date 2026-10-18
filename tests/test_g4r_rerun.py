@@ -62,7 +62,8 @@ def test_windows_entry_point_parses() -> None:
         "$e=$null; [System.Management.Automation.Language.Parser]::ParseFile("
         f"'{PS1}', [ref]$null, [ref]$e) | Out-Null; if ($e.Count) {{ $e | ForEach-Object {{ $_.Message }}; exit 1 }}"
     )
-    done = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True)
+    shell = shutil.which("pwsh") or "powershell"
+    done = subprocess.run([shell, "-NoProfile", "-Command", command], capture_output=True, text=True)
     assert done.returncode == 0, done.stdout + done.stderr
 
 

@@ -65,11 +65,18 @@ if the staging folder or a bundled wheel holds model weights. Then it runs
 `voxprint-model-forge-setup-<version>` (the exe) and `windows-smoke-results`.
 
 `scripts/windows_smoke.ps1` is the same checklist for a real PC. Run it from an
-elevated PowerShell next to the downloaded setup:
+elevated PowerShell 7 (`pwsh`) next to the downloaded setup. Windows PowerShell 5.1
+also works, but PowerShell 7 is recommended:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .\VoxprintModelForgeSetup.exe -RequireGpu
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .\VoxprintModelForgeSetup.exe -RequireGpu
 ```
+
+The setup runs its PowerShell steps hidden with PowerShell 7 when it is installed.
+If it is missing, an interactive setup offers to download and install the pinned
+official MSI (sha256 checked); if you decline or it fails, the setup continues with
+Windows PowerShell 5.1. A silent setup (`/VERYSILENT`) never prompts. The installer
+workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 
 | Step | Passes when |
 |---|---|

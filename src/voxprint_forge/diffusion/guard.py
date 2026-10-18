@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -74,11 +75,16 @@ def cmdline_is_job(cmdline: str) -> bool:
     return " forge " in padded and "forge-gui" not in lowered
 
 
+def powershell_exe() -> str:
+    """PowerShell 7 (``pwsh``) when it is on PATH, else Windows PowerShell."""
+    return shutil.which("pwsh") or "powershell"
+
+
 def _process_cmdlines() -> list[str]:
     if sys.platform == "win32":
         found = subprocess.run(
             [
-                "powershell",
+                powershell_exe(),
                 "-NoProfile",
                 "-Command",
                 "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",

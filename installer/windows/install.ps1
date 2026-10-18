@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # VOXPrint AI Model Forge: post-install step, run elevated by the setup.
 # Builds <app>\venv (Python 3.14, the app) and <app>\venv-mivolo (Python 3.12,
 # the MiVOLO age check, which pins transformers 4.51) with the bundled uv.exe.

@@ -1,12 +1,13 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
 Windows installer smoke for VOXPrint AI Model Forge: install, --version, preflight,
 LoRA dry-run on stub data, uninstall. No GPU work, no model downloads, no tokens.
 
 .DESCRIPTION
-Run from an elevated PowerShell (the setup installs to Program Files):
+Run from an elevated PowerShell 7 (the setup installs to Program Files). Windows PowerShell 5.1 also works.
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .\VoxprintModelForgeSetup.exe
+    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .\VoxprintModelForgeSetup.exe
 
 -Setup        The setup exe (CI artifact). Default: dist\VoxprintModelForgeSetup.exe, then the script folder.
 -RequireGpu   Also require the preflight CUDA check (use on the laptop; CI has no GPU).
