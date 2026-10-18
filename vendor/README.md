@@ -1,3 +1,3 @@
 Vendored so bootstrap does not fetch GitHub.
 
-- `voxprint_common-0.2.5-py3-none-any.whl`: the Yitro shell, https://github.com/Mitroshenkov87/voxprint-common/releases/tag/v0.2.5 (tag commit 8a94b531cb4f3526425a80a86a1e64624b5de606). CI, docs and release builds install it. The `gui` extra pins `voxprint-common[ui]==0.2.5`.
+- `voxprint_common-0.2.6-py3-none-any.whl`: built from the tag v0.2.6 (commit 75860fb6d786a6a99c0ea5fa746a350372856b11) with `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python -m build --wheel`; the build is reproducible (sha256 in the `.sha256` file). The v0.2.6 GitHub release has no assets because its release job failed (the release already existed). It bundles the serial 9 signed model index (index head 15edeab, sha256 104742f9…f49e45f) and our index public key (`keys/index-public.pem`). CI, docs, release builds and the Windows setup install it. The `gui` extra pins `voxprint-common[ui]==0.2.6`.

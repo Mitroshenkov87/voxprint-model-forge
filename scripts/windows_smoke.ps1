@@ -178,12 +178,15 @@ if ($installed) {
             if (-not (Get-MigrationLog | Where-Object { $_ -match " moved " })) { throw "home-migration.log has no move line" }
             # Then through voxprint_common: models_dir() must be <new home>\models.
             $saved = @{}
-            foreach ($n in @("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR")) { $saved[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $null) }
+            foreach ($n in @("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR", "VOXPRINT_TRT_CACHE")) { $saved[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $null) }
             $md = (& $Py -c "from voxprint_common.paths import models_dir; print(models_dir())" | Out-String).Trim()
-            foreach ($n in $saved.Keys) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
             if ($md -ne (Join-Path $NewHome "models")) { throw "paths.models_dir() is '$md', want $(Join-Path $NewHome 'models')" }
             if (-not (Test-Path -LiteralPath (Join-Path $md "smoke-dummy\smoke-dummy-model.bin"))) { throw "the dummy is not under models_dir()" }
-            $detail += "; dummy under models_dir() $md, sha256 unchanged"
+            $trt = (& $Py -c "from voxprint_common.paths import trt_cache_dir; print(trt_cache_dir())" | Out-String).Trim()
+            foreach ($n in $saved.Keys) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+            if ($trt -ne (Join-Path $NewHome "trt-cache")) { throw "paths.trt_cache_dir() is '$trt', want $(Join-Path $NewHome 'trt-cache')" }
+            if (Test-Path -LiteralPath $OldHome) { throw "voxprint_common recreated $OldHome" }
+            $detail += "; dummy under models_dir() $md, sha256 unchanged; trt_cache_dir() $trt"
         }
         $detail
     })

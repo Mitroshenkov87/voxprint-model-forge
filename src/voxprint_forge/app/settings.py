@@ -39,7 +39,7 @@ CONFIG_FIELD = {
     "lora.mix_old": "replay",
 }
 CAPTION_MODELS = (captioner.DEFAULT, captioner.FALLBACK)
-# The v0.2.5 Expert panel shows a FLOAT with one decimal, so small numbers are lists.
+# The v0.2.5 and v0.2.6 Expert panel shows a FLOAT with one decimal, so small numbers are lists.
 FLOAT_CHOICES = {
     "lora.lr": (1e-5, 2e-5, 5e-5, 8e-5, 1e-4, 2e-4, 3e-4, 5e-4),
     "lora.caption_dropout": (0.0, 0.05, 0.1, 0.15, 0.2, 0.3),
