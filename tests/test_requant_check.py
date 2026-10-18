@@ -227,15 +227,15 @@ DIGEST = "ab" * 32
 @pytest.mark.parametrize(
     ("quant", "message"),
     [
-        ('source = "local"\nrevision = ""\npattern = "/x/Q4.gguf"\n', "missing revision"),
-        ('source = "local"\nrevision = "local-sha256:xyz"\npattern = "/x/Q4.gguf"\n', "local-sha256:<12 hex>"),
+        ('source = "local"\nrevision = ""\npattern = @ABS@\n', "missing revision"),
+        ('source = "local"\nrevision = "local-sha256:xyz"\npattern = @ABS@\n', "local-sha256:<12 hex>"),
         ('source = "local"\nrevision = "local-sha256:abababababab"\npattern = "Q4.gguf"\n', "absolute .gguf"),
-        ('source = "local"\nrepo = "a/q"\nrevision = "local-sha256:abababababab"\npattern = "/x/Q4.gguf"\n', "no repo"),
+        ('source = "local"\nrepo = "a/q"\nrevision = "local-sha256:abababababab"\npattern = @ABS@\n', "no repo"),
         (
-            f'source = "local"\nrevision = "local-sha256:000000000000"\npattern = "/x/Q4.gguf"\nsha256 = "{DIGEST}"\n',
+            f'source = "local"\nrevision = "local-sha256:000000000000"\npattern = @ABS@\nsha256 = "{DIGEST}"\n',
             "does not match its sha256",
         ),
-        ('repo = "local"\nrevision = "x"\npattern = "/x/Q4.gguf"\n', 'set source = "local"'),
+        ('repo = "local"\nrevision = "x"\npattern = @ABS@\n', 'set source = "local"'),
         ('repo = "a/q"\nrevision = ""\npattern = "*.gguf"\n', "missing revision"),
         ('source = "disk"\nrepo = "a/q"\nrevision = "d"\npattern = "*.gguf"\n', "source must be one of"),
     ],
@@ -243,7 +243,8 @@ DIGEST = "ab" * 32
 def test_plan_validates_local_and_remote_quants(tmp_path: Path, quant: str, message: str) -> None:
     path = tmp_path / "kl.toml"
     path.write_text(
-        '[[jobs]]\nid = "L9"\nbf16_repo = "a/b"\nbf16_revision = "c"\n[[jobs.quants]]\nquant = "Q4_K_M"\n' + quant,
+        '[[jobs]]\nid = "L9"\nbf16_repo = "a/b"\nbf16_revision = "c"\n[[jobs.quants]]\nquant = "Q4_K_M"\n'
+        + quant.replace("@ABS@", json.dumps(str(tmp_path / "Q4.gguf"))),
         encoding="utf-8",
     )
     with pytest.raises(PlanError, match=message):
