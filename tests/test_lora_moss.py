@@ -103,6 +103,7 @@ def _install_pipe(monkeypatch) -> dict:
         return pipe
 
     monkeypatch.setattr(moss, "load_pipeline", load_pipeline)
+    monkeypatch.setattr(bases, "_moss_runtime_problems", lambda: [])
     return seen
 
 
@@ -325,3 +326,11 @@ def test_preview_device_mismatch_is_named() -> None:
     with pytest.raises(LoraStageError) as caught:
         adapter.preview(nn.Identity(), "a red cube", 1, build_config("balanced", "balanced", 24))
     assert caught.value.key == "lora.err.preview_device"
+
+
+def test_old_runtime_stops_with_a_named_error(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(bases, "_moss_runtime_problems", lambda: ["diffusers 0.37.1 < 0.38"])
+    monkeypatch.setattr(moss, "load_pipeline", lambda *a, **k: pytest.fail("loaded on an old runtime"))
+    with pytest.raises(LoraStageError) as caught:
+        MossImageAdapter().load(tmp_path, build_config("balanced", "balanced", 24), "cpu")
+    assert caught.value.key == "lora.err.base_runtime" and "0.37.1" in str(caught.value)

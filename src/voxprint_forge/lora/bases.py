@@ -492,6 +492,19 @@ def _moss_weights_dir() -> Path | None:
     return folder if folder.is_dir() else None
 
 
+def _moss_runtime_problems() -> list[str]:
+    """Installed torch, diffusers and transformers below what the vendored MOSS file needs."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    got = []
+    for name in ("torch", "diffusers", "transformers"):
+        try:
+            got.append(version(name))
+        except PackageNotFoundError:
+            got.append("0")
+    return moss_runtime.check_versions(*got)
+
+
 def _checkpoint_blocks(blocks: Sequence[nn.Module]) -> None:
     """Recompute each block on the backward. The MOSS transformer has no checkpointing switch."""
     for block in blocks:
@@ -568,6 +581,9 @@ class MossImageAdapter(BaseAdapter):
             raise LoraUsageError("lora.err.text_encoder")
         if weights_dir is None or not Path(weights_dir).is_dir():
             raise LoraStageError("lora.err.base_missing")
+        problems = _moss_runtime_problems()
+        if problems:
+            raise LoraStageError("lora.err.base_runtime", need="; ".join(problems))
         self.device = device
         self._dtype = torch.bfloat16
         self.pipe = moss_runtime.load_pipeline(Path(weights_dir), dtype=torch.bfloat16)
