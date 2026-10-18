@@ -6,6 +6,7 @@
 ; bitsandbytes wheel, and uv.exe. install.ps1 then builds the Python environments.
 ; The .ps1 steps run hidden under PowerShell 7 (pwsh.exe) when it is installed. If it is missing, an
 ; interactive setup offers to install the pinned official MSI; otherwise Windows PowerShell 5.1 runs them.
+; The PDF user guide (en, ru) is installed into {app}\docs with Start menu shortcuts.
 ; No model files are inside the setup; models are downloaded by the app on first launch.
 
 #define MyAppName "VOXPrint AI Model Forge"
@@ -62,6 +63,8 @@ Source: "migrate-home.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\venv\Scripts\voxprint-model-forge.exe"; WorkingDir: "{app}"
+Name: "{group}\Model Forge guide (EN)"; Filename: "{app}\docs\VOXPrint-Model-Forge-Guide-en.pdf"
+Name: "{group}\Руководство Model Forge (RU)"; Filename: "{app}\docs\VOXPrint-Model-Forge-Guide-ru.pdf"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [UninstallDelete]

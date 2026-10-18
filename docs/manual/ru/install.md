@@ -18,6 +18,8 @@
 2. Установщик копирует приложение в `C:\Program Files\VOXPrint AI Suite\Model Forge`, затем загружает Python и нужные библиотеки. Это занимает несколько минут. Не отключайте интернет.
 3. После завершения откройте **VOXPrint AI Model Forge** из папки **VOXPrint AI Suite** в меню «Пуск».
 
+В той же папке есть это руководство в PDF: **Руководство Model Forge (RU)** и **Model Forge guide (EN)**. Файлы лежат в `C:\Program Files\VOXPrint AI Suite\Model Forge\docs`.
+
 Если установка не удалась, установщик покажет путь к журналу: `C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log`. Проверьте подключение к интернету и запустите установщик снова.
 
 ## Первый запуск
