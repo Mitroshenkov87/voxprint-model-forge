@@ -55,3 +55,29 @@ path and the size, then checks free space again. Deleting a snapshot directory
 only removes symlinks. The bytes go when
 `scan_cache_dir().delete_revisions(...).execute()` runs, or when a blob that
 no snapshot still references is removed.
+
+## Windows installer smoke
+
+`.github/workflows/installer.yml` builds `installer/windows/voxprint-model-forge.iss`
+with Inno Setup 6 on `windows-latest`, with the version from `BUILD.json`. It fails
+if the staging folder or a bundled wheel holds model weights. Then it runs
+`scripts/windows_smoke.ps1` against the new setup and uploads
+`voxprint-model-forge-setup-<version>` (the exe) and `windows-smoke-results`.
+
+`scripts/windows_smoke.ps1` is the same checklist for a real PC. Run it from an
+elevated PowerShell next to the downloaded setup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .\VoxprintModelForgeSetup.exe -RequireGpu
+```
+
+| Step | Passes when |
+|---|---|
+| install | the silent setup exits 0; both venvs, the CLI and GUI exes, the Start menu shortcut and the uninstall entry exist; no weights |
+| version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
+| preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
+| lora-dry-run | `lora train --dry-run --base z-image --vram 24` on a 12-picture stub project returns `dry-run` |
+| uninstall | the program folder, shortcut and uninstall entry are gone; `%LOCALAPPDATA%\Voxprint` stays |
+
+Results go to `%LOCALAPPDATA%\VoxprintForgeSmoke\windows\<timestamp>\result.json`.
+It downloads no models and needs no token. Exit 0 means every step passed.
