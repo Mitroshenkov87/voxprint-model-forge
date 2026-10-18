@@ -13,6 +13,7 @@ on:
       - ".github/workflows/installer.yml"
       - "pyproject.toml"
       - "BUILD.json"
+      - "scripts/windows_smoke.ps1"
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,43 +51,44 @@ jobs:
           Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "uv") -Force
           Copy-Item (Get-ChildItem (Join-Path $env:RUNNER_TEMP "uv") -Recurse -Filter uv.exe | Select-Object -First 1).FullName "$stage\uv.exe"
           Get-ChildItem -Recurse $stage | Select-Object FullName, Length | Format-Table -AutoSize
+          # ROADMAP: no model weights in the setup; the app downloads them via MDL.
+          $weights = Get-ChildItem -Recurse -File $stage -Include *.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt
+          if ($weights) { throw "model weights in the setup staging: $($weights.Name -join ', ')" }
+          foreach ($w in Get-ChildItem "$stage\wheels" -Filter *.whl) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($w.FullName)
+            $hit = $zip.Entries | Where-Object { $_.Name -match '\.(safetensors|gguf|bin|pt|pth|onnx|ckpt)$' }
+            $zip.Dispose()
+            if ($hit) { throw "model weights inside $($w.Name): $($hit.FullName -join ', ')" }
+          }
       - name: Inno Setup 6
         shell: pwsh
         run: choco install innosetup --no-progress -y
       - name: Compile the setup
+        id: compile
         shell: pwsh
         run: |
           $version = (Get-Content -Raw BUILD.json | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
           $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw "Inno Setup was not installed" }
           & $iscc "/DAppVersion=$version" "/O$env:GITHUB_WORKSPACE\dist" "installer\windows\voxprint-model-forge.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC exited $LASTEXITCODE" }
           "{0:N1} MB" -f ((Get-Item dist\VoxprintModelForgeSetup.exe).Length / 1MB)
-      - name: Silent install, check, uninstall
+      - name: Smoke (install, --version, preflight, LoRA dry-run, uninstall)
         shell: pwsh
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
-          $ErrorActionPreference = "Stop"
-          $dir = "$env:ProgramFiles\VOXPrint AI Suite\Model Forge"
-          $p = Start-Process dist\VoxprintModelForgeSetup.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            if (Test-Path "$dir\setup-work\install.log") { Get-Content "$dir\setup-work\install.log" -Tail 80 }
-            throw "install failed ($($p.ExitCode))"
-          }
-          foreach ($f in @("venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe", "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md")) {
-            if (-not (Test-Path "$dir\$f")) { throw "missing $f" }
-          }
-          & "$dir\venv\Scripts\voxprint-forge-cli.exe" --help | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "the CLI did not start" }
-          & "$dir\venv\Scripts\python.exe" -c "from voxprint_forge.lora.backends import mivolo_python; import sys; p = mivolo_python(); print(p); sys.exit(0 if 'venv-mivolo' in p else 1)"
-          if ($LASTEXITCODE -ne 0) { throw "the app does not find venv-mivolo" }
-          $menu = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\VOXPrint AI Model Forge.lnk"
-          if (-not (Test-Path $menu)) { throw "Start menu shortcut missing" }
-          $u = Start-Process "$dir\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
-          for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep 2 }
-          if (Test-Path $dir) { Get-ChildItem -Recurse $dir | Select-Object -First 20 FullName; throw "uninstall left $dir" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup dist\VoxprintModelForgeSetup.exe -Results "$env:RUNNER_TEMP\smoke"
+          if ($LASTEXITCODE -ne 0) { throw "windows_smoke.ps1 exited $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke-results
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: voxprint-model-forge-setup-${{ steps.compile.outputs.version }}
           path: dist/VoxprintModelForgeSetup.exe
           if-no-files-found: error

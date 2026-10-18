@@ -32,6 +32,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.26100
 UninstallDisplayName={#MyAppName}
+UninstallDisplayIcon={app}\venv\Scripts\voxprint-model-forge.exe
+AppVerName={#MyAppName} {#AppVersion}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -49,6 +51,9 @@ Type: filesandordirs; Name: "{app}\venv"
 Type: filesandordirs; Name: "{app}\venv-mivolo"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\setup-work"
+Type: dirifempty; Name: "{app}"
+; Shared with the other suite apps: removed only when empty.
+Type: dirifempty; Name: "{autopf}\{#MySuiteName}"
 
 [Code]
 procedure ExitProcess(uExitCode: Cardinal);
