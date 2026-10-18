@@ -42,7 +42,7 @@ Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `co
 
 `voxprint.lora.adult_content` is a label the user sets: the training photos contain adult content. Apps such as Canvas can use it to label, sort or filter LoRAs (for example, hide them unless the user opts in). It can be `true` only for a person confirmed as 18 or older. It is not a safety setting and changes no checks. `voxprint.subject.consent_method` says how a person's consent was given: `verbal` (no file, `release_sha256` empty) or `file` (a release is attached; only its sha256 is recorded). LoRAs exported before these fields have no `adult_content` key; treat that as `false`.
 
-`--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `$VOXPRINT_USER_MODELS_DIR/lora/<id>/`, by default `<models dir>/user-models/lora/<id>/`. The id is the trigger word plus 8 hex digits of the LoRA tensors. Tensors keep the dtype they were trained in (BF16 by default; FP32 for an FP16 base); the id hashes their raw bytes.
+`--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `<models dir>/user-models/lora/<id>/`, where the models dir is always `voxprint_common.paths.models_dir()` (`VOXPRINT_MODELS_DIR`, then `models_dir` in `suite.json`, then `<suite home>/models`). The id is the trigger word plus 8 hex digits of the LoRA tensors. Tensors keep the dtype they were trained in (BF16 by default; FP32 for an FP16 base); the id hashes their raw bytes.
 
 ## Photos and consent
 

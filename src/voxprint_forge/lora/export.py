@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -83,10 +82,11 @@ def consent_method(subject: dict[str, object]) -> str:
 
 
 def user_models_dir() -> Path:
-    """``VOXPRINT_USER_MODELS_DIR``, else ``<models dir>/user-models``. LoRAs go to ``<that>/lora/<id>/``."""
-    env = os.environ.get("VOXPRINT_USER_MODELS_DIR", "").strip()
-    if env and os.path.isabs(env):
-        return Path(env)
+    """``<models dir>/user-models``, always from ``voxprint_common.paths.models_dir()``.
+
+    LoRAs go to ``<that>/lora/<id>/``. There is no Forge-only override: Canvas and
+    Manage models read the same folder, so a different root would hide the LoRA.
+    """
     from voxprint_common.paths import models_dir
 
     return models_dir() / "user-models"

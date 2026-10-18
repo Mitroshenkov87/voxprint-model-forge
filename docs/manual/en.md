@@ -55,7 +55,7 @@ Model Forge needs some models before it can train. They are not inside the setup
 
 - **Sources.** Every model is downloaded from its author's official page, at a fixed version. The downloader checks each file against its published checksum before it is used.
 - **Licences.** Each model keeps its own licence. Read it in Manage models before you use the model. Your LoRA inherits the licence of the base model it was trained on.
-- **Disk.** Models go to the shared VOXPrint models folder, by default `%LOCALAPPDATA%\Voxprint\models`. Other VOXPrint apps use the same folder, so a model is downloaded only once. Downloads continue in the background if you close the downloader window, and they resume after an interruption.
+- **Disk.** Models go to the shared VOXPrint models folder, by default `%LOCALAPPDATA%\VOXPrint AI Suite\models`. Other VOXPrint apps use the same folder, so a model is downloaded only once. Downloads continue in the background if you close the downloader window, and they resume after an interruption.
 
 > **Screenshot placeholder:** Manage models with the Model Forge models.
 
@@ -175,9 +175,9 @@ Good to know:
 ## 6. Managing models
 
 - **Manage models** (in **Check this computer**) opens the VOXPrint model downloader. There you can see installed models, their size and licence, download missing ones and remove ones you no longer need.
-- LoRAs sent with **Open in Canvas** are stored in `%LOCALAPPDATA%\Voxprint\models\user-models\lora\<name>\`.
+- LoRAs sent with **Open in Canvas** are stored in `%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\<name>\`.
 - **More → Open project…** opens an earlier project; **Open folder** shows the project's photos, versions and test pictures.
-- Projects are in `%LOCALAPPDATA%\Voxprint\state\model-forge\lora\`. Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.
+- Projects are in `%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\`. Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.
 
 > **Screenshot placeholder:** Manage models, installed models.
 
@@ -186,7 +186,7 @@ Good to know:
 - Training, descriptions and checks run on your computer. Photos, descriptions and models are never uploaded.
 - The internet is used only to download the app libraries and models from their official sources.
 - A saved LoRA contains the names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.
-- Uninstalling the app keeps your data. To remove everything, also delete `%LOCALAPPDATA%\Voxprint\state\model-forge` and, if no other VOXPrint app uses them, the models in `%LOCALAPPDATA%\Voxprint\models`.
+- Uninstalling the app keeps your data. To remove everything, also delete `%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge` and, if no other VOXPrint app uses them, the models in `%LOCALAPPDATA%\VOXPrint AI Suite\models`.
 
 ## 8. Troubleshooting
 
@@ -199,7 +199,7 @@ Good to know:
 | "These photos cannot be used for training" (the project is blocked) | A check found a sign of a minor. This cannot be overridden. Start a new project with different photos. |
 | "A PAUSE file is still in the project folder" | Press **Start training** again in the app. If it repeats, delete the file named `PAUSE` in the project folder. |
 | Out of video memory | Choose **16 GB** under Graphics card memory, close other programs that use the graphics card, and try again. |
-| Not enough disk space | Free space on the drive that holds `%LOCALAPPDATA%\Voxprint`, or remove models you no longer need in Manage models. |
+| Not enough disk space | Free space on the drive that holds `%LOCALAPPDATA%\VOXPrint AI Suite`, or remove models you no longer need in Manage models. |
 | The setup failed | Read `C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log`, check the internet connection and run the setup again. |
 | Test pictures do not look like the subject | Use **Close** likeness or **Best quality**, add more varied photos, or choose a later version. |
 | Every picture looks the same as the photos | Use **Flexible** likeness or an earlier version, and add more variety to the photos. |

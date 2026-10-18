@@ -38,7 +38,7 @@ def test_install_names_stay_in_the_build_spec() -> None:
     assert install["linux-dir"] == "/opt/voxprint-ai-suite/model-forge"
     assert install["gui-exe"] == "voxprint-model-forge.exe"
     assert install["cli-exe"] == "voxprint-forge-cli.exe"
-    assert install["user-data"] == r"%LOCALAPPDATA%\Voxprint"
+    assert install["user-data"] == r"%LOCALAPPDATA%\VOXPrint AI Suite"
     assert spec["project"]["name"] == "voxprint-forge"
     assert spec["project"]["scripts"]["voxprint-forge-cli"] == "voxprint_forge.cli:main"
     assert spec["project"]["scripts"]["forge"] == "voxprint_forge.cli:main"
