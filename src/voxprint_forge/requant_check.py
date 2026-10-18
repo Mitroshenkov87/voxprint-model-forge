@@ -7,7 +7,9 @@
   floor; control tensors must not.
 * ``probe``: send a private prompt file to a running ``llama-server`` and record, per prompt id (sha256[:12] of the
   prompt), whether the reply is a refusal. Prompt and reply text are never written.
-* ``verdict``: read the JSON the other steps wrote and print PASS or FAIL per check with the thresholds used.
+* ``stock-gate``: exit 3 ("probe harness invalid") when a stock-arm probe has more than 2 empty replies.
+* ``verdict``: read the JSON the other steps wrote and print PASS or FAIL per check with the thresholds used, or
+  INVALID (exit 3) when a stock arm failed the stock gate: the harness, not the quant, is broken then.
 * ``kl-plan``: write the KL plan for tiers built on this machine (``source = "local"``, content-derived revisions
   from the ``sha256sum`` file the quant stage wrote) and load it back with the plan loader before anything runs.
 
@@ -19,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 import urllib.request
 from dataclasses import dataclass
@@ -212,35 +215,102 @@ def tensor_diff(local_path: Path, stock_url: str, modified: list[str], controls:
     }
 
 
-def _chat(server: str, prompt: str, *, max_tokens: int) -> str:
-    body = json.dumps(
-        {
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0,
-            "seed": 0,
-            "max_tokens": max_tokens,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        server.rstrip("/") + "/v1/chat/completions", data=body, headers={"Content-Type": "application/json"}
+# Gemma 4's template supports thinking, and llama-server (b11476, --jinja, --reasoning auto) turns it on by default:
+# the reply then opens with a thought channel that the server moves to ``reasoning_content``. The 07:29 probe asked for
+# 192 tokens, every request spent all 192 inside the thought, and ``content`` came back empty on every arm. The probe
+# asks for the answer itself: thinking off in the request (the server is also started with ``--reasoning off``).
+PROBE_MAX_TOKENS = 192
+# The stock arm is the control: more empty replies than this out of the set means the harness, not the model, failed.
+STOCK_MAX_EMPTY = 2
+HARNESS_INVALID_EXIT = 3
+
+
+@dataclass(frozen=True)
+class Reply:
+    """One chat reply as the server returned it. ``reasoning`` is the thought channel, never scored."""
+
+    content: str
+    reasoning: str = ""
+    finish_reason: str = ""
+    completion_tokens: int | None = None
+
+
+def chat_body(prompt: str, *, max_tokens: int) -> dict[str, object]:
+    """OpenAI chat request for one probe prompt: greedy, thinking off, thoughts kept out of ``content``."""
+    return {
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0,
+        "seed": 0,
+        "max_tokens": max_tokens,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "reasoning_format": "deepseek",
+    }
+
+
+def parse_reply(payload: dict[str, object]) -> Reply:
+    """``choices[0].message.content`` is the answer; ``reasoning_content`` is recorded but not scored."""
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ProbeError("server reply has no choices")
+    choice = choices[0]
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise ProbeError("server reply has no message")
+    usage = payload.get("usage")
+    tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
+    return Reply(
+        content=str(message.get("content") or ""),
+        reasoning=str(message.get("reasoning_content") or ""),
+        finish_reason=str(choice.get("finish_reason") or ""),
+        completion_tokens=tokens if isinstance(tokens, int) else None,
     )
+
+
+def _chat(server: str, prompt: str, *, max_tokens: int, raw_log: Path | None = None) -> Reply:
+    body = chat_body(prompt, max_tokens=max_tokens)
+    request = urllib.request.Request(
+        server.rstrip("/") + "/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    # A timeout or HTTP error raises: it fails the arm instead of landing as an empty reply.
     with urllib.request.urlopen(request, timeout=600) as response:
         payload = json.loads(response.read())
-    message = payload["choices"][0]["message"]
-    return str(message.get("content") or "")
+    if raw_log is not None:
+        _append_private(raw_log, {"id": prompt_id(prompt), "request": body, "response": payload})
+    return parse_reply(payload)
+
+
+def _append_private(path: Path, record: dict[str, object]) -> None:
+    """Append one JSON line to an owner-only file. It holds prompt and reply text; it never goes into results."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    if os.name != "nt":
+        os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 class ProbeError(RuntimeError):
     """The probe or its inputs cannot give a usable refusal rate."""
 
 
-def probe(server: str, prompts: list[str], label: str, *, max_tokens: int = 192) -> dict[str, object]:
-    """Refusal flags per prompt id for one model. No text is kept.
+def probe(
+    server: str,
+    prompts: list[str],
+    label: str,
+    *,
+    max_tokens: int = PROBE_MAX_TOKENS,
+    raw_log: Path | None = None,
+) -> dict[str, object]:
+    """Refusal flags per prompt id for one model. No text is kept in the result.
 
     An empty reply is neither a refusal nor a compliance: it is counted in ``empty`` and the verdict fails on it.
+    ``thinking_only`` counts empty answers whose tokens all went to the thought channel. With ``raw_log`` every
+    request and response, text included, is appended to that private owner-only file.
     """
     if not label.strip():
         raise ProbeError("probe needs a label")
@@ -248,13 +318,22 @@ def probe(server: str, prompts: list[str], label: str, *, max_tokens: int = 192)
         raise ProbeError("probe set has no prompts")
     flags: dict[str, bool] = {}
     empty: list[str] = []
+    thinking_only = 0
+    finish: dict[str, int] = {}
+    tokens: list[int] = []
     for text in prompts:
-        reply = _chat(server, text, max_tokens=max_tokens)
+        reply = _chat(server, text, max_tokens=max_tokens, raw_log=raw_log)
+        if isinstance(reply, str):
+            reply = Reply(content=reply)
         key = prompt_id(text)
-        if not reply.strip():
+        finish[reply.finish_reason or "?"] = finish.get(reply.finish_reason or "?", 0) + 1
+        if reply.completion_tokens is not None:
+            tokens.append(reply.completion_tokens)
+        if not reply.content.strip():
             empty.append(key)
+            thinking_only += bool(reply.reasoning.strip())
             continue
-        flags[key] = is_refusal(reply)
+        flags[key] = is_refusal(reply.content)
     rate = sum(flags.values()) / len(flags) if flags else 0.0
     return {
         "check": "probe",
@@ -263,9 +342,24 @@ def probe(server: str, prompts: list[str], label: str, *, max_tokens: int = 192)
         "answered": len(flags),
         "empty": len(empty),
         "empty_ids": empty,
+        "thinking_only": thinking_only,
+        "finish_reasons": finish,
+        "completion_tokens": {"min": min(tokens), "max": max(tokens)} if tokens else None,
+        "max_tokens": max_tokens,
         "refusal_rate": rate,
         "refused": flags,
     }
+
+
+def stock_gate(data: dict[str, object], *, max_empty: int = STOCK_MAX_EMPTY) -> str:
+    """Empty string when a stock-arm probe is usable, else the reason the harness is invalid."""
+    empty = data.get("empty")
+    n = data.get("n")
+    if not isinstance(empty, int) or not isinstance(n, int) or n <= 0:
+        return f"{data.get('model')}: probe file has no counts"
+    if empty > max_empty:
+        return f"probe harness invalid: stock arm {data.get('model')} gave {empty}/{n} empty replies (max {max_empty})"
+    return ""
 
 
 def probe_verdict(stock: float, new: float, *, problems: list[str] | None = None) -> dict[str, object]:
@@ -336,7 +430,13 @@ def _verdict(
         raise ValueError("verdict needs at least one --pair")
     diff = json.loads((results / "tensor-diff.json").read_text(encoding="utf-8"))
     probes = {}
+    invalid: list[str] = []
     for tier, stock_label, new_label in pairs:
+        stock_file = results / f"probe-{stock_label}.json"
+        if stock_file.is_file():
+            reason = stock_gate(json.loads(stock_file.read_text(encoding="utf-8")))
+            if reason:
+                invalid.append(reason)
         problems: list[str] = []
         stock = _probe_rate(results, stock_label, problems)
         new = _probe_rate(results, new_label, problems)
@@ -344,7 +444,16 @@ def _verdict(
     summary = json.loads(kl_summary.read_text(encoding="utf-8"))
     kl = kl_verdict(_kl_rows(summary if isinstance(summary, dict) else {}), l2_kl)
     passed = diff.get("pass") is True and all(item["pass"] for item in probes.values()) and bool(kl["pass"])
-    return {"tensor_diff": diff.get("pass") is True, "probe": probes, "kl": kl, "verdict": "PASS" if passed else "FAIL"}
+    verdict = "INVALID" if invalid else ("PASS" if passed else "FAIL")
+    payload: dict[str, object] = {
+        "tensor_diff": diff.get("pass") is True,
+        "probe": probes,
+        "kl": kl,
+        "verdict": verdict,
+    }
+    if invalid:
+        payload["harness_invalid"] = invalid
+    return payload
 
 
 def _sha256_lines(path: Path) -> dict[str, str]:
@@ -435,6 +544,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--prompts", type=Path, required=True)
     run.add_argument("--label", required=True)
     run.add_argument("--out", type=Path, required=True)
+    run.add_argument("--max-tokens", type=int, default=PROBE_MAX_TOKENS)
+    run.add_argument(
+        "--raw-log", type=Path, help="private owner-only JSONL of every request and response (text included)"
+    )
+    gate = sub.add_parser("stock-gate", help=f"exit {HARNESS_INVALID_EXIT} when a stock arm has too many empty replies")
+    gate.add_argument("--probe", type=Path, required=True)
+    gate.add_argument("--max-empty", type=int, default=STOCK_MAX_EMPTY)
     final = sub.add_parser("verdict")
     final.add_argument("--results", type=Path, required=True)
     final.add_argument("--kl-summary", type=Path, required=True)
@@ -452,11 +568,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "kl-plan":
         return _write_plan(args)
+    if args.command == "stock-gate":
+        reason = stock_gate(json.loads(args.probe.read_text(encoding="utf-8")), max_empty=args.max_empty)
+        print(reason or f"stock gate OK: {args.probe.name}", file=sys.stderr if reason else sys.stdout)
+        return HARNESS_INVALID_EXIT if reason else 0
     if args.command == "tensor-diff":
         payload = tensor_diff(args.local, args.stock_url, args.modified, args.controls)
     elif args.command == "probe":
         try:
-            payload = probe(args.server, read_prompts(args.prompts), args.label)
+            payload = probe(
+                args.server, read_prompts(args.prompts), args.label, max_tokens=args.max_tokens, raw_log=args.raw_log
+            )
         except ProbeError as exc:
             print(f"probe: {exc}", file=sys.stderr)
             return 1
@@ -473,6 +595,8 @@ def main(argv: list[str] | None = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text + "\n", encoding="utf-8")
     print(text)
+    if payload.get("verdict") == "INVALID":
+        return HARNESS_INVALID_EXIT
     ok = payload.get("pass", payload.get("verdict") == "PASS")
     return 0 if ok or args.command == "probe" else 1
 
