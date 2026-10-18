@@ -2,9 +2,9 @@
 ; Install folder: C:\Program Files\VOXPrint AI Suite\Model Forge\
 ; Start menu folder: VOXPrint AI Suite
 ; GUI: venv\Scripts\voxprint-model-forge.exe  CLI: venv\Scripts\voxprint-forge-cli.exe
-; Windows 11 24H2 or newer, 64-bit. The setup holds the app wheels and uv.exe only.
-; install.ps1 then builds the Python environments. No GPU libraries or model
-; files are inside the setup; models are downloaded by the app on first launch.
+; Windows 11 24H2 or newer, 64-bit. The setup holds the app wheels, the pinned
+; bitsandbytes wheel, and uv.exe. install.ps1 then builds the Python environments.
+; No model files are inside the setup; models are downloaded by the app on first launch.
 
 #define MyAppName "VOXPrint AI Model Forge"
 #define MySuiteName "VOXPrint AI Suite"

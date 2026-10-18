@@ -75,6 +75,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -S
 |---|---|
 | home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
 | install | the silent setup exits 0; both venvs, the CLI and GUI exes, the Start menu shortcut and the uninstall entry exist; no weights |
+| te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
 | version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
 | lora-dry-run | `lora train --dry-run --base z-image --vram 24` on a 12-picture stub project returns `dry-run` |

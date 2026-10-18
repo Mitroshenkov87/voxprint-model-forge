@@ -46,6 +46,10 @@ try {
     $commonWheel = (Get-ChildItem $Wheels -Filter "voxprint_common-*.whl" | Select-Object -First 1).FullName
     if (-not $forgeWheel -or -not $commonWheel) { throw "the app wheels are missing from $Wheels" }
     Invoke-Uv @("pip", "install", "--python", $Py, "--constraint", $pins, "$commonWheel", "$forgeWheel[gui,compare]")
+    # te-quant extra: the bundled PyPI win_amd64 wheel, hash-checked. No extra index.
+    $teReq = Join-Path $App "requirements-te-quant.txt"
+    Invoke-Uv @("pip", "install", "--python", $Py, "--no-deps", "--require-hashes", "--no-index",
+        "--find-links", $Wheels, "-r", $teReq)
 
     $Mivolo = Join-Path $App "venv-mivolo"
     $MPy = Join-Path $Mivolo "Scripts\python.exe"
@@ -64,7 +68,7 @@ try {
     Invoke-Uv @("pip", "install", "--python", $MPy, "--no-deps", "--no-build-isolation",
         "mivolo @ https://github.com/WildChlamydia/MiVOLO/archive/37475e3f8818b5f22448003feec3e64b01bfb188.zip")
 
-    & $Py -c "import voxprint_forge, torch; print('forge', voxprint_forge.__name__, 'torch', torch.__version__)"
+    & $Py -c "import voxprint_forge, torch, bitsandbytes; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app environment does not import" }
     & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
     if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }

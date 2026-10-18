@@ -1,0 +1,3 @@
+# Windows installer te-quant extra. PyPI only: bitsandbytes 0.50.2 win_amd64.
+# install.ps1 installs this with --require-hashes --no-index from the bundled wheel.
+bitsandbytes==0.50.2 --hash=sha256:c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d

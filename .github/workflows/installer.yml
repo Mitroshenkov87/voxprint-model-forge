@@ -1,6 +1,7 @@
 # Windows setup for VOXPrint AI Model Forge. Free GitHub-hosted runner, no GPU.
-# The setup holds the app wheels and uv.exe; Python, torch and the other
-# packages are installed on the PC by install.ps1. No model weights.
+# The setup holds the app wheels, the hash-pinned bitsandbytes wheel, and uv.exe.
+# Python, torch and the other packages are installed on the PC by install.ps1.
+# No model weights.
 # Runs on pull requests that touch the installer, on main, and by hand.
 # Nothing is published; the setup is a workflow artifact.
 name: installer
@@ -50,6 +51,19 @@ jobs:
           foreach ($name in @("BUILD.json", "LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
           Copy-Item installer\requirements-mivolo.txt "$stage\requirements-mivolo.txt"
           Copy-Item installer\windows\install.ps1 "$stage\install.ps1"
+          Copy-Item installer\windows\requirements-te-quant.txt "$stage\requirements-te-quant.txt"
+          $teReq = Get-Content -Raw "$stage\requirements-te-quant.txt"
+          if ($teReq -notmatch '(?m)^bitsandbytes==0\.50\.2\b') { throw "requirements-te-quant.txt does not pin bitsandbytes==0.50.2" }
+          if ($teReq -notmatch '--hash=sha256:([0-9a-f]{64})') { throw "requirements-te-quant.txt has no sha256 pin" }
+          $bnbHash = $Matches[1].ToLower()
+          if ($teReq -match 'extra-index-url|git\+') { throw "requirements-te-quant.txt must use PyPI only" }
+          $bnbName = "bitsandbytes-0.50.2-py3-none-win_amd64.whl"
+          $meta = Invoke-RestMethod -Uri "https://pypi.org/pypi/bitsandbytes/0.50.2/json"
+          $published = @($meta.urls | Where-Object { $_.filename -eq $bnbName })
+          if ($published.Count -ne 1) { throw "PyPI has no single $bnbName" }
+          $bnb = Join-Path "$stage\wheels" $bnbName
+          curl.exe -fsSL --retry 5 -o $bnb $published[0].url
+          if ((Get-FileHash $bnb -Algorithm SHA256).Hash.ToLower() -ne $bnbHash) { throw "bitsandbytes sha256 mismatch" }
           $zip = Join-Path $env:RUNNER_TEMP "uv.zip"
           curl.exe -fsSL --retry 5 -o $zip "https://github.com/astral-sh/uv/releases/download/0.13.0/uv-x86_64-pc-windows-msvc.zip"
           if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne "088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c") { throw "uv sha256 mismatch" }
