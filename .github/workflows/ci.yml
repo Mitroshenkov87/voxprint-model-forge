@@ -28,6 +28,33 @@ jobs:
       - name: Qt libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libdbus-1-3 libxkbcommon0 libxcb-cursor0 libfontconfig1
+      - name: Free disk
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          Write-Host ("C: free {0:N1}%" -f (100 * $disk.FreeSpace / $disk.Size))
+          $roots = @(
+            'C:\Android',
+            "$env:ProgramFiles\Android",
+            "${env:ProgramFiles(x86)}\Android",
+            "$env:ProgramFiles\Microsoft Visual Studio",
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio",
+            "$env:AGENT_TOOLSDIRECTORY\go",
+            "$env:AGENT_TOOLSDIRECTORY\Ruby",
+            "$env:AGENT_TOOLSDIRECTORY\node",
+            "$env:AGENT_TOOLSDIRECTORY\Java_Temurin-Hotspot_jdk",
+            "$env:AGENT_TOOLSDIRECTORY\PyPy",
+            "$env:AGENT_TOOLSDIRECTORY\CodeQL"
+          )
+          foreach ($path in $roots) {
+            if ($path -and (Test-Path -LiteralPath $path)) {
+              Write-Host "remove $path"
+              Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          Write-Host ("C: free {0:N1}%" -f (100 * $disk.FreeSpace / $disk.Size))
       - name: Install
         run: |
           python -m pip install --upgrade pip
