@@ -88,6 +88,8 @@ workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 |---|---|
 | home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
 | install | the silent setup exits 0; both venvs, the CLI, the compiled launcher and its icon, the PDF guide (en, ru) in `docs\`, one Start menu launcher (target, icon, AppUserModelID; no Uninstall or guide shortcut; no desktop shortcut; old shortcuts removed) and the uninstall entry (name, icon, publisher) exist; no weights |
+| upgrade-plant | `voxprint_common-0.4.0-py3-none-any.whl` and `voxprint_forge-0.0.9-py3-none-any.whl` are planted in `{app}\wheels` before setup |
+| upgrade-wheels | those planted wheels are gone, and the app venv's voxprint-common version is the pin recorded in the app wheel |
 | te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
 | version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |

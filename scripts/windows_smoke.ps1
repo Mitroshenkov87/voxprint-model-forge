@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Windows installer smoke for VOXPrint AI Model Forge: install, --version, preflight,
+Windows installer smoke for VOXPrint AI Model Forge: install, wheel upgrade, --version, preflight,
 LoRA dry-run on stub data, uninstall. No GPU work, no model downloads, no tokens.
 
 .DESCRIPTION
@@ -17,11 +17,13 @@ Run from an elevated PowerShell 7 (the setup installs to Program Files). Windows
 
 Steps and pass rules:
   0 home       (with -MigrationTest on a clean profile) a fake %LOCALAPPDATA%\Voxprint\models\smoke-dummy file.
+  0w wheels    voxprint_common-0.4.0-py3-none-any.whl and voxprint_forge-0.0.9-py3-none-any.whl planted in {app}\wheels.
   1 install    silent setup exits 0; venv, venv-mivolo, CLI, mdl.json, the compiled launcher and its icon, the icon file,
                uv.exe, LICENSE and the PDF guides in docs\ exist. The Start menu folder holds one Forge shortcut
                (VOXPrint AI Model Forge.lnk): target is the launcher, icon is the app icon, AppUserModelID is
                VOXPrint.AISuite.ModelForge. No Uninstall or guide shortcut, no desktop shortcut. Older Uninstall
                and guide shortcuts are removed. The uninstall entry name, icon and publisher match. No model weights.
+  1w upgrade   the planted wheels are gone, and the app venv's voxprint-common version is the pin in the app wheel.
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
   2b help      voxprint-forge-cli lora train --help exits 0 in under 3 seconds.
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
@@ -70,6 +72,10 @@ $OldHome = Join-Path $env:LOCALAPPDATA "Voxprint"
 $NewHome = Join-Path $env:LOCALAPPDATA "VOXPrint AI Suite"
 $Dummy = "models\smoke-dummy\smoke-dummy-model.bin"
 $Weights = @("*.safetensors", "*.gguf", "*.bin", "*.pt", "*.pth", "*.onnx", "*.ckpt")
+$StaleWheels = @(
+    "voxprint_common-0.4.0-py3-none-any.whl",
+    "voxprint_forge-0.0.9-py3-none-any.whl"
+)
 
 if (-not $Results) {
     $Results = Join-Path $env:LOCALAPPDATA ("VoxprintForgeSmoke\windows\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
@@ -151,6 +157,15 @@ if ($MigrationTest -and -not $Before.old -and -not $Before.new) {
     Write-Log "home-plant skipped: a data home already exists (old=$($Before.old) new=$($Before.new)); real data is never touched"
 }
 
+[void](Invoke-Step "upgrade-plant" {
+    $wheels = Join-Path $Dir "wheels"
+    New-Item -ItemType Directory -Force -Path $wheels | Out-Null
+    foreach ($name in $StaleWheels) {
+        [IO.File]::WriteAllText((Join-Path $wheels $name), "stale wheel")
+    }
+    "planted $($StaleWheels -join ', ')"
+})
+
 $installed = Invoke-Step "install" {
     # No older setup is installed first. Plant the shortcuts that previous builds created so this
     # setup's InstallDelete has something to remove.
@@ -204,6 +219,56 @@ $installed = Invoke-Step "install" {
     & $Py -c "from voxprint_forge.lora.backends import mivolo_python; import sys; sys.exit(0 if 'venv-mivolo' in mivolo_python() else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app does not find venv-mivolo" }
     "installed to $Dir; one Start menu launcher; AUMID $aumid; uninstall entry $($entry.DisplayName)"
+}
+
+if ($installed) {
+    [void](Invoke-Step "upgrade-wheels" {
+        foreach ($name in $StaleWheels) {
+            $path = Join-Path (Join-Path $Dir "wheels") $name
+            if (Test-Path -LiteralPath $path) { throw "stale wheel remains: $name" }
+        }
+        $ErrorActionPreference = "Continue"
+        $err = Join-Path $Results "upgrade-wheels-stderr.txt"
+        $checker = Join-Path $Results "check_common_version.py"
+        @'
+import importlib.metadata as metadata
+import json
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+app = Path(sys.argv[1])
+version = json.loads((app / "BUILD.json").read_text(encoding="utf-8"))["version"]
+wheels = sorted((app / "wheels").glob(f"voxprint_forge-{version}-*.whl"))
+if len(wheels) != 1:
+    raise SystemExit(f"expected one voxprint_forge wheel for {version}, found {len(wheels)}")
+with zipfile.ZipFile(wheels[0]) as archive:
+    name = next(item for item in archive.namelist() if item.endswith(".dist-info/METADATA"))
+    text = archive.read(name).decode("utf-8")
+pins = set()
+for line in text.splitlines():
+    if not line.startswith("Requires-Dist:"):
+        continue
+    req = "".join(line.split(":", 1)[1].split(";", 1)[0].split())
+    match = re.fullmatch(r"voxprint-common(?:\[[^\]]*\])?==([0-9][0-9A-Za-z.]*)", req)
+    if match:
+        pins.add(match.group(1))
+if len(pins) != 1:
+    raise SystemExit("expected one voxprint-common pin, found %s" % sorted(pins))
+pin = next(iter(pins))
+installed = metadata.version("voxprint-common")
+if installed != pin:
+    raise SystemExit("voxprint-common %s, pin %s" % (installed, pin))
+print(installed)
+'@ | Set-Content -LiteralPath $checker -Encoding ascii
+        $got = (& $Py $checker $Dir 2>> $err | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            $stderr = if (Test-Path -LiteralPath $err) { (Get-Content -Raw -LiteralPath $err).Trim() } else { "" }
+            throw "pinned voxprint-common check failed: $stderr"
+        }
+        "voxprint-common $got"
+    })
 }
 
 function Get-MigrationLog {
