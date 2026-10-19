@@ -6,7 +6,7 @@
 | --- | --- |
 | "Training needs a supported graphics card" | Use a computer with an NVIDIA card with 16 GB or more and a current driver. |
 | "Models: not installed yet" | Press **Manage models** and download the missing models. |
-| Preparation does not start because models are missing | Download Qwen3-VL-4B-Instruct, MiVOLO v2 and YuNet in Manage models. |
+| Preparation does not start because models are missing | Download Huihui Qwen3-VL-4B Instruct (abliterated), MiVOLO v2 and YuNet in Manage models. |
 | "Add at least N more photos" | Many photos were set aside. Add more clear photos, or use Expert mode. |
 | "These photos cannot be used for training" | Some photos were refused and this project cannot continue. Start a new project with other photos of consenting adults. |
 | "A PAUSE file is still in the project folder" | Press **Continue** in the app. If it repeats, delete the file named `PAUSE` in the project folder. |
@@ -41,7 +41,7 @@
 | VOXPrint AI Model Forge | Apache-2.0 |
 | Z-Image, Z-Image-Turbo | Apache-2.0 |
 | MOSS-Image Base | Apache-2.0 |
-| Qwen3-VL-4B-Instruct | Apache-2.0 |
+| Huihui Qwen3-VL-4B Instruct (abliterated) | Apache-2.0 |
 | Florence-2-large | MIT |
 | MiVOLO v2 | Apache-2.0 |
 | YuNet | MIT |

@@ -9,9 +9,7 @@ from typing import Any
 
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
 
-JUDGE_ID = "qwen3-vl-4b-instruct"
-# Folder names installed before the #47 rename. Same weights; the new name wins when both exist.
-LEGACY_IDS: dict[str, tuple[str, ...]] = {JUDGE_ID: ("qwen3-vl-4b",)}
+JUDGE_ID = "huihui-qwen3-vl-4b-instruct-abliterated"
 ESTIMATOR_ID = "mivolo-v2"
 FACE_DETECTOR_ID = "yunet-2023mar"
 FACE_SCORE = 0.6
@@ -56,12 +54,26 @@ def model_dir(mdl_id: str) -> Path:
 
 
 def installed_dir(mdl_id: str) -> Path | None:
-    """The installed folder for ``mdl_id``: the current name first, then any legacy name; ``None`` if neither."""
-    for name in (mdl_id, *LEGACY_IDS.get(mdl_id, ())):
-        folder = model_dir(name)
-        if folder.is_dir():
-            return folder
-    return None
+    """The installed folder for ``mdl_id``, or ``None`` when that folder is absent."""
+    folder = model_dir(mdl_id)
+    return folder if folder.is_dir() else None
+
+
+def load_processor(folder: Path):
+    """The vision-language processor for ``folder``.
+
+    ``AutoProcessor`` reads ``chat_template.jinja`` in that folder. A folder with no chat template does not load.
+    """
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(str(folder))
+    if not getattr(processor, "chat_template", None):
+        jinja = folder / "chat_template.jinja"
+        if jinja.is_file():
+            processor.chat_template = jinja.read_text(encoding="utf-8")
+    if not getattr(processor, "chat_template", None):
+        raise OSError("chat template missing")
+    return processor
 
 
 class JudgeParseError(ValueError):
@@ -112,7 +124,7 @@ def parse_verdict(raw: str) -> Verdict:
 
 
 class VlmJudge:
-    """Qwen3-VL-4B-Instruct (Apache-2.0) as the age-cue judge."""
+    """Huihui Qwen3-VL-4B Instruct (abliterated) (Apache-2.0)."""
 
     name = JUDGE_ID
     max_new_tokens = 320
@@ -120,9 +132,9 @@ class VlmJudge:
     def __init__(self, folder: Path, device: str = "cuda") -> None:
         self.last_stats: dict[str, object] = {}
         import torch
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+        from transformers import AutoModelForImageTextToText
 
-        self.processor = AutoProcessor.from_pretrained(str(folder))
+        self.processor = load_processor(folder)
         self.model = AutoModelForImageTextToText.from_pretrained(str(folder), torch_dtype=torch.bfloat16).to(device)
         self.model.eval()
 

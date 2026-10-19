@@ -7,7 +7,7 @@ Model Forge needs some models before it can train. They are not inside the setup
 | Model | What it does | Source | Licence | Size |
 | --- | --- | --- | --- | --- |
 | Z-Image (base) | The picture model the LoRA is trained on | Tongyi-MAI/Z-Image | Apache-2.0 | 20.5 GB |
-| Qwen3-VL-4B-Instruct | Writes photo descriptions; required for preparing photos | Qwen/Qwen3-VL-4B-Instruct | Apache-2.0 | 8.9 GB |
+| Huihui Qwen3-VL-4B Instruct (abliterated) | Writes photo descriptions; required for preparing photos | huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated | Apache-2.0 | 8.9 GB |
 | MiVOLO v2 | Required for preparing photos | iitolstykh/mivolo_v2 | Apache-2.0 | 0.1 GB |
 | YuNet (2023mar) | Finds faces; required for preparing photos | opencv/opencv_zoo | MIT | under 1 MB |
 | Florence-2-large | Backup description writer | microsoft/Florence-2-large | MIT | 1.6 GB |

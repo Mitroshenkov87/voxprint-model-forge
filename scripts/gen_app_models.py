@@ -26,7 +26,8 @@ PACKAGED = ROOT / "src" / "voxprint_forge" / "data" / "app-models.json"
 # (role, MDL id, display name, repo, revision prefix)
 HF_ENTRIES = [
     ("required", "z-image", "Z-Image base (BF16)", "Tongyi-MAI/Z-Image", "04cc4abb"),
-    ("required", "qwen3-vl-4b-instruct", "Qwen3-VL-4B-Instruct", "Qwen/Qwen3-VL-4B-Instruct", "ebb281ec"),
+    ("required", "huihui-qwen3-vl-4b-instruct-abliterated", "Huihui Qwen3-VL-4B Instruct (abliterated)",
+     "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated", "ce72a7c2"),
     ("required", "mivolo-v2", "MiVOLO v2", "iitolstykh/mivolo_v2", "53393526"),
     ("optional", "florence2-large", "Florence-2-large", "microsoft/Florence-2-large", "21a599d4"),
     ("optional", "moss-image-base", "MOSS-Image Base", "OpenMOSS-Team/MOSS-Image-Base", "1ceede80"),

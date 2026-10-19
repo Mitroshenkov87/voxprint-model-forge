@@ -369,8 +369,10 @@ def test_refset_preflight_reports_each_requirement(tmp_path) -> None:
     report = run()
     assert report["ok"] is True, report["problems"]
     names = {check["name"] for check in report["checks"]}
-    assert {"diffusers", "img2img", "model:z-image-turbo", "model:qwen3-vl-4b-instruct", "model:mivolo-v2",
-            "mivolo-env", "model:dinov2-base", "cuda", "ram", "disk"} <= names
+    assert {
+        "diffusers", "img2img", "model:z-image-turbo", "model:huihui-qwen3-vl-4b-instruct-abliterated",
+        "model:mivolo-v2", "mivolo-env", "model:dinov2-base", "cuda", "ram", "disk",
+    } <= names
     assert run(diffusers_version=lambda: "0.42.0")["ok"] is False
     assert run(diffusers_version=lambda: "0.37.1")["ok"] is False
     assert run(diffusers_version=lambda: None)["ok"] is False
