@@ -77,7 +77,7 @@ def _to_refset(app, refs) -> None:
     app.draft.add_photos(refs)
     app.draft.kind = "person"
     app.repaint()
-    app.window.findChild(QtWidgets.QPushButton, "forge.chip.refs").click()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
     assert app.draft.source == "refs"
     assert _next(app).isEnabled(), _status(app)
     _next(app).click()
@@ -113,7 +113,7 @@ def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
     app = make_app()
     app.draft.kind = "person"
     app.repaint()
-    app.window.findChild(QtWidgets.QPushButton, "forge.chip.refs").click()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
     assert not _next(app).isEnabled()
     assert _status(app) == tr("forge.app.err.refs_count", low=1, high=10)
     app.draft.add_photos(_refs(tmp_path / "r", 11))
@@ -122,7 +122,8 @@ def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
     app.draft.remove_photo(app.draft.photos[-1])
     app.repaint()
     assert _next(app).isEnabled()
-    assert tr("forge.app.step.photos.short_refs") in [w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
+    assert tr("forge.app.step.photos.short_refs.person") in [
+        w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
 
 
 def test_own_photos_skip_the_step(make_app, tmp_path) -> None:
@@ -348,7 +349,15 @@ def test_open_folder_lines_up_with_back(make_app, tmp_path, expert) -> None:
     QtWidgets.QApplication.processEvents()
     folder = _find(app, QtWidgets.QPushButton, "openFolder")
     back = _find(app, QtWidgets.QPushButton, "wizardBack")
-    assert folder.mapTo(app.window, QtCore.QPoint()).x() == back.mapTo(app.window, QtCore.QPoint()).x()
+    nxt = _find(app, QtWidgets.QPushButton, "wizardNext")
+    assert folder.text() == tr("forge.app.folder")
+    assert folder.property("textButton") == "true"
+    def mid_y(widget: QtWidgets.QWidget) -> float:
+        return widget.mapTo(app.window, QtCore.QPoint()).y() + widget.height() / 2
+
+    assert abs(mid_y(folder) - mid_y(back)) <= 2
+    assert abs(mid_y(folder) - mid_y(nxt)) <= 2
+    assert folder.mapTo(app.window, QtCore.QPoint()).x() < back.mapTo(app.window, QtCore.QPoint()).x()
 
 
 def test_ru_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:

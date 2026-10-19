@@ -13,7 +13,7 @@ To improve a model later, press **Add more photos** on this step. Training conti
 ## Where the files go
 
 - LoRAs sent with **Open in Canvas**: `%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\<name>\`.
-- Projects: `%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\`. **More → Open project…** opens an earlier project; **Open folder** shows its photos, versions and test pictures.
+- Projects: `%LOCALAPPDATA%\VOXPrint AI Suite\state\model-forge\lora\`. **More → Open project…** opens an earlier project; **Open project folder** shows its photos, versions and test pictures.
 - Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.
 
 ## What the model file contains

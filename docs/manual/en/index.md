@@ -25,6 +25,6 @@ Everything happens on your computer. Your photos, the descriptions and the train
 
 ![Expert mode on the Train step](../img/en-expert-5-train.png)
 
-The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Each step shows one short line; **Details ▸** under it opens the full explanation.
+The steps are shown at the top of the window (Step 1 of 6 … Step 6 of 6): 1 Photos, 2 Subject and consent, 3 Build a set, 4 Check and prepare, 5 Train, 6 Result. Each step shows one short line. On Photos, that line names the subject you chose, and the empty drop area shows a short hint until you add pictures. On the other steps, **Details ▸** opens the full explanation. **Open project folder**, on the same row as Back and Next, opens the folder that holds the photos, versions and test pictures.
 
 The screenshots in this manual use a demo project with neutral placeholder pictures.
