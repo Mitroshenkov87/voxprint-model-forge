@@ -13,6 +13,7 @@ from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_pr
 from voxprint_forge.app.draft import STEPS  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
+from voxprint_forge.mdl_app import missing_id_text  # noqa: E402
 
 CONTROLS = (
     QtWidgets.QAbstractButton,
@@ -287,7 +288,7 @@ def test_gate_missing_blocks_with_a_plain_sentence(make_app, tmp_path) -> None:
     _walk_to(app, "prepare", photos)
     app.prepare()
     assert app.draft.prepared is None
-    assert _status(app) == tr("lora.err.gate_missing")
+    assert _status(app) == tr("lora.err.gate_missing", ids=missing_id_text())
     assert not _next(app).isEnabled()
 
 

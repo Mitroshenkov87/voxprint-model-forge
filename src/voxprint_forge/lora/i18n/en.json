@@ -22,7 +22,7 @@
  "lora.err.disk": "Not enough free disk space: {need} GB needed.",
  "lora.err.diverged": "Training went wrong; the last good version is kept. Try a lower learning rate.",
  "lora.err.encoders_stuck": "The text encoder did not leave the graphics card ({gb} GB still in use), so training stopped before it could run out of memory. Please report this.",
- "lora.err.gate_missing": "A model needed to prepare photos is not installed, so training cannot start. Install it in Manage models.",
+ "lora.err.gate_missing": "{ids}. voxprint-forge-cli models fetch --required",
  "lora.err.no_checkpoint": "There is no saved version to continue from.",
  "lora.err.no_consent": "Confirm consent and that the person is 18 or older.",
  "lora.err.no_gpu": "Training needs a supported graphics card.",

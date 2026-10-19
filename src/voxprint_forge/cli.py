@@ -144,6 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_compare_command(sub)
     add_kl_command(sub)
     add_lora_command(sub)
+    _add_models_command(sub)
     index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
     index_sub = index.add_subparsers(dest="index_command", required=True)
     index_build = index_sub.add_parser(
@@ -223,6 +224,17 @@ class _Help(argparse.HelpFormatter):
             return super()._format_usage(usage, actions, groups, prefix)
         finally:
             self._width = saved
+
+
+def _add_models_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """``models status|fetch``. The implementation is imported when the command runs."""
+    models = sub.add_parser("models", help="List or fetch model-forge model ids.")
+    commands = models.add_subparsers(dest="models_command", required=True)
+    for name, help_text in (("status", "List model ids."), ("fetch", "Fetch model ids and build folders.")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--required", action="store_true", help="Required model ids.")
+        command.add_argument("--model", action="append", default=[], help="Model id. Repeat as needed.")
+        command.add_argument("--gui", action="store_true", help="Show the progress window.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -351,6 +363,10 @@ def _dispatch(args: argparse.Namespace) -> object:
         return refset_preflight()
     if args.command == "lora":
         return execute_lora(args)
+    if args.command == "models":
+        from voxprint_forge.mdl_app import execute
+
+        return execute(args)
     root = _repo_root(args.root)
     if args.command == "accounts":
         return execute_accounts(args)

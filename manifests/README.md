@@ -12,8 +12,9 @@ The VM has no GitHub remote. Copy both files back to this repo. Schema: `manifes
 ## App models
 
 `model-forge.models.json` (schema `schemas/voxprint-app-models.schema.json`,
-`voxprint-app-models/1`) lists the models Model Forge needs (`required`) and can
+`voxprint-forge-models/1`) lists the models Model Forge needs (`required`) and can
 use (`optional`). Each entry pins a full commit and lists every file with its
 size and sha256 from the Hugging Face API. The wheel carries the same bytes as
 `voxprint_forge/data/app-models.json`; `voxprint_forge.app_models` reads it.
-Regenerate both with `python scripts/gen_app_models.py`. No weights are in git.
+Regenerate both, and `src/voxprint_forge/data/mdl.json`, with `python scripts/gen_app_models.py`.
+`python scripts/gen_app_models.py --check` fails when `mdl.json` differs. No weights are in git.

@@ -26,6 +26,7 @@ from voxprint_forge.lora.photos import (
 )
 from voxprint_forge.lora.project import Item, Project
 from voxprint_forge.lora.train import MIN_PHOTOS
+from voxprint_forge.mdl_app import missing_id_text
 
 
 def prepare(
@@ -54,7 +55,7 @@ def prepare(
         raise LoraUsageError("lora.err.no_consent")
     if not gate.available:
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
-        raise LoraBlocked("lora.err.gate_missing")
+        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
     existing = project.items()
     known = {item.id for item in existing}
     round_no = max((item.round for item in existing), default=-1) + 1 if existing else 0

@@ -17,7 +17,7 @@ Run from an elevated PowerShell 7 (the setup installs to Program Files). Windows
 
 Steps and pass rules:
   0 home       (with -MigrationTest on a clean profile) a fake %LOCALAPPDATA%\Voxprint\models\smoke-dummy file.
-  1 install    silent setup exits 0; venv, venv-mivolo, CLI, the compiled launcher and its icon, the icon file,
+  1 install    silent setup exits 0; venv, venv-mivolo, CLI, mdl.json, the compiled launcher and its icon, the icon file,
                uv.exe, LICENSE and the PDF guides in docs\ exist. The Start menu folder holds one Forge shortcut
                (VOXPrint AI Model Forge.lnk): target is the launcher, icon is the app icon, AppUserModelID is
                VOXPrint.AISuite.ModelForge. No Uninstall or guide shortcut, no desktop shortcut. Older Uninstall
@@ -162,7 +162,7 @@ $installed = Invoke-Step "install" {
         if (Test-Path $installLog) { Copy-Item $installLog (Join-Path $Results "install.log") }
         throw "setup exited $($p.ExitCode); see install.log"
     }
-    foreach ($f in @("voxprint-model-forge.exe", "assets\voxprint-model-forge.ico",
+    foreach ($f in @("voxprint-model-forge.exe", "mdl.json", "assets\voxprint-model-forge.ico",
             "venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe",
             "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md", "unins000.exe",
             "docs\VOXPrint-Model-Forge-Guide-en.pdf", "docs\VOXPrint-Model-Forge-Guide-ru.pdf")) {
@@ -246,6 +246,34 @@ if ($installed) {
 }
 
 if ($installed) {
+    [void](Invoke-Step "mdl" {
+        $mdlJson = Join-Path $Dir "mdl.json"
+        if (-not (Test-Path -LiteralPath $mdlJson)) { throw "missing mdl.json" }
+        $mdl = Join-Path $Dir "venv\Scripts\voxprint-mdl.exe"
+        if (-not (Test-Path -LiteralPath $mdl)) { throw "missing $mdl" }
+        $ErrorActionPreference = "Continue"
+        $err = Join-Path $Results "mdl-stderr.txt"
+        Push-Location ([System.IO.Path]::GetTempPath())
+        try {
+            $out = & $mdl --json download --dry-run --manifest $mdlJson --model qwen3-vl-4b-instruct --model mivolo-v2 --model yunet-2023mar --model dinov2-base 2>> $err | Out-String
+            $code = $LASTEXITCODE
+        } finally { Pop-Location }
+        Add-Content -LiteralPath $Log -Value ("> voxprint-mdl download --dry-run`n" + $out) -Encoding utf8
+        if ($code -ne 0) { throw "voxprint-mdl exited $code" }
+        $result = $null
+        foreach ($line in ($out -split "`r?`n")) {
+            $trim = $line.Trim()
+            if ($trim.StartsWith("{")) { $result = $trim | ConvertFrom-Json }
+        }
+        if ($null -eq $result -or $result.ok -ne $true) { throw "voxprint-mdl result ok is not true" }
+        $status = Invoke-Cli @("--json", "models", "status")
+        if ($status.code -ne 0) { throw "models status exited $($status.code)" }
+        foreach ($id in @("qwen3-vl-4b-instruct", "mivolo-v2", "yunet-2023mar", "dinov2-base")) {
+            if ($status.out -notmatch [regex]::Escape($id)) { throw "models status missing $id" }
+        }
+        "mdl.json; dry-run ok; models status lists qwen3-vl-4b-instruct, mivolo-v2, yunet-2023mar, dinov2-base"
+    })
+
     [void](Invoke-Step "version" {
         $want = (Get-Content -Raw (Join-Path $Dir "BUILD.json") | ConvertFrom-Json).version
         $r = Invoke-Cli @("--version")

@@ -39,6 +39,8 @@ from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import RULE_VERSION, Gate
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE, open_photo, photo_id
 from voxprint_forge.lora.project import Project
+from voxprint_forge.mdl_app import missing_id_text
+from voxprint_forge.model_views import ensure_view
 
 SCHEMA = "voxprint-refset/1"
 REF_RANGE = (1, 10)
@@ -311,7 +313,7 @@ def check_refs(
         _unload_gate(gate)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
                       state="blocked")
-        raise LoraBlocked("lora.err.gate_missing")
+        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
     prompts = load_prompts(project)
     try:
         for index, (rid, image) in enumerate(images, 1):
@@ -475,7 +477,7 @@ def _gate_candidates(
             path.unlink(missing_ok=True)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
                       state="blocked")
-        raise LoraBlocked("lora.err.gate_missing")
+        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
     shown: list[dict[str, Any]] = []
     minor = False
     try:
@@ -737,6 +739,7 @@ def load_teacher(device: str = "cuda") -> Generator | None:
     """Turbo img2img from MDL, or ``None`` when it is not installed."""
     from voxprint_forge.lora.backends import installed_dir
 
+    ensure_view(TEACHER_ID)
     weights = installed_dir(TEACHER_ID)
     if weights is None:
         return None
@@ -750,6 +753,7 @@ def load_embedder(device: str = "cuda") -> Embedder | None:
     """
     from voxprint_forge.lora.backends import installed_dir
 
+    ensure_view(EMBEDDER_ID)
     weights = installed_dir(EMBEDDER_ID)
     try:
         if weights is not None:

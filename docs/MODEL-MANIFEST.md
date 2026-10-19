@@ -171,7 +171,7 @@ is absent.
 
 ## App models
 
-`manifests/model-forge.models.json` (`voxprint-app-models/1`) is the per-app list.
+`manifests/model-forge.models.json` (`voxprint-forge-models/1`) is the per-app list.
 Required: Z-Image base BF16 (`Tongyi-MAI/Z-Image@04cc4abb`), Qwen3-VL-4B-Instruct
 (`@ebb281ec`), MiVOLO v2 (`iitolstykh/mivolo_v2@53393526`) and YuNet 2023mar
 (opencv_zoo `@47534e27`). Optional: Florence-2-large (`@21a599d4`), MOSS-Image Base

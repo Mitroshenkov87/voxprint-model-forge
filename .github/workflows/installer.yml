@@ -18,6 +18,8 @@ on:
       - "pyproject.toml"
       - "BUILD.json"
       - "scripts/windows_smoke.ps1"
+      - "src/voxprint_forge/data/mdl.json"
+      - "scripts/gen_app_models.py"
       - "src/voxprint_forge/lora/export.py"
       - "docs/manual/**"
       - "scripts/build_pdf_guide.py"
@@ -85,6 +87,10 @@ jobs:
           if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
           Copy-Item $common "$stage\wheels\"
           foreach ($name in @("BUILD.json", "LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
+          $mdl = "src\voxprint_forge\data\mdl.json"
+          if (-not (Test-Path -LiteralPath $mdl)) { throw "mdl.json is missing" }
+          Copy-Item -LiteralPath $mdl "$stage\mdl.json"
+          if (-not (Test-Path -LiteralPath "$stage\mdl.json")) { throw "mdl.json was not staged" }
           Copy-Item installer\requirements-mivolo.txt "$stage\requirements-mivolo.txt"
           Copy-Item installer\windows\install.ps1 "$stage\install.ps1"
           Copy-Item installer\windows\requirements-te-quant.txt "$stage\requirements-te-quant.txt"

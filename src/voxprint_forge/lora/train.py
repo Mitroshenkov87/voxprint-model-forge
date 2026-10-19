@@ -21,6 +21,7 @@ from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters,
 from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.mdl_app import missing_id_text
 
 MIN_PHOTOS = {"simple": 10, "expert": 5}
 STATE_FILE = "state.pt"
@@ -29,7 +30,7 @@ STATE_FILE = "state.pt"
 def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, object], list[Item]]:
     data = project.read()
     if data.get("gate_passed") is not True:
-        raise LoraBlocked("lora.err.gate_missing")
+        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
     items = project.items()
     floor = MIN_PHOTOS.get(str(data.get("mode", "simple")), 10)
     if mode_floor and len(items) < floor:
