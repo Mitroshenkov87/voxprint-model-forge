@@ -6,9 +6,9 @@ Start with **More → New model**. A project keeps your photos, their descriptio
 
 ![Step 1, Photos](../img/en-simple-1-photos.png)
 
-1. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG or WebP), or drop photos or a folder into the window.
-2. Choose what the photos show: **Person** (one specific person), **Object** (one specific thing or product) or **Style** (the shared look: lighting, colours, rendering, mood).
-3. Leave **Extend the set from samples** off to train on these photos. Turn it on to draw more pictures from them before training (see below).
+1. Choose what the photos show: **Person** (one specific person), **Object** (one specific thing or product) or **Style** (the shared look: lighting, colours, rendering, mood). The line above follows that choice.
+2. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG or WebP), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.
+3. Leave **Extend the set from samples** off to train on these photos. Turn it on to generate more varied training images from 1 to 10 photos before training (see below). The count line switches to that 1 to 10 range.
 
 Good photos make a good model:
 
@@ -36,7 +36,7 @@ Every photo must show consenting adults, and you must have the right to use it. 
 
 ![Step 3, Build a set](../img/en-simple-3-build.png)
 
-With your own photos this step only says so; press **Next**. Have only a few good pictures? Turn on **Extend the set from samples** on step 1, or press **Build from references instead** here, and use 1 to 10 photos of one subject. Then:
+With your own photos this step only says so; press **Next**. Have only a few good pictures? Turn on **Extend the set from samples** on step 1, or press **Build from references instead** here, and use 1 to 10 photos of one person, one thing or one style. Then:
 
 1. Press **Make pictures**. The app draws a round of new pictures from your references with Z-Image-Turbo.
 2. Tick each picture that looks right (or click it). Unticked pictures are not used.

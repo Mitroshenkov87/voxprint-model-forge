@@ -56,25 +56,50 @@ def _drop_paths(widget, paths: list[Path]) -> None:
     QtWidgets.QApplication.processEvents()
 
 
+def _label_texts(app) -> list[str]:
+    page = _page(app)
+    return [w.text() for w in page.findChildren(QtWidgets.QLabel) if w.isVisibleTo(app.window)]
+
+
 def test_empty_hint_is_visible_only_while_the_list_is_empty(make_app, tmp_path) -> None:
     from voxprint_forge.app.details import Details
 
     app = make_app()
+    app.window.resize(1280, 900)
+    QtWidgets.QApplication.processEvents()
     page = _page(app)
     hint = page.findChild(QtWidgets.QLabel, "forge.photos.empty_hint")
     title = page.findChild(QtWidgets.QLabel, "forge.photos.empty_title")
+    icon = page.findChild(QtWidgets.QLabel, "forge.photos.empty_icon")
+    board = page.findChild(QtWidgets.QWidget, "sourceDrop")
     assert hint is not None and hint.isVisibleTo(app.window)
-    assert title is not None and title.text() == tr("forge.app.photos.drop")
-    assert tr("lora.step.photos.desc") in hint.text()
-    assert tr("lora.step.photos.help") in hint.text()
+    assert hint.text() == tr("forge.app.photos.empty_hint")
     assert hint.property("muted") == "true"
+    assert title is not None and title.text() == tr("forge.app.photos.drop")
+    assert title.text() not in hint.text()
+    assert tr("forge.app.step.photos.short") not in hint.text()
+    assert tr("lora.step.photos.desc") not in hint.text()
+    texts = _label_texts(app)
+    assert texts.count(tr("forge.app.photos.drop")) == 1
+    assert texts.count(tr("forge.app.step.photos.short")) == 1
+    assert page.findChild(QtWidgets.QLabel, "presetLabel") is None
+    assert icon is not None and icon.pixmap() is not None and not icon.pixmap().isNull()
+    assert board is not None and board.testAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground)
+    assert "dashed" in app.window.styleSheet()
+    assert 160 <= board.height() <= 360
     assert app.window.findChild(Details, "forge.details.step.photos") is None
     assert tr("forge.app.details") not in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
     app.draft.add_photos(make_photos(tmp_path / "p", 2))
     app.repaint()
+    QtWidgets.QApplication.processEvents()
     page = _page(app)
     assert page.findChild(QtWidgets.QLabel, "forge.photos.empty_hint") is None
     assert page.findChild(QtWidgets.QLabel, "forge.photos.empty_title") is None
+    assert page.findChild(QtWidgets.QLabel, "forge.photos.empty_icon") is None
+    board = page.findChild(QtWidgets.QWidget, "sourceDrop")
+    add = page.findChild(QtWidgets.QPushButton, "forge.photos.add")
+    gap = add.mapTo(page, QtCore.QPoint(0, 0)).y() - board.mapTo(page, QtCore.QPoint(0, board.height())).y()
+    assert 0 <= gap <= 24
 
 
 def test_one_add_button_accepts_files_and_a_folder(make_app, tmp_path, monkeypatch) -> None:
@@ -128,12 +153,22 @@ def test_remove_controls_are_icon_buttons(make_app, tmp_path, lang) -> None:
     page = _page(app)
     buttons = [b for b in page.findChildren(QtWidgets.QToolButton, "forge.photos.remove") if b.isVisibleTo(app.window)]
     assert len(buttons) == 3
+    assert tr("forge.app.photos.remove") not in [b.text() for b in page.findChildren(QtWidgets.QAbstractButton)]
     for button in buttons:
         assert button.text() == ""
+        assert button.icon().isNull()  # hidden until hover or keyboard focus; no bar above the tile
+        assert button.property("shown") == "false"
+        assert button.width() == button.height()
+        thumb = button.parentWidget()
+        assert thumb.objectName() == "forge.photos.thumb"
+        assert thumb.geometry().contains(button.geometry().center())
+        assert button.y() < thumb.height() / 2
+        button.setFocus()
+        QtWidgets.QApplication.processEvents()
         assert not button.icon().isNull()
+        assert button.property("shown") == "true"
         assert button.accessibleName() == tr("forge.app.photos.remove")
         assert button.toolTip() == tr("lora.photos.remove.tip")
-    assert tr("forge.app.photos.remove") not in [b.text() for b in page.findChildren(QtWidgets.QAbstractButton)]
     QTest.mouseClick(buttons[1], QtCore.Qt.MouseButton.LeftButton)
     QtWidgets.QApplication.processEvents()
     assert app.draft.photos == [photos[0], photos[2]]
@@ -141,15 +176,16 @@ def test_remove_controls_are_icon_buttons(make_app, tmp_path, lang) -> None:
     tiles = [t for t in page.findChildren(QtWidgets.QFrame, "forge.photos.item") if t.isVisibleTo(app.window)]
     assert len(tiles) == 2
     selected = page.findChild(QtWidgets.QToolButton, "forge.photos.remove_selected")
-    assert selected.text() == ""
-    assert not selected.icon().isNull()
-    assert selected.accessibleName() == tr("forge.app.photos.remove_selected")
-    assert selected.toolTip()
-    assert not selected.isEnabled()
+    assert not selected.isVisibleTo(app.window)
     QTest.mouseClick(tiles[0], QtCore.Qt.MouseButton.LeftButton)
     QtWidgets.QApplication.processEvents()
     selected = _page(app).findChild(QtWidgets.QToolButton, "forge.photos.remove_selected")
-    assert selected.isEnabled()
+    assert selected.isVisibleTo(app.window)
+    assert selected.text() == ""
+    assert not selected.icon().isNull()
+    assert selected.property("selectionRemove") == "true"
+    assert selected.accessibleName() == tr("forge.app.photos.remove_selected")
+    assert selected.toolTip()
     QTest.mouseClick(selected, QtCore.Qt.MouseButton.LeftButton)
     QtWidgets.QApplication.processEvents()
     assert app.draft.photos == [photos[2]]
@@ -158,6 +194,12 @@ def test_remove_controls_are_icon_buttons(make_app, tmp_path, lang) -> None:
 def test_kind_options_have_a_one_line_note(make_app) -> None:
     app = make_app()
     page = _page(app)
+    label = next(w for w in page.findChildren(QtWidgets.QLabel) if w.text() == tr("forge.app.kind.label"))
+    board = page.findChild(QtWidgets.QWidget, "sourceDrop")
+    assert label.mapTo(page, QtCore.QPoint(0, 0)).y() < board.mapTo(page, QtCore.QPoint(0, 0)).y()
+    segments = page.findChild(QtWidgets.QFrame, "kindSegments")
+    assert segments is not None and segments.isVisibleTo(app.window)
+    assert segments.mapTo(page, QtCore.QPoint(0, 0)).y() < board.mapTo(page, QtCore.QPoint(0, 0)).y()
     expected = {
         "person": "One specific person from the photos.",
         "object": "One specific thing or product.",
@@ -171,15 +213,41 @@ def test_kind_options_have_a_one_line_note(make_app) -> None:
         assert note is not None and note.isVisibleTo(app.window)
         assert note.text() == text
         chip = page.findChild(QtWidgets.QPushButton, f"forge.chip.{kind}")
-        assert chip is not None
+        assert chip is not None and chip.property("segment") == "true"
         assert note.mapTo(page, QtCore.QPoint(0, 0)).y() > chip.mapTo(page, QtCore.QPoint(0, 0)).y()
+        assert segments.isAncestorOf(chip)
+
+
+def test_count_line_follows_the_subject_and_the_toggle(make_app) -> None:
+    app = make_app("ru")
+    assert tr("forge.app.step.photos.short") in _label_texts(app)
+    for kind in ("person", "object", "style"):
+        app.draft.kind = kind
+        app.repaint()
+        QtWidgets.QApplication.processEvents()
+        texts = _label_texts(app)
+        assert texts.count(tr(f"forge.app.step.photos.short.{kind}")) == 1
+        assert tr("forge.app.step.photos.short") not in texts
+        assert "одного объекта" not in " ".join(texts)
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
+    QtWidgets.QApplication.processEvents()
+    texts = _label_texts(app)
+    assert texts.count(tr("forge.app.step.photos.short_refs.style")) == 1
+    assert tr("forge.app.step.photos.short.style") not in texts
 
 
 def test_extend_toggle_maps_onto_the_refs_pipeline(make_app, tmp_path) -> None:
     app = make_app()
     toggle = app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend")
+    hint = app.window.findChild(QtWidgets.QLabel, "forge.photos.extend.hint")
     assert toggle is not None and not toggle.isChecked()
+    assert toggle.property("switch") == "true"
+    assert type(toggle).__name__ == "_Switch"
     assert toggle.text() == tr("forge.app.photos.extend")
+    assert hint is not None and hint.isVisibleTo(app.window)
+    assert hint.text() == tr("forge.app.photos.extend.hint")
+    assert hint.property("muted") == "true"
+    assert hint.mapTo(app.window, QtCore.QPoint(0, 0)).y() > toggle.mapTo(app.window, QtCore.QPoint(0, 0)).y()
     assert app.draft.source == "photos"
     assert app.window.findChild(QtWidgets.QPushButton, "forge.chip.refs") is None
     assert app.window.findChild(QtWidgets.QPushButton, "forge.chip.photos") is None
