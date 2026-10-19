@@ -70,6 +70,10 @@ def test_silent_upgrade_exits_20_when_the_app_is_running() -> None:
     assert "SilentInstall" in refuse and "ExitProcess(AppBusyExitCode)" in refuse
     silent = ISS.split("function SilentInstall", 1)[1].split("function RefuseIfAppBusy", 1)[0]
     assert "WizardSilent" in silent and "/VERYSILENT" in silent
+    # {app} is not initialized in InitializeSetup; the check uses the fixed directory.
+    busy = ISS.split("function AppFilesBusy", 1)[1].split("function ", 1)[0]
+    assert "{app}" not in busy
+    assert "{autopf}" in ISS.split("function InstallDir", 1)[1].split("function ", 1)[0]
     assert "CustomMessage('AppBusy')" in refuse
     assert "AppBusyExitCode" in SMOKE and "upgrade-busy" in SMOKE
     testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")

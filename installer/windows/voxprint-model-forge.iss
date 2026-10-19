@@ -251,15 +251,24 @@ begin
     Log('in use: ' + FileName);
 end;
 
+// {app} is not initialized in InitializeSetup. The directory page is disabled and
+// UsePreviousAppDir is no, so the install directory is this fixed path.
+function InstallDir: String;
+begin
+  Result := ExpandConstant('{autopf}\{#MySuiteName}\Model Forge');
+end;
+
 function AppFilesBusy: Boolean;
 var
+  Root: String;
   Launcher, Gui, Cli, Py, Pyw: Boolean;
 begin
-  Launcher := NoteLocked(ExpandConstant('{app}\voxprint-model-forge.exe'));
-  Gui := NoteLocked(ExpandConstant('{app}\venv\Scripts\voxprint-model-forge.exe'));
-  Cli := NoteLocked(ExpandConstant('{app}\venv\Scripts\voxprint-forge-cli.exe'));
-  Py := NoteLocked(ExpandConstant('{app}\venv\Scripts\python.exe'));
-  Pyw := NoteLocked(ExpandConstant('{app}\venv\Scripts\pythonw.exe'));
+  Root := InstallDir;
+  Launcher := NoteLocked(Root + '\voxprint-model-forge.exe');
+  Gui := NoteLocked(Root + '\venv\Scripts\voxprint-model-forge.exe');
+  Cli := NoteLocked(Root + '\venv\Scripts\voxprint-forge-cli.exe');
+  Py := NoteLocked(Root + '\venv\Scripts\python.exe');
+  Pyw := NoteLocked(Root + '\venv\Scripts\pythonw.exe');
   Result := Launcher or Gui or Cli or Py or Pyw;
 end;
 
