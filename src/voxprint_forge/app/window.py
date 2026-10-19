@@ -63,6 +63,35 @@ def button_radius_px() -> int:
 
 
 _BUTTON_RADIUS = button_radius_px()
+
+
+def format_span(seconds: float) -> str:
+    """A duration in hours and minutes, for the training progress line."""
+    whole = max(0, int(seconds))
+    if whole == 0:
+        return tr("lora.progress.span.minutes", count=0)
+    if whole < 30:
+        return tr("lora.progress.span.under")
+    minutes = (whole + 30) // 60
+    if minutes < 60:
+        return tr("lora.progress.span.minutes", count=minutes)
+    hours, rest = divmod(minutes, 60)
+    if rest == 0:
+        return tr("lora.progress.span.hours", count=hours)
+    return tr("lora.progress.span.hours_minutes", hours=hours, minutes=rest)
+
+
+def _control_width(button: QtWidgets.QAbstractButton) -> int:
+    """The label width plus the chip padding, measured in the heavier checked face."""
+    density = load_tokens().density
+    button.ensurePolished()
+    font = QtGui.QFont(button.font())
+    font.setPixelSize(density.body_px)
+    font.setWeight(QtGui.QFont.Weight.DemiBold)
+    advance = QtGui.QFontMetrics(font).horizontalAdvance(button.text())
+    return advance + (density.chip_pad_px + density.border_px) * 2 + 4
+
+
 # The shell's action bar (Open folder) gets the wizard card's 16 px inset, so it lines up with Back.
 ACTION_BAR_MARGINS = (16, 0, 16, 16)
 FORGE_STYLE = """
@@ -93,10 +122,15 @@ QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-rad
 QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
 QLabel[muted="true"] { color: #9a9aa8; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
-QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: 8px; }
+QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
     background: transparent; color: #e8e6e3; border: none; border-radius: 0;
     padding: 8px 10px; min-height: 34px; }
+QFrame#kindSegments QPushButton[segment="true"][end="left"] {
+    border-top-left-radius: @@RADIUS@@px; border-bottom-left-radius: @@RADIUS@@px; }
+QFrame#kindSegments QPushButton[segment="true"][end="right"] {
+    border-top-right-radius: @@RADIUS@@px; border-bottom-right-radius: @@RADIUS@@px; }
+QPushButton[chip="true"], QPushButton#overflow, QPushButton#expertToggle { border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"][end="mid"],
 QFrame#kindSegments QPushButton[segment="true"][end="right"] { border-left: 1px solid #4a4a58; }
 QFrame#kindSegments QPushButton[segment="true"]:checked {
@@ -404,6 +438,7 @@ class ForgeApp:
         column = QtWidgets.QVBoxLayout(page)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
+        self._loss_label = None
         # A paused review replaces the training intro; Continue and Finish drive that screen.
         if not (step == "train" and self._review_waiting() and not self.runner.busy):  # type: ignore[attr-defined]
             self._intro(column, step)
@@ -524,8 +559,9 @@ class ForgeApp:
         bar.show()
 
     def _intro(self, column: QtWidgets.QVBoxLayout, step: str) -> None:
+        running = step == "train" and bool(self.runner.busy)  # type: ignore[attr-defined]
         key = self._photos_count_key() if step == "photos" else f"forge.app.step.{step}.short"
-        short = QtWidgets.QLabel(tr(key))
+        short = QtWidgets.QLabel(self._running_title() if running else tr(key))
         short.setObjectName("panel")
         short.setWordWrap(True)
         short.setToolTip(tr(f"lora.step.{step}.desc"))
@@ -537,7 +573,14 @@ class ForgeApp:
             paragraphs += tuple(tr(f"forge.app.refset.more.{key}") for key in notes)
         # Photos keeps this text in the empty drop zone; the other steps keep Details.
         if step != "photos":
-            column.addWidget(self._details(f"step.{step}", paragraphs))
+            details = self._details(f"step.{step}", paragraphs)
+            column.addWidget(details)
+            if running:
+                loss = QtWidgets.QLabel(self._loss_text())
+                loss.setObjectName("forge.train.loss")
+                loss.setWordWrap(True)
+                details.body.layout().addWidget(loss)
+                self._loss_label = loss
 
     def _details(self, key: str, paragraphs: tuple[str, ...]) -> Details:
         """A collapsed Details expander; its open state survives repaints of the step."""
@@ -619,6 +662,7 @@ class ForgeApp:
             chip.setCheckable(True)
             chip.setChecked(value == self.draft.kind)
             chip.setAutoDefault(False)
+            chip.setMinimumWidth(_control_width(chip))
             chip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
             chip.setToolTip(tr("lora.kind.tip"))
             chip.clicked.connect(lambda _checked=False, v=value: self._set_kind(v))
@@ -645,6 +689,7 @@ class ForgeApp:
         *,
         tip: str = "",
         tips: str = "",
+        enabled: bool = True,
     ) -> QtWidgets.QHBoxLayout:
         row = QtWidgets.QHBoxLayout()
         group = QtWidgets.QButtonGroup(row)
@@ -655,9 +700,8 @@ class ForgeApp:
             chip.setProperty("chip", "true")
             chip.setCheckable(True)
             chip.setChecked(value == current)
-            bold = QtGui.QFont(chip.font())
-            bold.setBold(True)
-            chip.setMinimumWidth(QtGui.QFontMetrics(bold).horizontalAdvance(chip.text()) + 36)
+            chip.setFixedWidth(_control_width(chip))
+            chip.setEnabled(enabled)
             chip.setProperty("value", value)
             chip.setToolTip(tr(tips.format(value)) if tips else tr(tip))
             chip.clicked.connect(lambda _checked=False, v=value: on_pick(v))
@@ -1091,27 +1135,30 @@ class ForgeApp:
             heading.setObjectName("settingGroup")
             column.addWidget(heading)
             tip = "lora.memory.tip" if title == "forge.app.memory.label" else "lora.preset.tip"
-            row = self._chips(values, label, current, pick, tip=tip, tips=tips)
+            row = self._chips(values, label, current, pick, tip=tip, tips=tips, enabled=not busy)
             if title == "forge.app.preset.label" and self.custom():
                 custom = QtWidgets.QLabel(tr("forge.app.preset.custom"))
                 custom.setObjectName("warn")
+                reset = _button("forge.app.preset.reset", "forge.app.preset.reset.tip", self.apply_simple)
+                reset.setEnabled(not busy)
                 row.insertWidget(row.count() - 1, custom)
-                row.insertWidget(
-                    row.count() - 1, _button("forge.app.preset.reset", "forge.app.preset.reset.tip", self.apply_simple)
-                )
+                row.insertWidget(row.count() - 1, reset)
             column.addLayout(row)
         heading = QtWidgets.QLabel(tr("forge.app.base.label"))
         heading.setObjectName("settingGroup")
         column.addWidget(heading)
         base = basepicker.build_picker(self._base_options(), self.simple["base"])
         base.currentIndexChanged.connect(lambda _i: self.simple.__setitem__("base", str(base.currentData() or "")))
+        base.setEnabled(not busy)
         column.addWidget(basepicker.hint_label())
         column.addWidget(base, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         memory = basepicker.memory_details()
         column.addWidget(self._details("train.base", (tr("forge.app.base.details"),) + ((memory,) if memory else ())))
-        previews = QtWidgets.QCheckBox(tr("forge.app.previews.label"))
+        previews = _Switch(tr("forge.app.previews.label"))
+        previews.setObjectName("forge.train.previews")
         previews.setToolTip(tr("lora.previews.tip"))
         previews.setChecked(self.previews)
+        previews.setEnabled(not busy)
         previews.toggled.connect(lambda checked: setattr(self, "previews", checked))
         column.addWidget(previews)
         row = QtWidgets.QHBoxLayout()
@@ -1123,7 +1170,7 @@ class ForgeApp:
         )
         start = _button(start_key, start_tip, self.train, primary=True)
         pause = _button("forge.app.train.pause", "lora.train.pause.tip", self.pause)
-        stop = _button("forge.app.train.stop", "lora.train.stop.tip", self.stop)
+        stop = _button("forge.app.train.stop", "lora.train.stop.tip", self._stop_clicked)
         estimate.setEnabled(not busy)
         start.setEnabled(not busy)
         pause.setEnabled(busy)
@@ -1190,10 +1237,37 @@ class ForgeApp:
         bar.setTextVisible(False)
         bar.setRange(0, 1000)
         bar.setValue(int((self.progress_percent or 0) * 10))
-        bar.setVisible(self.progress_percent is not None)
+        shown = self.progress_percent is not None
+        bar.setVisible(shown)
+        percent = QtWidgets.QLabel("" if self.progress_percent is None else f"{int(round(self.progress_percent))}%")
+        percent.setObjectName("progressPercent")
+        percent.setVisible(shown)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(bar, 1)
+        row.addWidget(percent)
         column.addWidget(text)
-        column.addWidget(bar)
-        self._progress_text, self._progress_bar = text, bar
+        column.addLayout(row)
+        self._progress_text, self._progress_bar, self._progress_percent_label = text, bar, percent
+
+    def _running_title(self) -> str:
+        """The training-step heading while a stage is running."""
+        state = self._review_state()
+        total = int(state.get("rounds") or 0)
+        phase = str(state.get("phase") or "")
+        if total > 0 and phase in ("training", "review"):
+            index = int(state.get("index") or 0)
+            current = index if phase == "review" else index + 1
+            current = min(total, max(1, current))
+            return tr("forge.app.train.running.round", round=current, rounds=total)
+        return tr("forge.app.train.running")
+
+    def _loss_text(self) -> str:
+        """The loss sentence kept in Details while a stage is running."""
+        row = read_progress(self.project)
+        loss = None if row is None else row.get("loss")
+        shown = "—" if not isinstance(loss, int | float) else f"{float(loss):.4f}"
+        return tr("lora.progress.loss", loss=shown)
 
     def _review_state(self) -> dict[str, object]:
         """The saved review, or an idle state when this project has none."""
@@ -1595,18 +1669,21 @@ class ForgeApp:
             return
         total = int(row.get("total") or 0)
         step = int(row.get("step") or 0)
-        loss = row.get("loss")
-        loss_text = "—" if not isinstance(loss, int | float) else f"{float(loss):.4f}"
+        elapsed = format_span(float(row.get("elapsed_seconds") or 0))
         eta = row.get("eta_seconds")
-        self.progress_text = tr(
-            "lora.progress.status",
-            step=step,
-            steps=total,
-            loss=loss_text,
-            elapsed=int(float(row.get("elapsed_seconds") or 0)),
-            eta="—" if eta is None else int(eta),
-        )
+        if isinstance(eta, int | float):
+            self.progress_text = tr(
+                "lora.progress.status", step=step, steps=total, elapsed=elapsed, eta=format_span(float(eta)),
+            )
+        else:
+            self.progress_text = tr("lora.progress.status_open", step=step, steps=total, elapsed=elapsed)
         self.progress_percent = None if total <= 0 else (step / total) * 100
+        loss = getattr(self, "_loss_label", None)
+        if loss is not None:
+            try:
+                loss.setText(self._loss_text())
+            except RuntimeError:
+                self._loss_label = None
         self._paint_progress()
 
     def _paint_progress(self) -> None:
@@ -1616,9 +1693,14 @@ class ForgeApp:
             bar = getattr(self, "_progress_bar", None)
             if text is not None:
                 text.setText(self.progress_text)
+            shown = self.progress_percent is not None
             if bar is not None:
                 bar.setValue(int((self.progress_percent or 0) * 10))
-                bar.setVisible(self.progress_percent is not None)
+                bar.setVisible(shown)
+            percent = getattr(self, "_progress_percent_label", None)
+            if percent is not None:
+                percent.setText("" if not shown else f"{int(round(self.progress_percent or 0))}%")
+                percent.setVisible(shown)
             window = self.widget.root.window()
             if window is not None and self.progress_text:
                 window.setWindowTitle(f"{tr('splash.app.' + APP_ID)} — {self.progress_text}")
@@ -1836,6 +1918,9 @@ class ForgeApp:
         self.progress_percent = event.percent
         if event.state == "paused":
             self.paused = True
+        if self.runner.busy and read_progress(self.project) is not None:  # type: ignore[attr-defined]
+            self._apply_train_progress()
+            return
         self._paint_progress()
 
     def prepare(self) -> None:
@@ -1960,6 +2045,25 @@ class ForgeApp:
             return
         self.paused = True
         engine.request_pause(self.project)
+
+    def _stop_clicked(self) -> None:
+        """Ask, then stop. Versions saved so far stay in the project."""
+        if not self._confirm_stop():
+            return
+        self.stop()
+
+    def _confirm_stop(self) -> bool:
+        """True when the user confirms ending the run."""
+        box = QtWidgets.QMessageBox(self.window)
+        box.setObjectName("forge.train.stop.ask")
+        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box.setWindowTitle(tr("forge.app.train.stop"))
+        box.setText(tr("forge.app.train.stop.ask"))
+        stop = box.addButton(tr("forge.app.train.stop.confirm"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(tr("forge.app.train.stop.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is stop
 
     def stop(self) -> None:
         """Stop now and keep the versions saved so far."""

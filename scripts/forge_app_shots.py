@@ -226,6 +226,8 @@ def shot_train_live(out: Path, home: Path) -> None:
 
     from voxprint_forge.app.draft import Prepared, STEPS
     from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.lora.project import Project
+    from voxprint_forge.lora.review import save_state, transition
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     set_language("ru")
@@ -246,6 +248,10 @@ def shot_train_live(out: Path, home: Path) -> None:
         False,
     )
     forge.project.mkdir(parents=True, exist_ok=True)
+    save_state(Project(forge.project), transition(
+        {}, "start", rounds=3, samples_per_round=8, prompts=["a soft shape"], seed=1,
+        base="draw-test", config={"steps": 1500},
+    ))
     (forge.project / "train.json").write_text(json.dumps({
         "elapsed_seconds": 120,
         "eta_seconds": 900,

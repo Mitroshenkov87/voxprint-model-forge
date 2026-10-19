@@ -16,7 +16,13 @@ from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos  # noqa: 
 from voxprint_forge.app.details import Details  # noqa: E402
 from voxprint_forge.app.draft import STEPS  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
-from voxprint_forge.app.window import FORGE_STYLE, button_radius_px  # noqa: E402
+from voxprint_forge.app.window import (  # noqa: E402
+    FORGE_STYLE,
+    _control_width,
+    button_radius_px,
+    format_span,
+    register_catalogs,
+)
 from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
 from voxprint_forge.lora.review import save_state, transition  # noqa: E402
 
@@ -265,10 +271,28 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     assert verdicts["r1-s00"] == "like"
 
 
-def test_a_running_stage_shows_the_train_json_bar(make_app, qapp) -> None:
+def test_progress_spans_use_hours_and_minutes() -> None:
+    register_catalogs()
+    set_language("ru")
+    assert format_span(120) == "2 мин"
+    assert format_span(900) == "15 мин"
+    assert format_span(3600) == "1 ч"
+    assert format_span(5400) == "1 ч 30 мин"
+    assert format_span(20) == "меньше 1 мин"
+    set_language("en")
+    assert format_span(120) == "2 min"
+    assert format_span(3600) == "1 h"
+    assert format_span(5400) == "1 h 30 min"
+    assert format_span(20) == "under 1 min"
+
+
+def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, qapp) -> None:
     app = make_app("ru")
     app.runner.busy = True
     app.project.mkdir(parents=True, exist_ok=True)
+    save_state(Project(app.project), transition(
+        {}, "start", rounds=3, samples_per_round=8, prompts=["shape"], seed=1, base="draw-test", config={"steps": 1500},
+    ))
     (app.project / "train.json").write_text(json.dumps({
         "step": 450, "total": 1500, "loss": 0.18, "elapsed_seconds": 120, "eta_seconds": 900, "stage": "step",
     }), encoding="utf-8")
@@ -276,12 +300,93 @@ def test_a_running_stage_shows_the_train_json_bar(make_app, qapp) -> None:
     app.repaint()
     qapp.processEvents()
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    labels = [label.text() for label in page.findChildren(QtWidgets.QLabel)]
+    assert "Идёт обучение — раунд 1 из 3" in labels
+    assert tr("forge.app.step.train.short") not in labels
     text = page.findChild(QtWidgets.QLabel, "progressText")
     bar = page.findChild(QtWidgets.QProgressBar, "progress")
-    assert text.text() == tr(
-        "lora.progress.status", step=450, steps=1500, loss="0.1800", elapsed=120, eta=900,
-    )
+    percent = page.findChild(QtWidgets.QLabel, "progressPercent")
+    assert text.text() == "Шаг 450 из 1500 · прошло 2 мин · осталось около 15 мин"
+    assert "0.1800" not in text.text()
     assert bar.isVisible() and bar.value() == 300
-    preset_name = tr("forge.app.preset.label")
-    preset = next(label for label in page.findChildren(QtWidgets.QLabel) if label.text() == preset_name)
-    assert text.mapTo(page, QtCore.QPoint(0, 0)).y() < preset.mapTo(page, QtCore.QPoint(0, 0)).y()
+    assert percent.text() == "30%" and percent.isVisible()
+    assert text.mapTo(page, QtCore.QPoint(0, 0)).y() < bar.mapTo(page, QtCore.QPoint(0, 0)).y()
+    assert bar.mapTo(page, QtCore.QPoint(0, 0)).x() < percent.mapTo(page, QtCore.QPoint(0, 0)).x()
+    loss = page.findChild(QtWidgets.QLabel, "forge.train.loss")
+    assert loss.text() == tr("lora.progress.loss", loss="0.1800")
+    assert not app.window.findChild(QtWidgets.QPushButton, "forge.chip.balanced").isEnabled()
+    assert not app.window.findChild(QtWidgets.QComboBox, "forge.train.base").isEnabled()
+    previews = app.window.findChild(QtWidgets.QCheckBox, "forge.train.previews")
+    assert previews is not None and previews.property("switch") == "true" and not previews.isEnabled()
+    buttons = page.findChildren(QtWidgets.QPushButton)
+    start = next(button for button in buttons if button.text() == tr("forge.app.train.start"))
+    estimate = next(button for button in buttons if button.text() == tr("forge.app.train.estimate"))
+    pause = next(button for button in buttons if button.text() == tr("forge.app.train.pause"))
+    stop = next(button for button in buttons if button.text() == tr("forge.app.train.stop"))
+    assert not start.isEnabled() and not estimate.isEnabled()
+    assert pause.isEnabled() and stop.isEnabled()
+
+
+def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.runner.busy = True
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    stop = next(
+        button for button in app.window.findChildren(QtWidgets.QPushButton)
+        if button.text() == tr("forge.app.train.stop")
+    )
+
+    def cancel() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QMessageBox)
+        assert box.text() == tr("forge.app.train.stop.ask")
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.train.stop.cancel"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, cancel)
+    stop.click()
+    qapp.processEvents()
+    assert app.runner.stopped == 0
+
+    def confirm() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.train.stop.confirm"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, confirm)
+    stop.click()
+    qapp.processEvents()
+    assert app.runner.stopped == 1
+
+
+def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    radius = button_radius_px()
+    shared = (
+        'QPushButton[chip="true"], QPushButton#overflow, QPushButton#expertToggle '
+        f"{{ border-radius: {radius}px; }}"
+    )
+    assert shared in FORGE_STYLE
+    assert "border-radius: 15px" not in FORGE_STYLE
+    assert "border-radius: 14px" not in FORGE_STYLE
+    expected = {"balanced": "Сбалансированно", "best": "Лучшее качество", "close": "Близко к фото"}
+    for name, label in expected.items():
+        button = app.window.findChild(QtWidgets.QPushButton, f"forge.chip.{name}")
+        assert button.text() == label
+        assert button.width() == _control_width(button)
+        assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+    app.layout.sections._index = STEPS.index("photos")
+    app.repaint()
+    qapp.processEvents()
+    for kind in ("person", "object", "style"):
+        button = app.window.findChild(QtWidgets.QPushButton, f"forge.chip.{kind}")
+        assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+    for name in ("overflow", "expertToggle"):
+        button = app.window.findChild(QtWidgets.QPushButton, name)
+        assert button is not None
+        assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())

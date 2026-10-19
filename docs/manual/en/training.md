@@ -22,14 +22,14 @@ Choose a preset, a likeness and the graphics card memory (see [Presets](presets.
 
   ![Step 5 with Details open](../img/en-simple-5-train-details-open.png)
 
-- **Show test pictures** draws a few pictures during training so you can see progress.
+- **Show test pictures** is a switch. While it is on, the app draws a few pictures during training so you can see progress. Those pictures are separate from the ones you mark between rounds.
 
-Press **Estimate time** for a forecast, then **Start training**. While a stage is running, a bar and a line show the step out of the total, the loss, how long the stage has been running and the time left. Both are read from the project folder.
+Press **Estimate time** for a forecast, then **Start training**. While a stage is running, the step says that training is running, and the preset, likeness, memory and base model stay locked. A line shows the step out of the total, how long the stage has been running and the time left, in hours and minutes. The bar under that line ends with the percent. The loss is under **Details**. **Pause** and **Stop** stay available. **Stop** asks before it ends the run.
 
 ![Training in progress](../img/en-simple-5-train-running.png)
 
 - **Pause** saves a version and stops. Press **Continue** later to go on from that version.
-- **Stop** ends the run. The versions saved so far are kept.
+- **Stop** asks, then ends the run. The versions saved so far are kept.
 - The app saves a version six times during a run, so you can compare them on the next step.
 
 ## Review rounds
