@@ -68,6 +68,7 @@ class BaseAdapter(ABC):
     target_modules: tuple[str, ...] = ()
     requires_gpu: bool = True
     trainable: bool = True  # False while the adapter has no training loader yet
+    supports_negatives: bool = False  # True when disliked review samples can enter the loss
     lora_dtype: torch.dtype | None = None  # None: the adapter dtype follows the base weight
 
     @abstractmethod

@@ -129,6 +129,92 @@ def shot_downloader(out: Path, lang: str) -> None:
     grab_view(view_for(snapshot, mode="queue", focus_app="model-forge", lang=lang), out / f"{lang}-mdl-download.png")
 
 
+def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
+    """1280 px grabs: the photos switch on (ru) and a review with mixed marks (en and ru)."""
+    import json
+
+    from PySide6 import QtCore, QtGui, QtWidgets
+    from tests.forge_app_stub import ALL_COMMANDS, StubRunner
+    from voxprint_common.i18n import set_language
+
+    from voxprint_forge.app.draft import STEPS
+    from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.lora.project import Project
+    from voxprint_forge.lora.review import save_state, transition
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    out.mkdir(parents=True, exist_ok=True)
+    chosen = photos[:4]
+
+    def seed(project: Path) -> None:
+        root = Project(project)
+        root.prepared.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for index, photo in enumerate(chosen):
+            name = f"prepared/p{index:02d}.png"
+            (project / name).write_bytes(photo.read_bytes())
+            rows.append({"id": f"p{index:02d}", "file": name, "long": "a soft shape", "short": "shape", "round": 0})
+        (project / "captions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        root.write({
+            "kind": "object", "gate_passed": True,
+            "subject": {"name": "Soft shape", "trigger": "soft_shape", "rights_confirmed": True, "kind": "object"},
+        })
+        state = transition(
+            {}, "start", rounds=3, samples_per_round=6, prompts=["a soft shape"], seed=3,
+            base="draw-test", config={"steps": 1},
+        )
+        verdicts = ("like", "dislike", "unmarked", "like", "dislike", "unmarked")
+        samples = []
+        folder = project / "review" / "round-0001"
+        folder.mkdir(parents=True, exist_ok=True)
+        for index, verdict in enumerate(verdicts):
+            image = QtGui.QImage(256, 256, QtGui.QImage.Format.Format_RGB32)
+            image.fill(QtGui.qRgb(30 + index * 36, 90 + (index % 3) * 40, 150))
+            painter = QtGui.QPainter(image)
+            painter.setPen(QtGui.QColor(40, 40, 40))
+            font = painter.font()
+            font.setPixelSize(72)
+            painter.setFont(font)
+            painter.drawText(image.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, f"{index + 1}")
+            painter.end()
+            image.save(str(folder / f"s{index:02d}.png"))
+            samples.append({
+                "id": f"r1-s{index:02d}",
+                "file": f"review/round-0001/s{index:02d}.png",
+                "seed": index,
+                "prompt": "a soft shape",
+                "round": 1,
+                "verdict": verdict,
+            })
+        save_state(root, transition(
+            state, "pause", checkpoint="checkpoints/step-000001.safetensors", samples=samples,
+        ))
+
+    for lang in ("ru", "en"):
+        set_language(lang)
+        forge = ForgeApp(
+            runner=StubRunner(), home=home / f"review-{lang}", commands=ALL_COMMANDS,
+            open_path=lambda _p: None, launch=lambda _a: None,
+        )
+        forge.window.resize(1280, 960)
+        forge.window.show()
+        app.processEvents()
+        if lang == "ru":
+            forge.draft.kind = "object"
+            forge.draft.add_photos(chosen)
+            forge.repaint()
+            forge.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
+            app.processEvents()
+            forge.window.grab().save(str(out / "ru-simple-1-photos-extend.png"))
+        seed(forge.project)
+        forge.layout.sections._index = STEPS.index("train")
+        forge.repaint()
+        app.processEvents()
+        forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
+        forge.window.close()
+    set_language("en")
+
+
 def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:
     home = Path(tempfile.mkdtemp(prefix="forge-shots-"))
     os.environ["VOXPRINT_HOME"] = str(home)
@@ -230,6 +316,8 @@ def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:
             forge.expert.set_enabled(False)
         if manual:
             shot_downloader(out, lang)
+    if manual:
+        shot_review_rounds(out, home, photos)
 
 
 def scroll_to_start(forge, app, scroll) -> None:
@@ -264,4 +352,13 @@ def shot_open_base(forge, app, path: Path) -> None:
 if __name__ == "__main__":
     flags = sys.argv[2:]
     given = Path(flags[flags.index("--photos") + 1]) if "--photos" in flags else None
-    main(Path(sys.argv[1]), manual="--manual" in flags, samples=given)
+    if "--review-only" in flags:
+        home = Path(tempfile.mkdtemp(prefix="forge-shots-"))
+        os.environ["VOXPRINT_HOME"] = str(home)
+        from PySide6 import QtWidgets
+
+        QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        pictures = placeholder_photos(home / "photos", 6)
+        shot_review_rounds(Path(sys.argv[1]), home, pictures)
+    else:
+        main(Path(sys.argv[1]), manual="--manual" in flags, samples=given)

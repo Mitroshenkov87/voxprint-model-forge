@@ -27,6 +27,7 @@ from voxprint_common.ui.expert import ExpertMode
 from voxprint_common.ui.sections import BodyKind, Section, SectionSet, Wizard, WizardStep
 from voxprint_common.ui.simple_image import SimpleImageWidget, SimpleLayout
 from voxprint_common.ui.theme import build_shell_style
+from voxprint_common.ui.tokens import load as load_tokens
 from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
@@ -36,23 +37,44 @@ from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
 from voxprint_forge.lora import refset
+from voxprint_forge.lora import review as rounds
 from voxprint_forge.lora.attr import HIGH, LOW, accepted
+from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
+from voxprint_forge.lora.progress_log import read_progress
+from voxprint_forge.lora.project import Project
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
 APP_ID = "model-forge"
 CARD_PICTURE = 136  # px, a review-grid picture
 KEEP_MARK = 30  # px, the checkmark toggle on a picture
+
+
+def button_radius_px() -> int:
+    """Square-button radius from the suite token, or 4 px when that token is absent."""
+    try:
+        value = getattr(load_tokens().density, "button_radius_px", None)
+    except Exception:  # noqa: BLE001 - a missing token uses the 4 px fallback
+        value = None
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return 4
+
+
+_BUTTON_RADIUS = button_radius_px()
 # The shell's action bar (Open folder) gets the wizard card's 16 px inset, so it lines up with Back.
 ACTION_BAR_MARGINS = (16, 0, 16, 16)
 FORGE_STYLE = """
 QPushButton#wizardNext:disabled, QPushButton#wizardBack:disabled {
     background: #22222b; color: #6e6e7e; border-color: #33333f; }
 QPushButton[keepMark="true"] { background: #1c1c24; color: #9a9aa8; border: 2px solid #c4c4d0;
-    border-radius: 6px; padding: 0px; min-height: 0px; font-size: 16px; font-weight: 700; }
+    border-radius: @@RADIUS@@px; padding: 0px; min-height: 0px; font-size: 16px; font-weight: 700; }
 QPushButton[keepMark="true"]:checked { background: #f5d76e; color: #1c1604; border-color: #fbe8a6; }
 QFrame#card[kept="true"] { border: 2px solid #f5d76e; border-radius: 6px; }
 QFrame#card[kept="false"] { border: 2px solid transparent; border-radius: 6px; }
+QFrame#card[verdict="like"] { border: 2px solid #f5d76e; border-radius: 6px; }
+QFrame#card[verdict="dislike"] { border: 2px solid #6e6e80; border-radius: 6px; }
+QFrame#card[verdict="unmarked"] { border: 2px solid transparent; border-radius: 6px; }
 QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
 QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
@@ -73,15 +95,21 @@ QPushButton[textButton="true"] {
     background: transparent; border: none; color: #c8c8d4; padding: 4px 2px; min-height: 28px; font-weight: 500; }
 QPushButton[textButton="true"]:hover { background: transparent; color: #f5d76e; }
 QToolButton[photoRemove="true"] {
-    background: transparent; border: none; border-radius: 11px; padding: 0; min-width: 0; min-height: 0; }
+    background: transparent; border: none; border-radius: @@RADIUS@@px; padding: 0; min-width: 0; min-height: 0; }
 QToolButton[photoRemove="true"][shown="true"] {
     background: rgba(12, 12, 16, 210); border: 1px solid #6a6a78; }
 QToolButton[selectionRemove="true"] {
-    background: transparent; border: 1px solid #4a4a58; border-radius: 11px; padding: 0; min-width: 0; min-height: 0; }
+    background: transparent; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px;
+    padding: 0; min-width: 0; min-height: 0; }
 QToolButton[selectionRemove="true"]:hover { background: #2a2a35; border-color: #f5d76e; }
 QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
 QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
+QPushButton[reviewPrimary="true"] {
+    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; }
+QPushButton[reviewPrimary="true"]:disabled { background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
+QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
 """
+FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS))
 LOCALES = Path(__file__).resolve().parent / "locales"
 
 
@@ -1023,6 +1051,9 @@ class ForgeApp:
         column.addWidget(final)
 
     def _train(self, column: QtWidgets.QVBoxLayout) -> None:
+        if self._review_waiting() and not self.runner.busy:  # type: ignore[attr-defined]
+            self._review_screen(column)
+            return
         busy = self.runner.busy  # type: ignore[attr-defined]
         for title, values, label, current, pick, tips in (
             ("forge.app.preset.label", ("quick", "balanced", "best"), "lora.preset.{}", self.simple["preset"],
@@ -1138,6 +1169,302 @@ class ForgeApp:
         column.addWidget(text)
         column.addWidget(bar)
         self._progress_text, self._progress_bar = text, bar
+
+    def _review_state(self) -> dict[str, object]:
+        """The saved review, or an idle state when this project has none."""
+        project = Project(self.project)
+        if not rounds.state_path(project).is_file():
+            return rounds.empty_state()
+        try:
+            return rounds.load_state(project)
+        except (OSError, ValueError, LoraUsageError):
+            return rounds.empty_state()
+
+    def _review_waiting(self) -> bool:
+        """True when a stage has finished and the samples are waiting for marks."""
+        return self._review_state().get("phase") == "review"
+
+    def _review_rounds(self) -> tuple[int, int] | None:
+        """Rounds and samples when the sample-set switch is on, or a review is already open."""
+        state = self._review_state()
+        phase = str(state.get("phase") or "idle")
+        planned = int(state.get("rounds") or 0)
+        if phase in ("training", "review") and planned > 0:
+            return planned, int(state.get("samples_per_round") or rounds.DEFAULT_SAMPLES)
+        if self.draft.source == "refs":
+            return rounds.DEFAULT_ROUNDS, rounds.DEFAULT_SAMPLES
+        return None
+
+    def _review_screen(self, column: QtWidgets.QVBoxLayout) -> None:
+        """Original photos, generated samples with include/leave-out, and continue or finish."""
+        state = self._review_state()
+        counted = rounds.counts(state)
+        busy = self.runner.busy  # type: ignore[attr-defined]
+        heading = QtWidgets.QLabel(tr("forge.app.review.round", round=counted["round"], rounds=counted["rounds"]))
+        heading.setObjectName("forge.review.round")
+        heading.setWordWrap(True)
+        column.addWidget(heading)
+        counts = QtWidgets.QLabel(tr(
+            "forge.app.review.counts",
+            liked=counted["liked"], disliked=counted["disliked"], unmarked=counted["unmarked"],
+        ))
+        counts.setObjectName("forge.review.counts")
+        counts.setWordWrap(True)
+        column.addWidget(counts)
+        self._review_counts = counts
+        originals = QtWidgets.QLabel(tr("forge.app.review.originals"))
+        originals.setObjectName("settingGroup")
+        column.addWidget(originals)
+        tiles = tuple(self._review_original(path) for path in self._review_originals())
+        if tiles:
+            column.addWidget(_flow_row("forge.review.originals", *tiles))
+        samples_label = QtWidgets.QLabel(tr("forge.app.review.samples"))
+        samples_label.setObjectName("settingGroup")
+        column.addWidget(samples_label)
+        samples = [sample for sample in state.get("samples") or [] if isinstance(sample, dict)]
+        cards = tuple(self._sample_card(sample, busy) for sample in samples)
+        if cards:
+            column.addWidget(_flow_row("forge.review.samples", *cards))
+        row = QtWidgets.QHBoxLayout()
+        cont = _button("forge.app.review.continue", "forge.app.review.continue.tip", self.continue_review)
+        cont.setObjectName("forge.review.continue")
+        cont.setProperty("reviewPrimary", "true")
+        cont.setEnabled(not busy and rounds.can_continue(state))
+        finish = _button("forge.app.review.finish", "forge.app.review.finish.tip", self.finish_review)
+        finish.setObjectName("forge.review.finish")
+        finish.setEnabled(not busy)
+        row.addWidget(cont)
+        row.addWidget(finish)
+        row.addStretch(1)
+        column.addLayout(row)
+        self._review_continue = cont
+        self._progress_widgets(column)
+
+    def _review_originals(self) -> list[Path]:
+        """The user's prepared photos, or the photos still on the draft."""
+        project = Project(self.project)
+        paths = []
+        for item in project.items():
+            path = Path(item.file)
+            if not path.is_absolute():
+                path = project.root / path
+            if path.is_file():
+                paths.append(path)
+        return paths or [path for path in self.draft.photos if path.is_file()]
+
+    def _review_original(self, path: Path) -> QtWidgets.QLabel:
+        """One original photo, shown smaller than a generated sample."""
+        picture = QtWidgets.QLabel()
+        picture.setObjectName("forge.review.original")
+        picture.setFixedSize(96, 96)
+        picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        pixmap = QtGui.QPixmap(str(path))
+        if not pixmap.isNull():
+            picture.setPixmap(pixmap.scaled(
+                96, 96, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation,
+            ))
+        return picture
+
+    def _sample_card(self, sample: dict[str, object], busy: bool) -> QtWidgets.QFrame:
+        """One generated picture with include and leave-out toggles."""
+        sample_id = str(sample.get("id") or "")
+        verdict = str(sample.get("verdict") or "unmarked")
+        card = QtWidgets.QFrame()
+        card.setObjectName("card")
+        card.setProperty("verdict", verdict)
+        inner = QtWidgets.QVBoxLayout(card)
+        inner.setContentsMargins(6, 6, 6, 6)
+        inner.setSpacing(6)
+        picture = QtWidgets.QLabel()
+        picture.setFixedSize(CARD_PICTURE, CARD_PICTURE)
+        picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        path = self.project / str(sample.get("file") or "")
+        pixmap = QtGui.QPixmap(str(path))
+        if not pixmap.isNull():
+            picture.setPixmap(pixmap.scaled(
+                CARD_PICTURE, CARD_PICTURE,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            ))
+        inner.addWidget(picture)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
+        like = self._verdict_button(sample_id, "like", "\U0001f44d", verdict == "like", busy)
+        dislike = self._verdict_button(sample_id, "dislike", "\U0001f44e", verdict == "dislike", busy)
+        dislike.setProperty("down", "true")
+        like.toggled.connect(lambda checked, sid=sample_id, frame=card: self._mark_sample(
+            sid, "like" if checked else "unmarked", frame,
+        ))
+        dislike.toggled.connect(lambda checked, sid=sample_id, frame=card: self._mark_sample(
+            sid, "dislike" if checked else "unmarked", frame,
+        ))
+        row.addWidget(like)
+        row.addWidget(dislike)
+        row.addStretch(1)
+        inner.addLayout(row)
+        card.setFixedWidth(CARD_PICTURE + 16)
+        return card
+
+    def _verdict_button(
+        self, sample_id: str, verdict: str, glyph: str, checked: bool, busy: bool,
+    ) -> QtWidgets.QPushButton:
+        """A square include or leave-out toggle for one sample."""
+        button = QtWidgets.QPushButton(glyph)
+        button.setObjectName(f"forge.review.{verdict}.{sample_id}")
+        button.setProperty("keepMark", "true")
+        button.setCheckable(True)
+        button.setChecked(checked)
+        button.setFixedSize(KEEP_MARK, KEEP_MARK)
+        button.setToolTip(tr(f"forge.app.review.{verdict}.tip"))
+        button.setAccessibleName(tr(f"forge.app.review.{verdict}"))
+        button.setEnabled(not busy)
+        button.setAutoDefault(False)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        return button
+
+    def _mark_sample(self, sample_id: str, verdict: str, card: QtWidgets.QFrame) -> None:
+        """Store one mark and refresh the counter. The other toggle follows."""
+        state = rounds.transition(self._review_state(), "mark", id=sample_id, verdict=verdict)
+        rounds.save_state(Project(self.project), state)
+        card.setProperty("verdict", verdict)
+        card.style().unpolish(card)
+        card.style().polish(card)
+        for name, on in (("like", verdict == "like"), ("dislike", verdict == "dislike")):
+            button = card.findChild(QtWidgets.QPushButton, f"forge.review.{name}.{sample_id}")
+            if button is None:
+                continue
+            button.blockSignals(True)
+            button.setChecked(on)
+            button.blockSignals(False)
+        self._paint_review_counts()
+
+    def _paint_review_counts(self) -> None:
+        """Rewrite the liked / disliked / unmarked line from the saved review."""
+        label = getattr(self, "_review_counts", None)
+        if label is None:
+            return
+        counted = rounds.counts(self._review_state())
+        try:
+            label.setText(tr(
+                "forge.app.review.counts",
+                liked=counted["liked"], disliked=counted["disliked"], unmarked=counted["unmarked"],
+            ))
+            button = getattr(self, "_review_continue", None)
+            if button is not None:
+                button.setEnabled(rounds.can_continue(self._review_state()) and not self.runner.busy)  # type: ignore[attr-defined]
+        except RuntimeError:
+            pass
+
+    def continue_review(self) -> None:
+        """``lora continue``: the next stage on the original photos and the liked samples."""
+        if not self._needs("continue"):
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            if not outcome.ok:
+                return
+            if result.get("state") == "done":
+                self.draft.trained = True
+                self.paused = False
+            elif result.get("state") == "review":
+                self.draft.trained = False
+                self.paused = False
+
+        self._run(["--json", "lora", "continue", str(self.project)], done)
+
+    def finish_review(self) -> None:
+        """``lora finish``: keep the latest checkpoint and end the review rounds."""
+        if not self._needs("finish"):
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            if outcome.ok and result.get("state") == "done":
+                self.draft.trained = True
+                self.paused = False
+
+        self._run(["--json", "lora", "finish", str(self.project)], done)
+
+    def _restore_review(self, subject: dict[str, object]) -> None:
+        """Put a restarted review back on the training step, with consent and captions restored."""
+        self.draft.consent = bool(subject.get("consent_obtained"))
+        self.draft.adult = bool(subject.get("adult_confirmed"))
+        self.draft.rights = bool(subject.get("rights_confirmed"))
+        self.draft.adult_content = bool(subject.get("adult_content"))
+        self.draft.verbal = subject.get("consent_method") == "verbal"
+        if subject.get("attr") is not None:
+            try:
+                self.draft.attr = int(str(subject.get("attr")))
+            except (TypeError, ValueError):
+                self.draft.attr = None
+        if (self.project / "captions.jsonl").is_file():
+            kept, drops = engine.prepared_from(self.project)
+            if kept or drops:
+                self.draft.prepared = Prepared(kept, drops, False)
+        if not self.draft.photos:
+            for item in Project(self.project).items():
+                path = Path(item.file)
+                if not path.is_absolute():
+                    path = self.project / path
+                if path.is_file():
+                    self.draft.photos.append(path)
+        deck = self.layout.sections
+        deck._index = STEPS.index("train")  # type: ignore[attr-defined]
+        deck._save()  # type: ignore[attr-defined]
+
+    def _arm_progress(self) -> None:
+        """Poll ``train.json`` once a second while a training job is running."""
+        timer = getattr(self, "_progress_timer", None)
+        if timer is None:
+            timer = QtCore.QTimer(self.window)
+            timer.setInterval(1000)
+            timer.timeout.connect(self._read_live_progress)
+            self._progress_timer = timer
+        if not timer.isActive():
+            timer.start()
+
+    def _read_live_progress(self) -> None:
+        """Show the latest flushed step, loss, elapsed time and ETA."""
+        if not self.runner.busy:  # type: ignore[attr-defined]
+            timer = getattr(self, "_progress_timer", None)
+            if timer is not None:
+                timer.stop()
+            return
+        row = read_progress(self.project)
+        if row is None:
+            return
+        total = int(row.get("total") or 0)
+        step = int(row.get("step") or 0)
+        loss = row.get("loss")
+        loss_text = "—" if not isinstance(loss, int | float) else f"{float(loss):.4f}"
+        eta = row.get("eta_seconds")
+        self.progress_text = tr(
+            "lora.progress.status",
+            step=step,
+            steps=total,
+            loss=loss_text,
+            elapsed=int(float(row.get("elapsed_seconds") or 0)),
+            eta="—" if eta is None else int(eta),
+        )
+        self.progress_percent = None if total <= 0 else (step / total) * 100
+        self._paint_progress()
+
+    def _paint_progress(self) -> None:
+        """Copy the current sentence and bar onto the step, ignoring a widget that was rebuilt."""
+        try:
+            text = getattr(self, "_progress_text", None)
+            bar = getattr(self, "_progress_bar", None)
+            if text is not None:
+                text.setText(self.progress_text)
+            if bar is not None:
+                bar.setValue(int((self.progress_percent or 0) * 10))
+                bar.setVisible(self.progress_percent is not None)
+            window = self.widget.root.window()
+            if window is not None and self.progress_text:
+                window.setWindowTitle(f"{tr('splash.app.' + APP_ID)} — {self.progress_text}")
+        except RuntimeError:
+            pass
 
     def _build_check(self) -> None:
         note = self.widget._parts()["note"]
@@ -1333,6 +1660,7 @@ class ForgeApp:
             self.repaint()
 
         self.runner.start(args, self.on_event, finished)  # type: ignore[attr-defined]
+        self._arm_progress()
         self.repaint()
 
     def on_event(self, event: engine.EngineEvent) -> None:
@@ -1349,19 +1677,7 @@ class ForgeApp:
         self.progress_percent = event.percent
         if event.state == "paused":
             self.paused = True
-        text = getattr(self, "_progress_text", None)
-        bar = getattr(self, "_progress_bar", None)
-        try:
-            if text is not None:
-                text.setText(self.progress_text)
-            if bar is not None:
-                bar.setVisible(event.percent is not None)
-                bar.setValue(int((event.percent or 0) * 10))
-        except RuntimeError:
-            pass
-        window = self.widget.root.window()
-        if window is not None:
-            window.setWindowTitle(f"{tr('splash.app.' + APP_ID)} — {self.progress_text}")
+        self._paint_progress()
 
     def prepare(self) -> None:
         """``lora prepare``: filter, safety gate, crop, captions. The gate result is final."""
@@ -1434,6 +1750,10 @@ class ForgeApp:
                        "lora.previews": self.previews})
         args = engine.train_args(self.project, values, extend_from=self.draft.extend_from, resume=resume,
                                  dry_run=dry_run, expert=self.draft.expert)
+        planned = None if dry_run or self.draft.extend_from is not None else self._review_rounds()
+        if planned is not None:
+            count, samples = planned
+            args += ["--review-rounds", str(count), "--samples-per-round", str(samples)]
         edits = self.project / "captions-edit.jsonl"
         if edits.is_file():
             args += ["--captions", str(edits)]
@@ -1462,7 +1782,10 @@ class ForgeApp:
 
         def done(outcome: engine.Outcome) -> None:
             result = outcome.result if isinstance(outcome.result, dict) else {}
-            if outcome.ok and result.get("state", "done") == "done":
+            if outcome.ok and result.get("state") == "review":
+                self.draft.trained = False
+                self.paused = False
+            elif outcome.ok and result.get("state", "done") == "done":
                 self.draft.trained = True
                 self.paused = False
             elif outcome.ok and result.get("state") == "paused":
@@ -1541,7 +1864,10 @@ class ForgeApp:
             self.open_project(Path(folder))
 
     def open_project(self, folder: Path) -> None:
-        """Load the subject fields from ``project.json`` and continue on step 1."""
+        """Load the subject fields from ``project.json`` and continue on step 1.
+
+        A project paused on a review opens on the training step with that review.
+        """
         self.new_model()
         self.project = folder
         data_file = folder / "project.json"
@@ -1558,6 +1884,8 @@ class ForgeApp:
         photos = folder / "photos"
         if photos.is_dir():
             self.draft.add_photos([photos])
+        if self._review_waiting():
+            self._restore_review(subject)
         self.repaint()
 
     def new_model(self) -> None:
@@ -1690,7 +2018,7 @@ class _PhotoBoard(QtWidgets.QWidget):
 
 
 class _PhotoTile(QtWidgets.QFrame):
-    """One photo. A round remove button sits on the thumbnail corner and shows on hover or focus."""
+    """One photo. A remove button sits on the thumbnail corner and shows on hover or focus."""
 
     def __init__(
         self,

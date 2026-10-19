@@ -32,6 +32,18 @@ Press **Estimate time** for a forecast, then **Start training**. The bar shows t
 - **Stop** ends the run. The versions saved so far are kept.
 - The app saves a version six times during a run, so you can compare them on the next step.
 
+The step line shows the step, the loss, how long the stage has been running and the time left. It updates from the project folder while training is running.
+
+## Review rounds
+
+With **Extend the set from samples** on (Photos step), training pauses after each stage. The app saves a checkpoint and draws a fixed set of pictures from it. Your photos stay beside the new pictures. Each new picture has **Include** and **Leave out**.
+
+![A review round](../img/en-simple-5-review.png)
+
+The line under the title counts pictures you included, pictures you left out, and pictures with no mark. **Continue training** starts the next stage on your photos plus the pictures you included. Pictures you left out are not used in that stage. **Finish** keeps the current version and ends the rounds. You can finish before the last planned round. Closing the app does not drop a paused review: open the project again and the same screen is there.
+
+On the command line, `lora train --review-rounds N --samples-per-round K` pauses the same way. `lora review` lists the pictures and sets marks (`--like`, `--dislike`, or `--from-file`). `lora continue` starts the next stage and `lora finish` ends the rounds. A train without those options runs straight through, as before.
+
 ## Expert settings
 
 In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Learning rate, Scheduler, Warm-up steps, Batch size, Gradient accumulation, Resolution, Precision, Gradient checkpointing, Train the text encoder, Descriptions, Description model, Caption dropout, Seed, Save every N steps and Test picture every N steps. The reset button next to the presets puts back the values of the chosen preset.
