@@ -48,6 +48,7 @@ from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, 
 APP_ID = "model-forge"
 CARD_PICTURE = 136  # px, a review-grid picture
 KEEP_MARK = 30  # px, the checkmark toggle on a picture
+REVIEW_MARK = 36  # px, the include / leave-out toggles on a review sample
 
 
 def button_radius_px() -> int:
@@ -73,8 +74,20 @@ QPushButton[keepMark="true"]:checked { background: #f5d76e; color: #1c1604; bord
 QFrame#card[kept="true"] { border: 2px solid #f5d76e; border-radius: 6px; }
 QFrame#card[kept="false"] { border: 2px solid transparent; border-radius: 6px; }
 QFrame#card[verdict="like"] { border: 2px solid #f5d76e; border-radius: 6px; }
-QFrame#card[verdict="dislike"] { border: 2px solid #6e6e80; border-radius: 6px; }
+QFrame#card[verdict="dislike"] { border: 2px solid #c45c5c; border-radius: 6px; }
 QFrame#card[verdict="unmarked"] { border: 2px solid transparent; border-radius: 6px; }
+QLabel[reviewBadge="like"] {
+    background: #f5d76e; color: #1c1604; border-radius: @@RADIUS@@px; font-weight: 700; font-size: 14px; }
+QLabel[reviewBadge="dislike"] {
+    background: #b55252; color: #ffffff; border-radius: @@RADIUS@@px; font-weight: 700; font-size: 14px; }
+QPushButton[reviewMark="true"] {
+    background: #1c1c24; color: #e8e6e3; border: 2px solid #4a4a58;
+    border-radius: @@RADIUS@@px; padding: 0; margin: 0;
+    min-width: @@MARK@@px; max-width: @@MARK@@px; min-height: @@MARK@@px; max-height: @@MARK@@px;
+    font-size: 18px; }
+QPushButton[reviewMark="true"]:checked { background: #f5d76e; color: #1c1604; border-color: #fbe8a6; }
+QPushButton[reviewMark="true"][down="true"]:checked {
+    background: #5a3030; color: #f3d0d0; border-color: #c45c5c; }
 QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
 QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
@@ -109,7 +122,7 @@ QPushButton[reviewPrimary="true"] {
 QPushButton[reviewPrimary="true"]:disabled { background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
 """
-FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS))
+FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
 LOCALES = Path(__file__).resolve().parent / "locales"
 
 
@@ -275,11 +288,17 @@ class ForgeApp:
             return
         result = self.draft.check(step.step_id)
         busy = self.runner.busy  # type: ignore[attr-defined]
+        reviewing = step.step_id == "train" and self._review_waiting() and not busy
+        parts["next"].setVisible(not reviewing)  # type: ignore[attr-defined]
+        parts["back"].setVisible(not reviewing)  # type: ignore[attr-defined]
         last = step.step_id == STEPS[-1]
-        parts["next"].setEnabled(result.ok and not busy and not last)  # type: ignore[attr-defined]
-        parts["back"].setEnabled(self.layout.sections.index > 0 and not busy)  # type: ignore[attr-defined]
+        parts["next"].setEnabled(result.ok and not busy and not last and not reviewing)  # type: ignore[attr-defined]
+        parts["back"].setEnabled(self.layout.sections.index > 0 and not busy and not reviewing)  # type: ignore[attr-defined]
         label = getattr(self, "_status_label", None)
         if label is None:
+            return
+        if reviewing:
+            self._paint_review_footer(rounds.counts(self._review_state()))
             return
         if self.status is not None:
             key, params, warning = self.status
@@ -385,7 +404,9 @@ class ForgeApp:
         column = QtWidgets.QVBoxLayout(page)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
-        self._intro(column, step)
+        # A paused review replaces the training intro; Continue and Finish drive that screen.
+        if not (step == "train" and self._review_waiting() and not self.runner.busy):  # type: ignore[attr-defined]
+            self._intro(column, step)
         builder = {
             "photos": self._photos,
             "subject": self._subject,
@@ -1055,6 +1076,9 @@ class ForgeApp:
             self._review_screen(column)
             return
         busy = self.runner.busy  # type: ignore[attr-defined]
+        if busy:
+            self._progress_widgets(column)
+            self._apply_train_progress()
         for title, values, label, current, pick, tips in (
             ("forge.app.preset.label", ("quick", "balanced", "best"), "lora.preset.{}", self.simple["preset"],
              lambda v: self._set_simple("preset", v), "lora.preset.{}.tip"),
@@ -1112,7 +1136,8 @@ class ForgeApp:
             note = QtWidgets.QLabel(tr("forge.app.train.estimate_result", minutes=self.estimate_minutes))
             note.setObjectName("panel")
             column.addWidget(note)
-        self._progress_widgets(column, idle="forge.app.train.idle")
+        if not busy:
+            self._progress_widgets(column, idle="forge.app.train.idle")
 
     def _result(self, column: QtWidgets.QVBoxLayout) -> None:
         form = QtWidgets.QFormLayout()
@@ -1200,10 +1225,20 @@ class ForgeApp:
         state = self._review_state()
         counted = rounds.counts(state)
         busy = self.runner.busy  # type: ignore[attr-defined]
-        heading = QtWidgets.QLabel(tr("forge.app.review.round", round=counted["round"], rounds=counted["rounds"]))
-        heading.setObjectName("forge.review.round")
+        heading = QtWidgets.QLabel(tr("forge.app.review.heading"))
+        heading.setObjectName("forge.review.heading")
+        heading.setProperty("emptyTitle", "true")
         heading.setWordWrap(True)
         column.addWidget(heading)
+        lead = QtWidgets.QLabel(tr("forge.app.review.lead"))
+        lead.setObjectName("forge.review.lead")
+        lead.setProperty("muted", "true")
+        lead.setWordWrap(True)
+        column.addWidget(lead)
+        round_label = QtWidgets.QLabel(tr("forge.app.review.round", round=counted["round"], rounds=counted["rounds"]))
+        round_label.setObjectName("forge.review.round")
+        round_label.setWordWrap(True)
+        column.addWidget(round_label)
         counts = QtWidgets.QLabel(tr(
             "forge.app.review.counts",
             liked=counted["liked"], disliked=counted["disliked"], unmarked=counted["unmarked"],
@@ -1225,6 +1260,19 @@ class ForgeApp:
         cards = tuple(self._sample_card(sample, busy) for sample in samples)
         if cards:
             column.addWidget(_flow_row("forge.review.samples", *cards))
+        tools = QtWidgets.QHBoxLayout()
+        like_all = _button("forge.app.review.like_all", "forge.app.review.like_all.tip", self._like_all)
+        like_all.setObjectName("forge.review.like_all")
+        like_all.setProperty("textButton", "true")
+        reset = _button("forge.app.review.reset", "forge.app.review.reset.tip", self._reset_marks)
+        reset.setObjectName("forge.review.reset")
+        reset.setProperty("textButton", "true")
+        for button in (like_all, reset):
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setEnabled(not busy)
+            tools.addWidget(button)
+        tools.addStretch(1)
+        column.addLayout(tools)
         row = QtWidgets.QHBoxLayout()
         cont = _button("forge.app.review.continue", "forge.app.review.continue.tip", self.continue_review)
         cont.setObjectName("forge.review.continue")
@@ -1237,8 +1285,12 @@ class ForgeApp:
         row.addWidget(finish)
         row.addStretch(1)
         column.addLayout(row)
+        note = QtWidgets.QLabel(tr("forge.app.review.note"))
+        note.setObjectName("forge.review.note")
+        note.setProperty("muted", "true")
+        note.setWordWrap(True)
+        column.addWidget(note)
         self._review_continue = cont
-        self._progress_widgets(column)
 
     def _review_originals(self) -> list[Path]:
         """The user's prepared photos, or the photos still on the draft."""
@@ -1275,18 +1327,7 @@ class ForgeApp:
         inner = QtWidgets.QVBoxLayout(card)
         inner.setContentsMargins(6, 6, 6, 6)
         inner.setSpacing(6)
-        picture = QtWidgets.QLabel()
-        picture.setFixedSize(CARD_PICTURE, CARD_PICTURE)
-        picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        path = self.project / str(sample.get("file") or "")
-        pixmap = QtGui.QPixmap(str(path))
-        if not pixmap.isNull():
-            picture.setPixmap(pixmap.scaled(
-                CARD_PICTURE, CARD_PICTURE,
-                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                QtCore.Qt.TransformationMode.SmoothTransformation,
-            ))
-        inner.addWidget(picture)
+        inner.addWidget(self._sample_picture(sample, verdict))
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(6)
         like = self._verdict_button(sample_id, "like", "\U0001f44d", verdict == "like", busy)
@@ -1311,16 +1352,68 @@ class ForgeApp:
         """A square include or leave-out toggle for one sample."""
         button = QtWidgets.QPushButton(glyph)
         button.setObjectName(f"forge.review.{verdict}.{sample_id}")
-        button.setProperty("keepMark", "true")
+        button.setProperty("reviewMark", "true")
         button.setCheckable(True)
         button.setChecked(checked)
-        button.setFixedSize(KEEP_MARK, KEEP_MARK)
+        button.setFixedSize(REVIEW_MARK, REVIEW_MARK)
+        button.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         button.setToolTip(tr(f"forge.app.review.{verdict}.tip"))
         button.setAccessibleName(tr(f"forge.app.review.{verdict}"))
         button.setEnabled(not busy)
         button.setAutoDefault(False)
         button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         return button
+
+    def _sample_picture(self, sample: dict[str, object], verdict: str) -> QtWidgets.QWidget:
+        """The picture, a corner badge, and a dimming effect when the picture is left out."""
+        holder = QtWidgets.QWidget()
+        holder.setFixedSize(CARD_PICTURE, CARD_PICTURE)
+        picture = QtWidgets.QLabel(holder)
+        picture.setObjectName("forge.review.picture")
+        picture.setFixedSize(CARD_PICTURE, CARD_PICTURE)
+        picture.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        path = self.project / str(sample.get("file") or "")
+        pixmap = QtGui.QPixmap(str(path))
+        if not pixmap.isNull():
+            picture.setPixmap(pixmap.scaled(
+                CARD_PICTURE, CARD_PICTURE,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            ))
+        self._paint_picture_state(picture, verdict)
+        badge = QtWidgets.QLabel(holder)
+        badge.setObjectName("forge.review.badge")
+        badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(22, 22)
+        badge.move(CARD_PICTURE - 26, 4)
+        self._paint_badge(badge, verdict)
+        badge.raise_()
+        return holder
+
+    def _paint_picture_state(self, picture: QtWidgets.QLabel, verdict: str) -> None:
+        """Dim a left-out picture. The toggles stay on the card, outside this effect."""
+        if verdict != "dislike":
+            picture.setGraphicsEffect(None)
+            return
+        effect = picture.graphicsEffect()
+        if not isinstance(effect, QtWidgets.QGraphicsOpacityEffect):
+            effect = QtWidgets.QGraphicsOpacityEffect(picture)
+            picture.setGraphicsEffect(effect)
+        effect.setOpacity(0.5)
+
+    def _paint_badge(self, badge: QtWidgets.QLabel, verdict: str) -> None:
+        """A check on an included picture, a cross on a left-out one, nothing when unmarked."""
+        marks = {"like": ("\u2713", "like"), "dislike": ("\u00d7", "dislike")}
+        if verdict not in marks:
+            badge.hide()
+            badge.setProperty("reviewBadge", "")
+        else:
+            text, kind = marks[verdict]
+            badge.setText(text)
+            badge.setProperty("reviewBadge", kind)
+            badge.show()
+        badge.style().unpolish(badge)
+        badge.style().polish(badge)
 
     def _mark_sample(self, sample_id: str, verdict: str, card: QtWidgets.QFrame) -> None:
         """Store one mark and refresh the counter. The other toggle follows."""
@@ -1329,6 +1422,12 @@ class ForgeApp:
         card.setProperty("verdict", verdict)
         card.style().unpolish(card)
         card.style().polish(card)
+        picture = card.findChild(QtWidgets.QLabel, "forge.review.picture")
+        badge = card.findChild(QtWidgets.QLabel, "forge.review.badge")
+        if picture is not None:
+            self._paint_picture_state(picture, verdict)
+        if badge is not None:
+            self._paint_badge(badge, verdict)
         for name, on in (("like", verdict == "like"), ("dislike", verdict == "dislike")):
             button = card.findChild(QtWidgets.QPushButton, f"forge.review.{name}.{sample_id}")
             if button is None:
@@ -1352,12 +1451,68 @@ class ForgeApp:
             button = getattr(self, "_review_continue", None)
             if button is not None:
                 button.setEnabled(rounds.can_continue(self._review_state()) and not self.runner.busy)  # type: ignore[attr-defined]
+            self._paint_review_footer(counted)
         except RuntimeError:
             pass
+
+    def _paint_review_footer(self, counted: dict[str, int]) -> None:
+        """The pinned status line: liked, disliked and still unmarked."""
+        label = getattr(self, "_status_label", None)
+        if label is None:
+            return
+        try:
+            label.setText(tr(
+                "forge.app.review.footer",
+                liked=counted["liked"], disliked=counted["disliked"], unmarked=counted["unmarked"],
+            ))
+            label.setObjectName("ok")
+            label.style().unpolish(label)
+            label.style().polish(label)
+        except RuntimeError:
+            pass
+
+    def _like_all(self) -> None:
+        """Mark every current sample as included."""
+        self._set_review_group("like")
+
+    def _reset_marks(self) -> None:
+        """Clear every mark on the current samples."""
+        self._set_review_group("unmarked")
+
+    def _set_review_group(self, verdict: str) -> None:
+        state = self._review_state()
+        ids = [str(sample.get("id") or "") for sample in state.get("samples") or [] if isinstance(sample, dict)]
+        if verdict == "like":
+            state = rounds.set_verdicts(state, like=ids)
+        elif verdict == "unmarked":
+            state = rounds.set_verdicts(state, unmarked=ids)
+        else:
+            return
+        rounds.save_state(Project(self.project), state)
+        self.repaint()
+
+    def _confirm_unmarked(self) -> bool:
+        """Ask before a pass that would drop pictures the user has not marked."""
+        box = QtWidgets.QMessageBox(self.window)
+        box.setObjectName("forge.review.unmarked")
+        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box.setWindowTitle(tr("forge.app.review.continue"))
+        box.setText(tr("forge.app.review.unmarked"))
+        go = box.addButton(
+            tr("forge.app.review.unmarked.continue"), QtWidgets.QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel = box.addButton(
+            tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
 
     def continue_review(self) -> None:
         """``lora continue``: the next stage on the original photos and the liked samples."""
         if not self._needs("continue"):
+            return
+        if rounds.counts(self._review_state())["unmarked"] > 0 and not self._confirm_unmarked():
             return
 
         def done(outcome: engine.Outcome) -> None:
@@ -1431,6 +1586,10 @@ class ForgeApp:
             if timer is not None:
                 timer.stop()
             return
+        self._apply_train_progress()
+
+    def _apply_train_progress(self) -> None:
+        """Paint ``train.json`` onto the training step: step, total, loss and ETA."""
         row = read_progress(self.project)
         if row is None:
             return

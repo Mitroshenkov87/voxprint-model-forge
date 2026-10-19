@@ -9,10 +9,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6 import QtGui, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets  # noqa: E402
 from voxprint_common.i18n import set_language  # noqa: E402
 
 from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos  # noqa: E402
+from voxprint_forge.app.details import Details  # noqa: E402
 from voxprint_forge.app.draft import STEPS  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
 from voxprint_forge.app.window import FORGE_STYLE, button_radius_px  # noqa: E402
@@ -51,6 +52,10 @@ def test_square_buttons_use_the_shared_radius() -> None:
     assert "border-radius: 11px" not in FORGE_STYLE
     assert f"border-radius: {radius}px" in FORGE_STYLE
     assert 'QPushButton[keepMark="true"]' in FORGE_STYLE
+    assert 'QPushButton[reviewMark="true"]' in FORGE_STYLE
+    assert 'QLabel[reviewBadge="like"]' in FORGE_STYLE
+    assert 'QLabel[reviewBadge="dislike"]' in FORGE_STYLE
+    assert "border: 2px solid #c45c5c" in FORGE_STYLE
     assert 'QToolButton[photoRemove="true"]' in FORGE_STYLE
     assert 'QToolButton[selectionRemove="true"]' in FORGE_STYLE
     assert "QFrame#card" in FORGE_STYLE and "border-radius: 6px" in FORGE_STYLE
@@ -112,6 +117,25 @@ def _seed_review(project: Path, photos: list[Path]) -> None:
     save_state(root, state)
 
 
+def test_the_sample_switch_hint_describes_pictures_during_training() -> None:
+    set_language("en")
+    assert "before training" not in tr("forge.app.photos.extend.hint").lower()
+    assert tr("forge.app.photos.extend.hint").startswith("During training")
+    set_language("ru")
+    hint = tr("forge.app.photos.extend.hint")
+    assert "перед обучением" not in hint
+    assert hint == (
+        "Во время обучения приложение покажет новые картинки — вы отметите удачные, и они войдут в набор."
+    )
+    set_language("en")
+
+
+def _card(button: QtWidgets.QPushButton) -> QtWidgets.QFrame:
+    card = button.parentWidget()
+    assert isinstance(card, QtWidgets.QFrame)
+    return card
+
+
 def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app, tmp_path, qapp) -> None:
     app = make_app("ru")
     photos = make_photos(tmp_path / "src", 2)
@@ -119,16 +143,53 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
-    assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text()
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.heading").text() == "Проверьте новые картинки"
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.lead").text() == (
+        "Отметьте, какие подходят: 👍 — добавить в набор, 👎 — не брать."
+    )
+    assert app.window.findChild(Details, "forge.details.step.train") is None
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    labels = [w.text() for w in page.findChildren(QtWidgets.QLabel)]
+    assert tr("forge.app.step.train.short") not in labels
+    assert page.findChildren(QtWidgets.QPushButton, "disclosure") == []
+    back = app.window.findChild(QtWidgets.QPushButton, "wizardBack")
+    nxt = app.window.findChild(QtWidgets.QPushButton, "wizardNext")
+    assert back is not None and nxt is not None
+    assert not back.isVisible() and not nxt.isVisible()
+    assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
+    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить обучение"
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    assert note is not None and note.property("muted") == "true"
     counts = app.window.findChild(QtWidgets.QLabel, "forge.review.counts")
     assert counts.text() == tr("forge.app.review.counts", liked=1, disliked=1, unmarked=1)
     assert len(app.window.findChildren(QtWidgets.QLabel, "forge.review.original")) == 2
     like = app.window.findChild(QtWidgets.QPushButton, "forge.review.like.r1-s02")
     dislike = app.window.findChild(QtWidgets.QPushButton, "forge.review.dislike.r1-s00")
     assert like is not None and dislike is not None
+    assert like.width() >= 32 and like.height() == like.width()
+    assert like.toolTip() == tr("forge.app.review.like.tip")
+    assert dislike.toolTip() == tr("forge.app.review.dislike.tip")
+    liked = _card(app.window.findChild(QtWidgets.QPushButton, "forge.review.like.r1-s00"))
+    assert liked.property("verdict") == "like"
+    liked_badge = liked.findChild(QtWidgets.QLabel, "forge.review.badge")
+    assert liked_badge.isVisible() and liked_badge.text() == "✓"
+    assert liked_badge.property("reviewBadge") == "like"
+    assert liked.findChild(QtWidgets.QLabel, "forge.review.picture").graphicsEffect() is None
+    left = _card(app.window.findChild(QtWidgets.QPushButton, "forge.review.dislike.r1-s01"))
+    assert left.property("verdict") == "dislike"
+    left_badge = left.findChild(QtWidgets.QLabel, "forge.review.badge")
+    assert left_badge.isVisible() and left_badge.text() == "×"
+    effect = left.findChild(QtWidgets.QLabel, "forge.review.picture").graphicsEffect()
+    assert isinstance(effect, QtWidgets.QGraphicsOpacityEffect) and effect.opacity() == 0.5
+    plain = _card(like)
+    assert plain.property("verdict") == "unmarked"
+    assert not plain.findChild(QtWidgets.QLabel, "forge.review.badge").isVisible()
+    assert plain.findChild(QtWidgets.QLabel, "forge.review.picture").graphicsEffect() is None
     like.click()
     qapp.processEvents()
     assert counts.text() == tr("forge.app.review.counts", liked=2, disliked=1, unmarked=0)
+    assert app._status_label.text() == tr("forge.app.review.footer", liked=2, disliked=1, unmarked=0)
     dislike.click()
     qapp.processEvents()
     assert counts.text() == tr("forge.app.review.counts", liked=1, disliked=2, unmarked=0)
@@ -155,3 +216,72 @@ def test_opening_a_paused_review_returns_to_the_training_step(make_app, tmp_path
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.counts") is not None
     assert app.draft.rights is True
     assert app.draft.prepared is not None
+    assert not app.window.findChild(QtWidgets.QPushButton, "wizardNext").isVisible()
+
+
+def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make_app, tmp_path, qapp) -> None:
+    app = make_app("en")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Round 1 of 3"
+    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Finish training"
+    seen: list[str] = []
+
+    def click() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QMessageBox)
+        assert box.text() == tr("forge.app.review.unmarked")
+        seen.append(box.text())
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, click)
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").click()
+    qapp.processEvents()
+    assert seen == [tr("forge.app.review.unmarked")]
+    assert app.runner.calls == []
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.like_all").click()
+    qapp.processEvents()
+    saved = json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))
+    assert {sample["verdict"] for sample in saved["samples"]} == {"like"}
+    assert app._status_label.text() == tr("forge.app.review.footer", liked=3, disliked=0, unmarked=0)
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").click()
+    qapp.processEvents()
+    assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.reset").click()
+    qapp.processEvents()
+    saved = json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))
+    assert {sample["verdict"] for sample in saved["samples"]} == {"unmarked"}
+    thumb = app.window.findChild(QtWidgets.QPushButton, "forge.review.like.r1-s00")
+    assert not thumb.isChecked()
+    QtTest.QTest.keyClick(thumb, QtCore.Qt.Key.Key_Space)
+    qapp.processEvents()
+    assert thumb.isChecked()
+    saved = json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))
+    verdicts = {sample["id"]: sample["verdict"] for sample in saved["samples"]}
+    assert verdicts["r1-s00"] == "like"
+
+
+def test_a_running_stage_shows_the_train_json_bar(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.runner.busy = True
+    app.project.mkdir(parents=True, exist_ok=True)
+    (app.project / "train.json").write_text(json.dumps({
+        "step": 450, "total": 1500, "loss": 0.18, "elapsed_seconds": 120, "eta_seconds": 900, "stage": "step",
+    }), encoding="utf-8")
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    text = page.findChild(QtWidgets.QLabel, "progressText")
+    bar = page.findChild(QtWidgets.QProgressBar, "progress")
+    assert text.text() == tr(
+        "lora.progress.status", step=450, steps=1500, loss="0.1800", elapsed=120, eta=900,
+    )
+    assert bar.isVisible() and bar.value() == 300
+    preset_name = tr("forge.app.preset.label")
+    preset = next(label for label in page.findChildren(QtWidgets.QLabel) if label.text() == preset_name)
+    assert text.mapTo(page, QtCore.QPoint(0, 0)).y() < preset.mapTo(page, QtCore.QPoint(0, 0)).y()

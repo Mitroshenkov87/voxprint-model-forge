@@ -212,7 +212,55 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         app.processEvents()
         forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
         forge.window.close()
+    shot_train_live(out, home)
     set_language("en")
+
+
+def shot_train_live(out: Path, home: Path) -> None:
+    """1280 px: the training step while a stage is running, with ``train.json`` on the bar."""
+    import json
+
+    from PySide6 import QtWidgets
+    from tests.forge_app_stub import ALL_COMMANDS, StubRunner
+    from voxprint_common.i18n import set_language
+
+    from voxprint_forge.app.draft import Prepared, STEPS
+    from voxprint_forge.app.window import ForgeApp
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    set_language("ru")
+    photos = placeholder_photos(home / "live-photos", 12)
+    runner = StubRunner()
+    runner.busy = True
+    forge = ForgeApp(
+        runner=runner, home=home / "train-live", commands=ALL_COMMANDS,
+        open_path=lambda _p: None, launch=lambda _a: None,
+    )
+    forge.draft.kind = "object"
+    forge.draft.add_photos(photos)
+    forge.draft.set_names("Soft shape", "")
+    forge.draft.rights = True
+    forge.draft.prepared = Prepared(
+        [{"id": f"p{i:02d}", "file": str(photos[i]), "long": "a soft shape", "short": "shape"} for i in range(12)],
+        [],
+        False,
+    )
+    forge.project.mkdir(parents=True, exist_ok=True)
+    (forge.project / "train.json").write_text(json.dumps({
+        "elapsed_seconds": 120,
+        "eta_seconds": 900,
+        "loss": 0.18,
+        "stage": "step",
+        "step": 450,
+        "total": 1500,
+    }), encoding="utf-8")
+    forge.window.resize(1280, 960)
+    forge.window.show()
+    forge.layout.sections._index = STEPS.index("train")
+    forge.repaint()
+    app.processEvents()
+    forge.window.grab().save(str(out / "ru-simple-5-train-live.png"))
+    forge.window.close()
 
 
 def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:

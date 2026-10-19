@@ -143,7 +143,7 @@
  "lora.progress.refset_similar": "Ищу почти одинаковые картинки",
  "lora.progress.refset_unload": "Освобождаю видеопамять",
  "lora.progress.safety": "Проверяю фото {n} из {total}",
- "lora.progress.review": "Круг {round} из {rounds} готов к просмотру",
+ "lora.progress.review": "Раунд {round} из {rounds} готов к просмотру",
  "lora.progress.review_sample": "Рисую картинку {n} из {total}",
  "lora.progress.status": "Шаг {step} из {steps}, потери {loss}, прошло {elapsed} с, осталось около {eta} с",
  "lora.progress.train": "Обучение: шаг {step} из {steps}",

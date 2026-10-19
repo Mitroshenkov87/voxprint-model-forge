@@ -24,7 +24,7 @@ Choose a preset, a likeness and the graphics card memory (see [Presets](presets.
 
 - **Show test pictures** draws a few pictures during training so you can see progress.
 
-Press **Estimate time** for a forecast, then **Start training**. The bar shows the step, what is happening and the time left (after the first few steps).
+Press **Estimate time** for a forecast, then **Start training**. While a stage is running, a bar and a line show the step out of the total, the loss, how long the stage has been running and the time left. Both are read from the project folder.
 
 ![Training in progress](../img/en-simple-5-train-running.png)
 
@@ -32,15 +32,13 @@ Press **Estimate time** for a forecast, then **Start training**. The bar shows t
 - **Stop** ends the run. The versions saved so far are kept.
 - The app saves a version six times during a run, so you can compare them on the next step.
 
-The step line shows the step, the loss, how long the stage has been running and the time left. It updates from the project folder while training is running.
-
 ## Review rounds
 
-With **Extend the set from samples** on (Photos step), training pauses after each stage. The app saves a checkpoint and draws a fixed set of pictures from it. Your photos stay beside the new pictures. Each new picture has **Include** and **Leave out**.
+With **Extend the set from samples** on (Photos step), training pauses after each stage. The app saves a checkpoint and draws a fixed set of pictures from it. The heading is **Check the new pictures**. Your photos stay beside the new pictures. Each new picture has **Include** and **Leave out**. A picture you include gets a gold border and a check. A picture you leave out is dimmed, with a red border and a cross. A picture with no mark stays plain.
 
 ![A review round](../img/en-simple-5-review.png)
 
-The line under the title counts pictures you included, pictures you left out, and pictures with no mark. **Continue training** starts the next stage on your photos plus the pictures you included. Pictures you left out are not used in that stage. **Finish** keeps the current version and ends the rounds. You can finish before the last planned round. Closing the app does not drop a paused review: open the project again and the same screen is there.
+**Mark all 👍** includes every new picture. **Reset** clears the marks. The footer counts pictures you included, pictures you left out, and pictures with no mark. **Continue training** starts the next pass on your photos and the pictures you liked. If any picture has no mark, the app asks you to confirm: unmarked pictures will not join the set. **Finish training** saves the model now and ends the rounds. You can finish before the last planned round. Back and Next stay hidden; Continue and Finish drive this screen. Closing the app does not drop a paused review: open the project again and the same screen is there.
 
 On the command line, `lora train --review-rounds N --samples-per-round K` pauses the same way. `lora review` lists the pictures and sets marks (`--like`, `--dislike`, or `--from-file`). `lora continue` starts the next stage and `lora finish` ends the rounds. A train without those options runs straight through, as before.
 

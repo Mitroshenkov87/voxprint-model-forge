@@ -173,7 +173,7 @@
 <ol>
 <li>Choose what the photos show: <strong>Person</strong> (one specific person), <strong>Object</strong> (one specific thing or product) or <strong>Style</strong> (the shared look: lighting, colours, rendering, mood). The line above follows that choice.</li>
 <li>Press <strong>Add</strong> and choose <strong>Add photos</strong> or <strong>Add a folder</strong> (JPG, PNG or WebP), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.</li>
-<li>Leave <strong>Extend the set from samples</strong> off to train on these photos. Turn it on to generate more varied training images from 1 to 10 photos before training (see below). The count line switches to that 1 to 10 range. With it on, training also pauses after each stage so you can keep or leave out the new pictures (see <a href="#page-training">Training</a>).</li>
+<li>Leave <strong>Extend the set from samples</strong> off to train on these photos. Turn it on and, during training, the app shows new pictures. You mark the ones that work, and they join the set. The count line switches to a range of 1 to 10 photos (see below). Training pauses after each stage for those marks (see <a href="#page-training">Training</a>).</li>
 </ol>
 <p>Good photos make a good model:</p>
 <ul>
@@ -344,18 +344,17 @@
 <ul>
 <li><strong>Show test pictures</strong> draws a few pictures during training so you can see progress.</li>
 </ul>
-<p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. The bar shows the step, what is happening and the time left (after the first few steps).</p>
+<p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. While a stage is running, a bar and a line show the step out of the total, the loss, how long the stage has been running and the time left. Both are read from the project folder.</p>
 <p><img alt="Training in progress" src="img/en-simple-5-train-running.png" /></p>
 <ul>
 <li><strong>Pause</strong> saves a version and stops. Press <strong>Continue</strong> later to go on from that version.</li>
 <li><strong>Stop</strong> ends the run. The versions saved so far are kept.</li>
 <li>The app saves a version six times during a run, so you can compare them on the next step.</li>
 </ul>
-<p>The step line shows the step, the loss, how long the stage has been running and the time left. It updates from the project folder while training is running.</p>
 <h2 id="review-rounds">Review rounds</h2>
-<p>With <strong>Extend the set from samples</strong> on (Photos step), training pauses after each stage. The app saves a checkpoint and draws a fixed set of pictures from it. Your photos stay beside the new pictures. Each new picture has <strong>Include</strong> and <strong>Leave out</strong>.</p>
+<p>With <strong>Extend the set from samples</strong> on (Photos step), training pauses after each stage. The app saves a checkpoint and draws a fixed set of pictures from it. The heading is <strong>Check the new pictures</strong>. Your photos stay beside the new pictures. Each new picture has <strong>Include</strong> and <strong>Leave out</strong>. A picture you include gets a gold border and a check. A picture you leave out is dimmed, with a red border and a cross. A picture with no mark stays plain.</p>
 <p><img alt="A review round" src="img/en-simple-5-review.png" /></p>
-<p>The line under the title counts pictures you included, pictures you left out, and pictures with no mark. <strong>Continue training</strong> starts the next stage on your photos plus the pictures you included. Pictures you left out are not used in that stage. <strong>Finish</strong> keeps the current version and ends the rounds. You can finish before the last planned round. Closing the app does not drop a paused review: open the project again and the same screen is there.</p>
+<p><strong>Mark all 👍</strong> includes every new picture. <strong>Reset</strong> clears the marks. The footer counts pictures you included, pictures you left out, and pictures with no mark. <strong>Continue training</strong> starts the next pass on your photos and the pictures you liked. If any picture has no mark, the app asks you to confirm: unmarked pictures will not join the set. <strong>Finish training</strong> saves the model now and ends the rounds. You can finish before the last planned round. Back and Next stay hidden; Continue and Finish drive this screen. Closing the app does not drop a paused review: open the project again and the same screen is there.</p>
 <p>On the command line, <code>lora train --review-rounds N --samples-per-round K</code> pauses the same way. <code>lora review</code> lists the pictures and sets marks (<code>--like</code>, <code>--dislike</code>, or <code>--from-file</code>). <code>lora continue</code> starts the next stage and <code>lora finish</code> ends the rounds. A train without those options runs straight through, as before.</p>
 <h2 id="expert-settings">Expert settings</h2>
 <p>In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Learning rate, Scheduler, Warm-up steps, Batch size, Gradient accumulation, Resolution, Precision, Gradient checkpointing, Train the text encoder, Descriptions, Description model, Caption dropout, Seed, Save every N steps and Test picture every N steps. The reset button next to the presets puts back the values of the chosen preset.</p>

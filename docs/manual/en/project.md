@@ -8,7 +8,7 @@ Start with **More → New model**. A project keeps your photos, their descriptio
 
 1. Choose what the photos show: **Person** (one specific person), **Object** (one specific thing or product) or **Style** (the shared look: lighting, colours, rendering, mood). The line above follows that choice.
 2. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG or WebP), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.
-3. Leave **Extend the set from samples** off to train on these photos. Turn it on to generate more varied training images from 1 to 10 photos before training (see below). The count line switches to that 1 to 10 range. With it on, training also pauses after each stage so you can keep or leave out the new pictures (see [Training](training.md)).
+3. Leave **Extend the set from samples** off to train on these photos. Turn it on and, during training, the app shows new pictures. You mark the ones that work, and they join the set. The count line switches to a range of 1 to 10 photos (see below). Training pauses after each stage for those marks (see [Training](training.md)).
 
 Good photos make a good model:
 
