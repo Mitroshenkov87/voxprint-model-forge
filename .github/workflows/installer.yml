@@ -82,7 +82,12 @@ jobs:
           Copy-Item BUILD.json src\voxprint_forge\BUILD.json
           python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
           if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
-          $common = "vendor\voxprint_common-0.4.1-py3-none-any.whl"
+          $pyproject = Get-Content -Raw pyproject.toml
+          $pins = @([regex]::Matches($pyproject, 'voxprint-common(?:\[[^\]]*\])?\s*==\s*([0-9][0-9A-Za-z.]*)') |
+            ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+          if ($pins.Count -ne 1) { throw "pyproject.toml does not pin exactly one voxprint-common version: $($pins -join ', ')" }
+          $common = "vendor\voxprint_common-$($pins[0])-py3-none-any.whl"
+          if (-not (Test-Path -LiteralPath $common)) { throw "missing $common" }
           $want = (Get-Content "$common.sha256").Split(" ")[0].Trim().ToLower()
           if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
           Copy-Item $common "$stage\wheels\"
@@ -218,12 +223,22 @@ jobs:
               [void][LauncherIcon]::FreeLibrary($module)
           }
           "launcher icon ok"
-      - name: Smoke (install, --version, preflight, LoRA dry-run, uninstall)
+      - name: Smoke (install, upgrade wheels, --version, preflight, LoRA dry-run, uninstall)
         shell: pwsh
         timeout-minutes: 30
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup dist\VoxprintModelForgeSetup.exe -MigrationTest -Results "$env:RUNNER_TEMP\smoke"
-          if ($LASTEXITCODE -ne 0) { throw "windows_smoke.ps1 exited $LASTEXITCODE" }
+          $code = $LASTEXITCODE
+          $resultPath = Join-Path $env:RUNNER_TEMP "smoke\result.json"
+          if (-not (Test-Path -LiteralPath $resultPath)) { throw "windows_smoke.ps1 exited $code without result.json" }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          $upgrade = @($result.steps | Where-Object { $_.name -eq "upgrade-wheels" })
+          if ($upgrade.Count -ne 1 -or -not $upgrade[0].ok) {
+            $detail = if ($upgrade.Count -eq 1) { $upgrade[0].detail } else { "missing" }
+            throw "upgrade-wheels did not pass: $detail"
+          }
+          "upgrade-wheels: $($upgrade[0].detail)"
+          if ($code -ne 0) { throw "windows_smoke.ps1 exited $code" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -93,6 +93,8 @@ Source: "migrate-home.ps1"; Flags: dontcopy
 Type: files; Name: "{group}\Uninstall {#MyAppName}.lnk"
 Type: files; Name: "{group}\Model Forge guide (EN).lnk"
 Type: files; Name: "{group}\Руководство Model Forge (RU).lnk"
+; Wheels from an older setup. User data and models stay outside {app}.
+Type: files; Name: "{app}\wheels\*.whl"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\voxprint-model-forge.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\{#MyIcon}"; AppUserModelID: "{#MyAppId}"
@@ -103,6 +105,7 @@ Type: filesandordirs; Name: "{app}\venv"
 Type: filesandordirs; Name: "{app}\venv-mivolo"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\setup-work"
+Type: filesandordirs; Name: "{app}\wheels"
 Type: dirifempty; Name: "{app}"
 ; Shared with the other suite apps: removed only when empty.
 Type: dirifempty; Name: "{autopf}\{#MySuiteName}"

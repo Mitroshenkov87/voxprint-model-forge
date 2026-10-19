@@ -15,6 +15,50 @@ function Invoke-Uv([string[]]$ArgList) {
     if ($LASTEXITCODE -ne 0) { throw "uv $($ArgList[0..1] -join ' ') failed ($LASTEXITCODE)" }
 }
 
+function Resolve-OneWheel([string]$Directory, [string]$Label, [string]$Filter) {
+    $found = @(Get-ChildItem -LiteralPath $Directory -Filter $Filter -File -ErrorAction SilentlyContinue)
+    if ($found.Count -ne 1) {
+        $names = @($found | ForEach-Object { $_.Name }) -join ", "
+        throw "expected exactly one $Label wheel ($Filter) in ${Directory}, found $($found.Count): $names"
+    }
+    return [string]$found[0].FullName
+}
+
+function Get-PinnedCommonVersion([string]$WheelPath) {
+    # voxprint-common version recorded in the app wheel, from the pyproject.toml pin.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($WheelPath)
+    try {
+        $entry = $null
+        foreach ($item in $zip.Entries) {
+            if ($item.FullName -like "*.dist-info/METADATA") { $entry = $item; break }
+        }
+        if ($null -eq $entry) { throw "the app wheel has no metadata: $WheelPath" }
+        $reader = New-Object System.IO.StreamReader($entry.Open())
+        try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally {
+        $zip.Dispose()
+    }
+    $versions = @()
+    foreach ($line in ($text -split "`n")) {
+        $line = $line.TrimEnd("`r").Trim()
+        if (-not $line.StartsWith("Requires-Dist:")) { continue }
+        $req = $line.Substring($line.IndexOf(":") + 1).Trim()
+        $semi = $req.IndexOf(";")
+        if ($semi -ge 0) { $req = $req.Substring(0, $semi).Trim() }
+        $req = $req -replace "\s", ""
+        if ($req -match '^voxprint-common(\[[^\]]*\])?==([0-9][0-9A-Za-z.]*)$') {
+            $versions += $Matches[2]
+        }
+    }
+    $unique = @($versions | Select-Object -Unique)
+    if ($unique.Count -ne 1) {
+        $listed = ($unique -join ", ")
+        throw "the app wheel does not pin exactly one voxprint-common version (found $($unique.Count): $listed)"
+    }
+    return [string]$unique[0]
+}
+
 try {
     # Ignore inherited uv, pip, Python and conda settings.
     foreach ($name in (Get-ChildItem env: | ForEach-Object Name)) {
@@ -43,9 +87,9 @@ try {
     $pins = Join-Path $Work "torch-pins.txt"
     & $script:Uv pip freeze --python $Py | Select-String -Pattern '^(torch|torchvision)==' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii $pins
     # Both wheels by path, so a same-named package on a public index is never used.
-    $forgeWheel = (Get-ChildItem $Wheels -Filter "voxprint_forge-$Version-*.whl" | Select-Object -First 1).FullName
-    $commonWheel = (Get-ChildItem $Wheels -Filter "voxprint_common-*.whl" | Select-Object -First 1).FullName
-    if (-not $forgeWheel -or -not $commonWheel) { throw "the app wheels are missing from $Wheels" }
+    $forgeWheel = Resolve-OneWheel $Wheels "voxprint_forge" "voxprint_forge-$Version-*.whl"
+    $commonVersion = Get-PinnedCommonVersion $forgeWheel
+    $commonWheel = Resolve-OneWheel $Wheels "voxprint_common" "voxprint_common-${commonVersion}-*.whl"
     Invoke-Uv @("pip", "install", "--python", $Py, "--constraint", $pins, "$commonWheel", "$forgeWheel[gui,compare]")
     # te-quant extra: the bundled PyPI win_amd64 wheel, hash-checked. No extra index.
     $teReq = Join-Path $App "requirements-te-quant.txt"
