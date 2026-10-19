@@ -1,12 +1,12 @@
 ﻿; VOXPrint AI Model Forge
 ; Install folder: C:\Program Files\VOXPrint AI Suite\Model Forge\
 ; Start menu folder: VOXPrint AI Suite
-; GUI: venv\Scripts\voxprint-model-forge.exe  CLI: venv\Scripts\voxprint-forge-cli.exe
+; GUI: voxprint-model-forge.exe, a compiled launcher. CLI: venv\Scripts\voxprint-forge-cli.exe
 ; Windows 11 24H2 or newer, 64-bit. The setup holds the app wheels, the pinned
 ; bitsandbytes wheel, and uv.exe. install.ps1 then builds the Python environments.
 ; The .ps1 steps run hidden under PowerShell 7 (pwsh.exe) when it is installed. If it is missing, an
 ; interactive setup offers to install the pinned official MSI; otherwise Windows PowerShell 5.1 runs them.
-; The PDF user guide (en, ru) is installed into {app}\docs with Start menu shortcuts.
+; The PDF user guide (en, ru) is installed into {app}\docs. Guides open from the app's Help menu.
 ; No model files are inside the setup; models are downloaded by the app on first launch.
 
 #define MyAppName "VOXPrint AI Model Forge"
@@ -15,6 +15,19 @@
   #define AppVersion "0.1.0"
 #endif
 #define MyAppPublisher "Aleksandr Mitroshenkov"
+#define MyAppId "VOXPrint.AISuite.ModelForge"
+#define MyIcon "voxprint-model-forge.ico"
+
+; Compile the GUI launcher with the .NET Framework C# compiler that ships with Windows.
+#define Csc AddBackslash(GetEnv("WINDIR")) + "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+#if !FileExists(Csc)
+  #error The .NET Framework C# compiler was not found
+#endif
+#define Launcher AddBackslash(SourcePath) + "voxprint-model-forge.exe"
+#define LauncherExit Exec(Csc, '/nologo /optimize+ /target:winexe /win32icon:"' + AddBackslash(SourcePath) + '..\..\assets\voxprint-model-forge.ico" /out:"' + Launcher + '" "' + AddBackslash(SourcePath) + 'launcher.cs"', SourcePath, 1, 0)
+#if LauncherExit != 0
+  #error launcher.cs did not compile
+#endif
 
 [Setup]
 AppId={{CB5C2217-6254-48EA-99F6-BC3D52260BAB}
@@ -34,8 +47,9 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.26100
+SetupIconFile=..\..\assets\{#MyIcon}
 UninstallDisplayName={#MyAppName}
-UninstallDisplayIcon={app}\venv\Scripts\voxprint-model-forge.exe
+UninstallDisplayIcon={app}\assets\{#MyIcon}
 AppVerName={#MyAppName} {#AppVersion}
 
 [Languages]
@@ -56,16 +70,25 @@ russian.PwshDeclined=Установка продолжится с Windows PowerS
 english.PwshFailed=PowerShell 7 could not be installed, so setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 russian.PwshFailed=Не удалось установить PowerShell 7, поэтому установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 
+[Tasks]
+Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
 [Files]
 Source: "staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "voxprint-model-forge.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\assets\{#MyIcon}"; DestDir: "{app}\assets"; Flags: ignoreversion
 ; Extracted to {tmp} by PrepareToInstall only; not installed.
 Source: "migrate-home.ps1"; Flags: dontcopy
 
+[InstallDelete]
+; Shortcuts from older builds.
+Type: files; Name: "{group}\Uninstall {#MyAppName}.lnk"
+Type: files; Name: "{group}\Model Forge guide (EN).lnk"
+Type: files; Name: "{group}\Руководство Model Forge (RU).lnk"
+
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\venv\Scripts\voxprint-model-forge.exe"; WorkingDir: "{app}"
-Name: "{group}\Model Forge guide (EN)"; Filename: "{app}\docs\VOXPrint-Model-Forge-Guide-en.pdf"
-Name: "{group}\Руководство Model Forge (RU)"; Filename: "{app}\docs\VOXPrint-Model-Forge-Guide-ru.pdf"
-Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\voxprint-model-forge.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\{#MyIcon}"; AppUserModelID: "{#MyAppId}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\voxprint-model-forge.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\{#MyIcon}"; AppUserModelID: "{#MyAppId}"; Tasks: desktopicon
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\venv"

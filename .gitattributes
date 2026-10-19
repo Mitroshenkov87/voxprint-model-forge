@@ -3,7 +3,9 @@
 *.safetensors binary
 *.jpg binary
 *.jpeg binary
+*.png binary
 *.webp binary
+*.ico binary
 # Vendored files are sha256-pinned; keep their bytes on every OS.
 src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py -text
 src/voxprint_forge/vendored/moss_image/LICENSE -text

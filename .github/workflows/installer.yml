@@ -11,7 +11,9 @@ on:
     tags: ["v*"]
   pull_request:
     paths:
+      - "assets/**"
       - "installer/**"
+      - "installer/windows/launcher.cs"
       - ".github/workflows/installer.yml"
       - "pyproject.toml"
       - "BUILD.json"
@@ -148,6 +150,25 @@ jobs:
       - name: Inno Setup 6
         shell: pwsh
         run: choco install innosetup --no-progress -y
+      - name: Icon check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check pillow
+          $py = Join-Path $env:RUNNER_TEMP "check_icon.py"
+          @(
+            'from PIL import Image',
+            '# voxprint_common 0.4.0 has no branding module. Switch to: python -m voxprint_common.branding check',
+            'path = r"assets/voxprint-model-forge.ico"',
+            'with Image.open(path) as image:',
+            '    sizes = set(image.ico.sizes())',
+            'want = {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)}',
+            'if sizes != want:',
+            '    raise SystemExit("icon sizes %s, want %s" % (sorted(sizes), sorted(want)))',
+            'print("icon ok", sorted(sizes))'
+          ) | Set-Content -Encoding utf8 $py
+          python $py
+          if ($LASTEXITCODE -ne 0) { throw "icon check failed" }
       - name: Compile the setup
         id: compile
         shell: pwsh
@@ -159,6 +180,38 @@ jobs:
           & $iscc "/DAppVersion=$version" "/O$env:GITHUB_WORKSPACE\dist" "installer\windows\voxprint-model-forge.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC exited $LASTEXITCODE" }
           "{0:N1} MB" -f ((Get-Item dist\VoxprintModelForgeSetup.exe).Length / 1MB)
+          $launcher = Join-Path (Resolve-Path "installer\windows") "voxprint-model-forge.exe"
+          if (-not (Test-Path -LiteralPath $launcher)) { throw "launcher was not compiled" }
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($launcher)
+          if ($null -eq $icon) { throw "ExtractAssociatedIcon returned null" }
+          $icon.Dispose()
+          if (-not ("LauncherIcon" -as [type])) {
+            $code = @(
+              'using System;',
+              'using System.Runtime.InteropServices;',
+              'public static class LauncherIcon {',
+              '    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]',
+              '    public static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);',
+              '    [DllImport("kernel32.dll", SetLastError = true)]',
+              '    public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);',
+              '    [DllImport("kernel32.dll", SetLastError = true)]',
+              '    public static extern bool FreeLibrary(IntPtr module);',
+              '}'
+            ) -join "`n"
+            Add-Type -TypeDefinition $code
+          }
+          # LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE. RT_GROUP_ICON is 14.
+          $module = [LauncherIcon]::LoadLibraryEx($launcher, [IntPtr]::Zero, 0x22)
+          if ($module -eq [IntPtr]::Zero) { throw "LoadLibraryEx failed" }
+          try {
+              $found = [LauncherIcon]::FindResource($module, [IntPtr]1, [IntPtr]14)
+              if ($found -eq [IntPtr]::Zero) { $found = [LauncherIcon]::FindResource($module, [IntPtr]32512, [IntPtr]14) }
+              if ($found -eq [IntPtr]::Zero) { throw "PE has no RT_GROUP_ICON" }
+          } finally {
+              [void][LauncherIcon]::FreeLibrary($module)
+          }
+          "launcher icon ok"
       - name: Smoke (install, --version, preflight, LoRA dry-run, uninstall)
         shell: pwsh
         timeout-minutes: 30

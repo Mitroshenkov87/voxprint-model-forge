@@ -25,4 +25,5 @@ site/
 *.local.*
 scripts/_*.json
 installer/windows/staging/
+installer/windows/voxprint-model-forge.exe
 src/voxprint_forge/BUILD.json

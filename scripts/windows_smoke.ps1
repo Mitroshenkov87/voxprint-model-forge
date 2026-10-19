@@ -17,8 +17,11 @@ Run from an elevated PowerShell 7 (the setup installs to Program Files). Windows
 
 Steps and pass rules:
   0 home       (with -MigrationTest on a clean profile) a fake %LOCALAPPDATA%\Voxprint\models\smoke-dummy file.
-  1 install    silent setup exits 0; venv, venv-mivolo, CLI, GUI exe, uv.exe, LICENSE, Start menu shortcut exist;
-               the setup holds no model weights (*.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt).
+  1 install    silent setup exits 0; venv, venv-mivolo, CLI, the compiled launcher and its icon, the icon file,
+               uv.exe, LICENSE and the PDF guides in docs\ exist. The Start menu folder holds one Forge shortcut
+               (VOXPrint AI Model Forge.lnk): target is the launcher, icon is the app icon, AppUserModelID is
+               VOXPrint.AISuite.ModelForge. No Uninstall or guide shortcut, no desktop shortcut. Older Uninstall
+               and guide shortcuts are removed. The uninstall entry name, icon and publisher match. No model weights.
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
@@ -29,7 +32,8 @@ Steps and pass rules:
                (checked right after the setup: on disk first, then through voxprint_common), and a second silent install
                exits 0, logs "no-op" and changes nothing. Without -MigrationTest only the move rule is
                checked against the folders that were there before the install.
-  5 uninstall  unins000.exe removes the program folder, the shortcut and the uninstall entry.
+  5 uninstall  unins000.exe removes the program folder, this app's shortcut and the uninstall entry.
+               The shared Start menu folder VOXPrint AI Suite is removed only when it is empty.
                %LOCALAPPDATA%\VOXPrint AI Suite (user data, models) is left in place by design.
 
 Results: %LOCALAPPDATA%\VoxprintForgeSmoke\windows\<timestamp>\result.json and smoke.log.
@@ -51,12 +55,16 @@ $Dir = Join-Path $env:ProgramFiles "VOXPrint AI Suite\Model Forge"
 $Cli = Join-Path $Dir "venv\Scripts\voxprint-forge-cli.exe"
 $Py = Join-Path $Dir "venv\Scripts\python.exe"
 $Menu = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\VOXPrint AI Model Forge.lnk"
+$Group = Split-Path -Parent $Menu
 $GuideLinks = @(
-    (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\Model Forge guide (EN).lnk"),
-    (Join-Path $env:ProgramData ("Microsoft\Windows\Start Menu\Programs\VOXPrint AI Suite\" + [string][char]0x0420 + [char]0x0443 +
+    (Join-Path $Group "Model Forge guide (EN).lnk"),
+    (Join-Path $Group ([string][char]0x0420 + [char]0x0443 +
         [char]0x043A + [char]0x043E + [char]0x0432 + [char]0x043E + [char]0x0434 + [char]0x0441 + [char]0x0442 + [char]0x0432 + [char]0x043E +
         " Model Forge (RU).lnk"))
 )
+# Names this app used to install. Other suite apps may keep their own shortcuts in $Group.
+$OldLinks = @((Join-Path $Group "Uninstall VOXPrint AI Model Forge.lnk")) + $GuideLinks
+$Desktop = Join-Path $env:PUBLIC "Desktop\VOXPrint AI Model Forge.lnk"
 $OldHome = Join-Path $env:LOCALAPPDATA "Voxprint"
 $NewHome = Join-Path $env:LOCALAPPDATA "VOXPrint AI Suite"
 $Dummy = "models\smoke-dummy\smoke-dummy-model.bin"
@@ -143,6 +151,10 @@ if ($MigrationTest -and -not $Before.old -and -not $Before.new) {
 }
 
 $installed = Invoke-Step "install" {
+    # No older setup is installed first. Plant the shortcuts that previous builds created so this
+    # setup's InstallDelete has something to remove.
+    New-Item -ItemType Directory -Force -Path $Group | Out-Null
+    foreach ($link in $OldLinks) { [IO.File]::WriteAllText($link, "old shortcut") }
     $p = Start-Process $SetupExe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
         "/LOG=`"$(Join-Path $Results 'setup.log')`"" -Wait -PassThru
     if ($p.ExitCode -ne 0) {
@@ -150,20 +162,47 @@ $installed = Invoke-Step "install" {
         if (Test-Path $installLog) { Copy-Item $installLog (Join-Path $Results "install.log") }
         throw "setup exited $($p.ExitCode); see install.log"
     }
-    foreach ($f in @("venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe",
+    foreach ($f in @("voxprint-model-forge.exe", "assets\voxprint-model-forge.ico",
+            "venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe",
             "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md", "unins000.exe",
             "docs\VOXPrint-Model-Forge-Guide-en.pdf", "docs\VOXPrint-Model-Forge-Guide-ru.pdf")) {
         if (-not (Test-Path (Join-Path $Dir $f))) { throw "missing $f" }
     }
-    if (-not (Test-Path $Menu)) { throw "Start menu shortcut missing" }
-    foreach ($link in $GuideLinks) { if (-not (Test-Path -LiteralPath $link)) { throw "guide shortcut missing: $link" } }
+    $owned = @("VOXPrint AI Model Forge.lnk") + @($OldLinks | ForEach-Object { Split-Path -Leaf $_ })
+    $present = @(Get-ChildItem -LiteralPath $Group -Filter *.lnk | Where-Object { $owned -contains $_.Name })
+    if ($present.Count -ne 1 -or $present[0].Name -ne "VOXPrint AI Model Forge.lnk") {
+        throw "Start menu should hold one Forge shortcut, found: $($present.Name -join ', ')"
+    }
+    foreach ($link in $OldLinks) { if (Test-Path -LiteralPath $link) { throw "old shortcut still present: $link" } }
+    $uninstallLeft = @(Get-ChildItem -LiteralPath $Group -Filter "Uninstall*.lnk" | Where-Object { $_.Name -like "*Model Forge*" })
+    if ($uninstallLeft) { throw "uninstall shortcut present: $($uninstallLeft.Name -join ', ')" }
+    if (Test-Path -LiteralPath $Desktop) { throw "a silent install created a desktop shortcut" }
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($Menu)
+    $launcher = Join-Path $Dir "voxprint-model-forge.exe"
+    if ($shortcut.TargetPath -ne $launcher) { throw "shortcut target is $($shortcut.TargetPath)" }
+    $wantIcon = Join-Path $Dir "assets\voxprint-model-forge.ico"
+    if (-not $shortcut.IconLocation.StartsWith($wantIcon, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "IconLocation is $($shortcut.IconLocation)"
+    }
+    $item = (New-Object -ComObject Shell.Application).Namespace($Group).ParseName("VOXPrint AI Model Forge.lnk")
+    $aumid = $item.ExtendedProperty("System.AppUserModel.ID")
+    if ($aumid -ne "VOXPrint.AISuite.ModelForge") { throw "AppUserModelID is '$aumid'" }
+    Add-Type -AssemblyName System.Drawing
+    $drawn = [System.Drawing.Icon]::ExtractAssociatedIcon($launcher)
+    if ($null -eq $drawn) { throw "launcher has no icon" }
+    $drawn.Dispose()
     $key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId"
     if (-not (Test-Path $key)) { throw "uninstall entry missing" }
+    $entry = Get-ItemProperty $key
+    if ($entry.DisplayName -ne "VOXPrint AI Model Forge") { throw "DisplayName is $($entry.DisplayName)" }
+    if ([string]$entry.Publisher -ne "Aleksandr Mitroshenkov") { throw "Publisher is $($entry.Publisher)" }
+    $displayIcon = ([string]$entry.DisplayIcon).Trim('"')
+    if ($displayIcon -notmatch 'assets\\voxprint-model-forge\.ico(,\d+)?$') { throw "DisplayIcon is $displayIcon" }
     $bundled = Get-ChildItem -Recurse -File (Join-Path $Dir "wheels") -Include $Weights -ErrorAction SilentlyContinue
     if ($bundled) { throw "model weights in the setup: $($bundled.Name -join ', ')" }
     & $Py -c "from voxprint_forge.lora.backends import mivolo_python; import sys; sys.exit(0 if 'venv-mivolo' in mivolo_python() else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app does not find venv-mivolo" }
-    "installed to $Dir; uninstall entry $((Get-ItemProperty $key).DisplayName) $((Get-ItemProperty $key).DisplayVersion)"
+    "installed to $Dir; one Start menu launcher; AUMID $aumid; uninstall entry $($entry.DisplayName)"
 }
 
 function Get-MigrationLog {
@@ -296,9 +335,14 @@ if (-not $KeepInstalled -and (Test-Path (Join-Path $Dir "unins000.exe"))) {
         for ($i = 0; $i -lt 90 -and (Test-Path $Dir); $i++) { Start-Sleep 2 }
         if (Test-Path $Dir) { throw "uninstall left $Dir" }
         if (Test-Path $Menu) { throw "uninstall left the Start menu shortcut" }
-        foreach ($link in $GuideLinks) { if (Test-Path -LiteralPath $link) { throw "uninstall left $link" } }
+        foreach ($link in $OldLinks) { if (Test-Path -LiteralPath $link) { throw "uninstall left $link" } }
         if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId") { throw "uninstall left the uninstall entry" }
-        "program folder, shortcut and uninstall entry removed"
+        # The shared folder stays when another app's shortcut is still in it.
+        $left = @()
+        if (Test-Path -LiteralPath $Group) {
+            $left = @(Get-ChildItem -LiteralPath $Group -Filter *.lnk -ErrorAction SilentlyContinue)
+        }
+        "program folder, shortcut and uninstall entry removed; suite folder shortcuts left: $($left.Count)"
     })
 }
 

@@ -16,9 +16,9 @@
 
 1. Run `VoxprintModelForgeSetup.exe` and confirm the administrator prompt.
 2. The setup copies the app to `C:\Program Files\VOXPrint AI Suite\Model Forge`, then downloads Python and the libraries it needs. This takes a few minutes. Keep the computer online.
-3. When it finishes, open **VOXPrint AI Model Forge** from the Start menu folder **VOXPrint AI Suite**.
+3. When it finishes, open **VOXPrint AI Model Forge** from the Start menu folder **VOXPrint AI Suite**. The setup can also add a desktop shortcut. That choice is off unless you turn it on.
 
-The same folder has this guide as a PDF: **Model Forge guide (EN)** and **Руководство Model Forge (RU)**. The files are in `C:\Program Files\VOXPrint AI Suite\Model Forge\docs`.
+The guide opens from **Open guide** in the app. PDF copies are in `C:\Program Files\VOXPrint AI Suite\Model Forge\docs`.
 
 If the setup fails, it shows the path to its log: `C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log`. Check the internet connection and run the setup again.
 
@@ -30,4 +30,4 @@ Open the **Check this computer** tab. It lists the graphics card, the computer m
 
 ## Remove the app
 
-Use **Uninstall VOXPrint AI Model Forge** in the same Start menu folder, or Windows Settings. Your projects and downloaded models stay in place. To remove them as well, see [Privacy](troubleshooting.md#privacy).
+Remove the app in Settings > Apps > Installed apps. The Start menu has no Uninstall shortcut. Your projects and downloaded models stay in place. To remove them as well, see [Privacy](troubleshooting.md#privacy).
