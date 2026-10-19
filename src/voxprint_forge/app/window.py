@@ -252,6 +252,7 @@ class ForgeApp:
         self.simple["base"] = self._bases()[0][0] if self._bases() else ""
         self.previews = True
         self.first_round_steps = rounds.DEFAULT_FIRST_ROUND_STEPS
+        self.review_rounds = rounds.DEFAULT_ROUNDS
         self.refset_settings: dict[str, float] = {
             "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS,
         }
@@ -579,6 +580,7 @@ class ForgeApp:
             details = self._details(f"step.{step}", paragraphs)
             column.addWidget(details)
             if step == "train":
+                self._review_rounds_field(details)
                 self._first_round_steps_field(details)
             if running:
                 loss = QtWidgets.QLabel(self._loss_text())
@@ -586,6 +588,41 @@ class ForgeApp:
                 loss.setWordWrap(True)
                 details.body.layout().addWidget(loss)
                 self._loss_label = loss
+
+    def _review_rounds_field(self, details: Details) -> None:
+        """How many review pauses, under Details on the training step."""
+        if self._review_rounds() is None:
+            return
+        stored = int(self._review_state().get("rounds") or 0)
+        if rounds.REVIEW_ROUNDS_MIN <= stored <= rounds.REVIEW_ROUNDS_MAX:
+            phase = str(self._review_state().get("phase") or "")
+            if phase in ("training", "review"):
+                self.review_rounds = stored
+        label = QtWidgets.QLabel(tr("forge.app.train.review_rounds"))
+        label.setObjectName("forge.train.review_rounds.label")
+        spin = QtWidgets.QSpinBox()
+        spin.setObjectName("forge.train.review_rounds")
+        spin.setRange(rounds.REVIEW_ROUNDS_MIN, rounds.REVIEW_ROUNDS_MAX)
+        spin.setValue(self.review_rounds)
+        spin.setToolTip(tr("forge.app.train.review_rounds.tip"))
+        running = bool(self.runner.busy)  # type: ignore[attr-defined]
+        spin.setEnabled(not running)
+        label.setEnabled(not running)
+        spin.valueChanged.connect(self._set_review_rounds)
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("forge.train.review_rounds.row")
+        row = QtWidgets.QHBoxLayout(holder)
+        row.setContentsMargins(0, 4, 0, 0)
+        row.addWidget(label)
+        row.addWidget(spin)
+        row.addStretch(1)
+        layout = details.body.layout()
+        if layout is not None:
+            layout.addWidget(holder)
+
+    def _set_review_rounds(self, value: int) -> None:
+        """Remember how many review pauses were chosen under Details."""
+        self.review_rounds = int(value)
 
     def _first_round_steps_field(self, details: Details) -> None:
         """Steps before the first review, under Details on the training step."""
@@ -1329,7 +1366,7 @@ class ForgeApp:
         if phase in ("training", "review") and planned > 0:
             return planned, int(state.get("samples_per_round") or rounds.DEFAULT_SAMPLES)
         if self.draft.source == "refs":
-            return rounds.DEFAULT_ROUNDS, rounds.DEFAULT_SAMPLES
+            return self.review_rounds, rounds.DEFAULT_SAMPLES
         return None
 
     def _review_screen(self, column: QtWidgets.QVBoxLayout) -> None:
@@ -2082,6 +2119,9 @@ class ForgeApp:
                 "--first-round-samples", str(rounds.DEFAULT_FIRST_ROUND_SAMPLES),
                 "--sample-steps", str(rounds.DEFAULT_SAMPLE_STEPS),
             ]
+        elif not dry_run and self.draft.extend_from is None:
+            # The CLI default is 3. An explicit 0 keeps a straight train when the switch is off.
+            args += ["--review-rounds", "0"]
         edits = self.project / "captions-edit.jsonl"
         if edits.is_file():
             args += ["--captions", str(edits)]

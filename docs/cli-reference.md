@@ -596,8 +596,8 @@ options:
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
   --review-rounds REVIEW_ROUNDS
-                        Pause after each stage for this many reviews. 0 trains
-                        straight through.
+                        How many review pauses. From 1 to 6. Default: 3. 0
+                        trains straight through.
   --first-round-steps FIRST_ROUND_STEPS
                         Steps before the first review. From 100 to 500.
                         Default: 200.

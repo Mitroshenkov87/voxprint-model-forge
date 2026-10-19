@@ -278,6 +278,8 @@
   "forge.app.train.continue.tip": "Продолжить приостановленное обучение с последней сохранённой версии.",
   "forge.app.train.first_round_steps": "Шаги первого раунда",
   "forge.app.train.first_round_steps.tip": "Сколько шагов до первой проверки. От 100 до 500.",
+  "forge.app.train.review_rounds": "Число раундов",
+  "forge.app.train.review_rounds.tip": "Сколько раз обучение остановится на проверку. От 1 до 6.",
   "forge.app.train.estimate": "Оценить время",
   "forge.app.train.estimate.tip": "Рассчитать, сколько займёт обучение на этом компьютере. Обучение не запускается.",
   "forge.app.train.estimate_result": "Примерное время: около {minutes} мин",

@@ -29,7 +29,11 @@ from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_STEPS,
     DEFAULT_SAMPLE_STEPS,
     DEFAULT_SAMPLES,
+    HumanReviewDecider,
+    ReviewDecider,
+    apply_decider,
     build_sets,
+    check_review_round_count,
     check_round_options,
     first_pictures_eta,
     load_state,
@@ -241,16 +245,20 @@ def train(
     sample_steps: int = DEFAULT_SAMPLE_STEPS,
     review_continue: bool = False,
     no_more_reviews: bool = False,
+    decider: ReviewDecider | None = None,
 ) -> dict[str, object]:
     """Train (or extend, with ``from_lora``) and return the run summary.
 
     ``stop`` or a ``PAUSE`` file in the project folder pauses with a
     checkpoint after the current step. A ``PAUSE`` file left from before is
     refused at the start (``lora.err.pause_file``), so a resume never stops at once.
-    ``review_rounds`` above zero pauses after each planned stage so the user can
-    mark samples. The first stage is ``first_round_steps``; later stages share
-    the preset steps that remain. ``review_continue`` trains the next stage.
-    ``no_more_reviews`` trains every remaining preset step and then finishes.
+    ``review_rounds`` of 1 to 6 pauses after each planned stage so the user can
+    mark samples. ``0`` trains straight through. The first stage is
+    ``first_round_steps``; later stages share the preset steps that remain.
+    ``review_continue`` trains the next stage. ``no_more_reviews`` trains every
+    remaining preset step and then finishes. ``decider`` writes like and dislike
+    marks before that next stage. The default reads marks already stored by the
+    GUI or ``lora review``.
     """
     data, items = _check_ready(project)
     if project.pause.exists():
@@ -296,6 +304,7 @@ def train(
         review_continue=review_continue,
         no_more_reviews=no_more_reviews,
         resume=resume,
+        decider=decider,
     )
     if review_state is not None and not (resume and not review_continue):
         stage = steps_for_stage(review_state)
@@ -509,13 +518,16 @@ def _review_plan(
     review_continue: bool,
     no_more_reviews: bool,
     resume: bool,
+    decider: ReviewDecider | None = None,
 ) -> dict[str, object] | None:
     """The review state for this stage, or ``None`` when the run does not pause for review."""
     if review_continue:
+        state = apply_decider(load_state(project), decider if decider is not None else HumanReviewDecider())
         action = "train_full" if no_more_reviews else "continue"
-        state = transition(load_state(project), action)
+        state = transition(state, action)
         save_state(project, state)
         return state
+    check_review_round_count(review_rounds)
     if review_rounds < 1:
         return None
     check_round_options(

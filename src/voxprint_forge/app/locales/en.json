@@ -274,6 +274,8 @@
   "forge.app.train.continue.tip": "Continue a paused training from the last saved version.",
   "forge.app.train.first_round_steps": "First-round steps",
   "forge.app.train.first_round_steps.tip": "Steps before the first review. From 100 to 500.",
+  "forge.app.train.review_rounds": "Review rounds",
+  "forge.app.train.review_rounds.tip": "How many times training pauses for a review. From 1 to 6.",
   "forge.app.train.estimate": "Estimate time",
   "forge.app.train.estimate.tip": "Work out how long training will take on this computer. Nothing is trained.",
   "forge.app.train.estimate_result": "Estimated time: about {minutes} min",

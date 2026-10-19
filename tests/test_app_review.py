@@ -81,7 +81,7 @@ def test_the_sample_switch_adds_review_rounds_and_off_keeps_a_straight_train(mak
     assert flagged[flagged.index("--sample-steps") + 1] == "28"
     app.draft.set_source("photos")
     plain = app._train_args()
-    assert "--review-rounds" not in plain
+    assert plain[plain.index("--review-rounds") + 1] == "0"
     assert "--samples-per-round" not in plain
     dry = app._train_args(dry_run=True)
     assert "--review-rounds" not in dry
@@ -417,6 +417,37 @@ def test_train_fully_sends_no_more_reviews(make_app, tmp_path, qapp) -> None:
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
     assert "--no-more-reviews" in app.runner.calls[-1]
+
+
+def test_review_rounds_live_under_details(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.draft.set_source("refs")
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    details = app.window.findChild(Details, "forge.details.step.train")
+    assert details is not None
+    details.button.click()
+    qapp.processEvents()
+    spin = app.window.findChild(QtWidgets.QSpinBox, "forge.train.review_rounds")
+    assert spin is not None
+    assert spin.minimum() == 1 and spin.maximum() == 6 and spin.value() == 3
+    assert spin.toolTip() == tr("forge.app.train.review_rounds.tip")
+    label = app.window.findChild(QtWidgets.QLabel, "forge.train.review_rounds.label")
+    assert label is not None and label.text() == "Число раундов"
+    spin.setValue(4)
+    args = app._train_args()
+    assert args[args.index("--review-rounds") + 1] == "4"
+    app.runner.busy = True
+    app.repaint()
+    qapp.processEvents()
+    locked = app.window.findChild(QtWidgets.QSpinBox, "forge.train.review_rounds")
+    assert locked is not None and not locked.isEnabled()
+    app.runner.busy = False
+    app.draft.set_source("photos")
+    app.repaint()
+    qapp.processEvents()
+    assert app.window.findChild(QtWidgets.QSpinBox, "forge.train.review_rounds") is None
 
 
 def test_first_round_steps_live_under_details(make_app, qapp) -> None:

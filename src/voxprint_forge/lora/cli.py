@@ -200,10 +200,10 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
 
 
 def _review_flags(train: argparse.ArgumentParser) -> None:
-    """Round options on ``lora train``. Omitted, a run trains straight through."""
+    """Round options on ``lora train``. The default is 3 reviews; 0 trains straight through."""
     train.add_argument(
-        "--review-rounds", type=int, default=0,
-        help="Pause after each stage for this many reviews. 0 trains straight through.",
+        "--review-rounds", type=int, default=3,
+        help="How many review pauses. From 1 to 6. Default: 3. 0 trains straight through.",
     )
     train.add_argument(
         "--first-round-steps", type=int, default=200,
@@ -324,6 +324,7 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             from_lora=from_lora,
             stop=stop,
             preview_prompts=prompts,
+            # ``extend`` has no review flags. A missing value trains straight through.
             review_rounds=getattr(args, "review_rounds", 0),
             samples_per_round=getattr(args, "samples_per_round", 8),
             first_round_steps=getattr(args, "first_round_steps", 200),

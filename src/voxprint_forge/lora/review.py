@@ -11,10 +11,10 @@ no extra metadata.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Never
+from typing import Literal, Never, Protocol
 
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.project import Item, Project
@@ -24,6 +24,8 @@ PHASES = ("idle", "training", "review", "finished")
 VERDICTS = ("unmarked", "like", "dislike")
 # Simple mode, when "Extend the set from samples" is on. The user can finish sooner.
 DEFAULT_ROUNDS = 3
+REVIEW_ROUNDS_MIN = 1
+REVIEW_ROUNDS_MAX = 6
 DEFAULT_SAMPLES = 8
 DEFAULT_FIRST_ROUND_STEPS = 200
 FIRST_ROUND_STEPS_MIN = 100
@@ -231,6 +233,20 @@ def check_round_options(
         raise LoraUsageError("lora.err.sample_steps")
 
 
+def check_review_round_count(review_rounds: int) -> None:
+    """Reject a review count other than straight-through (0) or 1–6.
+
+    The state machine still accepts any positive count. This check is for a new
+    run: the CLI and the GUI offer 1–6, and 0 trains straight through.
+    """
+    if review_rounds == 0:
+        return
+    if not REVIEW_ROUNDS_MIN <= review_rounds <= REVIEW_ROUNDS_MAX:
+        raise LoraUsageError(
+            "lora.err.review_round_count", low=REVIEW_ROUNDS_MIN, high=REVIEW_ROUNDS_MAX,
+        )
+
+
 def first_pictures_eta(
     *,
     steps_left: int,
@@ -318,6 +334,56 @@ def set_verdicts(
 ) -> dict[str, object]:
     """Set verdicts on the current samples. Other samples keep their marks."""
     return _apply_groups(state, like=list(like), dislike=list(dislike), unmarked=list(unmarked))
+
+
+class ReviewDecider(Protocol):
+    """Chooses like, dislike, or unmarked for each sample of the open review.
+
+    The human GUI and ``lora review`` write the marks. A later automatic decider
+    can score the same samples and return the same mapping. The round state
+    machine does not grow a new action for that.
+    """
+
+    def decide(self, samples: Sequence[Mapping[str, object]]) -> Mapping[str, str]:
+        """Sample id to ``like``, ``dislike``, or ``unmarked``."""
+        ...
+
+
+class HumanReviewDecider:
+    """Reads the verdicts the GUI or ``lora review`` already stored. It does not score samples."""
+
+    def decide(self, samples: Sequence[Mapping[str, object]]) -> Mapping[str, str]:
+        """Sample id to the stored ``like``, ``dislike``, or ``unmarked``."""
+        verdicts: dict[str, str] = {}
+        for sample in samples:
+            sample_id = str(sample.get("id") or "")
+            if not sample_id:
+                continue
+            verdict = str(sample.get("verdict") or "unmarked")
+            verdicts[sample_id] = verdict if verdict in VERDICTS else "unmarked"
+        return verdicts
+
+
+def apply_decider(state: dict[str, object], decider: ReviewDecider) -> dict[str, object]:
+    """Write ``decider`` verdicts onto the open review.
+
+    Called before ``continue`` and ``train_full``, which archive the samples.
+    ``HumanReviewDecider`` is idempotent: marks already on the samples stay.
+    """
+    chosen = dict(decider.decide(_samples(state.get("samples"))))
+    like: list[str] = []
+    dislike: list[str] = []
+    unmarked: list[str] = []
+    for sample_id, verdict in chosen.items():
+        if verdict == "like":
+            like.append(sample_id)
+        elif verdict == "dislike":
+            dislike.append(sample_id)
+        elif verdict == "unmarked":
+            unmarked.append(sample_id)
+        else:
+            raise LoraUsageError("lora.err.review_sample")
+    return set_verdicts(state, like=like, dislike=dislike, unmarked=unmarked)
 
 
 @dataclass(frozen=True)

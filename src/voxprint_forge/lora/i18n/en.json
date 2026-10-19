@@ -222,6 +222,7 @@
  "lora.err.review_pending": "A review is waiting. Mark the pictures, then continue or finish.",
  "lora.err.review_phase": "This project is not waiting for a review.",
  "lora.err.review_rounds": "Review rounds must be zero or more, and there must be at least one picture per round.",
+ "lora.err.review_round_count": "The number of review rounds must be from {low} to {high}.",
  "lora.err.first_round_steps": "The first round must run for {low} to {high} steps.",
  "lora.err.sample_steps": "The number of steps used to draw a picture must be at least 1.",
  "lora.err.review_sample": "That picture is not in this review.",

@@ -16,9 +16,12 @@ from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.presets import TrainConfig, build_config
 from voxprint_forge.lora.project import Item, Project
 from voxprint_forge.lora.review import (
+    HumanReviewDecider,
+    apply_decider,
     apply_file,
     build_sets,
     can_continue,
+    check_review_round_count,
     check_round_options,
     counts,
     load_state,
@@ -241,7 +244,9 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     continued = build_parser().parse_args(["lora", "continue", str(tmp_path), "--no-more-reviews"])
     assert continued.no_more_reviews is True
     straight = build_parser().parse_args(["lora", "train", "--project", str(tmp_path)])
-    assert straight.review_rounds == 0
+    assert straight.review_rounds == 3
+    off = build_parser().parse_args(["lora", "train", "--project", str(tmp_path), "--review-rounds", "0"])
+    assert off.review_rounds == 0
     project = make_project(tmp_path / "proj", count=10)
     review = _paused()
     save_state(project, review)
@@ -286,6 +291,8 @@ def test_step_plan_splits_the_remaining_steps_and_train_full_takes_the_rest() ->
     assert step_plan(four) == (200, 433, 433, 434)
     assert sum(step_plan(four)) == 1500
     assert step_plan(opened(1)) == (200,)
+    assert step_plan(opened(6)) == (200, 260, 260, 260, 260, 260)
+    assert sum(step_plan(opened(6))) == 1500
     assert len(plan_samples(three)) == 6
     assert samples_for_round(three, 1) == 6
     paused = transition(three, "pause", checkpoint="checkpoints/step.safetensors", samples=plan_samples(three))
@@ -352,6 +359,58 @@ def test_status_prints_the_first_pictures_line(tmp_path: Path, capsys: pytest.Ca
     assert main(["--json", "lora", "status", str(project.root)]) == 0
     status = _envelope(capsys.readouterr().out)["result"]
     assert status["first_pictures"] == "First pictures in about 8 min (18 s per picture)"
+
+
+def test_review_round_count_is_zero_or_from_1_to_6(tmp_path: Path) -> None:
+    check_review_round_count(0)
+    check_review_round_count(1)
+    check_review_round_count(6)
+    for bad in (-1, 7):
+        with pytest.raises(LoraUsageError) as limited:
+            check_review_round_count(bad)
+        assert limited.value.code == "lora.err.review_round_count"
+    project = make_project(tmp_path, count=10)
+    with pytest.raises(LoraUsageError) as refused:
+        train(project, _config(), DrawingAdapter(), Progress(), review_rounds=7)
+    assert refused.value.code == "lora.err.review_round_count"
+    assert not state_path(project).is_file()
+
+
+def test_a_decider_sets_verdicts_before_continue_archives_them() -> None:
+    review = _paused()
+
+    class _Likes:
+        def decide(self, samples):
+            return {str(sample["id"]): "like" for sample in samples}
+
+    marked = apply_decider(review, _Likes())
+    assert all(sample["verdict"] == "like" for sample in marked["samples"])
+    continued = transition(marked, "continue")
+    included = build_sets((), continued, supports_negatives=False).include
+    assert [item.id for item in included] == ["r1-s00", "r1-s01", "r1-s02"]
+    mixed = set_verdicts(review, like=["r1-s00"], dislike=["r1-s01"])
+    same = apply_decider(mixed, HumanReviewDecider())
+    verdicts = {sample["id"]: sample["verdict"] for sample in same["samples"]}
+    assert verdicts == {"r1-s00": "like", "r1-s01": "dislike", "r1-s02": "unmarked"}
+
+
+def test_continue_applies_the_decider_before_the_next_stage(tmp_path: Path) -> None:
+    class _Likes:
+        def decide(self, samples):
+            return {str(sample["id"]): "like" for sample in samples}
+
+    project = make_project(tmp_path, count=10)
+    first = train(
+        project, _config(steps=2), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=1,
+        first_round_samples=1, preview_prompts=["a cube"],
+    )
+    assert first["state"] == "review"
+    current = load_state(project)
+    assert all(sample.get("verdict") == "unmarked" for sample in current["samples"] if isinstance(sample, dict))
+    second = train(project, _config(steps=2), DrawingAdapter(), Progress(), review_continue=True, decider=_Likes())
+    assert second["state"] == "review"
+    history = load_state(project)["history"]
+    assert history and history[0]["samples"][0]["verdict"] == "like"
 
 
 def test_train_refuses_a_first_round_outside_100_to_500(tmp_path: Path) -> None:

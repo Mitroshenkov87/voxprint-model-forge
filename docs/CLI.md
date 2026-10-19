@@ -157,6 +157,7 @@ voxprint-forge-cli lora train --project DIR --review-rounds 3 \
   --first-round-steps 200 --first-round-samples 6 --samples-per-round 8 --sample-steps 28
 ```
 
+- `--review-rounds` is how many review pauses (1–6, default 3). `--review-rounds 0` trains straight through, including a resume of a run that never paused for review.
 - `--first-round-steps` is the first stage (100–500, default 200). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what train-fully runs.
 - `--first-round-samples` (default 6) and `--samples-per-round` (default 8) are the pictures at the first review and at later reviews. Both are drawn at the training resolution. `--sample-steps` (default 28) is passed to the preview pipeline as `num_inference_steps`. Test pictures during a stage keep the pipeline default.
 - `lora continue PROJECT` trains the next planned round on the original photos and the liked samples.
