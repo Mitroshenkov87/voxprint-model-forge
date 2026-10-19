@@ -160,7 +160,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             "subject": {"name": "Soft shape", "trigger": "soft_shape", "rights_confirmed": True, "kind": "object"},
         })
         state = transition(
-            {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, first_round_samples=6,
+            {}, "start", rounds=3, samples_per_round=8, first_round_steps=450, first_round_samples=6,
             sample_steps=28, total_steps=1500, prompts=["a soft shape"], seed=3,
             base="draw-test", config={"steps": 1500},
         )
@@ -211,15 +211,49 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
         app.processEvents()
-        action = forge.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
-        if action is not None:
-            area = action.parentWidget()
-            while area is not None and not isinstance(area, QtWidgets.QScrollArea):
-                area = area.parentWidget()
-            if area is not None:
-                area.ensureWidgetVisible(action)
-                app.processEvents()
-        forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
+        button = forge.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+        note = forge.window.findChild(QtWidgets.QLabel, "forge.review.note")
+        anchor = note if note is not None else button
+        area = anchor.parentWidget() if anchor is not None else None
+        while area is not None and not isinstance(area, QtWidgets.QScrollArea):
+            area = area.parentWidget()
+        if area is not None and anchor is not None:
+            area.ensureWidgetVisible(anchor, 0, 120)
+            app.processEvents()
+        if lang == "ru" and button is not None and button.menu() is not None:
+            menu = button.menu()
+            menu.popup(button.mapToGlobal(QtCore.QPoint(0, button.height())))
+            app.processEvents()
+            image = forge.window.grab()
+            popup = menu.grab()
+            point = button.mapTo(forge.window, QtCore.QPoint(0, button.height()))
+            painter = QtGui.QPainter(image)
+            painter.drawPixmap(point, popup)
+            painter.end()
+            image.save(str(out / "ru-simple-5-review.png"))
+            menu.close()
+            app.processEvents()
+
+            def grab_confirm() -> None:
+                box = QtWidgets.QApplication.activeModalWidget()
+                if not isinstance(box, QtWidgets.QMessageBox):
+                    QtCore.QTimer.singleShot(0, grab_confirm)
+                    return
+                base = forge.window.grab()
+                dialog = box.grab()
+                painter = QtGui.QPainter(base)
+                x = max(0, (base.width() - dialog.width()) // 2)
+                y = max(0, (base.height() - dialog.height()) // 2)
+                painter.drawPixmap(x, y, dialog)
+                painter.end()
+                base.save(str(out / "ru-simple-5-finish-confirm.png"))
+                box.reject()
+
+            QtCore.QTimer.singleShot(0, grab_confirm)
+            forge.finish_review()
+            app.processEvents()
+        else:
+            forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
         forge.window.close()
     shot_train_live(out, home)
     set_language("en")

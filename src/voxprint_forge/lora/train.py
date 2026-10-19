@@ -22,7 +22,7 @@ from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
 from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
-from voxprint_forge.lora.progress_log import ProgressWriter
+from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
 from voxprint_forge.lora.project import Item, Project
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_SAMPLES,
@@ -42,8 +42,10 @@ from voxprint_forge.lora.review import (
     sample_steps_of,
     save_image,
     save_state,
+    steps_completed,
     steps_for_stage,
     summary,
+    total_steps_of,
     transition,
 )
 from voxprint_forge.mdl_app import missing_id_text
@@ -89,24 +91,13 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
     return result
 
 
-def finish_review(project: Project) -> dict[str, object]:
-    """End a paused review and keep the latest checkpoint as the training result."""
-    return _close_finished(project, load_state(project))
+def finish_review(project: Project, adapter: BaseAdapter, progress: Progress) -> dict[str, object]:
+    """Save the current LoRA, draw a final preview, and record the steps it got.
 
-
-def _close_finished(project: Project, state: dict[str, object]) -> dict[str, object]:
-    """Mark the review finished and store the latest checkpoint as the training result."""
-    if state.get("phase") != "finished":
-        state = transition(state, "finish")
-        save_state(project, state)
-    data = project.read()
-    trained = data.get("train")
-    record = dict(trained) if isinstance(trained, dict) else {}
-    record["state"] = "done"
-    if state.get("checkpoint"):
-        record["checkpoint"] = Path(str(state["checkpoint"])).name
-    project.write({**data, "train": record, "review": summary(state)})
-    return {"state": "done", "checkpoint": record.get("checkpoint"), "review": summary(state)}
+    The review stays open until the checkpoint is on disk and the preview has been
+    drawn, so a failed close does not look like a finished run.
+    """
+    return _seal_finished(project, load_state(project), adapter, progress)
 
 
 def lora_base(path: Path) -> dict[str, str]:
@@ -309,7 +300,7 @@ def train(
     if review_state is not None and not (resume and not review_continue):
         stage = steps_for_stage(review_state)
         if review_state.get("no_more_reviews") and stage < 1:
-            return _close_finished(project, review_state)
+            return _seal_finished(project, review_state, adapter, progress)
         config = replace(config, steps=max(1, stage) if stage > 0 else 0)
     rng = random.Random(config.seed)
     torch.manual_seed(config.seed)
@@ -498,9 +489,15 @@ def _train(
             review_state, clock,
         )
     done = progress.emit("train.done", "lora.progress.done", state="done", done=config.steps, total=config.steps)
-    _report(writer, stage="done", step=config.steps, total=config.steps, loss=loss_value, eta=done.eta_seconds)
+    _report(
+        writer, stage="done", step=config.steps, total=config.steps, loss=loss_value, eta=done.eta_seconds,
+        extra={"steps": config.steps, "steps_planned": config.steps},
+    )
     phases.mark(phases.phase, phases.phase)
-    return _finish(project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora, phases)
+    return _finish(
+        project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora, phases,
+        steps_planned=config.steps,
+    )
 
 
 def _review_plan(
@@ -622,12 +619,16 @@ def _complete_full(
     rel = "" if last_good is None else str(Path(last_good).relative_to(project.root))
     finished = transition({**review_state, "checkpoint": rel}, "finish")
     save_state(project, finished)
-    done = progress.emit("train.done", "lora.progress.done", state="done", done=config.steps, total=config.steps)
-    _report(writer, stage="done", step=config.steps, total=config.steps, loss=loss_value, eta=done.eta_seconds)
+    planned = total_steps_of(finished)
+    done = progress.emit("train.done", "lora.progress.done", state="done", done=planned, total=planned)
+    _report(
+        writer, stage="done", step=planned, total=planned, loss=loss_value, eta=done.eta_seconds,
+        extra={"steps": planned, "steps_planned": planned},
+    )
     phases.mark(phases.phase, phases.phase)
     return _finish(
-        project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora, phases,
-        review_summary=summary(finished),
+        project, data, adapter, config, "done", planned, last_good, loss_value, from_lora, phases,
+        review_summary=summary(finished), steps_planned=planned,
     )
 
 
@@ -698,6 +699,121 @@ class _PictureClock:
         return payload
 
 
+def _seal_finished(
+    project: Project, state: dict[str, object], adapter: BaseAdapter, progress: Progress,
+) -> dict[str, object]:
+    """Draw the final preview, then store a finished, exportable LoRA and the steps it got."""
+    phase = state.get("phase")
+    if phase != "finished" and not (phase == "review" or (phase == "training" and state.get("no_more_reviews"))):
+        transition(state, "finish")
+    checkpoint = _review_checkpoint(project, state)
+    done_steps = steps_completed(state)
+    planned = total_steps_of(state)
+    config = _stored_config(project, state)
+    _final_preview(project, adapter, config, state, checkpoint, progress)
+    if state.get("phase") != "finished":
+        state = transition(state, "finish")
+        save_state(project, state)
+    data = project.read()
+    trained = data.get("train")
+    record = dict(trained) if isinstance(trained, dict) else {}
+    record.update({
+        "base": record.get("base") or adapter.info.mdl_id,
+        "base_revision": record.get("base_revision") or adapter.info.revision,
+        "state": "done",
+        "step": done_steps,
+        "steps_planned": planned,
+        "checkpoint": checkpoint.name,
+        "config": record.get("config") if isinstance(record.get("config"), dict) else config.to_dict(),
+        "trained_on": record.get("trained_on") or datetime.now(UTC).date().isoformat(),
+    })
+    project.write({**data, "train": record, "review": summary(state)})
+    previous = read_progress(project.root) or {}
+    loss = previous.get("loss")
+    elapsed = previous.get("elapsed_seconds")
+    write_row(project.root, {
+        "step": done_steps,
+        "total": planned,
+        "steps": done_steps,
+        "steps_planned": planned,
+        "stage": "done",
+        "loss": loss if isinstance(loss, int | float) and not isinstance(loss, bool) else None,
+        "elapsed_seconds": elapsed if isinstance(elapsed, int | float) and not isinstance(elapsed, bool) else 0,
+        "eta_seconds": 0,
+    })
+    return {
+        "state": "done",
+        "step": done_steps,
+        "steps": done_steps,
+        "steps_planned": planned,
+        "checkpoint": checkpoint.name,
+        "review": summary(state),
+    }
+
+
+def _review_checkpoint(project: Project, state: dict[str, object]) -> Path:
+    """The checkpoint the open review saved. Missing files are not a finished LoRA."""
+    raw = str(state.get("checkpoint") or "")
+    if not raw:
+        raise LoraUsageError("lora.err.no_checkpoint")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = project.root / path
+    if not path.is_file():
+        alt = project.checkpoints / Path(raw).name
+        path = alt if alt.is_file() else path
+    if not path.is_file():
+        raise LoraUsageError("lora.err.no_checkpoint")
+    return path
+
+
+def _stored_config(project: Project, state: dict[str, object]) -> TrainConfig:
+    """The config the run was trained with, so the final preview matches that LoRA."""
+    data = project.read()
+    trained = data.get("train")
+    raw = trained.get("config") if isinstance(trained, dict) else None
+    if not isinstance(raw, dict) or "rank" not in raw:
+        stored = state.get("config")
+        raw = stored if isinstance(stored, dict) else {}
+    return TrainConfig.from_dict(raw)
+
+
+def _final_preview(
+    project: Project,
+    adapter: BaseAdapter,
+    config: TrainConfig,
+    state: dict[str, object],
+    checkpoint: Path,
+    progress: Progress,
+) -> None:
+    """Draw the result pictures from the saved LoRA. The name matches the checkpoint step."""
+    prompts = [str(prompt) for prompt in state.get("prompts") or [] if str(prompt).strip()]
+    if not prompts:
+        prompts = [""]
+    device = _device(adapter, config)
+    model = adapter.load(weights_dir(adapter.info.mdl_id), config, device)
+    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+    load_lora_state(layers, load_file(str(checkpoint)))
+    file_step = _checkpoint_step(checkpoint.name)
+    steps = sample_steps_of(state)
+    progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
+    model.eval()
+    for index, prompt in enumerate(prompts):
+        image = adapter.preview(model, prompt, config.seed + index, config, steps=steps)
+        if not passes_output_check(image):
+            continue
+        project.previews.mkdir(parents=True, exist_ok=True)
+        save_image(image, project.previews / f"step-{file_step:06d}-{index}.png")
+
+
+def _checkpoint_step(name: str) -> int:
+    """The step number in a ``step-NNNNNN`` checkpoint name."""
+    stem = Path(name).stem
+    if stem.startswith("step-") and stem.removeprefix("step-").isdigit():
+        return int(stem.removeprefix("step-"))
+    return 0
+
+
 def _previews(project, adapter, model, prompts, step, config, progress) -> None:
     progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
     model.eval()
@@ -712,7 +828,8 @@ def _previews(project, adapter, model, prompts, step, config, progress) -> None:
 
 
 def _finish(
-    project, data, adapter, config, state, step, checkpoint, loss, from_lora, phases=None, review_summary=None
+    project, data, adapter, config, state, step, checkpoint, loss, from_lora, phases=None, review_summary=None,
+    steps_planned: int | None = None,
 ) -> dict[str, object]:
     record = {
         "base": adapter.info.mdl_id,
@@ -724,6 +841,8 @@ def _finish(
         "trained_on": datetime.now(UTC).date().isoformat(),
         "extended": from_lora is not None,
     }
+    if steps_planned is not None:
+        record["steps_planned"] = int(steps_planned)
     payload = {**data, "train": record}
     if review_summary is not None:
         payload["review"] = review_summary

@@ -167,12 +167,15 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert not back.isVisible() and not nxt.isVisible()
     assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить обучение"
-    train_full = app.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
-    assert train_full is not None and train_full.text() == "Дообучить без проверок"
-    assert train_full.isEnabled()
+    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить"
+    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+    assert cont is not None and cont.text() == "Продолжить с подкреплением" and cont.isEnabled()
+    unattended = next(item for item in cont.menu().actions() if item.objectName() == "forge.review.unattended")
+    assert unattended.text() == "Просто продолжить"
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
+    assert note.text() == tr("forge.app.review.note")
+    assert note.text().count("\n") == 2
     counts = app.window.findChild(QtWidgets.QLabel, "forge.review.counts")
     assert counts.text() == tr("forge.app.review.counts", liked=1, disliked=1, unmarked=1)
     assert len(app.window.findChildren(QtWidgets.QLabel, "forge.review.original")) == 2
@@ -208,10 +211,21 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     saved = json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))
     verdicts = {sample["id"]: sample["verdict"] for sample in saved["samples"]}
     assert verdicts == {"r1-s00": "dislike", "r1-s01": "dislike", "r1-s02": "like"}
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").click()
+    cont.click()
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
+    assert "--unattended" not in app.runner.calls[-1]
     assert app.runner.calls[-1][-1] == str(app.project)
+
+    def accept_finish() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QMessageBox)
+        assert box.objectName() == "forge.review.finish.confirm"
+        assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, accept_finish)
     app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "finish"]
@@ -239,7 +253,9 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     app.repaint()
     qapp.processEvents()
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Round 1 of 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Finish training"
+    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Finish"
+    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+    assert cont is not None and cont.text() == "Continue with reinforcement"
     seen: list[str] = []
 
     def click() -> None:
@@ -251,7 +267,7 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
         button.click()
 
     QtCore.QTimer.singleShot(0, click)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").click()
+    cont.click()
     qapp.processEvents()
     assert seen == [tr("forge.app.review.unmarked")]
     assert app.runner.calls == []
@@ -260,7 +276,7 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     saved = json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))
     assert {sample["verdict"] for sample in saved["samples"]} == {"like"}
     assert app._status_label.text() == tr("forge.app.review.footer", liked=3, disliked=0, unmarked=0)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").click()
+    cont.click()
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
     app.window.findChild(QtWidgets.QPushButton, "forge.review.reset").click()
@@ -402,21 +418,68 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
 
 
-def test_train_fully_sends_no_more_reviews(make_app, tmp_path, qapp) -> None:
+def test_just_continue_sends_unattended(make_app, tmp_path, qapp) -> None:
     app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
-    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
-    assert button.text() == "Train fully, no more reviews"
+    button = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+    action = next(item for item in button.menu().actions() if item.objectName() == "forge.review.unattended")
+    assert action.text() == "Just continue"
     app.window.findChild(QtWidgets.QPushButton, "forge.review.like_all").click()
     qapp.processEvents()
-    button.click()
+    action.trigger()
     qapp.processEvents()
-    assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
-    assert "--no-more-reviews" in app.runner.calls[-1]
+    assert app.runner.calls[-1][:4] == ["--json", "lora", "continue", str(app.project)]
+    assert app.runner.calls[-1][-1] == "--unattended"
+
+
+def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+
+    def cancel() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QMessageBox)
+        assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, cancel)
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
+    qapp.processEvents()
+    assert app.runner.calls == []
+    assert json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))["phase"] == "review"
+
+
+def test_the_result_names_the_steps_the_lora_got(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.project.mkdir(parents=True, exist_ok=True)
+    Project(app.project).write({
+        "schema": SCHEMA,
+        "kind": "object",
+        "gate_passed": True,
+        "subject": {"name": "Test cube", "trigger": "tcube", "rights_confirmed": True, "kind": "object"},
+        "train": {
+            "state": "done",
+            "step": 450,
+            "steps_planned": 1500,
+            "checkpoint": "checkpoints/step-000001.safetensors",
+        },
+    })
+    app.draft.trained = True
+    app.layout.sections._index = STEPS.index("result")
+    app.repaint()
+    qapp.processEvents()
+    label = app.window.findChild(QtWidgets.QLabel, "forge.result.steps")
+    assert label is not None
+    assert label.text() == "Завершено на 450 из 1500 шагов"
 
 
 def test_review_rounds_live_under_details(make_app, qapp) -> None:

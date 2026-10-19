@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import pytest
 import torch
 from PIL import Image
+from safetensors import safe_open
 
 from tests.lora_fakes import TinyAdapter, gradient, make_project
+from voxprint_forge.lora import bases
 from voxprint_forge.lora.bases import BaseInfo
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.export import export
 from voxprint_forge.lora.presets import TrainConfig, build_config
 from voxprint_forge.lora.project import Item, Project
 from voxprint_forge.lora.review import (
@@ -241,8 +245,18 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     assert parsed.first_round_steps == 200
     assert parsed.first_round_samples == 6
     assert parsed.sample_steps == 28
-    continued = build_parser().parse_args(["lora", "continue", str(tmp_path), "--no-more-reviews"])
-    assert continued.no_more_reviews is True
+    continued = build_parser().parse_args(["lora", "continue", str(tmp_path), "--unattended"])
+    assert continued.unattended is True
+    reinforced = build_parser().parse_args(["lora", "continue", str(tmp_path)])
+    assert reinforced.unattended is False
+    top = next(action for action in build_parser()._actions if isinstance(action, argparse._SubParsersAction))
+    lora_parser = top.choices["lora"]
+    lora_help = " ".join(lora_parser.format_help().split())
+    assert "pause for another review" in lora_help
+    assert "final preview" in lora_help and "steps it got" in lora_help
+    commands = next(action for action in lora_parser._actions if isinstance(action, argparse._SubParsersAction))
+    continue_help = " ".join(commands.choices["continue"].format_help().split())
+    assert "--unattended" in continue_help and "no more pauses" in continue_help
     straight = build_parser().parse_args(["lora", "train", "--project", str(tmp_path)])
     assert straight.review_rounds == 3
     off = build_parser().parse_args(["lora", "train", "--project", str(tmp_path), "--review-rounds", "0"])
@@ -270,10 +284,11 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     status = _envelope(capsys.readouterr().out)["result"]
     assert status["step"] == 1
     assert status["review"]["phase"] == "review"
-    assert main(["--json", "lora", "finish", str(project.root)]) == 0
-    finished = _envelope(capsys.readouterr().out)["result"]
-    assert finished["state"] == "done"
-    assert load_state(project)["phase"] == "finished"
+    assert main(["--json", "lora", "finish", str(project.root)]) == 2
+    failed = _envelope(capsys.readouterr().out)
+    assert failed["ok"] is False
+    assert failed["error"]["code"] == "lora.err.base_missing"
+    assert load_state(project)["phase"] == "review"
 
 
 def test_step_plan_splits_the_remaining_steps_and_train_full_takes_the_rest() -> None:
@@ -341,6 +356,55 @@ def test_train_full_with_nothing_left_finishes(tmp_path: Path) -> None:
     done = train(project, _config(steps=2), DrawingAdapter(), Progress(), review_continue=True, no_more_reviews=True)
     assert done["state"] == "done"
     assert load_state(project)["phase"] == "finished"
+
+
+def test_finish_saves_the_steps_it_got_and_a_final_preview(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from voxprint_forge.cli import main
+
+    project = make_project(tmp_path, count=10)
+    train(project, _config(steps=1), DrawingAdapter(), Progress())
+    assert (project.checkpoints / "step-000001.safetensors").is_file()
+    state = transition(
+        {}, "start", rounds=3, samples_per_round=8, first_round_steps=450, first_round_samples=6,
+        sample_steps=28, total_steps=1500, prompts=["a cube"], seed=1, base="draw-test",
+        config={"steps": 1500},
+    )
+    save_state(project, transition(state, "pause", checkpoint="checkpoints/step-000001.safetensors", samples=[]))
+    before = json.loads((project.root / "train.json").read_text(encoding="utf-8"))
+    DrawingAdapter.preview_steps = []
+    bases.register(DrawingAdapter)
+    try:
+        capsys.readouterr()
+        assert main(["--json", "lora", "finish", str(project.root)]) == 0
+        finished = _envelope(capsys.readouterr().out)["result"]
+    finally:
+        bases.unregister("draw-test")
+    assert finished["state"] == "done"
+    assert finished["step"] == 450 and finished["steps"] == 450 and finished["steps_planned"] == 1500
+    assert load_state(project)["phase"] == "finished"
+    record = project.read()["train"]
+    assert record["step"] == 450 and record["steps_planned"] == 1500 and record["state"] == "done"
+    row = json.loads((project.root / "train.json").read_text(encoding="utf-8"))
+    assert row["step"] == 450 and row["total"] == 1500 and row["steps"] == 450 and row["steps_planned"] == 1500
+    assert row["stage"] == "done" and row["loss"] == before["loss"]
+    assert (project.previews / "step-000001-0.png").is_file()
+    assert DrawingAdapter.preview_steps == [28]
+    bases.register(DrawingAdapter)
+    try:
+        saved = export(project, Progress(), out=tmp_path / "final" / "lora.safetensors")
+        early = export(project, Progress(), out=tmp_path / "early" / "lora.safetensors", checkpoint=1)
+    finally:
+        bases.unregister("draw-test")
+    with safe_open(str(saved["file"]), framework="pt") as handle:
+        meta = handle.metadata()
+    with safe_open(str(early["file"]), framework="pt") as handle:
+        early_meta = handle.metadata()
+    assert meta["voxprint.lora.steps"] == "450" and meta["voxprint.lora.steps_planned"] == "1500"
+    assert early_meta["voxprint.lora.steps"] == "1" and early_meta["voxprint.lora.steps_planned"] == "1500"
+    sidecar = json.loads((Path(saved["file"]).parent / "voxprint-model.json").read_text(encoding="utf-8"))
+    early_side = json.loads((Path(early["file"]).parent / "voxprint-model.json").read_text(encoding="utf-8"))
+    assert sidecar["steps"] == 450 and sidecar["steps_planned"] == 1500
+    assert early_side["steps"] == 1 and early_side["steps_planned"] == 1500
 
 
 def test_status_prints_the_first_pictures_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -433,9 +433,10 @@ positional arguments:
     refset              Build a photo set from 1-10 references, round by
                         round.
     review              List or mark the samples of a paused review.
-    continue            Train the next stage on the original photos and the
-                        liked samples.
-    finish              Keep the latest checkpoint and end the review rounds.
+    continue            Train the next round on the liked pictures, then pause
+                        for another review.
+    finish              Save the current LoRA, draw a final preview, and
+                        record the steps it got.
     status              Read live training progress from train.json.
 
 options:
@@ -791,15 +792,15 @@ options:
 ## `forge lora continue`
 
 ```text
-usage: forge lora continue [-h] [--no-more-reviews] project
+usage: forge lora continue [-h] [--unattended] project
 
 positional arguments:
-  project            Project folder.
+  project       Project folder.
 
 options:
-  -h, --help         show this help message and exit
-  --no-more-reviews  Train every remaining preset step and finish, with no
-                     further reviews.
+  -h, --help    show this help message and exit
+  --unattended  Keep the liked pictures and train every remaining step with no
+                more pauses.
 ```
 
 ## `forge lora finish`

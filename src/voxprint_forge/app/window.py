@@ -151,9 +151,17 @@ QToolButton[selectionRemove="true"] {
 QToolButton[selectionRemove="true"]:hover { background: #2a2a35; border-color: #f5d76e; }
 QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
 QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
-QPushButton[reviewPrimary="true"] {
-    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; }
-QPushButton[reviewPrimary="true"]:disabled { background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
+QPushButton[reviewPrimary="true"], QToolButton[reviewPrimary="true"] {
+    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604;
+    padding: 4px 12px; border-radius: @@RADIUS@@px; }
+QPushButton[reviewPrimary="true"]:disabled, QToolButton[reviewPrimary="true"]:disabled {
+    background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
+QToolButton[reviewPrimary="true"]::menu-button {
+    border-left: 1px solid #c4a84a; width: 22px; background: #f5d76e; }
+QToolButton[reviewPrimary="true"]:disabled::menu-button { background: #4a4430; border-left-color: #4a4430; }
+QMenu#forgeReviewMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
+QMenu#forgeReviewMenu::item { padding: 6px 18px; background: transparent; }
+QMenu#forgeReviewMenu::item:selected { background: #3a3a46; }
 QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
     background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
@@ -1262,6 +1270,13 @@ class ForgeApp:
             self._progress_widgets(column, idle="forge.app.train.idle")
 
     def _result(self, column: QtWidgets.QVBoxLayout) -> None:
+        counted = self._finished_steps()
+        if counted is not None:
+            done, planned = counted
+            label = QtWidgets.QLabel(tr("forge.app.result.steps", done=done, planned=planned))
+            label.setObjectName("forge.result.steps")
+            label.setWordWrap(True)
+            column.addWidget(label)
         form = QtWidgets.QFormLayout()
         pick = QtWidgets.QComboBox()
         pick.setObjectName("forge.result.checkpoint")
@@ -1369,8 +1384,24 @@ class ForgeApp:
             return self.review_rounds, rounds.DEFAULT_SAMPLES
         return None
 
+    def _finished_steps(self) -> tuple[int, int] | None:
+        """Steps the saved LoRA got, and the preset total, once a run has recorded both."""
+        try:
+            data = Project(self.project).read()
+        except (OSError, ValueError, LoraUsageError):
+            return None
+        train = data.get("train")
+        if not isinstance(train, dict):
+            return None
+        done, planned = train.get("step"), train.get("steps_planned")
+        if isinstance(done, bool) or isinstance(planned, bool):
+            return None
+        if not isinstance(done, int) or not isinstance(planned, int) or planned < 1:
+            return None
+        return done, planned
+
     def _review_screen(self, column: QtWidgets.QVBoxLayout) -> None:
-        """Original photos, generated samples, and continue, train fully, or finish."""
+        """Original photos, generated samples, and continue with reinforcement, just continue, or finish."""
         state = self._review_state()
         counted = rounds.counts(state)
         busy = self.runner.busy  # type: ignore[attr-defined]
@@ -1423,18 +1454,11 @@ class ForgeApp:
         tools.addStretch(1)
         column.addLayout(tools)
         row = QtWidgets.QHBoxLayout()
-        cont = _button("forge.app.review.continue", "forge.app.review.continue.tip", self.continue_review)
-        cont.setObjectName("forge.review.continue")
-        cont.setProperty("reviewPrimary", "true")
-        cont.setEnabled(not busy and rounds.can_continue(state))
-        full = _button("forge.app.review.train_full", "forge.app.review.train_full.tip", self.train_full)
-        full.setObjectName("forge.review.train_full")
-        full.setEnabled(not busy)
+        cont = self._continue_split(busy)
         finish = _button("forge.app.review.finish", "forge.app.review.finish.tip", self.finish_review)
         finish.setObjectName("forge.review.finish")
         finish.setEnabled(not busy)
         row.addWidget(cont)
-        row.addWidget(full)
         row.addWidget(finish)
         row.addStretch(1)
         column.addLayout(row)
@@ -1444,6 +1468,29 @@ class ForgeApp:
         note.setWordWrap(True)
         column.addWidget(note)
         self._review_continue = cont
+
+    def _continue_split(self, busy: bool) -> QtWidgets.QToolButton:
+        """Primary split button: the next review, or every remaining step with no more pauses."""
+        button = QtWidgets.QToolButton()
+        button.setObjectName("forge.review.continue")
+        button.setText(tr("forge.app.review.continue"))
+        button.setToolTip(tr("forge.app.review.continue.tip"))
+        button.setProperty("reviewPrimary", "true")
+        button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        button.setAutoRaise(False)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        button.setEnabled(not busy)
+        button.setMinimumWidth(button.fontMetrics().horizontalAdvance(button.text()) + 48)
+        menu = QtWidgets.QMenu(button)
+        menu.setObjectName("forgeReviewMenu")
+        action = menu.addAction(tr("forge.app.review.unattended"))
+        action.setObjectName("forge.review.unattended")
+        action.setToolTip(tr("forge.app.review.unattended.tip"))
+        action.triggered.connect(self.continue_unattended)
+        button.setMenu(menu)
+        button.clicked.connect(self.continue_review)
+        return button
 
     def _review_originals(self) -> list[Path]:
         """The user's prepared photos, or the photos still on the draft."""
@@ -1603,7 +1650,8 @@ class ForgeApp:
             ))
             button = getattr(self, "_review_continue", None)
             if button is not None:
-                button.setEnabled(rounds.can_continue(self._review_state()) and not self.runner.busy)  # type: ignore[attr-defined]
+                # The menu stays available when no further round is planned. The main click checks that itself.
+                button.setEnabled(not self.runner.busy)  # type: ignore[attr-defined]
             self._paint_review_footer(counted)
         except RuntimeError:
             pass
@@ -1662,8 +1710,10 @@ class ForgeApp:
         return box.clickedButton() is go
 
     def continue_review(self) -> None:
-        """``lora continue``: the next stage on the original photos and the liked samples."""
+        """``lora continue``: the next round on the liked pictures, then another review."""
         if not self._needs("continue"):
+            return
+        if not rounds.can_continue(self._review_state()):
             return
         if rounds.counts(self._review_state())["unmarked"] > 0 and not self._confirm_unmarked():
             return
@@ -1681,12 +1731,12 @@ class ForgeApp:
 
         self._run(["--json", "lora", "continue", str(self.project)], done)
 
-    def train_full(self) -> None:
-        """``lora continue --no-more-reviews``: the remaining preset steps, then finish."""
+    def continue_unattended(self) -> None:
+        """``lora continue --unattended``: the remaining steps, with no more pauses."""
         if not self._needs("continue"):
             return
         if rounds.counts(self._review_state())["unmarked"] > 0 and not self._confirm_unmarked(
-            "forge.app.review.train_full",
+            "forge.app.review.unattended",
         ):
             return
 
@@ -1701,11 +1751,13 @@ class ForgeApp:
                 self.draft.trained = False
                 self.paused = False
 
-        self._run(["--json", "lora", "continue", str(self.project), "--no-more-reviews"], done)
+        self._run(["--json", "lora", "continue", str(self.project), "--unattended"], done)
 
     def finish_review(self) -> None:
-        """``lora finish``: keep the latest checkpoint and end the review rounds."""
+        """``lora finish``: confirm the steps, then save the LoRA and draw a final preview."""
         if not self._needs("finish"):
+            return
+        if not self._confirm_finish():
             return
 
         def done(outcome: engine.Outcome) -> None:
@@ -1715,6 +1767,25 @@ class ForgeApp:
                 self.paused = False
 
         self._run(["--json", "lora", "finish", str(self.project)], done)
+
+    def _confirm_finish(self) -> bool:
+        """Ask before ending the run, and show the steps done out of the plan."""
+        state = self._review_state()
+        box = QtWidgets.QMessageBox(self.window)
+        box.setObjectName("forge.review.finish.confirm")
+        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box.setWindowTitle(tr("forge.app.review.finish"))
+        box.setText(tr(
+            "forge.app.review.finish.confirm",
+            done=rounds.steps_completed(state), planned=rounds.total_steps_of(state),
+        ))
+        go = box.addButton(tr("forge.app.review.finish"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(
+            tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
 
     def _restore_review(self, subject: dict[str, object]) -> None:
         """Put a restarted review back on the training step, with consent and captions restored."""

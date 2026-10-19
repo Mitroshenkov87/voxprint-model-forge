@@ -158,11 +158,11 @@ voxprint-forge-cli lora train --project DIR --review-rounds 3 \
 ```
 
 - `--review-rounds` is how many review pauses (1–6, default 3). `--review-rounds 0` trains straight through, including a resume of a run that never paused for review.
-- `--first-round-steps` is the first stage (100–500, default 200). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what train-fully runs.
+- `--first-round-steps` is the first stage (100–500, default 200). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what `lora continue --unattended` runs.
 - `--first-round-samples` (default 6) and `--samples-per-round` (default 8) are the pictures at the first review and at later reviews. Both are drawn at the training resolution. `--sample-steps` (default 28) is passed to the preview pipeline as `num_inference_steps`. Test pictures during a stage keep the pipeline default.
-- `lora continue PROJECT` trains the next planned round on the original photos and the liked samples.
-- `lora continue PROJECT --no-more-reviews` keeps the current liked set, uses disliked samples as negatives where the base supports them, trains every remaining preset step in one stage, and finishes. It is allowed on the last review; with nothing left it finishes without another stage.
-- `lora finish PROJECT` saves the current LoRA now.
+- `lora continue PROJECT` trains the next planned round on the original photos and the liked samples, then pauses for another review.
+- `lora continue PROJECT --unattended` keeps the current liked set, uses disliked samples as negatives where the base supports them, and trains every remaining preset step with no more pauses. It is allowed on the last review; with nothing left it saves the LoRA and draws a final preview.
+- `lora finish PROJECT` saves the current LoRA, draws a final preview, and records the steps it got. `train.json` and the export store `steps` and `steps_planned`.
 - `lora status PROJECT` prints `train.json`. During round 1 the result includes `first_pictures` (steps left times measured seconds per step, plus samples times measured seconds per sample; until a sample is timed, one denoising step counts as half a training step).
 
 The rest of the trainer is in `docs/LORA.md`.

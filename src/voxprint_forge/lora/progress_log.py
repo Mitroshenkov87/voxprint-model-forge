@@ -140,6 +140,13 @@ def first_pictures_text(row: dict[str, object], lang: str | None = None) -> str 
     return text("lora.status.first_pictures", lang, eta=eta)
 
 
+def write_row(root: Path, row: dict[str, object]) -> None:
+    """Replace ``train.json`` with ``row``. Used when a run is sealed, not on a live tick."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    _atomic_fsync(root / TRAIN_FILE, json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def read_progress(root: Path) -> dict[str, object] | None:
     """The latest ``train.json``, or ``None`` when training has not reported yet."""
     path = Path(root) / TRAIN_FILE

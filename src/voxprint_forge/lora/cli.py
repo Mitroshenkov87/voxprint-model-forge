@@ -230,13 +230,17 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
     review.add_argument("--like", action="append", default=[], metavar="ID", help="Mark this sample as liked.")
     review.add_argument("--dislike", action="append", default=[], metavar="ID", help="Mark this sample as disliked.")
     review.add_argument("--from-file", type=Path, default=None, help="Verdicts from a text or JSON file.")
-    cont = lora_sub.add_parser("continue", help="Train the next stage on the original photos and the liked samples.")
+    cont = lora_sub.add_parser(
+        "continue", help="Train the next round on the liked pictures, then pause for another review.",
+    )
     cont.add_argument("project", type=Path, help="Project folder.")
     cont.add_argument(
-        "--no-more-reviews", action="store_true",
-        help="Train every remaining preset step and finish, with no further reviews.",
+        "--unattended", action="store_true",
+        help="Keep the liked pictures and train every remaining step with no more pauses.",
     )
-    finish = lora_sub.add_parser("finish", help="Keep the latest checkpoint and end the review rounds.")
+    finish = lora_sub.add_parser(
+        "finish", help="Save the current LoRA, draw a final preview, and record the steps it got.",
+    )
     finish.add_argument("project", type=Path, help="Project folder.")
     status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
     status.add_argument("project", type=Path, help="Project folder.")
@@ -485,17 +489,22 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
             stop=stop,
             preview_prompts=prompts,
             review_continue=True,
-            no_more_reviews=bool(getattr(args, "no_more_reviews", False)),
+            no_more_reviews=bool(getattr(args, "unattended", False)),
         )
     finally:
         signal.signal(signal.SIGINT, previous)
 
 
 def _finish_review(args: argparse.Namespace) -> dict[str, object]:
-    """Stop the rounds and keep the latest checkpoint."""
+    """Save the current LoRA, draw a final preview, and record the steps it got."""
+    from voxprint_forge.lora.bases import get_adapter
+    from voxprint_forge.lora.review import load_state
     from voxprint_forge.lora.train import finish_review
 
-    return finish_review(Project(args.project))
+    project = Project(args.project)
+    state = load_state(project)
+    adapter = get_adapter(str(state.get("base") or ""))
+    return finish_review(project, adapter, Progress(printer(args.json)))
 
 
 def _status(args: argparse.Namespace) -> dict[str, object]:
