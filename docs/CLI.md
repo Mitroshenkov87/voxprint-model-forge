@@ -46,7 +46,7 @@ Model downloads through MDL honour `VOXPRINT_MDL_ROUTE=direct|system|auto` (defa
 
 ## Commands
 
-`forge --version` prints `X.Y.Z build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. `VOXPRINT_BUILD` replaces that sum. With neither value, and no recorded build, the line says `dev` instead of a number. The raw run number is not the build when `offset` is not zero. The first codename is Charash.
+`forge --version` prints `X.Y.Z build N "Charash"`. `N` is `GITHUB_RUN_NUMBER` plus the `offset` in `BUILD.json`. `VOXPRINT_BUILD` replaces that sum. With neither value, and no recorded build, the line says `dev` instead of a number. The raw run number is not the build when `offset` is not zero. The first codename is Charash. The Windows pack writes that number and `rc` into the wheel as `build_info.json` and into the installed `BUILD.json`. An installed `voxprint-forge-cli --version` prints the recorded build when those variables are unset.
 
 `forge plan-summary` prints the plan, the per-model minute estimates, and the required path including the llama.cpp build. It does not import the ablation stack. Bootstrap prints the same text with `PYTHONPATH=src` before torch is installed.
 

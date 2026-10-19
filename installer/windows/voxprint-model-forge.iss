@@ -8,6 +8,15 @@
 ; interactive setup offers to install the pinned official MSI; otherwise Windows PowerShell 5.1 runs them.
 ; The PDF user guide (en, ru) is installed into {app}\docs. Guides open from the app's Help menu.
 ; No model files are inside the setup; models are downloaded by the app on first launch.
+;
+; Wheels are installed to {app}\wheels.new and promoted into {app}\wheels only after
+; every file has been copied (CurStepChanged ssPostInstall). A failed install rolls
+; wheels.new back and leaves the previous wheels in place.
+;
+; CloseApplications=force uses Restart Manager during an interactive install.
+; A silent install does not close the app. If the launcher or the app Python is
+; still running, InitializeSetup and PrepareToInstall exit 20 before any file is
+; deleted or copied. Exit 20 is not an Inno Setup code (those are 0 through 8).
 
 #define MyAppName "VOXPrint AI Model Forge"
 #define MySuiteName "VOXPrint AI Suite"
@@ -51,6 +60,10 @@ SetupIconFile=..\..\assets\{#MyIcon}
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\assets\{#MyIcon}
 AppVerName={#MyAppName} {#AppVersion}
+; Interactive setup: Restart Manager closes the app. The script still asks first.
+; Silent setup: do not close it; exit 20 while it is running (see [Code]).
+CloseApplications=force
+CloseApplicationsFilter=voxprint-model-forge.exe,voxprint-forge-cli.exe,python.exe,pythonw.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -77,12 +90,16 @@ english.PrefetchPrompt=Download the required models after setup (large download)
 russian.PrefetchPrompt=Скачать нужные модели после установки (большой объём)
 english.PrefetchOption=Download the required models after setup (large download)
 russian.PrefetchOption=Скачать нужные модели после установки (большой объём)
+english.AppBusy=Close VOXPrint Model Forge
+russian.AppBusy=Закройте VOXPrint Model Forge
 
 [Tasks]
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Not the live wheels folder. Promoted in ssPostInstall, after the copy succeeds.
+Source: "wheels-incoming\*"; DestDir: "{app}\wheels.new"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "voxprint-model-forge.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\assets\{#MyIcon}"; DestDir: "{app}\assets"; Flags: ignoreversion
 ; Extracted to {tmp} by PrepareToInstall only; not installed.
@@ -93,8 +110,6 @@ Source: "migrate-home.ps1"; Flags: dontcopy
 Type: files; Name: "{group}\Uninstall {#MyAppName}.lnk"
 Type: files; Name: "{group}\Model Forge guide (EN).lnk"
 Type: files; Name: "{group}\Руководство Model Forge (RU).lnk"
-; Wheels from an older setup. User data and models stay outside {app}.
-Type: files; Name: "{app}\wheels\*.whl"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\voxprint-model-forge.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\{#MyIcon}"; AppUserModelID: "{#MyAppId}"
@@ -106,6 +121,7 @@ Type: filesandordirs; Name: "{app}\venv-mivolo"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\setup-work"
 Type: filesandordirs; Name: "{app}\wheels"
+Type: filesandordirs; Name: "{app}\wheels.new"
 Type: dirifempty; Name: "{app}"
 ; Shared with the other suite apps: removed only when empty.
 Type: dirifempty; Name: "{autopf}\{#MySuiteName}"
@@ -120,6 +136,8 @@ const
   PwshMsiUrl = 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.7/PowerShell-7.6.7-win-x64.msi';
   PwshMsiName = 'PowerShell-7.6.7-win-x64.msi';
   PwshMsiSha256 = 'ec575cef9ec56fcd905de0d5eeac9cb7f81a0a65abb87bb5cd0e87fdfe2b8cc0';
+  // Silent setup exit when the app is running. Outside Inno Setup's 0..8.
+  AppBusyExitCode = 20;
 
 var
   DownloadPage: TDownloadWizardPage;
@@ -209,6 +227,105 @@ begin
     MsgBox(CustomMessage('PwshDeclined'), mbInformation, MB_OK);
 end;
 
+// Exclusive open fails when the process image is mapped or another process holds the file
+// (DeleteFile then returns code 5). A missing file is not in use.
+function FileIsLocked(const FileName: String): Boolean;
+var
+  Stream: TFileStream;
+begin
+  Result := False;
+  if not FileExists(FileName) then
+    Exit;
+  try
+    Stream := TFileStream.Create(FileName, fmOpenRead or fmShareExclusive);
+    Stream.Free;
+  except
+    Result := True;
+  end;
+end;
+
+function NoteLocked(const FileName: String): Boolean;
+begin
+  Result := FileIsLocked(FileName);
+  if Result then
+    Log('in use: ' + FileName);
+end;
+
+// {app} is not initialized in InitializeSetup. The directory page is disabled and
+// UsePreviousAppDir is no, so the install directory is this fixed path.
+function InstallDir: String;
+begin
+  Result := ExpandConstant('{autopf}\{#MySuiteName}\Model Forge');
+end;
+
+function AppFilesBusy: Boolean;
+var
+  Root: String;
+  Launcher, Gui, Cli, Py, Pyw: Boolean;
+begin
+  Root := InstallDir;
+  Launcher := NoteLocked(Root + '\voxprint-model-forge.exe');
+  Gui := NoteLocked(Root + '\venv\Scripts\voxprint-model-forge.exe');
+  Cli := NoteLocked(Root + '\venv\Scripts\voxprint-forge-cli.exe');
+  Py := NoteLocked(Root + '\venv\Scripts\python.exe');
+  Pyw := NoteLocked(Root + '\venv\Scripts\pythonw.exe');
+  Result := Launcher or Gui or Cli or Py or Pyw;
+end;
+
+// WizardSilent follows /SILENT and /VERYSILENT. The command line is checked as well,
+// so a silent run cannot stop on the close prompt.
+function SilentInstall: Boolean;
+var
+  Index: Integer;
+  Param: String;
+begin
+  Result := WizardSilent;
+  if Result then
+    Exit;
+  for Index := 1 to ParamCount do
+  begin
+    Param := Uppercase(ParamStr(Index));
+    if (Param = '/SILENT') or (Param = '/VERYSILENT') then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+// Silent: exit 20 before InstallDelete and before any copy. Interactive: the prompt
+// is the English (or Russian) 'Close VOXPrint Model Forge' line; Retry after the app
+// is closed continues, Cancel aborts with nothing deleted.
+function RefuseIfAppBusy: String;
+begin
+  Result := '';
+  if not AppFilesBusy then
+    Exit;
+  if SilentInstall then
+  begin
+    Log('silent setup: VOXPrint AI Model Forge is running; exit ' + IntToStr(AppBusyExitCode) + ' before any file change');
+    ExitProcess(AppBusyExitCode);
+  end;
+  while AppFilesBusy do
+  begin
+    if MsgBox(CustomMessage('AppBusy'), mbConfirmation, MB_RETRYCANCEL) <> IDRETRY then
+    begin
+      Result := CustomMessage('AppBusy');
+      Exit;
+    end;
+  end;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := True;
+  if SilentInstall and AppFilesBusy then
+  begin
+    Log('silent setup: VOXPrint AI Model Forge is running; exit ' + IntToStr(AppBusyExitCode) + ' before any file change');
+    ExitProcess(AppBusyExitCode);
+  end;
+end;
+
 // One-time move of %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite (voxprint-common 0.2.5).
 // It runs before any file is copied and before install.ps1 starts Python, as the signed-in user
 // (whose LOCALAPPDATA it is). See migrate-home.ps1 for the rules; exit 10 (both folders exist) is
@@ -218,7 +335,9 @@ var
   ResultCode: Integer;
   Script: String;
 begin
-  Result := '';
+  Result := RefuseIfAppBusy;
+  if Result <> '' then
+    Exit;
   ExtractTemporaryFile('migrate-home.ps1');
   Script := ExpandConstant('{tmp}\migrate-home.ps1');
   if not ExecAsOriginalUser(
@@ -240,12 +359,85 @@ begin
   end;
 end;
 
+// Copy the new wheels over the live folder, then delete wheels the new setup did not ship.
+// Called only from ssPostInstall, which runs after the file copy has succeeded.
+function PromoteWheels: Boolean;
+var
+  Incoming, Live: String;
+  Rec: TFindRec;
+  Found: Boolean;
+begin
+  Result := False;
+  Incoming := ExpandConstant('{app}\wheels.new');
+  Live := ExpandConstant('{app}\wheels');
+  if not DirExists(Incoming) then
+  begin
+    Log('wheels.new is missing; the previous wheels were not removed');
+    Exit;
+  end;
+  if not DirExists(Live) then
+    if not CreateDir(Live) then
+    begin
+      Log('could not create ' + Live);
+      Exit;
+    end;
+  Found := FindFirst(Incoming + '\*.whl', Rec);
+  if not Found then
+  begin
+    Log('no wheels in ' + Incoming);
+    Exit;
+  end;
+  Result := True;
+  try
+    while Found and Result do
+    begin
+      if not FileCopy(Incoming + '\' + Rec.Name, Live + '\' + Rec.Name, False) then
+      begin
+        Log('wheel copy failed: ' + Rec.Name);
+        Result := False;
+      end;
+      Found := FindNext(Rec);
+    end;
+  finally
+    FindClose(Rec);
+  end;
+  if not Result then
+    Exit;
+  Found := FindFirst(Live + '\*.whl', Rec);
+  if not Found then
+  begin
+    DelTree(Incoming, True, True, True);
+    Exit;
+  end;
+  try
+    while Found and Result do
+    begin
+      if not FileExists(Incoming + '\' + Rec.Name) then
+        if not DeleteFile(Live + '\' + Rec.Name) then
+        begin
+          Log('could not remove stale wheel: ' + Rec.Name);
+          Result := False;
+        end;
+      Found := FindNext(Rec);
+    end;
+  finally
+    FindClose(Rec);
+  end;
+  if Result then
+    DelTree(Incoming, True, True, True);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then
     Exit;
+  if not PromoteWheels then
+  begin
+    SuppressibleMsgBox('The new wheels could not be installed. The previous wheels were left in place.', mbError, MB_OK, IDOK);
+    ExitProcess(1);
+  end;
   if not Exec(
     ScriptHost,
     ScriptArgs(ExpandConstant('{app}\install.ps1')),
