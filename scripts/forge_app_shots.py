@@ -28,7 +28,8 @@ MANUAL = {
 # Model Forge rows in the downloader picture: (id, display name, size in bytes, received share, state).
 MDL_ROWS = (
     ("z-image", "Z-Image", 20_540_000_000, 1.0, "ready"),
-    ("qwen3-vl-4b-instruct", "Qwen3-VL-4B-Instruct", 8_890_000_000, 1.0, "ready"),
+    ("huihui-qwen3-vl-4b-instruct-abliterated", "Huihui Qwen3-VL-4B Instruct (abliterated)", 8_891_670_863, 1.0,
+     "ready"),
     ("mivolo-v2", "MiVOLO v2", 120_000_000, 1.0, "ready"),
     ("yunet-2023mar", "YuNet (2023mar)", 400_000, 1.0, "ready"),
     ("florence2-large", "Florence-2-large", 1_560_000_000, 0.62, "downloading"),

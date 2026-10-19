@@ -449,7 +449,7 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--mode {simple,expert}]
                           [--allow-count-outside-range]
                           [--crop {subject,whole}] [--captions CAPTIONS]
-                          [--caption-model {qwen3-vl-4b-instruct,florence2-large}]
+                          [--caption-model {huihui-qwen3-vl-4b-instruct-abliterated,florence2-large}]
                           [--min-side MIN_SIDE]
                           [--blur-threshold BLUR_THRESHOLD]
                           [--dup-threshold DUP_THRESHOLD]
@@ -487,7 +487,7 @@ options:
   --crop {subject,whole}
                         How photos are cropped.
   --captions CAPTIONS   JSONL caption overrides: id, long, short.
-  --caption-model {qwen3-vl-4b-instruct,florence2-large}
+  --caption-model {huihui-qwen3-vl-4b-instruct-abliterated,florence2-large}
                         Captioner.
   --min-side MIN_SIDE   Smallest short side in pixels (Expert).
   --blur-threshold BLUR_THRESHOLD

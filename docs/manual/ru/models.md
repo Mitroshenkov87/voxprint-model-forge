@@ -7,7 +7,7 @@
 | Модель | Что делает | Источник | Лицензия | Размер |
 | --- | --- | --- | --- | --- |
 | Z-Image (base) | Модель для картинок, на которой обучается LoRA | Tongyi-MAI/Z-Image | Apache-2.0 | 20,5 ГБ |
-| Qwen3-VL-4B-Instruct | Пишет описания фото; нужна для подготовки фото | Qwen/Qwen3-VL-4B-Instruct | Apache-2.0 | 8,9 ГБ |
+| Huihui Qwen3-VL-4B Instruct (abliterated) | Пишет описания фото; нужна для подготовки фото | huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated | Apache-2.0 | 8,9 ГБ |
 | MiVOLO v2 | Нужна для подготовки фото | iitolstykh/mivolo_v2 | Apache-2.0 | 0,1 ГБ |
 | YuNet (2023mar) | Находит лица; нужна для подготовки фото | opencv/opencv_zoo | MIT | меньше 1 МБ |
 | Florence-2-large | Запасная модель для описаний | microsoft/Florence-2-large | MIT | 1,6 ГБ |

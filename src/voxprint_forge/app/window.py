@@ -37,6 +37,7 @@ from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_va
 from voxprint_forge.app.text import tr
 from voxprint_forge.lora import refset
 from voxprint_forge.lora.attr import HIGH, LOW, accepted
+from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
 from voxprint_forge.lora.limits import expert_range_differs
 
 APP_ID = "model-forge"
@@ -1237,7 +1238,7 @@ class ForgeApp:
             return
         args = engine.prepare_args(self.draft, self.project)
         if self.draft.expert:
-            args += ["--caption-model", str(self.expert_values().get("lora.caption_model", "qwen3-vl-4b-instruct"))]
+            args += ["--caption-model", str(self.expert_values().get("lora.caption_model", CAPTION_DEFAULT))]
 
         def done(outcome: engine.Outcome) -> None:
             if outcome.ok:

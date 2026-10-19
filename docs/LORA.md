@@ -60,11 +60,11 @@ Simple mode (default) takes 10 to 30 photos. Expert mode (`--mode expert` or `--
 
 ## Safety check (always on)
 
-Every photo of every kind goes through the safety check (`voxprint_forge.lora.gate`, settings in [Gate config](spec/gate-config.md)). A person set needs `--consent-obtained` and `--subject-adult`. A photo that does not pass is set aside as `lora.drop.safety`; some cases block the project (`lora.err.blocked`). If a check model is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
+Every photo of every kind goes through the safety check (`voxprint_forge.lora.gate`, settings in [Gate config](spec/gate-config.md)). A person set needs `--consent-obtained` and `--subject-adult`. A photo that does not pass is set aside as `lora.drop.safety`; some cases block the project (`lora.err.blocked`). If a check model is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `huihui-qwen3-vl-4b-instruct-abliterated`, `mivolo-v2`, `yunet-2023mar`.
 
 ## Captions
 
-Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
+Huihui Qwen3-VL-4B Instruct (abliterated) (`huihui-qwen3-vl-4b-instruct-abliterated`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
 
 ## Bases
 

@@ -1,4 +1,4 @@
-"""Captioners: Qwen3-VL-4B-Instruct (default) and Florence-2-large (fallback), via MDL.
+"""Captioners: Huihui Qwen3-VL-4B Instruct (abliterated) (default) and Florence-2-large (fallback), via MDL.
 
 The captioner is loaded, captions every photo, and is unloaded before training;
 it never stays in memory next to the base model.
@@ -10,9 +10,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-DEFAULT = "qwen3-vl-4b-instruct"
+DEFAULT = "huihui-qwen3-vl-4b-instruct-abliterated"
 FALLBACK = "florence2-large"
 LICENCES = {DEFAULT: "Apache-2.0", FALLBACK: "MIT"}
+# credits: huihui-ai, Qwen; base_model: Qwen/Qwen3-VL-4B-Instruct
 LONG = "Describe this photo for training an image model in two or three plain sentences. Do not guess names."
 SHORT = "Describe this photo in one short phrase."
 
@@ -32,7 +33,7 @@ class Captioner(Protocol):
 
 
 class QwenCaptioner:
-    """Qwen3-VL-4B-Instruct (Apache-2.0)."""
+    """Huihui Qwen3-VL-4B Instruct (abliterated) (Apache-2.0)."""
 
     name = DEFAULT
 
