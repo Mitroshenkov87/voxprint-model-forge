@@ -1,5 +1,5 @@
 {
-  "schema": "voxprint-app-models/1",
+  "schema": "voxprint-forge-models/1",
   "app": "model-forge",
   "required": [
     "z-image",

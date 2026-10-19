@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
+from voxprint_forge.model_views import ensure_view
 
 JUDGE_ID = "qwen3-vl-4b-instruct"
 # Folder names installed before the #47 rename. Same weights; the new name wins when both exist.
@@ -52,11 +53,13 @@ def model_dir(mdl_id: str) -> Path:
     """``<models dir>/model-forge/<mdl_id>``."""
     from voxprint_common.paths import models_dir
 
+    ensure_view(mdl_id)
     return models_dir() / "model-forge" / mdl_id
 
 
 def installed_dir(mdl_id: str) -> Path | None:
     """The installed folder for ``mdl_id``: the current name first, then any legacy name; ``None`` if neither."""
+    ensure_view(mdl_id)
     for name in (mdl_id, *LEGACY_IDS.get(mdl_id, ())):
         folder = model_dir(name)
         if folder.is_dir():

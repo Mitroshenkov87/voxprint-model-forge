@@ -1,4 +1,4 @@
-"""Model Forge's required and optional models (``voxprint-app-models/1``).
+"""Model Forge's required and optional models (``voxprint-forge-models/1``).
 
 The list lives in ``manifests/model-forge.models.json``; the wheel carries the
 same bytes as ``voxprint_forge/data/app-models.json``. Each model is pinned to a
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from voxprint_forge.errors import StageError
 
-SCHEMA = "voxprint-app-models/1"
+SCHEMA = "voxprint-forge-models/1"
 PERMISSIVE = frozenset({"apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "cc-by-4.0", "cc0-1.0"})
 
 

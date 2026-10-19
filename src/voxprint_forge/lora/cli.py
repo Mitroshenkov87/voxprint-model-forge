@@ -13,13 +13,14 @@ from voxprint_forge.lora import bases
 from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
 from voxprint_forge.lora.captioner import FALLBACK as CAPTION_FALLBACK
 from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_subject
-from voxprint_forge.lora.errors import LoraUsageError
+from voxprint_forge.lora.errors import LoraBlocked, LoraUsageError
 from voxprint_forge.lora.events import Event, Progress, json_line, sentence
 from voxprint_forge.lora.i18n import current_lang
 from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.mdl_app import fetch, missing_ids
 
 _REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
 _EXPERT = "{}-{}".format(*EXPERT_RANGE)
@@ -68,11 +69,13 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
                         help=f"Turbo steps, {refset.STEPS_RANGE[0]}-{refset.STEPS_RANGE[1]}. "
                         f"Default: {refset.DEFAULT_STEPS}.")
     round_.add_argument("--seed", type=int, default=None, help="First seed of the round. Default: 1000 x round.")
+    _fetch_flags(round_)
     finish = steps.add_parser("finish", help="Copy the references and kept candidates into refset/approved.")
     finish.add_argument("--project", type=Path, required=True, help="Project folder.")
     finish.add_argument("--mode", choices=("simple", "expert"), default="simple",
                         help=f"Set size: {_REC}, or {_EXPERT} in Expert.")
     finish.add_argument("--base", default=bases.DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
+    _fetch_flags(finish)
 
 
 def _subject_flags(command: argparse.ArgumentParser) -> None:
@@ -102,6 +105,37 @@ def _subject_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--provenance-note", default="", help="Optional note on where the photos come from.")
 
 
+def _fetch_flags(command: argparse.ArgumentParser) -> None:
+    group = command.add_mutually_exclusive_group()
+    group.add_argument("--fetch-missing", action="store_true", help="Fetch missing model ids before this command.")
+    group.add_argument("--no-fetch", action="store_true", help="Do not fetch model ids.")
+
+
+def _wants_fetch(args: argparse.Namespace) -> bool:
+    """``--fetch-missing`` when set, else ``--no-fetch`` off, else a TTY stdin."""
+    if args.fetch_missing:
+        return True
+    if args.no_fetch:
+        return False
+    return sys.stdin.isatty()
+
+
+def _fetch_missing() -> None:
+    """Run ``models fetch --required`` when required ids are absent."""
+    missing = missing_ids()
+    if not missing:
+        return
+    text = ", ".join(missing)
+    print(text, file=sys.stderr)
+    print("voxprint-forge-cli models fetch --required", file=sys.stderr)
+    result = fetch(missing, gui=False)
+    if not result.get("ok"):
+        still = ", ".join(missing_ids() or missing)
+        if not still:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=still)
+
+
 def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--project", type=Path, required=True, help="Project folder.")
     command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG or WebP photos.")
@@ -122,6 +156,7 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--min-side", type=int, default=MIN_SIDE, help="Smallest short side in pixels (Expert).")
     command.add_argument("--blur-threshold", type=float, default=BLUR_THRESHOLD, help="Blur limit (Expert).")
     command.add_argument("--dup-threshold", type=int, default=DUP_THRESHOLD, help="Duplicate limit (Expert).")
+    _fetch_flags(command)
 
 
 def _training_flags(command: argparse.ArgumentParser) -> None:
@@ -157,6 +192,7 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--preview-prompts", type=Path, default=None, help="Text file, one test prompt per line.")
     command.add_argument("--resume", action="store_true", help="Continue a paused run from its last version.")
     command.add_argument("--dry-run", action="store_true", help="Print the plan and time estimate; train nothing.")
+    _fetch_flags(command)
 
 
 _CONFIG_FLAGS = (
@@ -200,6 +236,8 @@ def printer(json_mode: bool, lang: str | None = None):
 def _train(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.train import estimate, lora_base, train
 
+    if not args.dry_run and _wants_fetch(args):
+        _fetch_missing()
     project = Project(args.project)
     data = project.read()
     if args.captions is not None:
@@ -310,6 +348,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     else:
         subject = subject_from(args)
     files = collect(args.photos, args.photo, args.exclude)
+    if _wants_fetch(args):
+        _fetch_missing()
     mode = "expert" if args.allow_count_outside_range else args.mode
     result = prepare(
         project,
@@ -336,6 +376,8 @@ def _refset(args: argparse.Namespace) -> dict[str, object]:
 
     project = Project(args.project)
     progress = Progress(printer(args.json))
+    if _wants_fetch(args):
+        _fetch_missing()
     if args.refset_command == "finish":
         return refset.finish(project, progress, mode=args.mode, base=args.base)
     settings = refset.check_settings(args.candidates, args.strength, args.steps, args.seed)

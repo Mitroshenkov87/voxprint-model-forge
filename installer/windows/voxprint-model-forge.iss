@@ -69,6 +69,14 @@ english.PwshDeclined=Setup continues with Windows PowerShell 5.1. We recommend i
 russian.PwshDeclined=Установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 english.PwshFailed=PowerShell 7 could not be installed, so setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 russian.PwshFailed=Не удалось установить PowerShell 7, поэтому установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
+english.PrefetchCaption=Download models now
+russian.PrefetchCaption=Скачать модели сейчас
+english.PrefetchDescription=Download the required models after setup (large download)
+russian.PrefetchDescription=Скачать нужные модели после установки (большой объём)
+english.PrefetchPrompt=Download the required models after setup (large download)
+russian.PrefetchPrompt=Скачать нужные модели после установки (большой объём)
+english.PrefetchOption=Download the required models after setup (large download)
+russian.PrefetchOption=Скачать нужные модели после установки (большой объём)
 
 [Tasks]
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -112,6 +120,7 @@ const
 
 var
   DownloadPage: TDownloadWizardPage;
+  PrefetchPage: TInputOptionWizardPage;
   PwshExe: String;
 
 function FindPwsh: String;
@@ -170,6 +179,13 @@ end;
 procedure InitializeWizard;
 begin
   DownloadPage := CreateDownloadPage(CustomMessage('PwshCaption'), CustomMessage('PwshDescription'), nil);
+  PrefetchPage := CreateInputOptionPage(wpSelectTasks,
+    CustomMessage('PrefetchCaption'),
+    CustomMessage('PrefetchDescription'),
+    CustomMessage('PrefetchPrompt'),
+    False, False);
+  PrefetchPage.Add(CustomMessage('PrefetchOption'));
+  PrefetchPage.Values[0] := False;
 end;
 
 // Interactive only: offer PowerShell 7 when it is missing. A silent setup never prompts.
@@ -236,5 +252,14 @@ begin
   begin
     SuppressibleMsgBox('VOXPrint AI Model Forge setup failed. The log is ' + ExpandConstant('{app}\setup-work\install.log') + '.', mbError, MB_OK, IDOK);
     ExitProcess(ResultCode);
+  end;
+  if PrefetchPage.Values[0] then
+  begin
+    if not ExecAsOriginalUser(
+      ExpandConstant('{app}\venv\Scripts\voxprint-mdl.exe'),
+      'download --app model-forge --manifest "' + ExpandConstant('{app}') + '\mdl.json" --gui',
+      ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+      Log('voxprint-mdl did not start');
+    Log(Format('voxprint-mdl exit code %d', [ResultCode]));
   end;
 end;

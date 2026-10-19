@@ -38,6 +38,7 @@ from voxprint_forge.app.text import tr
 from voxprint_forge.lora import refset
 from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.limits import expert_range_differs
+from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
 APP_ID = "model-forge"
 CARD_PICTURE = 136  # px, a review-grid picture
@@ -178,6 +179,7 @@ class ForgeApp:
         self.window.resize(1200, 900)
         self._painted: object = None
         self._check_built = False
+        self._open_required_models()
         self._extend_menu()
         self._unsubscribe = self.expert.subscribe(self._on_expert)
         self.layout.sections.open_wizard(WIZARD)
@@ -309,10 +311,17 @@ class ForgeApp:
         self.repaint()
 
     def manage_models(self) -> None:
-        """Start Manage models (``voxprint-mdl --gui --app model-forge``)."""
-        from voxprint_common.mdl import CLI_NAME
+        """Start Manage models (``voxprint-mdl --gui --app model-forge --manifest <mdl.json>``)."""
+        self._launch(manage_argv())
 
-        self._launch([CLI_NAME, "--gui", "--app", APP_ID])
+    def _open_required_models(self) -> None:
+        """Open the MDL progress window for missing required ids before any job."""
+        try:
+            missing = missing_ids()
+        except (OSError, ValueError):
+            return
+        if missing:
+            self._launch(download_argv(tuple(missing), gui=True))
 
     # ----- steps --------------------------------------------------------
     def _fill_step(self, step: str) -> None:
@@ -1578,6 +1587,11 @@ def _thumb(path: Path, size: int = 72) -> QtGui.QIcon:
 
 def _failure(outcome: engine.Outcome) -> tuple[str, dict[str, object], bool]:
     code = outcome.error_code
+    if code == "lora.err.gate_missing":
+        ids = missing_id_text()
+        if not ids:
+            return "lora.err.not_prepared", {}, True
+        return code, {"ids": ids}, True
     if code.startswith(("lora.", "forge.app.")):
         return code, {}, True
     return "forge.app.err.unexpected", {"message": outcome.error_message or code}, True

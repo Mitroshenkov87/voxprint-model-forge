@@ -148,9 +148,16 @@ def test_resume_without_checkpoint_is_refused(tmp_path) -> None:
     assert info.value.code == "lora.err.no_checkpoint"
 
 
-def test_gate_not_passed_blocks_and_few_photos_refuse(tmp_path) -> None:
-    with pytest.raises(LoraBlocked):
+def test_gate_not_passed_blocks_and_few_photos_refuse(tmp_path, monkeypatch) -> None:
+    with pytest.raises(LoraBlocked) as blocked:
         train(make_project(tmp_path / "g", gate_passed=False), tiny(), TinyAdapter(), Progress())
+    assert blocked.value.code == "lora.err.gate_missing"
+    assert blocked.value.params["ids"]
+    monkeypatch.setattr("voxprint_forge.lora.train.missing_id_text", lambda: "")
+    with pytest.raises(LoraBlocked) as empty:
+        train(make_project(tmp_path / "h", gate_passed=False), tiny(), TinyAdapter(), Progress())
+    assert empty.value.code == "lora.err.not_prepared"
+    assert "ids" not in empty.value.params
     with pytest.raises(LoraUsageError) as info:
         train(make_project(tmp_path / "f", count=8), tiny(), TinyAdapter(), Progress())
     assert info.value.key == "lora.err.too_few" and info.value.params == {"need": 2}

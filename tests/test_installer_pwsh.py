@@ -41,7 +41,8 @@ def test_offer_is_interactive_only_and_falls_back_to_51() -> None:
 
 
 def test_scripts_run_hidden_through_the_chosen_host() -> None:
-    assert "SW_SHOW" not in ISS
+    scripts = ISS.split("if PrefetchPage.Values[0]")[0]
+    assert "SW_SHOW" not in scripts
     assert "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File" in ISS
     assert ISS.count("ScriptHost,") == 2
 

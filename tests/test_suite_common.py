@@ -156,7 +156,7 @@ def test_model_components_stay_under_the_shared_root(tmp_path: Path, monkeypatch
 
 
 def test_legacy_home_moves_on_first_use(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """voxprint-common 0.4.0: read_home() stops reading the legacy home, home() still moves it."""
+    """voxprint-common 0.4.1: read_home() stops reading the legacy home, home() still moves it."""
     from voxprint_common import paths
 
     for name in ("VOXPRINT_HOME", "VOXPRINT_MODELS_DIR"):

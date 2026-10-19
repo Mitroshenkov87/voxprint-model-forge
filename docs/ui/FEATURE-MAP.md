@@ -1,6 +1,6 @@
 # Model Forge GUI feature map
 
-The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.4.0 (tag commit eb5df238), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Every LoRA step runs `voxprint-forge-cli lora ... --json`; the window shows the engine's events and never filters or gates a photo itself.
+The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.4.1 (tag commit 0ea02df5), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Every LoRA step runs `voxprint-forge-cli lora ... --json`; the window shows the engine's events and never filters or gates a photo itself.
 
 The pre-Yitro operator window (`forge-gui`, `voxprint_forge.gui`) is retired from the user app. It stays in the tree for internal VM work and is not shipped. Its features are CLI-only for users.
 
@@ -39,7 +39,7 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Preview strength slider | — (no engine call for previews at a strength yet) | — | waits-engine |
 | Open project | project folder | overflow: Open project | mapped |
 | User guide | docs/manual (rendered by `scripts/build_guide.py` into `app/guide/`) | overflow: Open guide, offline, in the app language | mapped |
-| Manage models | `voxprint-mdl --gui --app model-forge` | overflow: Manage models; Check this computer | mapped |
+| Manage models | `voxprint-mdl --gui --app model-forge --manifest {app}\\mdl.json` | overflow: Manage models; Check this computer | mapped |
 | Graphics card, memory, disk, models | `preflight`, `disk`, MDL `ready` | Check this computer | mapped |
 
 ## Operator window (`forge-gui`, retired from the user app)
@@ -54,6 +54,6 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | VRAM, RAM and disk gauges | operator window | Check this computer | mapped |
 | About / version | operator window dialog | `forge --version` | CLI-only |
 
-## Shell notes (v0.2.5 through v0.4.0)
+## Shell notes (v0.2.5 through v0.4.1)
 
 The v0.2.5 wizard draws only text and choice fields for a step and its Start button records a placeholder run. Model Forge therefore fills each step body itself through `ForgeWidget._parts()` (one place, covered by `tests/test_app_window.py::test_shell_parts_this_app_extends_exist`). The Expert panel shows a float with one decimal, so learning rate, caption dropout and replay share are lists of values.

@@ -27,6 +27,7 @@ from voxprint_forge.diffusion import moss as moss_runtime
 from voxprint_forge.lora import memory, te_quant
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.presets import TrainConfig, measured
+from voxprint_forge.model_views import ensure_view
 
 PERMISSIVE = frozenset({"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"})
 
@@ -156,6 +157,7 @@ def weights_dir(mdl_id: str) -> Path:
     """Where MDL installs a base for Model Forge: ``<models_dir>/model-forge/<mdl_id>``."""
     from voxprint_common.paths import models_dir
 
+    ensure_view(mdl_id)
     return models_dir() / "model-forge" / mdl_id
 
 

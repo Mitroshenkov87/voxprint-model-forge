@@ -13,6 +13,7 @@ from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_pr
 from voxprint_forge.app.draft import STEPS  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
+from voxprint_forge.mdl_app import missing_id_text  # noqa: E402
 
 CONTROLS = (
     QtWidgets.QAbstractButton,
@@ -280,6 +281,18 @@ def test_a_safety_block_cannot_be_bypassed(make_app, tmp_path) -> None:
     assert app.draft.prepared.blocked and app.draft.prepared.drops[0]["reason"] == "lora.drop.safety"
 
 
+def test_manage_models_passes_the_manifest(make_app) -> None:
+    app = make_app()
+    launched: list[list[str]] = []
+    app._launch = launched.append
+    app.manage_models()
+    argv = launched[0]
+    assert argv[argv.index("--gui") + 1 : argv.index("--gui") + 3] == ["--app", "model-forge"]
+    manifest = argv[argv.index("--manifest") + 1]
+    assert manifest.endswith("mdl.json")
+    assert "download" not in argv
+
+
 def test_gate_missing_blocks_with_a_plain_sentence(make_app, tmp_path) -> None:
     photos = make_photos(tmp_path / "p", 12)
     runner = StubRunner({"prepare": ([], Outcome(False, None, "lora.err.gate_missing", "missing", 6))})
@@ -287,7 +300,7 @@ def test_gate_missing_blocks_with_a_plain_sentence(make_app, tmp_path) -> None:
     _walk_to(app, "prepare", photos)
     app.prepare()
     assert app.draft.prepared is None
-    assert _status(app) == tr("lora.err.gate_missing")
+    assert _status(app) == tr("lora.err.gate_missing", ids=missing_id_text())
     assert not _next(app).isEnabled()
 
 

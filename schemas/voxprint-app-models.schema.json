@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "voxprint-app-models/1",
-  "title": "Per-app required and optional models (voxprint-app-models/1)",
+  "$id": "voxprint-forge-models/1",
+  "title": "Per-app required and optional models (voxprint-forge-models/1)",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "app", "required", "optional", "models"],
   "properties": {
-    "schema": {"const": "voxprint-app-models/1"},
+    "schema": {"const": "voxprint-forge-models/1"},
     "app": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
     "required": {"type": "array", "items": {"$ref": "#/$defs/id"}, "minItems": 1, "uniqueItems": true},
     "optional": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
