@@ -123,7 +123,8 @@ def _bootstrap_missing_token(env: dict[str, str]) -> subprocess.CompletedProcess
         input=b"",
         capture_output=True,
         env=env,
-        timeout=5,
+        # Git bash on a busy Windows runner can take longer than a few seconds to start.
+        timeout=30,
         check=False,
     )
 
