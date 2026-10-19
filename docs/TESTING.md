@@ -68,7 +68,7 @@ The `pdf-guide` job (Ubuntu) builds `VOXPrint-Model-Forge-Guide-en.pdf` and `-ru
 `docs/manual` with `scripts/build_pdf_guide.py` (WeasyPrint, embedded DejaVu fonts, pins in
 `installer/requirements-pdf.txt`), checks them with `tests/test_pdf_guide.py` (more than 10 pages,
 screenshots, extractable Cyrillic) and uploads them as `voxprint-model-forge-guide-pdf`. The Windows
-job puts them into the setup (`{app}\docs`, Start menu shortcuts).
+job puts them into the setup (`{app}\docs`). The app opens the guide from its menu.
 
 `scripts/windows_smoke.ps1` is the same checklist for a real PC. Run it from an
 elevated PowerShell 7 (`pwsh`) next to the downloaded setup. Windows PowerShell 5.1
@@ -87,7 +87,7 @@ workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 | Step | Passes when |
 |---|---|
 | home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
-| install | the silent setup exits 0; both venvs, the CLI and GUI exes, the PDF guide (en, ru) in `docs\`, the Start menu shortcuts (app and both guides) and the uninstall entry exist; no weights |
+| install | the silent setup exits 0; both venvs, the CLI, the compiled launcher and its icon, the PDF guide (en, ru) in `docs\`, one Start menu launcher (target, icon, AppUserModelID; no Uninstall or guide shortcut; no desktop shortcut; old shortcuts removed) and the uninstall entry (name, icon, publisher) exist; no weights |
 | te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
 | version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
