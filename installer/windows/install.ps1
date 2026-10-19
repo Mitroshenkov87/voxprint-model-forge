@@ -74,8 +74,11 @@ try {
     & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
     if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }
     # Program Files is read-only for the signed-in user, so bytecode is written at install time.
+    # Skip the uv Python trees (Tcl ships a file 3.14 cannot compile), the uv cache, wheels, and
+    # venv-mivolo, which is compiled with its own interpreter below.
     $site = Join-Path $Venv "Lib\site-packages"
-    & $Py -m compileall -q -x "venv-mivolo" $site $App
+    $skip = '\\python\\cpython-|\\setup-work\\|\\venv-mivolo\\|\\wheels\\'
+    & $Py -m compileall -q -x $skip $site $App
     if ($LASTEXITCODE -ne 0) { throw "compileall failed" }
     & $MPy -m compileall -q (Join-Path $Mivolo "Lib\site-packages")
     if ($LASTEXITCODE -ne 0) { throw "compileall failed for venv-mivolo" }

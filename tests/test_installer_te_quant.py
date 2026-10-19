@@ -41,6 +41,8 @@ def test_installer_precompiles_bytecode() -> None:
     install = (ROOT / "installer" / "windows" / "install.ps1").read_text(encoding="utf-8")
     assert "-m compileall -q" in install
     assert "Lib\\site-packages" in install
+    assert "python\\\\cpython-" in install
+    assert "venv-mivolo" in install
 
 
 def test_windows_smoke_imports_bitsandbytes() -> None:
