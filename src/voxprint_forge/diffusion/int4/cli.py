@@ -13,7 +13,6 @@ from voxprint_forge.diffusion.int4.fetch import fetch_weights
 from voxprint_forge.diffusion.int4.gpu import planning_gpu, step_minutes, total_minutes
 from voxprint_forge.diffusion.int4.markers import done_dir
 from voxprint_forge.diffusion.int4.pins import DEFAULT_SVD_RANK, DISK_FLOOR, SCHEMA, planned_steps
-from voxprint_forge.diffusion.int4.stage import format_estimates, run
 from voxprint_forge.diffusion.int4.watch import watch_path
 from voxprint_forge.errors import EXIT_UNEXPECTED, ForgeError, UsageError
 from voxprint_forge.jsonio import emit
@@ -64,6 +63,8 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
     command = str(getattr(args, "command", None) or getattr(args, "int4_command", ""))
     forge_out = args.forge_out or Path.home() / "forge-out"
     if command == "estimates":
+        from voxprint_forge.diffusion.int4.stage import format_estimates
+
         steps = planned_steps()
         gpu = planning_gpu()
         text = format_estimates()
@@ -106,6 +107,8 @@ def perform(args: argparse.Namespace, repo: Path) -> dict[str, object]:
         raise UsageError(f"unknown diffusion-int4 command {command}", code="usage")
     if args.svd_rank < 1:
         raise UsageError("svd rank must be at least 1", code="usage")
+    from voxprint_forge.diffusion.int4.stage import run
+
     ctx = StageContext(
         repo=repo,
         forge_out=forge_out,

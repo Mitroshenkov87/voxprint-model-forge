@@ -9,7 +9,6 @@ from pathlib import Path
 from voxprint_forge.errors import UsageError
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.kl.plan import KlJob, QuantRef, load_kl_plan, local_revision
-from voxprint_forge.kl.run import rerender, run_kl
 
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -50,6 +49,8 @@ def execute(
     render: Path | None = None,
 ) -> dict[str, object]:
     """Run one KL job. Results land in ``forge-out/results/kl/<id>``."""
+    from voxprint_forge.kl.run import rerender, run_kl
+
     if render is not None:
         if job_id or bf16 or quants:
             raise UsageError("--render takes only the results folder", code="usage")

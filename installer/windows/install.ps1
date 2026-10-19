@@ -73,6 +73,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "the app environment does not import" }
     & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
     if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }
+    # Program Files is read-only for the signed-in user, so bytecode is written at install time.
+    $site = Join-Path $Venv "Lib\site-packages"
+    & $Py -m compileall -q -x "venv-mivolo" $site $App
+    if ($LASTEXITCODE -ne 0) { throw "compileall failed" }
+    & $MPy -m compileall -q (Join-Path $Mivolo "Lib\site-packages")
+    if ($LASTEXITCODE -ne 0) { throw "compileall failed for venv-mivolo" }
     Remove-Item -Recurse -Force $env:UV_CACHE_DIR -ErrorAction SilentlyContinue
     Write-Host "Model Forge setup finished."
     $code = 0

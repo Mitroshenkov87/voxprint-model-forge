@@ -23,6 +23,7 @@ Steps and pass rules:
                VOXPrint.AISuite.ModelForge. No Uninstall or guide shortcut, no desktop shortcut. Older Uninstall
                and guide shortcuts are removed. The uninstall entry name, icon and publisher match. No model weights.
   2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
+  2b help      voxprint-forge-cli lora train --help exits 0 in under 3 seconds.
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
                MiVOLO env pass. Missing models are listed, not failed (a fresh install has none).
@@ -280,6 +281,16 @@ if ($installed) {
         if ($r.code -ne 0) { throw "--version exited $($r.code)" }
         if ($r.out -notmatch [regex]::Escape($want)) { throw "--version printed '$($r.out.Trim())', want $want" }
         $r.out.Trim()
+    })
+
+    [void](Invoke-Step "lora-train-help" {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-Cli @("lora", "train", "--help")
+        $sw.Stop()
+        $seconds = $sw.Elapsed.TotalSeconds
+        if ($r.code -ne 0) { throw "lora train --help exited $($r.code)" }
+        if ($seconds -ge 3) { throw ("lora train --help took {0:N2} s" -f $seconds) }
+        "lora train --help {0:N2} s" -f $seconds
     })
 
     [void](Invoke-Step "te-quant" {

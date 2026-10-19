@@ -7,6 +7,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from voxprint_forge.accounts import execute_accounts
 from voxprint_forge.compare.cli import add_command as add_compare_command
@@ -37,12 +38,14 @@ from voxprint_forge.llama import Runner
 from voxprint_forge.lora.cli import add_command as add_lora_command
 from voxprint_forge.lora.cli import execute as execute_lora
 from voxprint_forge.mdl import host_descriptors, push_index, revision_map, run_backfill, run_build
-from voxprint_forge.pipeline import ORDER, Host, run_all, run_model
 from voxprint_forge.plan import format_estimates, load_plan
 from voxprint_forge.preflight import run_preflight
 from voxprint_forge.statusfile import inspect_status, status_path
 from voxprint_forge.upload import HubRemote, verify_logins
 from voxprint_forge.version import version_line
+
+if TYPE_CHECKING:
+    from voxprint_forge.pipeline import Host
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -446,17 +449,19 @@ def _dispatch(args: argparse.Namespace) -> object:
     if args.command == "plan-summary":
         return format_estimates(plan)
     forge_out = args.forge_out or plan.output_dir.parent
-    layout = Layout(forge_out)
-    host = _live_host()
-    if args.command in {"preflight", "run-all"} or args.command in ORDER:
+    if args.command == "preflight":
         try:
-            report = run_preflight(plan, root, forge_out)
+            return run_preflight(plan, root, forge_out)
         except StageError as exc:
-            if args.command == "preflight" and isinstance(exc.report, dict):
+            if isinstance(exc.report, dict):
                 return exc.report
             raise
-        if args.command == "preflight":
-            return report
+    from voxprint_forge.pipeline import ORDER, run_all, run_model
+
+    layout = Layout(forge_out)
+    host = _live_host()
+    if args.command == "run-all" or args.command in ORDER:
+        run_preflight(plan, root, forge_out)
     if args.command == "run-all":
         return run_all(plan, host, root, layout, jobs=_jobs(args.jobs))
     model_id = str(args.model)
@@ -475,6 +480,8 @@ def _dispatch(args: argparse.Namespace) -> object:
 
 
 def _live_host() -> Host:
+    from voxprint_forge.pipeline import Host
+
     hf_token = os.environ.get("HF_TOKEN")
     kaggle_token = os.environ.get("KAGGLE_API_TOKEN")
     return Host(

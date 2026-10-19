@@ -24,7 +24,11 @@ import torch.utils.checkpoint as checkpoint
 from torch import nn
 
 from voxprint_forge.diffusion import moss as moss_runtime
-from voxprint_forge.lora import memory, te_quant
+from voxprint_forge.lora import (
+    DEFAULT_BASE,  # noqa: F401 - re-export for callers that read bases.DEFAULT_BASE
+    memory,
+    te_quant,
+)
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.presets import TrainConfig, measured
 from voxprint_forge.model_views import ensure_view
@@ -106,7 +110,6 @@ class BaseAdapter(ABC):
 
 
 _REGISTRY: dict[str, type[BaseAdapter]] = {}
-DEFAULT_BASE = "z-image"
 
 
 def register(adapter: type[BaseAdapter]) -> type[BaseAdapter]:

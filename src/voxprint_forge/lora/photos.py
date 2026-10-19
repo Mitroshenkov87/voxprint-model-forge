@@ -6,12 +6,15 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-from PIL import Image, ImageOps
 
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE  # noqa: F401 - re-export
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 BLUR_THRESHOLD = 60.0
@@ -59,6 +62,8 @@ def photo_id(path: Path) -> str:
 
 def open_photo(path: Path) -> Image.Image | None:
     """Decoded RGB image with EXIF rotation applied, or ``None`` when it is not a picture."""
+    from PIL import Image, ImageOps
+
     try:
         with Image.open(path) as image:
             return ImageOps.exif_transpose(image).convert("RGB")
@@ -77,6 +82,8 @@ def sharpness(image: Image.Image) -> float:
 
 def dhash(image: Image.Image) -> int:
     """64-bit difference hash for near-duplicate detection."""
+    from PIL import Image
+
     small = np.asarray(image.convert("L").resize((9, 8), Image.Resampling.LANCZOS), dtype=np.int16)
     bits = (small[:, 1:] > small[:, :-1]).flatten()
     return int("".join("1" if b else "0" for b in bits), 2)
@@ -106,6 +113,8 @@ def filter_reason(
 
 def crop(image: Image.Image, mode: str, side: int = PREPARED_SIDE) -> Image.Image:
     """``subject``: centred square crop. ``whole``: the full photo padded to a square. Then ``side`` px."""
+    from PIL import Image, ImageOps
+
     if mode == "whole":
         width, height = image.size
         edge = max(width, height)
