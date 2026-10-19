@@ -2,8 +2,8 @@
 
 The Start menu shortcut and this process share one AppUserModelID. The window
 icon is the same ``.ico`` the setup, the shortcut and the uninstall entry use.
-``voxprint_common`` 0.4.0 has no ``branding`` module; a newer one is used when
-it is installed.
+``voxprint_common`` 0.4.1 provides ``branding``; it is used when the import
+succeeds.
 """
 
 from __future__ import annotations

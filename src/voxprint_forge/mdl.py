@@ -39,7 +39,7 @@ INDEX_KEY_ENV = "VOXPRINT_MDL_INDEX_KEY_FILE"
 HOSTED_REPO = f"datasets/{INDEX_REPO}"
 HOSTED_DIR = "descriptors"
 # Serial, head and generated_at of the signed index bundled in voxprint-common
-# 0.4.0 (model-index.pin.json). Apps refuse a remote index older than that pin,
+# 0.4.1 (model-index.pin.json). Apps refuse a remote index older than that pin,
 # so the next one we publish is serial 10.
 BUNDLED_INDEX_SERIAL = 9
 BUNDLED_INDEX_HEAD = "15edeab0f7a874c27d2b38ef6ecb69106ff94df8"

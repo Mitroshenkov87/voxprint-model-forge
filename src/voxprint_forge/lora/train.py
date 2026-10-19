@@ -30,7 +30,10 @@ STATE_FILE = "state.pt"
 def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, object], list[Item]]:
     data = project.read()
     if data.get("gate_passed") is not True:
-        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
+        ids = missing_id_text()
+        if not ids:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=ids)
     items = project.items()
     floor = MIN_PHOTOS.get(str(data.get("mode", "simple")), 10)
     if mode_floor and len(items) < floor:

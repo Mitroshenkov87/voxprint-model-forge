@@ -130,8 +130,10 @@ def _fetch_missing() -> None:
     print("voxprint-forge-cli models fetch --required", file=sys.stderr)
     result = fetch(missing, gui=False)
     if not result.get("ok"):
-        still = missing_ids() or missing
-        raise LoraBlocked("lora.err.gate_missing", ids=", ".join(still))
+        still = ", ".join(missing_ids() or missing)
+        if not still:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=still)
 
 
 def _prepare_flags(command: argparse.ArgumentParser) -> None:

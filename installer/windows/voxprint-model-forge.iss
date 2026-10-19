@@ -69,12 +69,14 @@ english.PwshDeclined=Setup continues with Windows PowerShell 5.1. We recommend i
 russian.PwshDeclined=Установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 english.PwshFailed=PowerShell 7 could not be installed, so setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 russian.PwshFailed=Не удалось установить PowerShell 7, поэтому установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
-english.PrefetchCaption=model-forge
-russian.PrefetchCaption=model-forge
-english.PrefetchDescription=voxprint-mdl download --app model-forge --manifest "{app}\mdl.json" --gui
-russian.PrefetchDescription=voxprint-mdl download --app model-forge --manifest "{app}\mdl.json" --gui
-english.PrefetchPrompt=model-forge
-russian.PrefetchPrompt=model-forge
+english.PrefetchCaption=Download models now
+russian.PrefetchCaption=Скачать модели сейчас
+english.PrefetchDescription=Download the required models after setup (large download)
+russian.PrefetchDescription=Скачать нужные модели после установки (большой объём)
+english.PrefetchPrompt=Download the required models after setup (large download)
+russian.PrefetchPrompt=Скачать нужные модели после установки (большой объём)
+english.PrefetchOption=Download the required models after setup (large download)
+russian.PrefetchOption=Скачать нужные модели после установки (большой объём)
 
 [Tasks]
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -182,7 +184,7 @@ begin
     CustomMessage('PrefetchDescription'),
     CustomMessage('PrefetchPrompt'),
     False, False);
-  PrefetchPage.Add('voxprint-mdl download --app model-forge --manifest "{app}\mdl.json" --gui');
+  PrefetchPage.Add(CustomMessage('PrefetchOption'));
   PrefetchPage.Values[0] := False;
 end;
 

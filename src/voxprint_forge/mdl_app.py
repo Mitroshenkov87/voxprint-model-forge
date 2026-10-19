@@ -118,6 +118,11 @@ def mdl_executable() -> list[str]:
     return [sys.executable, "-m", "voxprint_common.mdl"]
 
 
+def manage_argv() -> list[str]:
+    """``voxprint-mdl --gui --app model-forge --manifest <path>``."""
+    return [*mdl_executable(), "--gui", "--app", APP_ID, "--manifest", str(manifest_path())]
+
+
 def download_argv(
     ids: Sequence[str] = (),
     *,

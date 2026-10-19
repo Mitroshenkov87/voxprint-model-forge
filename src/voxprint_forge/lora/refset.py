@@ -313,7 +313,10 @@ def check_refs(
         _unload_gate(gate)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
                       state="blocked")
-        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
+        ids = missing_id_text()
+        if not ids:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=ids)
     prompts = load_prompts(project)
     try:
         for index, (rid, image) in enumerate(images, 1):
@@ -477,7 +480,10 @@ def _gate_candidates(
             path.unlink(missing_ok=True)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
                       state="blocked")
-        raise LoraBlocked("lora.err.gate_missing", ids=missing_id_text())
+        ids = missing_id_text()
+        if not ids:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=ids)
     shown: list[dict[str, Any]] = []
     minor = False
     try:
