@@ -437,7 +437,10 @@ if (-not $KeepInstalled -and (Test-Path (Join-Path $Dir "unins000.exe"))) {
         $u = Start-Process (Join-Path $Dir "unins000.exe") -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
         if ($u.ExitCode -ne 0) { throw "uninstaller exited $($u.ExitCode)" }
         for ($i = 0; $i -lt 90 -and (Test-Path $Dir); $i++) { Start-Sleep 2 }
-        if (Test-Path $Dir) { throw "uninstall left $Dir" }
+        if (Test-Path $Dir) {
+            $left = @(Get-ChildItem -LiteralPath $Dir -Force | ForEach-Object { $_.Name })
+            throw "uninstall left $Dir ($($left -join ', '))"
+        }
         if (Test-Path $Menu) { throw "uninstall left the Start menu shortcut" }
         foreach ($link in $OldLinks) { if (Test-Path -LiteralPath $link) { throw "uninstall left $link" } }
         if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId") { throw "uninstall left the uninstall entry" }

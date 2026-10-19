@@ -105,6 +105,7 @@ Type: filesandordirs; Name: "{app}\venv"
 Type: filesandordirs; Name: "{app}\venv-mivolo"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\setup-work"
+Type: filesandordirs; Name: "{app}\wheels"
 Type: dirifempty; Name: "{app}"
 ; Shared with the other suite apps: removed only when empty.
 Type: dirifempty; Name: "{autopf}\{#MySuiteName}"

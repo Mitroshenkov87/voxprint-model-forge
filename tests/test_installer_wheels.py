@@ -37,6 +37,8 @@ def test_iss_install_delete_removes_stale_wheels() -> None:
     """Stale wheels under {app}\\wheels are removed before the new files are copied."""
     deleted = _section("InstallDelete")
     assert r'Type: files; Name: "{app}\wheels\*.whl"' in deleted
+    removed = _section("UninstallDelete")
+    assert r'Type: filesandordirs; Name: "{app}\wheels"' in removed
 
 
 def test_windows_smoke_plants_stale_wheels_and_checks_the_pin() -> None:
