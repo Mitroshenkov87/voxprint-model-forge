@@ -7,10 +7,8 @@ from pathlib import Path
 
 from voxprint_forge.compare.cache import reclaim_all
 from voxprint_forge.compare.codes import CompareSetup
-from voxprint_forge.compare.fp8_make import export_fp8
 from voxprint_forge.compare.plan import load_compare_plan
 from voxprint_forge.compare.privacy import private_root_from_env
-from voxprint_forge.compare.run import run_compare
 
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -59,6 +57,9 @@ def execute(
     ``--make-fp8`` writes the local FP8 files and does not need a GPU.
     ``--reclaim-cache`` deletes the shared snapshot directory and does not run a job.
     """
+    from voxprint_forge.compare.fp8_make import export_fp8
+    from voxprint_forge.compare.run import run_compare
+
     if reclaim_cache:
         removed = reclaim_all(forge_out / "compare-cache")
         return {"exit_code": 0, "removed": removed, "uploaded": False}

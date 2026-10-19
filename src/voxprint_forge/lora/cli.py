@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 
-from voxprint_forge.lora import bases
+from voxprint_forge.lora import DEFAULT_BASE
 from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
 from voxprint_forge.lora.captioner import FALLBACK as CAPTION_FALLBACK
 from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_subject
@@ -41,7 +41,7 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
     for command in (train, extend):
         _training_flags(command)
-    train.add_argument("--base", default=bases.DEFAULT_BASE, help="Base model MDL id. Default: z-image.")
+    train.add_argument("--base", default=DEFAULT_BASE, help="Base model MDL id. Default: z-image.")
     train.add_argument("--rank", type=int, default=None, help="Adapter size (Expert).")
     train.add_argument("--alpha", type=int, default=None, help="Adapter scale, usually equal to rank (Expert).")
     train.add_argument("--resolution", type=int, default=None, help="Training picture size, a multiple of 64.")
@@ -74,7 +74,7 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
     finish.add_argument("--project", type=Path, required=True, help="Project folder.")
     finish.add_argument("--mode", choices=("simple", "expert"), default="simple",
                         help=f"Set size: {_REC}, or {_EXPERT} in Expert.")
-    finish.add_argument("--base", default=bases.DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
+    finish.add_argument("--base", default=DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
     _fetch_flags(finish)
 
 
@@ -234,6 +234,7 @@ def printer(json_mode: bool, lang: str | None = None):
 
 
 def _train(args: argparse.Namespace) -> dict[str, object]:
+    from voxprint_forge.lora.bases import get_adapter
     from voxprint_forge.lora.train import estimate, lora_base, train
 
     if not args.dry_run and _wants_fetch(args):
@@ -252,7 +253,7 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         base_id = lora_base(from_lora).get("voxprint.lora.base") or ""
     else:
         base_id = args.base
-    adapter = bases.get_adapter(base_id, training=True)
+    adapter = get_adapter(base_id, training=True)
     if args.dry_run:
         return estimate(project, config, adapter)
     prompts = _prompts(args.preview_prompts, data)

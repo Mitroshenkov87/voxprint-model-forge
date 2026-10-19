@@ -36,8 +36,19 @@ def test_installer_installs_that_set_with_require_hashes() -> None:
     assert "bitsandbytes sha256 mismatch" in workflow
 
 
+def test_installer_precompiles_bytecode() -> None:
+    """install.ps1 compiles venv site-packages and the app while the setup can still write."""
+    install = (ROOT / "installer" / "windows" / "install.ps1").read_text(encoding="utf-8")
+    assert "-m compileall -q" in install
+    assert "Lib\\site-packages" in install
+    assert "python\\\\cpython-" in install
+    assert "venv-mivolo" in install
+
+
 def test_windows_smoke_imports_bitsandbytes() -> None:
     """The installer smoke checks that the app venv can import bitsandbytes 0.50.2."""
     smoke = (ROOT / "scripts" / "windows_smoke.ps1").read_text(encoding="utf-8")
     assert "import bitsandbytes" in smoke
     assert "0.50.2" in smoke
+    assert 'Invoke-Cli @("lora", "train", "--help")' in smoke
+    assert "$seconds -ge 3" in smoke
