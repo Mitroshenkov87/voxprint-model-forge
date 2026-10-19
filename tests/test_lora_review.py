@@ -19,12 +19,17 @@ from voxprint_forge.lora.review import (
     apply_file,
     build_sets,
     can_continue,
+    check_round_options,
     counts,
     load_state,
     plan_samples,
+    sample_steps_of,
+    samples_for_round,
     save_state,
     set_verdicts,
     state_path,
+    step_plan,
+    steps_for_stage,
     transition,
 )
 from voxprint_forge.lora.train import train
@@ -143,15 +148,17 @@ class DrawingAdapter(TinyAdapter):
 
     info = BaseInfo("draw-test", "example/draw", "0" * 40, "Apache-2.0", "Draw")
     encoded: list[int] = []
+    preview_steps: list[int | None] = []
 
     def encode(self, images, captions, config):
         type(self).encoded.append(len(images))
         return super().encode(images, captions, config)
 
-    def preview(self, model, prompt, seed, config):
+    def preview(self, model, prompt, seed, config, steps=None):
+        type(self).preview_steps.append(steps)
         if seed % 5 == 4:
             return None
-        return gradient(seed, 16)
+        return gradient(seed, config.resolution)
 
 
 class NegativeAdapter(DrawingAdapter):
@@ -175,14 +182,22 @@ def _config(**overrides: object) -> TrainConfig:
 
 def test_a_stage_pauses_for_review_and_the_next_pass_uses_likes(tmp_path: Path) -> None:
     DrawingAdapter.encoded = []
+    DrawingAdapter.preview_steps = []
     NegativeAdapter.negative_calls = 0
     project = make_project(tmp_path, count=10)
     first = train(
-        project, _config(), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=3,
-        preview_prompts=["a cube"],
+        project, _config(steps=101), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=3,
+        first_round_steps=100, preview_prompts=["a cube"],
     )
     assert first["state"] == "review"
+    assert first["steps"] == 100
     state = load_state(project)
+    assert state["first_round_steps"] == 100
+    assert state["first_round_samples"] == 6
+    assert state["sample_steps"] == 28
+    assert state["total_steps"] == 101
+    assert DrawingAdapter.preview_steps
+    assert set(DrawingAdapter.preview_steps) == {28}
     assert state["phase"] == "review"
     assert state["index"] == 1
     kept = [sample for sample in state["samples"] if isinstance(sample, dict)]
@@ -198,7 +213,7 @@ def test_a_stage_pauses_for_review_and_the_next_pass_uses_likes(tmp_path: Path) 
     if disliked != liked:
         state = transition(state, "mark", id=disliked, verdict="dislike")
     save_state(project, state)
-    second = train(project, _config(), NegativeAdapter(), Progress(), review_continue=True)
+    second = train(project, _config(steps=101), NegativeAdapter(), Progress(), review_continue=True)
     assert second["state"] == "review"
     assert DrawingAdapter.encoded[1] == 10 + (2 if disliked != liked else 1)
     if disliked != liked:
@@ -220,6 +235,11 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     parsed = build_parser().parse_args(["lora", "train", "--project", str(tmp_path), "--review-rounds", "2"])
     assert parsed.review_rounds == 2
     assert parsed.samples_per_round == 8
+    assert parsed.first_round_steps == 200
+    assert parsed.first_round_samples == 6
+    assert parsed.sample_steps == 28
+    continued = build_parser().parse_args(["lora", "continue", str(tmp_path), "--no-more-reviews"])
+    assert continued.no_more_reviews is True
     straight = build_parser().parse_args(["lora", "train", "--project", str(tmp_path)])
     assert straight.review_rounds == 0
     project = make_project(tmp_path / "proj", count=10)
@@ -249,6 +269,99 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     finished = _envelope(capsys.readouterr().out)["result"]
     assert finished["state"] == "done"
     assert load_state(project)["phase"] == "finished"
+
+
+def test_step_plan_splits_the_remaining_steps_and_train_full_takes_the_rest() -> None:
+    def opened(rounds: int, total: int = 1500, first: int = 200) -> dict[str, object]:
+        return transition(
+            {}, "start", rounds=rounds, samples_per_round=8, first_round_steps=first,
+            first_round_samples=6, sample_steps=28, total_steps=total, prompts=["a cube"],
+            seed=1, base="draw-test", config={"steps": total},
+        )
+
+    three = opened(3)
+    assert step_plan(three) == (200, 650, 650)
+    assert sum(step_plan(three)) == 1500
+    four = opened(4)
+    assert step_plan(four) == (200, 433, 433, 434)
+    assert sum(step_plan(four)) == 1500
+    assert step_plan(opened(1)) == (200,)
+    assert len(plan_samples(three)) == 6
+    assert samples_for_round(three, 1) == 6
+    paused = transition(three, "pause", checkpoint="checkpoints/step.safetensors", samples=plan_samples(three))
+    again = transition(paused, "continue")
+    assert samples_for_round(again, 2) == 8
+    assert len(plan_samples(again)) == 8
+    assert sample_steps_of(three) == 28
+    full = transition(paused, "train_full")
+    assert full["phase"] == "training"
+    assert full["no_more_reviews"] is True
+    assert full["samples"] == []
+    assert full["history"]
+    assert steps_for_stage(full) == 1300
+    finished = transition(full, "finish")
+    assert finished["phase"] == "finished"
+    with pytest.raises(LoraUsageError) as blocked:
+        transition(three, "finish")
+    assert blocked.value.code == "lora.err.review_phase"
+    last = transition(again, "pause", checkpoint="c", samples=plan_samples(again))
+    last = transition(last, "continue")
+    last = transition(last, "pause", checkpoint="c", samples=[])
+    assert not can_continue(last)
+    with pytest.raises(LoraUsageError):
+        transition(last, "continue")
+    done = transition(last, "train_full")
+    assert done["no_more_reviews"] is True
+    assert steps_for_stage(done) == 0
+    check_round_options(first_round_steps=100, first_round_samples=6, samples_per_round=8, sample_steps=28)
+    for bad in (50, 600):
+        with pytest.raises(LoraUsageError) as limited:
+            check_round_options(first_round_steps=bad, first_round_samples=6, samples_per_round=8, sample_steps=28)
+        assert limited.value.code == "lora.err.first_round_steps"
+
+
+def test_train_full_with_nothing_left_finishes(tmp_path: Path) -> None:
+    DrawingAdapter.encoded = []
+    project = make_project(tmp_path, count=10)
+    first = train(
+        project, _config(steps=2), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=1,
+        preview_prompts=["a cube"],
+    )
+    assert first["state"] == "review"
+    state = load_state(project)
+    liked = next(sample["id"] for sample in state["samples"] if isinstance(sample, dict))
+    save_state(project, transition(state, "mark", id=str(liked), verdict="like"))
+    done = train(project, _config(steps=2), DrawingAdapter(), Progress(), review_continue=True, no_more_reviews=True)
+    assert done["state"] == "done"
+    assert load_state(project)["phase"] == "finished"
+
+
+def test_status_prints_the_first_pictures_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from voxprint_forge.cli import main
+
+    project = make_project(tmp_path, count=10)
+    (project.root / "train.json").write_text(
+        json.dumps({
+            "step": 40, "total": 200, "loss": 0.2, "elapsed_seconds": 90, "eta_seconds": 400,
+            "stage": "step", "round": 1, "first_pictures_seconds": 480, "seconds_per_sample": 18,
+            "sample_seconds_estimated": False,
+        }),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+    assert main(["--json", "lora", "status", str(project.root)]) == 0
+    status = _envelope(capsys.readouterr().out)["result"]
+    assert status["first_pictures"] == "First pictures in about 8 min (18 s per picture)"
+
+
+def test_train_refuses_a_first_round_outside_100_to_500(tmp_path: Path) -> None:
+    project = make_project(tmp_path, count=10)
+    for bad in (50, 600):
+        with pytest.raises(LoraUsageError) as limited:
+            train(
+                project, _config(), DrawingAdapter(), Progress(), review_rounds=2, first_round_steps=bad,
+            )
+        assert limited.value.code == "lora.err.first_round_steps"
 
 
 def test_train_refuses_to_start_while_a_review_is_waiting(tmp_path: Path) -> None:

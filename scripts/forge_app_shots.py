@@ -160,8 +160,9 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             "subject": {"name": "Soft shape", "trigger": "soft_shape", "rights_confirmed": True, "kind": "object"},
         })
         state = transition(
-            {}, "start", rounds=3, samples_per_round=6, prompts=["a soft shape"], seed=3,
-            base="draw-test", config={"steps": 1},
+            {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, first_round_samples=6,
+            sample_steps=28, total_steps=1500, prompts=["a soft shape"], seed=3,
+            base="draw-test", config={"steps": 1500},
         )
         verdicts = ("like", "dislike", "unmarked", "like", "dislike", "unmarked")
         samples = []
@@ -210,6 +211,14 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
         app.processEvents()
+        action = forge.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
+        if action is not None:
+            area = action.parentWidget()
+            while area is not None and not isinstance(area, QtWidgets.QScrollArea):
+                area = area.parentWidget()
+            if area is not None:
+                area.ensureWidgetVisible(action)
+                app.processEvents()
         forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
         forge.window.close()
     shot_train_live(out, home)
@@ -249,16 +258,22 @@ def shot_train_live(out: Path, home: Path) -> None:
     )
     forge.project.mkdir(parents=True, exist_ok=True)
     save_state(Project(forge.project), transition(
-        {}, "start", rounds=3, samples_per_round=8, prompts=["a soft shape"], seed=1,
+        {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, first_round_samples=6,
+        sample_steps=28, total_steps=1500, prompts=["a soft shape"], seed=1,
         base="draw-test", config={"steps": 1500},
     ))
     (forge.project / "train.json").write_text(json.dumps({
-        "elapsed_seconds": 120,
-        "eta_seconds": 900,
-        "loss": 0.18,
+        "elapsed_seconds": 90,
+        "eta_seconds": 400,
+        "loss": 0.21,
         "stage": "step",
-        "step": 450,
-        "total": 1500,
+        "step": 40,
+        "total": 200,
+        "round": 1,
+        "first_pictures_seconds": 480,
+        "seconds_per_sample": 18,
+        "sample_seconds_estimated": False,
+        "seconds_per_step": 2.2,
     }), encoding="utf-8")
     forge.window.resize(1280, 960)
     forge.window.show()

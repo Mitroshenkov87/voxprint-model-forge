@@ -55,6 +55,20 @@ def test_progress_writes_every_60s_and_on_a_stage_change(tmp_path: Path, monkeyp
     assert json.loads(text)["stage"] == "step"
 
 
+def test_round_one_extra_is_stored_and_logged(tmp_path: Path) -> None:
+    clock = _Clock()
+    writer = ProgressWriter(tmp_path, clock=clock, vram=lambda: (None, None))
+    assert writer.note(
+        step=40, total=200, loss=0.2, eta=400, stage="step",
+        extra={"round": 1, "first_pictures_seconds": 480, "seconds_per_sample": 18, "sample_seconds_estimated": False},
+    )
+    row = read_progress(tmp_path)
+    assert row is not None
+    assert row["first_pictures_seconds"] == 480
+    assert row["seconds_per_sample"] == 18
+    assert "first_pictures=480" in (tmp_path / "train.log").read_text(encoding="utf-8")
+
+
 def test_a_non_finite_loss_is_stored_as_unknown(tmp_path: Path) -> None:
     clock = _Clock()
     writer = ProgressWriter(tmp_path, clock=clock, vram=lambda: (None, None))

@@ -100,14 +100,14 @@ def test_shell_parts_this_app_extends_exist(make_app) -> None:
 
 @pytest.mark.parametrize(("lang", "count", "reset"), [
     ("en", "Step 1 of 6", "Reset to the “Balanced” preset"),
-    ("ru", "Шаг 1 из 6", "Сбросить к пресету «Сбалансированно»"),
+    ("ru", "Шаг 1 из 6", "Сбросить к пресету «Сбалансированная»"),
 ])
 def test_review_wording(make_app, lang, count, reset) -> None:
     make_app()
     set_language(lang)
     try:
         assert tr("wizard.step_count", current=1, total=len(STEPS)) == count
-        name = "Balanced" if lang == "en" else "Сбалансированно"
+        name = "Balanced" if lang == "en" else "Сбалансированная"
         assert tr("simple.preset.reset", name=name) == reset
     finally:
         set_language("en")

@@ -91,8 +91,14 @@ class BaseAdapter(ABC):
     def prepare_previews(self, prompts: Sequence[str]) -> None:
         """Encode the test prompts while the encoders are still loaded. Optional."""
 
-    def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
-        """A test picture (PIL image) or ``None`` when the adapter cannot draw one."""
+    def preview(
+        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+    ) -> Any | None:
+        """A test picture (PIL image) or ``None`` when the adapter cannot draw one.
+
+        ``steps`` is the denoising count for a review picture. ``None`` leaves the pipeline default,
+        which is what test pictures during a stage use.
+        """
         return None
 
     @abstractmethod
@@ -117,6 +123,13 @@ def register(adapter: type[BaseAdapter]) -> type[BaseAdapter]:
     """Add an adapter class to the registry under its MDL id."""
     _REGISTRY[adapter.info.mdl_id] = adapter
     return adapter
+
+
+def _inference_steps(steps: int | None) -> dict[str, int]:
+    """Pipeline kwargs for an explicit denoising count. Empty when the pipeline default applies."""
+    if steps is None:
+        return {}
+    return {"num_inference_steps": int(steps)}
 
 
 def unregister(mdl_id: str) -> None:
@@ -341,7 +354,9 @@ class ZImageAdapter(BaseAdapter):
         return torch.nn.functional.mse_loss(pred, (x0 - noise).float())
 
     @torch.no_grad()
-    def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
+    def preview(
+        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+    ) -> Any | None:
         """Draw one test picture with the current LoRA. Only the VAE joins the transformer on the card."""
         if prompt not in self._prompts:
             self.pipe.text_encoder.to(self.device)
@@ -370,6 +385,7 @@ class ZImageAdapter(BaseAdapter):
                     height=config.resolution,
                     width=config.resolution,
                     generator=generator,
+                    **_inference_steps(steps),
                 ).images[0]
         finally:
             self.pipe.vae.to("cpu")
@@ -748,7 +764,9 @@ class MossImageAdapter(BaseAdapter):
         return torch.nn.functional.mse_loss(pred, (noise - x0).float())
 
     @torch.no_grad()
-    def preview(self, model: nn.Module, prompt: str, seed: int, config: TrainConfig) -> Any | None:
+    def preview(
+        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+    ) -> Any | None:
         """Draw one test picture. The text encoder stays parked; noise comes from a CPU generator."""
         if prompt not in self._prompts or "" not in self._prompts:
             self.prepare_previews([prompt])
@@ -769,6 +787,7 @@ class MossImageAdapter(BaseAdapter):
                     height=config.resolution,
                     width=config.resolution,
                     generator=generator,
+                    **_inference_steps(steps),
                 ).images[0]
         finally:
             self.pipe.vae.to("cpu")

@@ -154,6 +154,8 @@ QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
 QPushButton[reviewPrimary="true"] {
     background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; }
 QPushButton[reviewPrimary="true"]:disabled { background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
+QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
+    background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
 """
 FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
@@ -249,6 +251,7 @@ class ForgeApp:
         self.simple: dict[str, str] = {"preset": "balanced", "likeness": "balanced", "vram": "auto"}
         self.simple["base"] = self._bases()[0][0] if self._bases() else ""
         self.previews = True
+        self.first_round_steps = rounds.DEFAULT_FIRST_ROUND_STEPS
         self.refset_settings: dict[str, float] = {
             "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS,
         }
@@ -439,7 +442,7 @@ class ForgeApp:
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
         self._loss_label = None
-        # A paused review replaces the training intro; Continue and Finish drive that screen.
+        # A paused review replaces the training intro; Continue, train fully and Finish drive that screen.
         if not (step == "train" and self._review_waiting() and not self.runner.busy):  # type: ignore[attr-defined]
             self._intro(column, step)
         builder = {
@@ -575,12 +578,47 @@ class ForgeApp:
         if step != "photos":
             details = self._details(f"step.{step}", paragraphs)
             column.addWidget(details)
+            if step == "train":
+                self._first_round_steps_field(details)
             if running:
                 loss = QtWidgets.QLabel(self._loss_text())
                 loss.setObjectName("forge.train.loss")
                 loss.setWordWrap(True)
                 details.body.layout().addWidget(loss)
                 self._loss_label = loss
+
+    def _first_round_steps_field(self, details: Details) -> None:
+        """Steps before the first review, under Details on the training step."""
+        if self._review_rounds() is None:
+            return
+        stored = int(self._review_state().get("first_round_steps") or 0)
+        if rounds.FIRST_ROUND_STEPS_MIN <= stored <= rounds.FIRST_ROUND_STEPS_MAX:
+            self.first_round_steps = stored
+        label = QtWidgets.QLabel(tr("forge.app.train.first_round_steps"))
+        label.setObjectName("forge.train.first_round_steps.label")
+        spin = QtWidgets.QSpinBox()
+        spin.setObjectName("forge.train.first_round_steps")
+        spin.setRange(rounds.FIRST_ROUND_STEPS_MIN, rounds.FIRST_ROUND_STEPS_MAX)
+        spin.setValue(self.first_round_steps)
+        spin.setToolTip(tr("forge.app.train.first_round_steps.tip"))
+        running = bool(self.runner.busy)  # type: ignore[attr-defined]
+        spin.setEnabled(not running)
+        label.setEnabled(not running)
+        spin.valueChanged.connect(self._set_first_round_steps)
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("forge.train.first_round_steps.row")
+        row = QtWidgets.QHBoxLayout(holder)
+        row.setContentsMargins(0, 4, 0, 0)
+        row.addWidget(label)
+        row.addWidget(spin)
+        row.addStretch(1)
+        layout = details.body.layout()
+        if layout is not None:
+            layout.addWidget(holder)
+
+    def _set_first_round_steps(self, value: int) -> None:
+        """Remember the first-round length chosen under Details."""
+        self.first_round_steps = int(value)
 
     def _details(self, key: str, paragraphs: tuple[str, ...]) -> Details:
         """A collapsed Details expander; its open state survives repaints of the step."""
@@ -1295,7 +1333,7 @@ class ForgeApp:
         return None
 
     def _review_screen(self, column: QtWidgets.QVBoxLayout) -> None:
-        """Original photos, generated samples with include/leave-out, and continue or finish."""
+        """Original photos, generated samples, and continue, train fully, or finish."""
         state = self._review_state()
         counted = rounds.counts(state)
         busy = self.runner.busy  # type: ignore[attr-defined]
@@ -1352,10 +1390,14 @@ class ForgeApp:
         cont.setObjectName("forge.review.continue")
         cont.setProperty("reviewPrimary", "true")
         cont.setEnabled(not busy and rounds.can_continue(state))
+        full = _button("forge.app.review.train_full", "forge.app.review.train_full.tip", self.train_full)
+        full.setObjectName("forge.review.train_full")
+        full.setEnabled(not busy)
         finish = _button("forge.app.review.finish", "forge.app.review.finish.tip", self.finish_review)
         finish.setObjectName("forge.review.finish")
         finish.setEnabled(not busy)
         row.addWidget(cont)
+        row.addWidget(full)
         row.addWidget(finish)
         row.addStretch(1)
         column.addLayout(row)
@@ -1565,12 +1607,12 @@ class ForgeApp:
         rounds.save_state(Project(self.project), state)
         self.repaint()
 
-    def _confirm_unmarked(self) -> bool:
+    def _confirm_unmarked(self, title_key: str = "forge.app.review.continue") -> bool:
         """Ask before a pass that would drop pictures the user has not marked."""
         box = QtWidgets.QMessageBox(self.window)
         box.setObjectName("forge.review.unmarked")
         box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
-        box.setWindowTitle(tr("forge.app.review.continue"))
+        box.setWindowTitle(tr(title_key))
         box.setText(tr("forge.app.review.unmarked"))
         go = box.addButton(
             tr("forge.app.review.unmarked.continue"), QtWidgets.QMessageBox.ButtonRole.AcceptRole,
@@ -1601,6 +1643,28 @@ class ForgeApp:
                 self.paused = False
 
         self._run(["--json", "lora", "continue", str(self.project)], done)
+
+    def train_full(self) -> None:
+        """``lora continue --no-more-reviews``: the remaining preset steps, then finish."""
+        if not self._needs("continue"):
+            return
+        if rounds.counts(self._review_state())["unmarked"] > 0 and not self._confirm_unmarked(
+            "forge.app.review.train_full",
+        ):
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            if not outcome.ok:
+                return
+            if result.get("state") == "done":
+                self.draft.trained = True
+                self.paused = False
+            elif result.get("state") == "review":
+                self.draft.trained = False
+                self.paused = False
+
+        self._run(["--json", "lora", "continue", str(self.project), "--no-more-reviews"], done)
 
     def finish_review(self) -> None:
         """``lora finish``: keep the latest checkpoint and end the review rounds."""
@@ -1671,7 +1735,21 @@ class ForgeApp:
         step = int(row.get("step") or 0)
         elapsed = format_span(float(row.get("elapsed_seconds") or 0))
         eta = row.get("eta_seconds")
-        if isinstance(eta, int | float):
+        pictures = row.get("first_pictures_seconds")
+        sample = row.get("seconds_per_sample")
+        estimated = bool(row.get("sample_seconds_estimated", True))
+        if isinstance(pictures, int | float) and int(row.get("round") or 0) == 1:
+            shown = format_span(float(pictures))
+            if isinstance(sample, int | float) and not estimated:
+                self.progress_text = tr(
+                    "lora.progress.first_pictures_rate",
+                    step=step, steps=total, elapsed=elapsed, eta=shown, seconds=max(1, round(float(sample))),
+                )
+            else:
+                self.progress_text = tr(
+                    "lora.progress.first_pictures", step=step, steps=total, elapsed=elapsed, eta=shown,
+                )
+        elif isinstance(eta, int | float):
             self.progress_text = tr(
                 "lora.progress.status", step=step, steps=total, elapsed=elapsed, eta=format_span(float(eta)),
             )
@@ -1997,7 +2075,13 @@ class ForgeApp:
         planned = None if dry_run or self.draft.extend_from is not None else self._review_rounds()
         if planned is not None:
             count, samples = planned
-            args += ["--review-rounds", str(count), "--samples-per-round", str(samples)]
+            args += [
+                "--review-rounds", str(count),
+                "--samples-per-round", str(samples),
+                "--first-round-steps", str(self.first_round_steps),
+                "--first-round-samples", str(rounds.DEFAULT_FIRST_ROUND_SAMPLES),
+                "--sample-steps", str(rounds.DEFAULT_SAMPLE_STEPS),
+            ]
         edits = self.project / "captions-edit.jsonl"
         if edits.is_file():
             args += ["--captions", str(edits)]

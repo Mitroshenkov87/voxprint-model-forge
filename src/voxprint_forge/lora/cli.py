@@ -206,8 +206,20 @@ def _review_flags(train: argparse.ArgumentParser) -> None:
         help="Pause after each stage for this many reviews. 0 trains straight through.",
     )
     train.add_argument(
+        "--first-round-steps", type=int, default=200,
+        help="Steps before the first review. From 100 to 500. Default: 200.",
+    )
+    train.add_argument(
+        "--first-round-samples", type=int, default=6,
+        help="Pictures drawn at the first review, at the training resolution. Default: 6.",
+    )
+    train.add_argument(
         "--samples-per-round", type=int, default=8,
-        help="Pictures drawn from the checkpoint at each review. Default: 8.",
+        help="Pictures drawn after the first review. Default: 8.",
+    )
+    train.add_argument(
+        "--sample-steps", type=int, default=28,
+        help="Inference steps for each review picture. Default: 28.",
     )
 
 
@@ -220,6 +232,10 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
     review.add_argument("--from-file", type=Path, default=None, help="Verdicts from a text or JSON file.")
     cont = lora_sub.add_parser("continue", help="Train the next stage on the original photos and the liked samples.")
     cont.add_argument("project", type=Path, help="Project folder.")
+    cont.add_argument(
+        "--no-more-reviews", action="store_true",
+        help="Train every remaining preset step and finish, with no further reviews.",
+    )
     finish = lora_sub.add_parser("finish", help="Keep the latest checkpoint and end the review rounds.")
     finish.add_argument("project", type=Path, help="Project folder.")
     status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
@@ -310,6 +326,9 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             preview_prompts=prompts,
             review_rounds=getattr(args, "review_rounds", 0),
             samples_per_round=getattr(args, "samples_per_round", 8),
+            first_round_steps=getattr(args, "first_round_steps", 200),
+            first_round_samples=getattr(args, "first_round_samples", 6),
+            sample_steps=getattr(args, "sample_steps", 28),
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -465,6 +484,7 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
             stop=stop,
             preview_prompts=prompts,
             review_continue=True,
+            no_more_reviews=bool(getattr(args, "no_more_reviews", False)),
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -479,7 +499,7 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
 
 def _status(args: argparse.Namespace) -> dict[str, object]:
     """The latest ``train.json`` line, plus the review phase when one is saved."""
-    from voxprint_forge.lora.progress_log import read_progress
+    from voxprint_forge.lora.progress_log import first_pictures_text, read_progress
     from voxprint_forge.lora.review import counts, load_state
 
     project = Project(args.project)
@@ -488,6 +508,9 @@ def _status(args: argparse.Namespace) -> dict[str, object]:
     if row is None and state.get("phase") in (None, "idle"):
         raise LoraUsageError("lora.err.no_progress")
     result: dict[str, object] = dict(row or {})
+    pictures = first_pictures_text(result)
+    if pictures:
+        result["first_pictures"] = pictures
     if state.get("phase") not in (None, "idle"):
         result["review"] = {"phase": state.get("phase"), **counts(state)}
     return result

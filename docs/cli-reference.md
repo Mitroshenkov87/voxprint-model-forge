@@ -544,7 +544,10 @@ usage: forge lora train [-h] --project PROJECT
                         [--preview-prompts PREVIEW_PROMPTS] [--resume]
                         [--dry-run] [--fetch-missing | --no-fetch]
                         [--review-rounds REVIEW_ROUNDS]
-                        [--samples-per-round SAMPLES_PER_ROUND] [--base BASE]
+                        [--first-round-steps FIRST_ROUND_STEPS]
+                        [--first-round-samples FIRST_ROUND_SAMPLES]
+                        [--samples-per-round SAMPLES_PER_ROUND]
+                        [--sample-steps SAMPLE_STEPS] [--base BASE]
                         [--rank RANK] [--alpha ALPHA]
                         [--resolution RESOLUTION] [--train-text-encoder]
 
@@ -595,9 +598,16 @@ options:
   --review-rounds REVIEW_ROUNDS
                         Pause after each stage for this many reviews. 0 trains
                         straight through.
+  --first-round-steps FIRST_ROUND_STEPS
+                        Steps before the first review. From 100 to 500.
+                        Default: 200.
+  --first-round-samples FIRST_ROUND_SAMPLES
+                        Pictures drawn at the first review, at the training
+                        resolution. Default: 6.
   --samples-per-round SAMPLES_PER_ROUND
-                        Pictures drawn from the checkpoint at each review.
-                        Default: 8.
+                        Pictures drawn after the first review. Default: 8.
+  --sample-steps SAMPLE_STEPS
+                        Inference steps for each review picture. Default: 28.
   --base BASE           Base model MDL id. Default: z-image.
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).
@@ -781,13 +791,15 @@ options:
 ## `forge lora continue`
 
 ```text
-usage: forge lora continue [-h] project
+usage: forge lora continue [-h] [--no-more-reviews] project
 
 positional arguments:
-  project     Project folder.
+  project            Project folder.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help         show this help message and exit
+  --no-more-reviews  Train every remaining preset step and finish, with no
+                     further reviews.
 ```
 
 ## `forge lora finish`

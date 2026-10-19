@@ -76,6 +76,9 @@ def test_the_sample_switch_adds_review_rounds_and_off_keeps_a_straight_train(mak
     flagged = app._train_args()
     assert flagged[flagged.index("--review-rounds") + 1] == "3"
     assert flagged[flagged.index("--samples-per-round") + 1] == "8"
+    assert flagged[flagged.index("--first-round-steps") + 1] == "200"
+    assert flagged[flagged.index("--first-round-samples") + 1] == "6"
+    assert flagged[flagged.index("--sample-steps") + 1] == "28"
     app.draft.set_source("photos")
     plain = app._train_args()
     assert "--review-rounds" not in plain
@@ -165,6 +168,9 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
     assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить обучение"
+    train_full = app.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
+    assert train_full is not None and train_full.text() == "Дообучить без проверок"
+    assert train_full.isEnabled()
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
     counts = app.window.findChild(QtWidgets.QLabel, "forge.review.counts")
@@ -374,12 +380,16 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
     assert shared in FORGE_STYLE
     assert "border-radius: 15px" not in FORGE_STYLE
     assert "border-radius: 14px" not in FORGE_STYLE
-    expected = {"balanced": "Сбалансированно", "best": "Лучшее качество", "close": "Близко к фото"}
+    expected = {"balanced": "Сбалансированная", "best": "Лучшее качество", "close": "Близко к фото"}
     for name, label in expected.items():
         button = app.window.findChild(QtWidgets.QPushButton, f"forge.chip.{name}")
         assert button.text() == label
         assert button.width() == _control_width(button)
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+    likeness = [
+        button.text() for button in app.window.findChildren(QtWidgets.QPushButton, "forge.chip.balanced")
+    ]
+    assert "Умеренно" in likeness
     app.layout.sections._index = STEPS.index("photos")
     app.repaint()
     qapp.processEvents()
@@ -390,3 +400,68 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
         button = app.window.findChild(QtWidgets.QPushButton, name)
         assert button is not None
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+
+
+def test_train_fully_sends_no_more_reviews(make_app, tmp_path, qapp) -> None:
+    app = make_app("en")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.train_full")
+    assert button.text() == "Train fully, no more reviews"
+    app.window.findChild(QtWidgets.QPushButton, "forge.review.like_all").click()
+    qapp.processEvents()
+    button.click()
+    qapp.processEvents()
+    assert app.runner.calls[-1][:3] == ["--json", "lora", "continue"]
+    assert "--no-more-reviews" in app.runner.calls[-1]
+
+
+def test_first_round_steps_live_under_details(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.draft.set_source("refs")
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    details = app.window.findChild(Details, "forge.details.step.train")
+    assert details is not None
+    details.button.click()
+    qapp.processEvents()
+    spin = app.window.findChild(QtWidgets.QSpinBox, "forge.train.first_round_steps")
+    assert spin is not None
+    assert spin.minimum() == 100 and spin.maximum() == 500 and spin.value() == 200
+    assert spin.toolTip() == tr("forge.app.train.first_round_steps.tip")
+    spin.setValue(250)
+    args = app._train_args()
+    assert args[args.index("--first-round-steps") + 1] == "250"
+
+
+def test_round_one_shows_the_first_pictures_line_and_a_grey_start_button(make_app, qapp) -> None:
+    app = make_app("ru")
+    app.project.mkdir(parents=True, exist_ok=True)
+    save_state(Project(app.project), transition(
+        {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, prompts=["shape"],
+        seed=1, base="draw-test", config={"steps": 1500}, total_steps=1500,
+    ))
+    (app.project / "train.json").write_text(json.dumps({
+        "elapsed_seconds": 90, "eta_seconds": 400, "loss": 0.21, "stage": "step",
+        "step": 40, "total": 200, "round": 1, "first_pictures_seconds": 480,
+        "seconds_per_sample": 18, "sample_seconds_estimated": False,
+    }), encoding="utf-8")
+    app.runner.busy = True
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    text = page.findChild(QtWidgets.QLabel, "progressText")
+    elapsed = format_span(90)
+    eta = format_span(480)
+    assert text.text() == f"Шаг 40 из 200 · прошло {elapsed} · первые картинки примерно через {eta} · 18 с на картинку"
+    start = app.window.findChild(QtWidgets.QPushButton, "primary")
+    assert start is not None and not start.isEnabled()
+    assert start.text() == "Начать обучение"
+    image = start.grab().toImage()
+    color = image.pixelColor(6, image.height() // 2)
+    assert color.red() < 160 and color.green() < 160

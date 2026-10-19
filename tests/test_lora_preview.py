@@ -54,7 +54,9 @@ class _DiffusersLikePipe:
                 return next(module.parameters()).device
         return torch.device("cpu")
 
-    def __call__(self, *, prompt_embeds, negative_prompt_embeds, height, width, generator):
+    def __call__(
+        self, *, prompt_embeds, negative_prompt_embeds, height, width, generator, num_inference_steps=None,
+    ):
         device = self._execution_device
         shape = (1, 16, 2 * (height // 16), 2 * (width // 16))
         # randn_tensor: a CPU generator draws on the CPU and moves; any other generator must
@@ -70,7 +72,14 @@ class _DiffusersLikePipe:
         card = next(self.transformer.parameters()).device
         if latents.device != card or prompt_embeds[0].device != card:
             raise RuntimeError(f"Expected all tensors to be on the same device ({latents.device} vs {card})")
-        self.calls.append({"device": device, "generator": generator.device.type, "latents": latents})
+        self.calls.append({
+            "device": device,
+            "generator": generator.device.type,
+            "latents": latents,
+            "height": height,
+            "width": width,
+            "num_inference_steps": num_inference_steps,
+        })
         return _Result()
 
 
@@ -111,6 +120,17 @@ def test_encoder_is_restored_when_the_preview_raises() -> None:
     with pytest.raises(RuntimeError):
         adapter.preview(nn.Identity(), "a red cube", 1, build_config("balanced", "balanced", 24))
     assert isinstance(adapter.pipe.text_encoder, nn.Module)
+
+
+def test_review_samples_pass_an_explicit_step_count_and_the_training_resolution() -> None:
+    adapter = _adapter()
+    config = build_config("balanced", "balanced", 24)
+    adapter.preview(nn.Identity(), "a red cube", 7, config, steps=28)
+    call = adapter.pipe.calls[-1]
+    assert call["num_inference_steps"] == 28
+    assert call["height"] == config.resolution == call["width"]
+    adapter.preview(nn.Identity(), "a red cube", 8, config)
+    assert adapter.pipe.calls[-1]["num_inference_steps"] is None
 
 
 def test_execution_device_mismatch_is_a_named_error() -> None:

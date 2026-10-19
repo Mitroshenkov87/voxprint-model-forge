@@ -25,7 +25,14 @@ VERDICTS = ("unmarked", "like", "dislike")
 # Simple mode, when "Extend the set from samples" is on. The user can finish sooner.
 DEFAULT_ROUNDS = 3
 DEFAULT_SAMPLES = 8
-Action = Literal["start", "pause", "continue", "finish", "mark"]
+DEFAULT_FIRST_ROUND_STEPS = 200
+FIRST_ROUND_STEPS_MIN = 100
+FIRST_ROUND_STEPS_MAX = 500
+DEFAULT_FIRST_ROUND_SAMPLES = 6
+DEFAULT_SAMPLE_STEPS = 28
+# One denoising step, estimated as half a measured training step until a sample is timed.
+SAMPLE_STEP_SHARE = 0.5
+Action = Literal["start", "pause", "continue", "train_full", "finish", "mark"]
 
 
 def state_path(project: Project) -> Path:
@@ -40,6 +47,11 @@ def empty_state() -> dict[str, object]:
         "phase": "idle",
         "rounds": 0,
         "samples_per_round": 0,
+        "first_round_steps": 0,
+        "first_round_samples": 0,
+        "sample_steps": 0,
+        "total_steps": 0,
+        "no_more_reviews": False,
         "index": 0,
         "seed": 0,
         "base": "",
@@ -96,6 +108,8 @@ def transition(state: dict[str, object], action: Action, **payload: object) -> d
             return _pause(state, payload)
         case "continue":
             return _continue(state)
+        case "train_full":
+            return _train_full(state)
         case "finish":
             return _finish(state)
         case "mark":
@@ -105,8 +119,8 @@ def transition(state: dict[str, object], action: Action, **payload: object) -> d
 
 def plan_samples(state: dict[str, object]) -> list[dict[str, object]]:
     """The pictures for the stage in progress: fixed seeds and the project prompts."""
-    per_round = int(state.get("samples_per_round") or 0)
     round_no = int(state.get("index") or 0) + 1
+    per_round = samples_for_round(state, round_no)
     seed = int(state.get("seed") or 0)
     prompts = [str(prompt) for prompt in _list(state.get("prompts"))] or [""]
     planned = []
@@ -123,6 +137,126 @@ def plan_samples(state: dict[str, object]) -> list[dict[str, object]]:
             }
         )
     return planned
+
+
+def samples_for_round(state: dict[str, object], round_no: int) -> int:
+    """How many pictures this round draws. The first round has its own count."""
+    if round_no <= 1:
+        first = int(state.get("first_round_samples") or 0)
+        if first > 0:
+            return first
+    return int(state.get("samples_per_round") or 0)
+
+
+def sample_steps_of(state: dict[str, object]) -> int:
+    """Inference steps for a review picture. Missing values use the default of 28."""
+    value = int(state.get("sample_steps") or 0)
+    return value if value > 0 else DEFAULT_SAMPLE_STEPS
+
+
+def total_steps_of(state: dict[str, object]) -> int:
+    """The preset step count, from the review or from the saved training config."""
+    total = int(state.get("total_steps") or 0)
+    if total > 0:
+        return total
+    raw = state.get("config")
+    if isinstance(raw, dict):
+        return max(0, int(raw.get("steps") or 0))
+    return 0
+
+
+def step_plan(state: dict[str, object]) -> tuple[int, ...]:
+    """Steps in each planned round.
+
+    The first round is ``first_round_steps``, clamped to the preset total.
+    Later rounds share the steps that remain, and the last of them takes the
+    remainder. A single planned round stops at the first-round length; the
+    steps still left are what train-fully runs. Planned rounds plus that
+    remainder equal the preset total.
+    """
+    rounds = int(state.get("rounds") or 0)
+    total = total_steps_of(state)
+    if rounds < 1 or total < 1:
+        return ()
+    first = int(state.get("first_round_steps") or 0)
+    if first < 1:
+        first = min(DEFAULT_FIRST_ROUND_STEPS, total)
+    first = min(first, total)
+    if rounds == 1:
+        return (first,)
+    remaining = total - first
+    later = rounds - 1
+    base, extra = divmod(remaining, later)
+    return (first, *([base] * (later - 1)), base + extra)
+
+
+def steps_completed(state: dict[str, object]) -> int:
+    """Steps finished in rounds that have already paused for review."""
+    plan = step_plan(state)
+    index = int(state.get("index") or 0)
+    if index <= 0 or not plan:
+        return 0
+    return sum(plan[: min(index, len(plan))])
+
+
+def steps_for_stage(state: dict[str, object]) -> int:
+    """Steps for the stage that is running or about to run.
+
+    Train-fully takes every preset step that is not finished yet, in one stage.
+    """
+    if state.get("no_more_reviews"):
+        return max(0, total_steps_of(state) - steps_completed(state))
+    plan = step_plan(state)
+    index = int(state.get("index") or 0)
+    if index < 0 or index >= len(plan):
+        return 0
+    return plan[index]
+
+
+def check_round_options(
+    *,
+    first_round_steps: int,
+    first_round_samples: int,
+    samples_per_round: int,
+    sample_steps: int,
+) -> None:
+    """Reject a review setup outside the supported range."""
+    if samples_per_round < 1 or first_round_samples < 1:
+        raise LoraUsageError("lora.err.review_rounds")
+    if not FIRST_ROUND_STEPS_MIN <= first_round_steps <= FIRST_ROUND_STEPS_MAX:
+        raise LoraUsageError(
+            "lora.err.first_round_steps", low=FIRST_ROUND_STEPS_MIN, high=FIRST_ROUND_STEPS_MAX,
+        )
+    if sample_steps < 1:
+        raise LoraUsageError("lora.err.sample_steps")
+
+
+def first_pictures_eta(
+    *,
+    steps_left: int,
+    seconds_per_step: float,
+    samples_left: int,
+    sample_steps: int,
+    seconds_per_sample: float | None,
+) -> dict[str, object]:
+    """Seconds until the first review pictures, and whether the sample time is estimated.
+
+    ``steps_left`` times the measured seconds per step, plus the pictures still
+    to draw times the seconds per picture. Until one picture has been timed,
+    each denoising step is estimated as half a training step.
+    """
+    estimated = seconds_per_sample is None
+    per_sample = (
+        max(0.0, seconds_per_step) * SAMPLE_STEP_SHARE * max(0, sample_steps)
+        if estimated
+        else max(0.0, float(seconds_per_sample))
+    )
+    total = max(0, steps_left) * max(0.0, seconds_per_step) + max(0, samples_left) * per_sample
+    return {
+        "first_pictures_seconds": int(round(total)),
+        "seconds_per_sample": None if estimated else round(per_sample, 3),
+        "sample_seconds_estimated": estimated,
+    }
 
 
 def passes_output_check(image: object) -> bool:
@@ -228,17 +362,31 @@ def _start(state: dict[str, object], payload: dict[str, object]) -> dict[str, ob
     samples = int(payload["samples_per_round"])
     if rounds < 1 or samples < 1:
         raise LoraUsageError("lora.err.review_rounds")
-    prompts = [str(prompt) for prompt in _list(payload.get("prompts"))]
+    first_samples = int(payload.get("first_round_samples") or 0)
+    if first_samples < 1:
+        first_samples = samples
+    sample_steps = int(payload.get("sample_steps") or 0)
+    if sample_steps < 1:
+        sample_steps = DEFAULT_SAMPLE_STEPS
     config = payload.get("config")
+    stored = dict(config) if isinstance(config, dict) else {}
+    total = int(payload.get("total_steps") or 0)
+    if total < 1:
+        total = int(stored.get("steps") or 0)
+    prompts = [str(prompt) for prompt in _list(payload.get("prompts"))]
     return {
         **empty_state(),
         "phase": "training",
         "rounds": rounds,
         "samples_per_round": samples,
+        "first_round_steps": int(payload.get("first_round_steps") or 0),
+        "first_round_samples": first_samples,
+        "sample_steps": sample_steps,
+        "total_steps": total,
         "seed": int(payload.get("seed") or 0),
         "base": str(payload.get("base") or ""),
         "prompts": prompts,
-        "config": dict(config) if isinstance(config, dict) else {},
+        "config": stored,
     }
 
 
@@ -257,21 +405,34 @@ def _pause(state: dict[str, object], payload: dict[str, object]) -> dict[str, ob
     }
 
 
-def _continue(state: dict[str, object]) -> dict[str, object]:
-    if state.get("phase") != "review":
-        raise LoraUsageError("lora.err.review_phase")
-    if not can_continue(state):
-        raise LoraUsageError("lora.err.review_finished")
+def _archive(state: dict[str, object]) -> dict[str, object]:
+    """Move the open round into history and go back to training."""
     history = [dict(entry) for entry in _list(state.get("history")) if isinstance(entry, dict)]
     if state.get("samples"):
         history.append({"round": int(state.get("index") or 0), "samples": list(_samples(state.get("samples")))})
     return {**state, "phase": "training", "samples": [], "history": history}
 
 
-def _finish(state: dict[str, object]) -> dict[str, object]:
+def _continue(state: dict[str, object]) -> dict[str, object]:
     if state.get("phase") != "review":
         raise LoraUsageError("lora.err.review_phase")
-    return {**state, "phase": "finished"}
+    if not can_continue(state):
+        raise LoraUsageError("lora.err.review_finished")
+    return {**_archive(state), "no_more_reviews": False}
+
+
+def _train_full(state: dict[str, object]) -> dict[str, object]:
+    """Keep the current marks and train every remaining preset step, with no further review."""
+    if state.get("phase") != "review":
+        raise LoraUsageError("lora.err.review_phase")
+    return {**_archive(state), "no_more_reviews": True}
+
+
+def _finish(state: dict[str, object]) -> dict[str, object]:
+    phase = state.get("phase")
+    if phase == "review" or (phase == "training" and state.get("no_more_reviews")):
+        return {**state, "phase": "finished"}
+    raise LoraUsageError("lora.err.review_phase")
 
 
 def _mark(state: dict[str, object], payload: dict[str, object]) -> dict[str, object]:

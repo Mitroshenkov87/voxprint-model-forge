@@ -33,7 +33,7 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Estimate time | `--dry-run` | Train: Estimate time | mapped |
 | Train / Pause / Continue / Stop | `lora train`, `<project>/PAUSE` file, `--resume` | Train: buttons, plain-words progress and time left | mapped |
 | Live progress | `lora status`, `<project>/train.json` | Train: the step line and bar read `train.json` while a job runs | mapped |
-| Review rounds | `lora train --review-rounds`, `lora review`, `lora continue`, `lora finish` | Train: review screen when **Extend the set from samples** is on | mapped |
+| Review rounds | `lora train --review-rounds --first-round-steps --first-round-samples --samples-per-round --sample-steps`, `lora review`, `lora continue`, `lora continue --no-more-reviews`, `lora finish` | Train: first-round steps under Details; review screen with Continue, Train fully, and Finish when **Extend the set from samples** is on | mapped |
 | Extend | `lora extend --from` | Result: Add more photos; overflow: Add more photos to a model | mapped |
 | Checkpoint pick | `--checkpoint N` | Result: Version | mapped |
 | Save | `lora export --out` | Result: Save; overflow: Export | mapped |
