@@ -78,8 +78,10 @@ jobs:
           $ErrorActionPreference = "Stop"
           $stage = "installer\windows\staging"
           New-Item -ItemType Directory -Force "$stage\wheels" | Out-Null
-          # The version line reads BUILD.json from the package folder.
-          Copy-Item BUILD.json src\voxprint_forge\BUILD.json
+          # Resolved build and rc go into the wheel and into {app}\BUILD.json.
+          # The catalogue's null build is what a laptop prints as "dev" if this is skipped.
+          python installer\stamp_build.py --catalog BUILD.json --package-dir src\voxprint_forge --stage-dir $stage --require-build
+          if ($LASTEXITCODE -ne 0) { throw "the build stamp failed" }
           python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
           if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
           $pyproject = Get-Content -Raw pyproject.toml
@@ -91,7 +93,7 @@ jobs:
           $want = (Get-Content "$common.sha256").Split(" ")[0].Trim().ToLower()
           if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
           Copy-Item $common "$stage\wheels\"
-          foreach ($name in @("BUILD.json", "LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
+          foreach ($name in @("LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
           $mdl = "src\voxprint_forge\data\mdl.json"
           if (-not (Test-Path -LiteralPath $mdl)) { throw "mdl.json is missing" }
           Copy-Item -LiteralPath $mdl "$stage\mdl.json"
@@ -127,6 +129,13 @@ jobs:
             $zip.Dispose()
             if ($hit) { throw "model weights inside $($w.Name): $($hit.FullName -join ', ')" }
           }
+          # Live {app}\wheels is updated only after the copy succeeds. Keep the
+          # new wheels out of staging so [Files] does not drop them there early.
+          $incoming = "installer\windows\wheels-incoming"
+          if (Test-Path -LiteralPath $incoming) { Remove-Item -LiteralPath $incoming -Recurse -Force }
+          Move-Item -LiteralPath "$stage\wheels" -Destination $incoming
+          if (Test-Path -LiteralPath "$stage\wheels") { throw "wheels were not moved out of staging" }
+          if (-not (Get-ChildItem -LiteralPath $incoming -Filter *.whl)) { throw "wheels-incoming has no wheels" }
       - name: PowerShell 7 MSI pin (download, sha256, Microsoft signature)
         shell: pwsh
         run: |
@@ -223,7 +232,7 @@ jobs:
               [void][LauncherIcon]::FreeLibrary($module)
           }
           "launcher icon ok"
-      - name: Smoke (install, upgrade wheels, --version, preflight, LoRA dry-run, uninstall)
+      - name: Smoke (install, upgrade wheels, busy upgrade, --version, preflight, LoRA dry-run, uninstall)
         shell: pwsh
         timeout-minutes: 30
         run: |
@@ -232,12 +241,16 @@ jobs:
           $resultPath = Join-Path $env:RUNNER_TEMP "smoke\result.json"
           if (-not (Test-Path -LiteralPath $resultPath)) { throw "windows_smoke.ps1 exited $code without result.json" }
           $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
-          $upgrade = @($result.steps | Where-Object { $_.name -eq "upgrade-wheels" })
-          if ($upgrade.Count -ne 1 -or -not $upgrade[0].ok) {
-            $detail = if ($upgrade.Count -eq 1) { $upgrade[0].detail } else { "missing" }
-            throw "upgrade-wheels did not pass: $detail"
+          foreach ($name in @("upgrade-wheels", "upgrade-busy", "version")) {
+            $step = @($result.steps | Where-Object { $_.name -eq $name })
+            if ($step.Count -ne 1 -or -not $step[0].ok) {
+              $detail = if ($step.Count -eq 1) { $step[0].detail } else { "missing" }
+              throw "$name did not pass: $detail"
+            }
+            "${name}: $($step[0].detail)"
           }
-          "upgrade-wheels: $($upgrade[0].detail)"
+          $versionDetail = @($result.steps | Where-Object { $_.name -eq "version" })[0].detail
+          if ($versionDetail -notmatch "build \d+") { throw "installed --version did not report a build: $versionDetail" }
           if ($code -ne 0) { throw "windows_smoke.ps1 exited $code" }
       - uses: actions/upload-artifact@v4
         if: always()

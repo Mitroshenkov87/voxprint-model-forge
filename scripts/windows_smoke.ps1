@@ -24,7 +24,10 @@ Steps and pass rules:
                VOXPrint.AISuite.ModelForge. No Uninstall or guide shortcut, no desktop shortcut. Older Uninstall
                and guide shortcuts are removed. The uninstall entry name, icon and publisher match. No model weights.
   1w upgrade   the planted wheels are gone, and the app venv's voxprint-common version is the pin in the app wheel.
-  2 version    voxprint-forge-cli --version exits 0 and prints the BUILD.json version.
+  2 version    the installed voxprint-forge-cli --version (no checkout on PATH, no GITHUB_RUN_NUMBER)
+               exits 0 and prints the build number from the installed build_info.json.
+  2c busy      a process holds voxprint-model-forge.exe; a silent upgrade exits 20; the previous
+               install is unchanged (--help works, the same wheels are present, wheels.new is absent).
   2b help      voxprint-forge-cli lora train --help exits 0 in under 3 seconds.
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
@@ -76,6 +79,8 @@ $StaleWheels = @(
     "voxprint_common-0.4.0-py3-none-any.whl",
     "voxprint_forge-0.0.9-py3-none-any.whl"
 )
+# installer/windows/voxprint-model-forge.iss AppBusyExitCode. Not an Inno Setup code.
+$AppBusyExitCode = 20
 
 if (-not $Results) {
     $Results = Join-Path $env:LOCALAPPDATA ("VoxprintForgeSmoke\windows\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
@@ -107,17 +112,44 @@ function Invoke-Step([string]$Name, [scriptblock]$Body) {
     }
 }
 
-function Invoke-Cli([string[]]$ArgList) {
+function Invoke-Cli([string[]]$ArgList, [switch]$InstalledOnly) {
     # stdout is the JSON; stderr (warnings) goes to the log only. Windows PowerShell 5.1 turns native
     # stderr into error records, so this call must not run under "Stop".
     $ErrorActionPreference = "Continue"
     $err = Join-Path $Results "stderr.txt"
+    $savedPath = $env:PATH
+    $saved = @{}
+    if ($InstalledOnly) {
+        foreach ($name in @("GITHUB_RUN_NUMBER", "VOXPRINT_BUILD", "PYTHONPATH", "PYTHONHOME", "FORGE_ROOT")) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+        # The installed exe is absolute. A checkout on PATH must not be able to answer --version.
+        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        $repo = Split-Path -Parent $PSScriptRoot
+        foreach ($entry in ($env:PATH -split ";")) {
+            if ($entry -and $entry.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "checkout is on PATH: $entry"
+            }
+        }
+        if ($env:GITHUB_RUN_NUMBER -or $env:VOXPRINT_BUILD) {
+            throw "the build environment is still set for an installed --version"
+        }
+    }
     # Run outside any source checkout, as an installed app does.
     Push-Location ([System.IO.Path]::GetTempPath())
     try {
         $out = & $Cli @ArgList 2>> $err | Out-String
         $code = $LASTEXITCODE
-    } finally { Pop-Location }
+    } finally {
+        Pop-Location
+        if ($InstalledOnly) {
+            $env:PATH = $savedPath
+            foreach ($name in @($saved.Keys)) {
+                [Environment]::SetEnvironmentVariable($name, $saved[$name])
+            }
+        }
+    }
     Add-Content -LiteralPath $Log -Value ("> voxprint-forge-cli " + ($ArgList -join " ") + "`n" + $out) -Encoding utf8
     return @{ code = $code; out = $out }
 }
@@ -341,11 +373,98 @@ if ($installed) {
     })
 
     [void](Invoke-Step "version" {
-        $want = (Get-Content -Raw (Join-Path $Dir "BUILD.json") | ConvertFrom-Json).version
-        $r = Invoke-Cli @("--version")
+        $cliFull = (Resolve-Path -LiteralPath $Cli).Path
+        if (-not $cliFull.StartsWith($Dir, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "CLI is not under the install directory: $cliFull"
+        }
+        $pkg = Join-Path $Dir "venv\Lib\site-packages\voxprint_forge"
+        $frozenPath = Join-Path $pkg "build_info.json"
+        $payloadPath = Join-Path $Dir "BUILD.json"
+        if (-not (Test-Path -LiteralPath $frozenPath)) { throw "installed wheel has no build_info.json" }
+        $frozen = Get-Content -Raw -LiteralPath $frozenPath | ConvertFrom-Json
+        $payload = Get-Content -Raw -LiteralPath $payloadPath | ConvertFrom-Json
+        if ($null -eq $frozen.build -or "$($frozen.build)" -notmatch '^\d+$') {
+            throw "installed build_info.json build is $($frozen.build)"
+        }
+        if ("$($payload.build)" -ne "$($frozen.build)") {
+            throw "installed BUILD.json build is $($payload.build), wheel build is $($frozen.build)"
+        }
+        foreach ($path in @($frozenPath, $payloadPath)) {
+            $text = Get-Content -Raw -LiteralPath $path
+            if ($text -notmatch '"rc"\s*:') { throw "$path has no rc field" }
+        }
+        if ("$($payload.rc)" -ne "$($frozen.rc)") {
+            throw "installed rc $($payload.rc) does not match the wheel rc $($frozen.rc)"
+        }
+        $r = Invoke-Cli @("--version") -InstalledOnly
         if ($r.code -ne 0) { throw "--version exited $($r.code)" }
-        if ($r.out -notmatch [regex]::Escape($want)) { throw "--version printed '$($r.out.Trim())', want $want" }
-        $r.out.Trim()
+        $line = $r.out.Trim()
+        if ($line -notmatch [regex]::Escape("build $($frozen.build)")) {
+            throw "--version printed '$line', want build $($frozen.build) from the installed wheel"
+        }
+        if ($line -match '(^|\s)dev(\s|$)') { throw "--version printed dev: $line" }
+        if ($payload.version -and ($line -notmatch [regex]::Escape([string]$payload.version))) {
+            throw "--version printed '$line', want version $($payload.version)"
+        }
+        $line
+    })
+
+    [void](Invoke-Step "upgrade-busy" {
+        $exe = Join-Path $Dir "voxprint-model-forge.exe"
+        if (-not (Test-Path -LiteralPath $exe)) { throw "missing $exe" }
+        $wheelDir = Join-Path $Dir "wheels"
+        $before = @(Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File | ForEach-Object { $_.Name } | Sort-Object)
+        if ($before.Count -lt 1) { throw "no wheels before the busy upgrade" }
+        $exeItem = Get-Item -LiteralPath $exe
+        $exeStamp = "$($exeItem.Length)|$($exeItem.LastWriteTimeUtc.Ticks)"
+        $holder = Start-Job -ScriptBlock {
+            param($Path)
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+            try { while ($true) { Start-Sleep -Seconds 1 } } finally { $stream.Dispose() }
+        } -ArgumentList $exe
+        $locked = $false
+        $released = $false
+        try {
+            for ($i = 0; $i -lt 50 -and -not $locked; $i++) {
+                try {
+                    $probe = [System.IO.File]::Open($exe, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+                    $probe.Dispose()
+                    Start-Sleep -Milliseconds 100
+                } catch {
+                    $locked = $true
+                }
+            }
+            if (-not $locked) { throw "the exe was not locked" }
+            $p = Start-Process $SetupExe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+                "/LOG=`"$(Join-Path $Results 'setup-busy.log')`"" -Wait -PassThru
+            if ($p.ExitCode -ne $AppBusyExitCode) {
+                throw "silent upgrade while the exe was held exited $($p.ExitCode), want $AppBusyExitCode"
+            }
+        } finally {
+            Stop-Job $holder -ErrorAction SilentlyContinue
+            Remove-Job $holder -Force -ErrorAction SilentlyContinue
+            for ($i = 0; $i -lt 50; $i++) {
+                try {
+                    $probe = [System.IO.File]::Open($exe, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+                    $probe.Dispose()
+                    $released = $true
+                    break
+                } catch { Start-Sleep -Milliseconds 100 }
+            }
+        }
+        if (-not $released) { throw "the exe lock was not released" }
+        if (Test-Path -LiteralPath (Join-Path $Dir "wheels.new")) {
+            throw "refused upgrade left wheels.new"
+        }
+        $after = @(Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File | ForEach-Object { $_.Name } | Sort-Object)
+        if (Compare-Object $before $after) {
+            throw "wheels changed: before $($before -join ', ') after $($after -join ', ')"
+        }
+        $exeNow = Get-Item -LiteralPath $exe
+        if ("$($exeNow.Length)|$($exeNow.LastWriteTimeUtc.Ticks)" -ne $exeStamp) { throw "the launcher was replaced" }
+        $help = Invoke-Cli @("--help") -InstalledOnly
+        if ($help.code -ne 0) { throw "--help exited $($help.code)" }
+        "exit $AppBusyExitCode; $($before.Count) wheels unchanged; --help ok"
     })
 
     [void](Invoke-Step "lora-train-help" {

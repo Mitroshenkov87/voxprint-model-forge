@@ -81,7 +81,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup .
 The setup runs its PowerShell steps hidden with PowerShell 7 when it is installed.
 If it is missing, an interactive setup offers to download and install the pinned
 official MSI (sha256 checked); if you decline or it fails, the setup continues with
-Windows PowerShell 5.1. A silent setup (`/VERYSILENT`) never prompts. The installer
+Windows PowerShell 5.1. A silent setup (`/VERYSILENT`) never prompts. If the app is still
+running, a silent setup exits 20 before it deletes or copies any file, and the previous
+install keeps working. The installer
 workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 
 | Step | Passes when |
@@ -90,8 +92,9 @@ workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 | install | the silent setup exits 0; both venvs, the CLI, the compiled launcher and its icon, the PDF guide (en, ru) in `docs\`, one Start menu launcher (target, icon, AppUserModelID; no Uninstall or guide shortcut; no desktop shortcut; old shortcuts removed) and the uninstall entry (name, icon, publisher) exist; no weights |
 | upgrade-plant | `voxprint_common-0.4.0-py3-none-any.whl` and `voxprint_forge-0.0.9-py3-none-any.whl` are planted in `{app}\wheels` before setup |
 | upgrade-wheels | those planted wheels are gone, and the app venv's voxprint-common version is the pin recorded in the app wheel |
+| upgrade-busy | a process holds `voxprint-model-forge.exe`; the silent upgrade exits 20 and leaves the previous install runnable (`--help` exits 0, the same wheels are present) |
 | te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
-| version | `voxprint-forge-cli --version` prints the `BUILD.json` version |
+| version | the installed `voxprint-forge-cli --version`, with the checkout off `PATH` and without `GITHUB_RUN_NUMBER`, prints the build number recorded in the installed wheel |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
 | lora-dry-run | `lora train --dry-run --base z-image --vram 24` on a 12-picture stub project returns `dry-run` |
 | home-migration | the setup moved `%LOCALAPPDATA%\Voxprint` to `%LOCALAPPDATA%\VOXPrint AI Suite` before any Python ran: the old folder is gone and the dummy is under `paths.models_dir()` with the same sha256 |

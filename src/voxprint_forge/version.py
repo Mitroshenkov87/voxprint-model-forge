@@ -4,6 +4,10 @@
 ``offset`` in ``BUILD.json``. That sum lives in the shared loader. This module
 does not read ``GITHUB_RUN_NUMBER``. A missing recorded build stays null and
 :func:`version_line` renders it as ``dev``.
+
+A Windows pack writes ``build_info.json`` beside the catalogue, with the resolved
+``build`` and ``rc``. The loader uses that recorded build when both variables
+are unset, which is the installed app on a laptop.
 """
 
 from __future__ import annotations

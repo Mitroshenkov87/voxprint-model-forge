@@ -4,11 +4,14 @@
 # the MiVOLO age check, which pins transformers 4.51) with the bundled uv.exe.
 # Nothing is written outside <app>. Models are not downloaded here; the app
 # asks for them on first launch. Log: <app>\setup-work\install.log
+# Each run deletes that log first, so a reader never sees the previous run.
 $ErrorActionPreference = "Stop"
 $App = Split-Path -Parent $PSCommandPath
 $Work = Join-Path $App "setup-work"
 New-Item -ItemType Directory -Force $Work | Out-Null
-Start-Transcript -Path (Join-Path $Work "install.log") -Force | Out-Null
+$LogPath = Join-Path $Work "install.log"
+if (Test-Path -LiteralPath $LogPath) { Remove-Item -LiteralPath $LogPath -Force }
+Start-Transcript -Path $LogPath -Force | Out-Null
 
 function Invoke-Uv([string[]]$ArgList) {
     & $script:Uv @ArgList

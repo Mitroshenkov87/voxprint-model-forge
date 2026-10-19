@@ -25,5 +25,7 @@ site/
 *.local.*
 scripts/_*.json
 installer/windows/staging/
+installer/windows/wheels-incoming/
 installer/windows/voxprint-model-forge.exe
 src/voxprint_forge/BUILD.json
+src/voxprint_forge/build_info.json
