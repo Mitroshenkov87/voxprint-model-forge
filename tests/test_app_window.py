@@ -543,7 +543,10 @@ def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_pa
             _next(app).click()
         QtWidgets.QApplication.processEvents()
         intro = app.window.findChild(Details, f"forge.details.step.{step}")
-        assert intro is not None and not intro.opened, step
+        if step == "photos":
+            assert intro is None  # the explanation sits in the empty drop zone
+        else:
+            assert intro is not None and not intro.opened, step
         assert len(tr(f"forge.app.step.{step}.short")) <= 60, step
 
 
@@ -573,7 +576,11 @@ def _scroll_problems(app, step):
     if page.height() + 1 < need:
         bad.append(("page squeezed", page.height(), need))
     controls = [w for kind in CONTROLS for w in page.findChildren(kind) if w.isVisibleTo(page)]
-    assert any(c.objectName() == "disclosure" for c in controls)
+    disclosures = [c for c in controls if c.objectName() == "disclosure"]
+    if step == "photos":
+        assert not disclosures  # no Details button; the note is the empty-state hint
+    else:
+        assert disclosures
     bar = scroll.verticalScrollBar()
     if bar.maximum() < page.height() - viewport.height():
         bad.append(("scroll range too short", bar.maximum(), page.height() - viewport.height()))

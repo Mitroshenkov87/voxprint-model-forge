@@ -77,7 +77,7 @@ def _to_refset(app, refs) -> None:
     app.draft.add_photos(refs)
     app.draft.kind = "person"
     app.repaint()
-    app.window.findChild(QtWidgets.QPushButton, "forge.chip.refs").click()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
     assert app.draft.source == "refs"
     assert _next(app).isEnabled(), _status(app)
     _next(app).click()
@@ -113,7 +113,7 @@ def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
     app = make_app()
     app.draft.kind = "person"
     app.repaint()
-    app.window.findChild(QtWidgets.QPushButton, "forge.chip.refs").click()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
     assert not _next(app).isEnabled()
     assert _status(app) == tr("forge.app.err.refs_count", low=1, high=10)
     app.draft.add_photos(_refs(tmp_path / "r", 11))

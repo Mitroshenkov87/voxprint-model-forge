@@ -31,7 +31,7 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
-from voxprint_forge.app.draft import KINDS, SOURCES, STEPS, Draft, Prepared
+from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
@@ -54,6 +54,18 @@ QPushButton[keepMark="true"]:checked { background: #f5d76e; color: #1c1604; bord
 QFrame#card[kept="true"] { border: 2px solid #f5d76e; border-radius: 6px; }
 QFrame#card[kept="false"] { border: 2px solid transparent; border-radius: 6px; }
 QLabel[similar="true"] { color: #fbbf24; }
+QWidget#sourceDrop { background: #16161c; border: 1px dashed #4a4a58; border-radius: 10px; }
+QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
+QLabel[muted="true"] { color: #9a9aa8; }
+QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
+QPushButton[photosAdd="true"] {
+    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; }
+QPushButton[photosAdd="true"]:hover { background: #f9e291; }
+QToolButton[photoRemove="true"] {
+    background: transparent; border: none; padding: 0; min-width: 0; min-height: 0; }
+QToolButton[photoRemove="true"]:hover { background: #2a2a35; border-radius: 4px; }
+QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
+QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
 """
 LOCALES = Path(__file__).resolve().parent / "locales"
 
@@ -157,6 +169,7 @@ class ForgeApp:
         self.estimate_minutes: int | None = None
         self.paused = False
         self.help_open: dict[str, bool] = {}
+        self.photo_selection: set[str] = set()
         settings_name, history_name = state_names(self.surface)
         self.layout = SimpleLayout(
             presets=preset_file(self.settings),
@@ -431,7 +444,9 @@ class ForgeApp:
             # One Details for the whole step: the round notes join the step's own explanation.
             notes = ("rounds", "strength", "similar", "check")
             paragraphs += tuple(tr(f"forge.app.refset.more.{key}") for key in notes)
-        column.addWidget(self._details(f"step.{step}", paragraphs))
+        # Photos keeps this text in the empty drop zone; the other steps keep Details.
+        if step != "photos":
+            column.addWidget(self._details(f"step.{step}", paragraphs))
 
     def _details(self, key: str, paragraphs: tuple[str, ...]) -> Details:
         """A collapsed Details expander; its open state survives repaints of the step."""
@@ -439,28 +454,21 @@ class ForgeApp:
                        on_toggle=lambda checked: self.help_open.__setitem__(key, checked))
 
     def _photos(self, column: QtWidgets.QVBoxLayout) -> None:
-        drop = _DropList(self._dropped)
-        drop.setObjectName("sourceDrop")
+        self.photo_selection &= {str(path) for path in self.draft.photos}
+        tiles = [
+            _PhotoTile(path, str(path) in self.photo_selection, self._select_photo, self._remove_paths, self._dropped)
+            for path in self.draft.photos
+        ]
+        drop = _PhotoBoard(self._dropped, tiles)
         drop.setToolTip(tr("forge.app.photos.list.tip"))
-        drop.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        drop.setIconSize(QtCore.QSize(72, 72))
-        drop.setViewMode(QtWidgets.QListView.ViewMode.IconMode)
-        drop.setResizeMode(QtWidgets.QListView.ResizeMode.Adjust)
-        drop.setMinimumHeight(220)
-        for path in self.draft.photos:
-            item = QtWidgets.QListWidgetItem(_thumb(path), path.name)
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
-            item.setToolTip(tr("lora.photos.remove.tip"))
-            drop.addItem(item)
-        if not self.draft.photos:
-            hint = QtWidgets.QListWidgetItem(tr("forge.app.photos.drop"))
-            hint.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
-            drop.addItem(hint)
         column.addWidget(drop, 1)
         row = QtWidgets.QHBoxLayout()
-        add = _button("forge.app.photos.add", "lora.photos.add.tip", self.choose_photos, primary=True)
-        folder = _button("forge.app.photos.add_folder", "forge.app.photos.add_folder.tip", self.choose_folder)
-        remove = _button("forge.app.photos.remove", "lora.photos.remove.tip", lambda: self._remove(drop))
+        add = self._add_button()
+        remove = _icon_button(
+            "forge.photos.remove_selected", "forge.app.photos.remove_selected",
+            "forge.app.photos.remove_selected.tip", self._remove_selected,
+        )
+        remove.setEnabled(bool(self.photo_selection))
         expert_range = self.draft.expert and expert_range_differs()  # name the Expert range only if it differs
         count_key = "forge.app.photos.count_expert" if expert_range else "forge.app.photos.count"
         if self.draft.source == "refs":
@@ -468,20 +476,70 @@ class ForgeApp:
         count = QtWidgets.QLabel(tr(count_key, count=len(self.draft.photos)))
         count.setObjectName("presetLabel")
         count.setToolTip(tr("lora.photos.count_expert.tip" if expert_range else "lora.photos.count.tip"))
-        for widget in (add, folder, remove):
-            row.addWidget(widget)
+        row.addWidget(add)
+        row.addWidget(remove)
         row.addStretch(1)
         row.addWidget(count)
         column.addLayout(row)
         kind_label = QtWidgets.QLabel(tr("forge.app.kind.label"))
         kind_label.setObjectName("settingGroup")
         column.addWidget(kind_label)
-        column.addLayout(self._chips(KINDS, "lora.kind.{}", self.draft.kind, self._set_kind, tip="lora.kind.tip"))
-        source_label = QtWidgets.QLabel(tr("forge.app.source.label"))
-        source_label.setObjectName("settingGroup")
-        column.addWidget(source_label)
-        column.addLayout(self._chips(SOURCES, "forge.app.source.{}", self.draft.source, self._set_source,
-                                     tips="forge.app.source.{}.tip"))
+        column.addLayout(self._kind_choices())
+        extend = QtWidgets.QCheckBox(tr("forge.app.photos.extend"))
+        extend.setObjectName("forge.photos.extend")
+        extend.setToolTip(tr("forge.app.photos.extend.tip"))
+        extend.setChecked(self.draft.source == "refs")
+        extend.toggled.connect(lambda checked: self._set_source("refs" if checked else "photos"))
+        column.addWidget(extend)
+
+    def _add_button(self) -> QtWidgets.QPushButton:
+        """One button whose menu adds photo files or every photo in a folder."""
+        button = QtWidgets.QPushButton(tr("forge.app.photos.add"))
+        button.setObjectName("forge.photos.add")
+        button.setProperty("photosAdd", "true")
+        button.setToolTip(tr("lora.photos.add.tip"))
+        button.setAutoDefault(False)
+        menu = QtWidgets.QMenu(button)
+        menu.setObjectName("forge.photos.add_menu")
+        files = menu.addAction(tr("forge.app.photos.add_files"))
+        files.triggered.connect(self.choose_photos)
+        folder = menu.addAction(tr("forge.app.photos.add_folder"))
+        folder.triggered.connect(self.choose_folder)
+        button.setMenu(menu)
+        return button
+
+    def _kind_choices(self) -> QtWidgets.QHBoxLayout:
+        """Person, object and style, each with a one-line note under the chip."""
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(12)
+        group = QtWidgets.QButtonGroup(row)
+        group.setExclusive(True)
+        for value in KINDS:
+            cell = QtWidgets.QVBoxLayout()
+            cell.setSpacing(4)
+            chip = QtWidgets.QPushButton(tr(f"lora.kind.{value}"))
+            chip.setObjectName(f"forge.chip.{value}")
+            chip.setProperty("chip", "true")
+            chip.setCheckable(True)
+            chip.setChecked(value == self.draft.kind)
+            bold = QtGui.QFont(chip.font())
+            bold.setBold(True)
+            chip.setMinimumWidth(QtGui.QFontMetrics(bold).horizontalAdvance(chip.text()) + 36)
+            chip.setToolTip(tr("lora.kind.tip"))
+            chip.clicked.connect(lambda _checked=False, v=value: self._set_kind(v))
+            group.addButton(chip)
+            note = QtWidgets.QLabel(tr(f"forge.app.kind.{value}.note"))
+            note.setObjectName(f"forge.kind.note.{value}")
+            note.setProperty("kindNote", "true")
+            note.setProperty("muted", "true")
+            note.setWordWrap(True)
+            note.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+            cell.addWidget(chip, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+            cell.addWidget(note)
+            cell.addStretch(1)
+            row.addLayout(cell, 1)
+        row._group = group  # type: ignore[attr-defined]
+        return row
 
     def _chips(
         self,
@@ -1139,17 +1197,34 @@ class ForgeApp:
         self.draft.add_photos(paths)
         self.repaint()
 
-    def _remove(self, drop: QtWidgets.QListWidget) -> None:
-        for item in drop.selectedItems():
-            value = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            if value:
-                self.draft.remove_photo(Path(value))
+    def _select_photo(self, path: Path, modifiers: QtCore.Qt.KeyboardModifier) -> None:
+        """Select one photo, or toggle it when Control is held."""
+        key = str(path)
+        if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
+            if key in self.photo_selection:
+                self.photo_selection.remove(key)
+            else:
+                self.photo_selection.add(key)
+        else:
+            self.photo_selection = {key}
         self.repaint()
+
+    def _remove_paths(self, paths: list[Path]) -> None:
+        """Leave these photos out of training. The files on disk stay."""
+        for path in paths:
+            self.draft.remove_photo(path)
+            self.photo_selection.discard(str(path))
+        self.repaint()
+
+    def _remove_selected(self) -> None:
+        """Leave the selected photos out of training."""
+        chosen = [path for path in self.draft.photos if str(path) in self.photo_selection]
+        self._remove_paths(chosen)
 
     def choose_photos(self) -> None:
         """Pick photo files."""
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self.window, tr("forge.app.photos.add"), "", tr("forge.app.photos.filter")
+            self.window, tr("forge.app.photos.add_files"), "", tr("forge.app.photos.filter")
         )
         self._dropped([Path(item) for item in files])
 
@@ -1488,30 +1563,161 @@ class ForgeApp:
         return [(i.mdl_id, i.display_name, i.repo, i.licence, i.permissive) for i in bases.trainable()]
 
 
-class _DropList(QtWidgets.QListWidget):
-    """Photo list that accepts dropped files and folders."""
+def _file_drop(event: QtGui.QDragEnterEvent | QtGui.QDragMoveEvent | QtGui.QDropEvent) -> list[Path]:
+    """Local paths from a file drag, accepting the event when it carries any."""
+    if not event.mimeData().hasUrls():
+        return []
+    event.acceptProposedAction()
+    return [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
 
-    def __init__(self, on_drop: Callable[[list[Path]], None]) -> None:
+
+class _PhotoBoard(QtWidgets.QWidget):
+    """Drop zone: an explanation while empty, otherwise one tile per photo."""
+
+    def __init__(self, on_drop: Callable[[list[Path]], None], tiles: list[QtWidgets.QWidget]) -> None:
         super().__init__()
         self._on_drop = on_drop
+        self.setObjectName("sourceDrop")
         self.setAcceptDrops(True)
-        self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DropOnly)
+        self.setMinimumHeight(220)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        if tiles:
+            layout.addWidget(FlowRow("forge.photos.grid", tuple(tiles)))
+            layout.addStretch(1)
+            return
+        layout.addStretch(1)
+        box = QtWidgets.QWidget()
+        box.setObjectName("forge.photos.empty")
+        box.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        inner = QtWidgets.QVBoxLayout(box)
+        inner.setSpacing(8)
+        title = QtWidgets.QLabel(tr("forge.app.photos.drop"))
+        title.setObjectName("forge.photos.empty_title")
+        title.setProperty("emptyTitle", "true")
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        title.setWordWrap(True)
+        hint = QtWidgets.QLabel(f"{tr('lora.step.photos.desc')}\n\n{tr('lora.step.photos.help')}")
+        hint.setObjectName("forge.photos.empty_hint")
+        hint.setProperty("muted", "true")
+        hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        hint.setWordWrap(True)
+        for label in (title, hint):
+            label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        inner.addWidget(title)
+        inner.addWidget(hint)
+        layout.addWidget(box)
+        layout.addStretch(1)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: N802 - Qt name
-        """Accept file drops."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        """Accept file and folder drops."""
+        _file_drop(event)
 
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: N802 - Qt name
-        """Keep accepting while the files move over the list."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        """Keep accepting while the files move over the zone."""
+        _file_drop(event)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: N802 - Qt name
         """Add the dropped files and folders."""
-        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
-        event.acceptProposedAction()
-        self._on_drop(paths)
+        paths = _file_drop(event)
+        if paths:
+            self._on_drop(paths)
+
+
+class _PhotoTile(QtWidgets.QFrame):
+    """One photo, a remove icon, and a click that selects it."""
+
+    def __init__(
+        self,
+        path: Path,
+        selected: bool,
+        on_select: Callable[[Path, QtCore.Qt.KeyboardModifier], None],
+        on_remove: Callable[[list[Path]], None],
+        on_drop: Callable[[list[Path]], None],
+    ) -> None:
+        super().__init__()
+        self._path = path
+        self._on_select = on_select
+        self._on_drop = on_drop
+        self.setObjectName("forge.photos.item")
+        self.setProperty("path", str(path))
+        self.setProperty("photoTile", "true")
+        self.setProperty("selected", "true" if selected else "false")
+        self.setAcceptDrops(True)
+        self.setFixedWidth(104)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        column = QtWidgets.QVBoxLayout(self)
+        column.setContentsMargins(6, 4, 4, 6)
+        column.setSpacing(4)
+        top = QtWidgets.QHBoxLayout()
+        top.addStretch(1)
+        remove = _icon_button("forge.photos.remove", "forge.app.photos.remove", "lora.photos.remove.tip",
+                              lambda: on_remove([path]))
+        remove.setProperty("path", str(path))
+        top.addWidget(remove)
+        column.addLayout(top)
+        thumb = QtWidgets.QLabel()
+        thumb.setPixmap(_thumb(path).pixmap(72, 72))
+        thumb.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        thumb.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        column.addWidget(thumb)
+        name = QtWidgets.QLabel()
+        name.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        shown = QtGui.QFontMetrics(name.font()).elidedText(path.name, QtCore.Qt.TextElideMode.ElideMiddle, 90)
+        name.setText(shown)
+        name.setToolTip(path.name)
+        name.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        column.addWidget(name)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override
+        """Select this photo. Control toggles it in the current selection."""
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self._on_select(self._path, event.modifiers())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: N802 - Qt name
+        """Accept a drop on top of a photo."""
+        _file_drop(event)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: N802 - Qt name
+        """Keep accepting while the files move over a photo."""
+        _file_drop(event)
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: N802 - Qt name
+        """Add files dropped on a photo."""
+        paths = _file_drop(event)
+        if paths:
+            self._on_drop(paths)
+
+
+def _icon_button(name: str, label: str, tip: str, slot: Callable[[], None]) -> QtWidgets.QToolButton:
+    """A small icon button with a tooltip and an accessible name, and no visible text."""
+    button = QtWidgets.QToolButton()
+    button.setObjectName(name)
+    button.setProperty("photoRemove", "true")
+    button.setIcon(_remove_icon())
+    button.setIconSize(QtCore.QSize(14, 14))
+    button.setFixedSize(22, 22)
+    button.setAutoRaise(True)
+    button.setToolTip(tr(tip))
+    button.setAccessibleName(tr(label))
+    button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+    button.clicked.connect(lambda _checked=False: slot())
+    return button
+
+
+def _remove_icon() -> QtGui.QIcon:
+    """A small minus mark, drawn so it shows without a theme icon."""
+    image = QtGui.QImage(16, 16, QtGui.QImage.Format.Format_ARGB32)
+    image.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(image)
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.setBrush(QtGui.QColor("#e8e6e3"))
+    painter.drawRoundedRect(QtCore.QRectF(2, 6, 12, 3), 1, 1)
+    painter.end()
+    return QtGui.QIcon(QtGui.QPixmap.fromImage(image))
 
 
 class _ClickLabel(QtWidgets.QLabel):
