@@ -9,7 +9,7 @@ import pytest
 
 from tests.lora_fakes import make_project
 from voxprint_forge.lora.captioner import text_marks_unclothed
-from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.project import Item
 from voxprint_forge.lora.review import load_state, passes_output_check
 from voxprint_forge.lora.sample_prompts import (
     ATTIRE_MODES,
@@ -103,10 +103,9 @@ def test_the_output_check_still_keeps_only_a_picture() -> None:
 
 
 def test_a_review_without_a_prompt_file_stores_sample_prompts(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
     from voxprint_forge.lora.events import Progress
     from voxprint_forge.lora.train import train
-
-    from tests.test_lora_review import DrawingAdapter, _config
 
     project = make_project(tmp_path, count=10)
     items = project.items()
@@ -131,10 +130,9 @@ def test_a_review_without_a_prompt_file_stores_sample_prompts(tmp_path: Path) ->
 
 
 def test_an_explicit_prompt_list_is_kept(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
     from voxprint_forge.lora.events import Progress
     from voxprint_forge.lora.train import train
-
-    from tests.test_lora_review import DrawingAdapter, _config
 
     project = make_project(tmp_path, count=10)
     train(
@@ -147,11 +145,10 @@ def test_an_explicit_prompt_list_is_kept(tmp_path: Path) -> None:
 
 
 def test_the_cli_flag_parses_and_the_next_round_uses_the_saved_mode(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
     from voxprint_forge.cli import build_parser
     from voxprint_forge.lora.events import Progress
     from voxprint_forge.lora.train import train
-
-    from tests.test_lora_review import DrawingAdapter, _config
 
     parsed = build_parser().parse_args(
         ["lora", "train", "--project", str(tmp_path), "--sample-attire", "clothed"],

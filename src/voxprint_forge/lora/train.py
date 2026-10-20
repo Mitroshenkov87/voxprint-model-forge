@@ -25,7 +25,6 @@ from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
 from voxprint_forge.lora.project import Item, Project
-from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_SAMPLES,
     DEFAULT_FIRST_ROUND_STEPS,
@@ -51,6 +50,7 @@ from voxprint_forge.lora.review import (
     total_steps_of,
     transition,
 )
+from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
 from voxprint_forge.mdl_app import missing_id_text
 
 MIN_PHOTOS = {"simple": 10, "expert": 5}

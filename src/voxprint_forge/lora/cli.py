@@ -20,12 +20,12 @@ from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
-from voxprint_forge.lora.sample_prompts import store_attire
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_STEPS,
     FIRST_ROUND_STEPS_MAX,
     FIRST_ROUND_STEPS_MIN,
 )
+from voxprint_forge.lora.sample_prompts import store_attire
 from voxprint_forge.mdl_app import fetch, missing_ids
 
 _REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
