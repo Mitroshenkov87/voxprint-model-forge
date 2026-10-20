@@ -25,6 +25,7 @@ from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_SAMPLES,
     DEFAULT_FIRST_ROUND_STEPS,
@@ -41,6 +42,7 @@ from voxprint_forge.lora.review import (
     passes_output_check,
     plan_samples,
     sample_steps_of,
+    samples_for_round,
     save_image,
     save_state,
     steps_completed,
@@ -278,6 +280,7 @@ def train(
     review_continue: bool = False,
     no_more_reviews: bool = False,
     decider: ReviewDecider | None = None,
+    sample_attire: str | None = None,
 ) -> dict[str, object]:
     """Train (or extend, with ``from_lora``) and return the run summary.
 
@@ -337,7 +340,15 @@ def train(
         no_more_reviews=no_more_reviews,
         resume=resume,
         decider=decider,
+        sample_attire=sample_attire,
     )
+    if review_state is not None and review_state.get("custom_prompts") is False:
+        built = [str(prompt) for prompt in review_state.get("prompts") or [] if str(prompt).strip()]
+        if built:
+            preview_prompts = built
+        stored = project.read().get("sample_attire")
+        if isinstance(stored, str):
+            data["sample_attire"] = stored
     if review_state is not None and not (resume and not review_continue):
         stage = steps_for_stage(review_state)
         if review_state.get("no_more_reviews") and stage < 1:
@@ -557,12 +568,15 @@ def _review_plan(
     no_more_reviews: bool,
     resume: bool,
     decider: ReviewDecider | None = None,
+    sample_attire: str | None = None,
 ) -> dict[str, object] | None:
     """The review state for this stage, or ``None`` when the run does not pause for review."""
     if review_continue:
         state = apply_decider(load_state(project), decider if decider is not None else HumanReviewDecider())
         action = "train_full" if no_more_reviews else "continue"
         state = transition(state, action)
+        if not no_more_reviews and state.get("custom_prompts") is False:
+            state = _with_sample_prompts(project, data, state, sample_attire)
         save_state(project, state)
         return state
     check_review_round_count(review_rounds)
@@ -579,11 +593,14 @@ def _review_plan(
         raise LoraUsageError("lora.err.review_pending")
     if resume and state.get("phase") == "training" and int(state.get("rounds") or 0) > 0:
         return state
-    prompts = [prompt for prompt in preview_prompts if str(prompt).strip()]
-    if not prompts:
-        subject = data.get("subject") if isinstance(data.get("subject"), dict) else {}
-        trigger = str(subject.get("trigger") or "")
-        prompts = [trigger] if trigger else [""]
+    explicit = _explicit_prompts(preview_prompts, data)
+    if explicit is None:
+        count = first_round_samples if first_round_samples > 0 else samples_per_round
+        prompts = _sample_prompt_list(project, data, config.seed, 1, count, sample_attire)
+        custom = False
+    else:
+        prompts = explicit
+        custom = True
     state = transition(
         state,
         "start",
@@ -594,12 +611,66 @@ def _review_plan(
         sample_steps=sample_steps,
         total_steps=config.steps,
         prompts=prompts,
+        custom_prompts=custom,
         seed=config.seed,
         base=adapter.info.mdl_id,
         config=config.to_dict(),
     )
     save_state(project, state)
     return state
+
+
+def _explicit_prompts(preview_prompts: Sequence[str], data: dict[str, object]) -> list[str] | None:
+    """Prompt lines from a file. The trigger-only fallback is not an explicit list."""
+    given = [str(prompt).strip() for prompt in preview_prompts if str(prompt).strip()]
+    trigger = _subject_trigger(data)
+    if not given or given == ([trigger] if trigger else []):
+        return None
+    return given
+
+
+def _subject_trigger(data: dict[str, object]) -> str:
+    subject = data.get("subject") if isinstance(data.get("subject"), dict) else {}
+    return str(subject.get("trigger") or "")
+
+
+def _sample_prompt_list(
+    project: Project,
+    data: dict[str, object],
+    seed: int,
+    round_no: int,
+    count: int,
+    sample_attire: str | None,
+) -> list[str]:
+    mode = sample_attire if isinstance(sample_attire, str) and sample_attire else read_attire(data)
+    mode = store_attire(project, mode)
+    return build_sample_prompts(
+        _subject_trigger(data),
+        count=count,
+        seed=seed,
+        round_no=round_no,
+        mode=mode,
+        captions=caption_rows(project),
+    )
+
+
+def _with_sample_prompts(
+    project: Project,
+    data: dict[str, object],
+    state: dict[str, object],
+    sample_attire: str | None,
+) -> dict[str, object]:
+    """Replace the stored prompts for the round that is about to be drawn."""
+    round_no = int(state.get("index") or 0) + 1
+    prompts = _sample_prompt_list(
+        project,
+        data,
+        int(state.get("seed") or 0),
+        round_no,
+        samples_for_round(state, round_no),
+        sample_attire,
+    )
+    return {**state, "prompts": prompts}
 
 
 def _open_review(

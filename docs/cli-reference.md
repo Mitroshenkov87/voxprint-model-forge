@@ -553,8 +553,9 @@ usage: forge lora train [-h] --project PROJECT
                         [--first-round-steps FIRST_ROUND_STEPS]
                         [--first-round-samples FIRST_ROUND_SAMPLES]
                         [--samples-per-round SAMPLES_PER_ROUND]
-                        [--sample-steps SAMPLE_STEPS] [--base BASE]
-                        [--rank RANK] [--alpha ALPHA]
+                        [--sample-steps SAMPLE_STEPS]
+                        [--sample-attire {auto,as_photos,clothed,unclothed}]
+                        [--base BASE] [--rank RANK] [--alpha ALPHA]
                         [--resolution RESOLUTION] [--train-text-encoder]
 
 options:
@@ -614,6 +615,9 @@ options:
                         Pictures drawn after the first review. Default: 8.
   --sample-steps SAMPLE_STEPS
                         Inference steps for each review picture. Default: 28.
+  --sample-attire {auto,as_photos,clothed,unclothed}
+                        Attire word for review samples. Default: auto. Stored
+                        on the project.
   --base BASE           Base model MDL id. Default: z-image.
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).

@@ -161,8 +161,16 @@ def prepare(
                     total=len(safe),
                 )
                 text = captioner.caption(crop(image, crop_mode))
+                flag = text.get("unclothed")
                 new_items.append(
-                    Item(pid, f"prepared/{pid}.png", text.get("long", ""), text.get("short", ""), round_no)
+                    Item(
+                        pid,
+                        f"prepared/{pid}.png",
+                        str(text.get("long", "")),
+                        str(text.get("short", "")),
+                        round_no,
+                        flag if isinstance(flag, bool) else None,
+                    )
                 )
         finally:
             progress.emit(

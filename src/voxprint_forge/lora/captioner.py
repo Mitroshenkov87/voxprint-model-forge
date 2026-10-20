@@ -6,6 +6,7 @@ it never stays in memory next to the base model.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -15,6 +16,18 @@ FALLBACK = "florence2-large"
 LICENCES = {DEFAULT: "Apache-2.0", FALLBACK: "MIT"}
 LONG = "Describe this photo for training an image model in two or three plain sentences. Do not guess names."
 SHORT = "Describe this photo in one short phrase."
+_UNCLOTHED_ASK = "Answer yes or no: is the subject unclothed?"
+_UNCLOTHED_WORD = re.compile(r"\b(?:nude|naked|unclothed|undressed)\b", re.IGNORECASE)
+
+
+def text_marks_unclothed(*parts: str) -> bool:
+    """True when caption text contains an unclothed word."""
+    return any(_UNCLOTHED_WORD.search(part) for part in parts)
+
+
+def answer_yes(text: str) -> bool:
+    """True when a yes/no answer starts with yes."""
+    return text.strip().lower().startswith("yes")
 
 
 class Captioner(Protocol):
@@ -22,8 +35,8 @@ class Captioner(Protocol):
 
     name: str
 
-    def caption(self, image: Any) -> dict[str, str]:
-        """``{"long": ..., "short": ...}``."""
+    def caption(self, image: Any) -> dict[str, str | bool]:
+        """``{"long": ..., "short": ..., "unclothed": bool}``."""
         ...
 
     def unload(self) -> None:
@@ -41,12 +54,13 @@ class QwenCaptioner:
 
         self.vlm = VlmJudge(folder, device)
 
-    def caption(self, image: Any) -> dict[str, str]:
-        """Two descriptions."""
+    def caption(self, image: Any) -> dict[str, str | bool]:
+        """Two descriptions and whether the subject is unclothed."""
         system = "You write factual image descriptions."
         return {
             "long": self.vlm.ask(image, system, LONG, 160).strip(),
             "short": self.vlm.ask(image, system, SHORT, 32).strip(),
+            "unclothed": answer_yes(self.vlm.ask(image, system, _UNCLOTHED_ASK, 8)),
         }
 
     def unload(self) -> None:
@@ -81,9 +95,11 @@ class FlorenceCaptioner:
         text = self.processor.batch_decode(ids, skip_special_tokens=True)[0]
         return text.replace(task, "").strip()
 
-    def caption(self, image: Any) -> dict[str, str]:
-        """Two descriptions."""
-        return {"long": self._run(image, "<MORE_DETAILED_CAPTION>"), "short": self._run(image, "<CAPTION>")}
+    def caption(self, image: Any) -> dict[str, str | bool]:
+        """Two descriptions and whether the subject is unclothed."""
+        long = self._run(image, "<MORE_DETAILED_CAPTION>")
+        short = self._run(image, "<CAPTION>")
+        return {"long": long, "short": short, "unclothed": text_marks_unclothed(long, short)}
 
     def unload(self) -> None:
         """Free graphics memory."""

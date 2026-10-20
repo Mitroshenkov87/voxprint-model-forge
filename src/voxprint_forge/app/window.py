@@ -43,6 +43,7 @@ from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.sample_prompts import read_attire, store_attire
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
 APP_ID = "model-forge"
@@ -1619,10 +1620,70 @@ class ForgeApp:
         pinned = QtWidgets.QVBoxLayout(bar)
         pinned.setContentsMargins(0, 8, 0, 0)
         pinned.setSpacing(6)
+        pinned.addWidget(self._review_attire(busy))
         pinned.addLayout(row)
         pinned.addWidget(note)
         self._review_actions = bar
         self._review_continue = cont
+
+    def _review_attire(self, busy: bool) -> QtWidgets.QWidget:
+        """Attire for the next round's samples, left-aligned with the action row."""
+        row = QtWidgets.QWidget()
+        row.setObjectName("forge.review.attire.row")
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        label = QtWidgets.QLabel(tr("forge.app.review.attire"))
+        label.setObjectName("forge.review.attire.label")
+        label.setStyleSheet("color: #f4f1ea; background: transparent;")
+        combo = _AttireCombo()
+        tip = tr("forge.app.review.attire.tip")
+        combo.setToolTip(tip)
+        label.setToolTip(tip)
+        label.setBuddy(combo)
+        for key, mode in (
+            ("forge.app.review.attire.as_photos", "auto"),
+            ("forge.app.review.attire.clothed", "clothed"),
+            ("forge.app.review.attire.unclothed", "unclothed"),
+        ):
+            combo.addItem(tr(key), mode)
+        stored = self._stored_sample_attire()
+        shown = stored if stored in ("clothed", "unclothed") else "auto"
+        combo.blockSignals(True)
+        combo.setCurrentIndex(max(0, combo.findData(shown)))
+        combo.blockSignals(False)
+        combo.setEnabled(not busy)
+        combo.currentIndexChanged.connect(self._store_sample_attire)
+        self._attire_combo = combo
+        layout.addWidget(label, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(combo, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addStretch(1)
+        return row
+
+    def _stored_sample_attire(self) -> str:
+        """The attire mode saved on the project, or ``auto``."""
+        try:
+            return read_attire(Project(self.project).read())
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return "auto"
+
+    def _store_sample_attire(self, index: int) -> None:
+        """Keep the combo's choice on the project. The open round is left as it is."""
+        combo = getattr(self, "_attire_combo", None)
+        if not isinstance(combo, QtWidgets.QComboBox):
+            return
+        mode = combo.itemData(index)
+        if mode not in ("auto", "clothed", "unclothed"):
+            return
+        project = Project(self.project)
+        try:
+            data = project.read()
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return
+        if data.get("sample_attire") == mode:
+            return
+        store_attire(project, str(mode))
 
     def _show_review_note(self, mode: str) -> None:
         """One muted line for the mode the main button would start."""
@@ -3262,6 +3323,81 @@ def _menu(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMenu:
     menu.setObjectName(name)
     _style_menu(menu)
     return menu
+
+
+_ATTIRE_COMBO_STYLE = """
+QComboBox {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #5c5c6c; border-radius: 4px;
+    padding: 2px 22px 2px 8px; min-height: 28px; max-height: 28px;
+}
+QComboBox:hover { border-color: #c8c8d4; }
+QComboBox:disabled { background: #22222b; color: #6e6e7e; border-color: #33333f; }
+QComboBox::drop-down { border: none; width: 18px; }
+QComboBox QAbstractItemView {
+    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0;
+}
+"""
+_ATTIRE_VIEW_STYLE = """
+QAbstractItemView {
+    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0;
+}
+"""
+
+
+class _AttireCombo(QtWidgets.QComboBox):
+    """Dark attire list. The popup stays on the control and inside the window."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("forge.review.attire")
+        self.setStyleSheet(_ATTIRE_COMBO_STYLE)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(28)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt override
+        """Size the box to its longest item once the font is real."""
+        super().showEvent(event)
+        self.fit_to_items()
+
+    def fit_to_items(self) -> None:
+        """Keep every item on one line, with room for the arrow."""
+        self.ensurePolished()
+        metrics = self.fontMetrics()
+        widest = max((metrics.horizontalAdvance(self.itemText(index)) for index in range(self.count())), default=0)
+        self.setFixedWidth(widest + 36)
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        """Open the list under the box, or above it when the window ends first."""
+        self.view().setStyleSheet(_ATTIRE_VIEW_STYLE)
+        super().showPopup()
+        popup = self.view().window()
+        if popup is None or popup is self.window():
+            return
+        self._place_popup(popup)
+
+    def _place_popup(self, popup: QtWidgets.QWidget) -> None:
+        popup.adjustSize()
+        width = max(self.width(), popup.sizeHint().width(), popup.width())
+        height = max(popup.sizeHint().height(), popup.height(), 1)
+        popup.resize(width, height)
+        origin = self.mapToGlobal(QtCore.QPoint(0, 0))
+        below = origin.y() + self.height()
+        host = self.window()
+        if host is None:
+            popup.move(origin.x(), below)
+            return
+        frame = QtCore.QRect(host.mapToGlobal(QtCore.QPoint(0, 0)), host.size())
+        if below + popup.height() > frame.bottom() and origin.y() - popup.height() >= frame.top():
+            top = origin.y() - popup.height()
+        else:
+            top = below
+        left = min(max(origin.x(), frame.left()), frame.right() - popup.width() + 1)
+        top = min(max(top, frame.top()), frame.bottom() - popup.height() + 1)
+        popup.move(left, top)
 
 
 class _FinishMenu(QtWidgets.QMenu):

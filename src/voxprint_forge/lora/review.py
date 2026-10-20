@@ -59,6 +59,7 @@ def empty_state() -> dict[str, object]:
         "base": "",
         "checkpoint": "",
         "prompts": [],
+        "custom_prompts": False,
         "config": {},
         "samples": [],
         "history": [],
@@ -452,6 +453,7 @@ def _start(state: dict[str, object], payload: dict[str, object]) -> dict[str, ob
         "seed": int(payload.get("seed") or 0),
         "base": str(payload.get("base") or ""),
         "prompts": prompts,
+        "custom_prompts": bool(payload.get("custom_prompts")),
         "config": stored,
     }
 

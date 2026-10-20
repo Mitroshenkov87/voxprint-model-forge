@@ -215,6 +215,18 @@ def test_collect_dedupes_and_excludes(tmp_path) -> None:
     assert [p.name for p in found] == ["img00.png", "img02.png"]
 
 
+def test_prepare_stores_the_captioners_unclothed_flag(tmp_path) -> None:
+    class Marked(FakeCaptioner):
+        def caption(self, image):
+            return {"long": "a square", "short": "square", "unclothed": True}
+
+    run(tmp_path, photos(tmp_path / "in", 10), captioner=Marked())
+    rows = [json.loads(line) for line in (tmp_path / "proj" / "captions.jsonl").read_text().splitlines()]
+    assert rows and all(row["unclothed"] is True for row in rows)
+    kept = Project(tmp_path / "proj").items()
+    assert kept and all(item.unclothed is True for item in kept)
+
+
 def test_prepare_filters_crops_captions_and_unloads(tmp_path) -> None:
     files = photos(tmp_path / "in", 11)
     Image.new("RGB", (600, 600), (128, 128, 128)).save(tmp_path / "in" / "flat.png")

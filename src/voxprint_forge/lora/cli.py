@@ -20,6 +20,7 @@ from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.sample_prompts import store_attire
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_STEPS,
     FIRST_ROUND_STEPS_MAX,
@@ -242,6 +243,12 @@ def _review_flags(train: argparse.ArgumentParser) -> None:
         "--sample-steps", type=int, default=28,
         help="Inference steps for each review picture. Default: 28.",
     )
+    train.add_argument(
+        "--sample-attire",
+        choices=("auto", "as_photos", "clothed", "unclothed"),
+        default=None,
+        help="Attire word for review samples. Default: auto. Stored on the project.",
+    )
 
 
 def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -336,6 +343,9 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
     adapter = get_adapter(base_id, training=True)
     if args.dry_run:
         return estimate(project, config, adapter)
+    attire = getattr(args, "sample_attire", None)
+    if isinstance(attire, str) and attire:
+        store_attire(project, attire)
     prompts = _prompts(args.preview_prompts, data)
     stop = threading.Event()
     previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -355,6 +365,7 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             first_round_steps=getattr(args, "first_round_steps", DEFAULT_FIRST_ROUND_STEPS),
             first_round_samples=getattr(args, "first_round_samples", 6),
             sample_steps=getattr(args, "sample_steps", 28),
+            sample_attire=attire if isinstance(attire, str) else None,
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -381,7 +392,10 @@ def _apply_captions(project: Project, path: Path) -> None:
             row = json.loads(line)
             edits[str(row["id"])] = row
     items = [
-        Item(i.id, i.file, str(edits[i.id].get("long", i.long)), str(edits[i.id].get("short", i.short)), i.round)
+        Item(
+            i.id, i.file, str(edits[i.id].get("long", i.long)), str(edits[i.id].get("short", i.short)),
+            i.round, i.unclothed,
+        )
         if i.id in edits
         else i
         for i in project.items()

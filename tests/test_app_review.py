@@ -951,3 +951,56 @@ def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> Non
     discard.trigger()
     qapp.processEvents()
     assert app.runner.calls[-1] == ["--json", "lora", "finish", str(app.project), "--discard", "--yes"]
+
+
+def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qapp) -> None:
+    """The list is dark, aligned with the continue row, and saved for the next round."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    label = app.window.findChild(QtWidgets.QLabel, "forge.review.attire.label")
+    combo = app.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
+    host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
+    assert label is not None and combo is not None and host is not None
+    assert label.text() == "Пробные картинки:"
+    assert [combo.itemText(index) for index in range(combo.count())] == ["как на фото", "в одежде", "без одежды"]
+    assert combo.currentText() == "как на фото"
+    assert combo.itemData(0) == "auto"
+    assert "следующего раунда" in combo.toolTip()
+    assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
+    assert combo.width() >= combo.fontMetrics().horizontalAdvance("как на фото") + 16
+    label_box = label.mapTo(app.window, QtCore.QPoint(0, 0))
+    combo_box = combo.mapTo(app.window, QtCore.QPoint(0, 0))
+    host_box = host.mapTo(app.window, QtCore.QPoint(0, 0))
+    assert abs(label_box.x() - host_box.x()) <= 2
+    assert combo_box.x() >= label_box.x() + label.width() - 2
+    assert abs((label_box.y() + label.height() // 2) - (combo_box.y() + combo.height() // 2)) <= 4
+    assert combo_box.y() + combo.height() <= host_box.y()
+    assert combo_box.x() + combo.width() <= app.window.width()
+    face = combo.grab().toImage()
+    background = face.pixelColor(6, face.height() // 2)
+    assert background.lightness() < 80
+    assert _has_light_pixel(combo)
+    assert _has_light_pixel(label)
+    names = sorted(path.name for path in (app.project / "review").rglob("*.png"))
+    combo.setCurrentIndex(2)
+    qapp.processEvents()
+    assert Project(app.project).read()["sample_attire"] == "unclothed"
+    assert sorted(path.name for path in (app.project / "review").rglob("*.png")) == names
+    combo.showPopup()
+    qapp.processEvents()
+    popup = combo.view().window()
+    assert popup is not None and popup is not app.window
+    origin = combo.mapToGlobal(QtCore.QPoint(0, 0))
+    frame = QtCore.QRect(app.window.mapToGlobal(QtCore.QPoint(0, 0)), app.window.size())
+    assert abs(popup.x() - origin.x()) <= 2
+    touches_below = abs(popup.y() - (origin.y() + combo.height())) <= 2
+    touches_above = abs(origin.y() - (popup.y() + popup.height())) <= 2
+    assert touches_below or touches_above
+    assert frame.contains(QtCore.QRect(popup.pos(), popup.size()))
+    fill = popup.grab().toImage().pixelColor(8, 8)
+    assert fill.lightness() < 80
