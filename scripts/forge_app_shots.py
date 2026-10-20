@@ -138,7 +138,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
     from voxprint_common.i18n import set_language
 
     from voxprint_forge.app.draft import STEPS
-    from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.app.window import ForgeApp, menu_popup_point
     from voxprint_forge.lora.project import Project
     from voxprint_forge.lora.review import save_state, transition
 
@@ -197,7 +197,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             runner=StubRunner(), home=home / f"review-{lang}", commands=ALL_COMMANDS,
             open_path=lambda _p: None, launch=lambda _a: None,
         )
-        forge.window.resize(1280, 960)
+        forge.window.setFixedSize(1280, 800)
         forge.window.show()
         app.processEvents()
         if lang == "ru":
@@ -211,26 +211,30 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
         app.processEvents()
-        button = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
-        note = forge.window.findChild(QtWidgets.QLabel, "forge.review.note")
-        anchor = note if note is not None else button
-        area = anchor.parentWidget() if anchor is not None else None
+        heading = forge.window.findChild(QtWidgets.QLabel, "forge.review.heading")
+        area = heading.parentWidget() if heading is not None else None
         while area is not None and not isinstance(area, QtWidgets.QScrollArea):
             area = area.parentWidget()
-        if area is not None and anchor is not None:
-            area.ensureWidgetVisible(anchor, 0, 120)
+        if area is not None:
+            area.verticalScrollBar().setValue(0)
+            if heading is not None:
+                area.ensureWidgetVisible(heading, 0, 16)
             app.processEvents()
         finish = forge.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
         if lang == "ru" and finish is not None and finish.menu() is not None:
-            forge.window.grab().save(str(out / "ru-simple-5-review.png"))
+            image = forge.window.grab()
+            if image.width() != 1280 or image.height() != 800:
+                raise SystemExit(f"review grab is {image.width()}x{image.height()}, want 1280x800")
+            image.save(str(out / "ru-simple-5-review.png"))
             menu = finish.menu()
-            menu.popup(finish.mapToGlobal(QtCore.QPoint(0, finish.height())))
+            origin = menu_popup_point(finish)
+            menu.popup(origin)
             app.processEvents()
             image = forge.window.grab()
             popup = menu.grab()
-            point = finish.mapTo(forge.window, QtCore.QPoint(0, finish.height()))
-            if point.x() + popup.width() > image.width():
-                point.setX(max(0, image.width() - popup.width() - 12))
+            point = forge.window.mapFromGlobal(menu.pos())
+            point.setX(min(max(0, point.x()), max(0, image.width() - popup.width())))
+            point.setY(min(max(0, point.y()), max(0, image.height() - popup.height())))
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()
@@ -240,9 +244,14 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             chevron = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
             if chevron is not None:
                 chevron.click()
-                QtTest.QTest.qWait(200)
+                QtTest.QTest.qWait(220)
                 app.processEvents()
-            forge.window.grab().save(str(out / "ru-simple-5-review-plain.png"))
+                forge.window.repaint()
+                app.processEvents()
+            plain = forge.window.grab()
+            if plain.width() != 1280 or plain.height() != 800:
+                raise SystemExit(f"plain grab is {plain.width()}x{plain.height()}, want 1280x800")
+            plain.save(str(out / "ru-simple-5-review-plain.png"))
             if chevron is not None:
                 chevron.click()
                 QtTest.QTest.qWait(200)
@@ -250,7 +259,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
 
             def grab_dialog(path: str) -> None:
                 box = QtWidgets.QApplication.activeModalWidget()
-                if not isinstance(box, QtWidgets.QMessageBox):
+                if not isinstance(box, QtWidgets.QDialog):
                     QtCore.QTimer.singleShot(0, lambda: grab_dialog(path))
                     return
                 base = forge.window.grab()
@@ -329,7 +338,7 @@ def shot_train_live(out: Path, home: Path) -> None:
         "sample_seconds_estimated": False,
         "seconds_per_step": 2.2,
     }), encoding="utf-8")
-    forge.window.resize(1280, 960)
+    forge.window.setFixedSize(1280, 800)
     forge.window.show()
     forge.layout.sections._index = STEPS.index("train")
     forge.repaint()
@@ -373,7 +382,7 @@ def shot_result_export(out: Path, home: Path) -> None:
         },
     })
     forge.draft.trained = True
-    forge.window.resize(1280, 960)
+    forge.window.setFixedSize(1280, 800)
     forge.window.show()
     forge.layout.sections._index = STEPS.index("result")
     forge.repaint()

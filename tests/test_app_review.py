@@ -21,6 +21,7 @@ from voxprint_forge.app.window import (  # noqa: E402
     _control_width,
     button_radius_px,
     format_span,
+    menu_popup_point,
     register_catalogs,
 )
 from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
@@ -159,6 +160,36 @@ def test_the_sample_switch_hint_describes_pictures_during_training() -> None:
     set_language("en")
 
 
+def _assert_review_fits(app, qapp) -> None:
+    """At 1280×800 the heading sits fully in the scroll and the continue row sits in the window."""
+    app.window.setFixedSize(1280, 800)
+    qapp.processEvents()
+    heading = app.window.findChild(QtWidgets.QLabel, "forge.review.heading")
+    assert heading is not None
+    assert heading.height() >= heading.fontMetrics().height()
+    area = heading.parentWidget()
+    while area is not None and not isinstance(area, QtWidgets.QScrollArea):
+        area = area.parentWidget()
+    assert isinstance(area, QtWidgets.QScrollArea)
+    area.verticalScrollBar().setValue(0)
+    qapp.processEvents()
+    viewport = area.viewport()
+    top = heading.mapTo(viewport, QtCore.QPoint(0, 0))
+    assert top.y() >= 8
+    assert top.y() + heading.height() <= viewport.height()
+    host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
+    assert host.width() >= host.sizeHint().width()
+    origin = host.mapTo(app.window, QtCore.QPoint(0, 0))
+    assert origin.x() >= 0 and origin.y() >= 0
+    assert origin.x() + host.width() <= app.window.width()
+    assert origin.y() + host.height() <= app.window.height()
+    view_bottom = viewport.mapTo(app.window, QtCore.QPoint(0, viewport.height())).y()
+    assert origin.y() >= view_bottom - 1
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    note_at = note.mapTo(app.window, QtCore.QPoint(0, note.height()))
+    assert note_at.y() <= app.window.height()
+
+
 def _card(button: QtWidgets.QPushButton) -> QtWidgets.QFrame:
     card = button.parentWidget()
     assert isinstance(card, QtWidgets.QFrame)
@@ -197,8 +228,16 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert discard_action.text() == "Принудительно, без сохранения"
     menu = finish.menu()
     assert menu is not None
-    menu.popup(finish.mapToGlobal(QtCore.QPoint(0, finish.height())))
+    QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
     qapp.processEvents()
+    assert menu.isVisible()
+    assert abs(menu.pos().x() - menu_popup_point(finish).x()) <= 2
+    window_origin = app.window.mapToGlobal(QtCore.QPoint(0, 0))
+    menu_right = menu.pos().x() + menu.width()
+    button_right = finish.mapToGlobal(QtCore.QPoint(finish.width(), 0)).x()
+    assert menu.pos().x() >= window_origin.x()
+    assert menu_right <= window_origin.x() + app.window.width()
+    assert menu_right <= button_right + 2
     menu_pixel = menu.grab().toImage().pixelColor(6, 6)
     assert menu_pixel.red() < 90 and menu_pixel.green() < 90 and menu_pixel.blue() < 110
     menu.close()
@@ -208,13 +247,19 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     host = cont.parentWidget()
     assert cont is not None and chevron is not None and host is not None
     assert cont.text() == "Продолжить с подкреплением" and cont.isEnabled() and cont.menu() is None
-    assert host.width() >= host.fontMetrics().horizontalAdvance(cont.text()) + 28
+    text_width = host.fontMetrics().horizontalAdvance(cont.text())
+    plain_width = host.fontMetrics().horizontalAdvance("Просто продолжить")
+    assert host.sizeHint().width() >= text_width
+    assert host.sizeHint().width() >= plain_width
+    assert host.width() >= host.sizeHint().width()
+    assert host.minimumSizeHint().width() == host.sizeHint().width()
     assert finish.x() > host.x() and finish.width() < host.width() and finish.height() <= host.height()
     face_image = host.grab().toImage()
     face = face_image.pixelColor(12, host.height() // 2)
     assert face.red() > 200 and face.green() > 180 and face.blue() < 160
     corner = face_image.pixelColor(0, 0)
     assert 10 < corner.red() < 80 and corner.green() < 80 and corner.blue() < 90
+    _assert_review_fits(app, qapp)
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
     assert note.text() == tr("forge.app.review.note")
@@ -262,7 +307,7 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
 
     def accept_finish() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.objectName() == "forge.review.finish.confirm"
         assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
         background = box.grab().toImage().pixelColor(8, box.height() - 8)
@@ -311,7 +356,7 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
 
     def click() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.review.unmarked")
         seen.append(box.text())
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
@@ -415,7 +460,7 @@ def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
 
     def cancel() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.train.stop.ask")
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.train.stop.cancel"))
         button.click()
@@ -528,7 +573,7 @@ def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
 
     def cancel() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
         button.click()
@@ -668,7 +713,7 @@ def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> Non
 
     def cancel() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.review.finish.discard.confirm")
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
         button.click()
@@ -680,7 +725,22 @@ def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> Non
 
     def confirm() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QDialog)
+        assert box.windowTitle()
+        title = box.findChild(QtWidgets.QLabel, "forgeDialogTitle")
+        assert title is not None and title.text() == box.windowTitle()
+        card = box.findChild(QtWidgets.QFrame, "forgeDialogCard")
+        assert card is not None
+        edge = card.grab().toImage().pixelColor(0, card.height() // 2)
+        fill = card.grab().toImage().pixelColor(card.width() // 2, card.height() // 2)
+        assert edge.lightness() > fill.lightness() + 40
+        shadow_at = card.mapTo(box, QtCore.QPoint(card.width() // 2, card.height() + 6))
+        shadow = box.grab().toImage().pixelColor(shadow_at)
+        assert shadow.alpha() > 40
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish.discard"))
+        assert button.property("danger") == "true"
+        face = button.grab().toImage().pixelColor(10, button.height() // 2)
+        assert face.red() > face.green() + 20 and face.red() > face.blue()
         button.click()
 
     QtCore.QTimer.singleShot(0, confirm)

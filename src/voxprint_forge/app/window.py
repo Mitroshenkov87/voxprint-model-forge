@@ -119,7 +119,7 @@ QPushButton[reviewMark="true"][down="true"]:checked {
     background: #5a3030; color: #f3d0d0; border-color: #c45c5c; }
 QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
-QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
+QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; padding: 0; min-height: 28px; }
 QLabel[muted="true"] { color: #9a9aa8; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
@@ -170,11 +170,16 @@ QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
 """
 FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
-_MESSAGE_BOX_STYLE = """
-QMessageBox { background: #1c1c24; }
-QMessageBox QLabel { color: #f4f1ea; background: transparent; }
-QMessageBox QPushButton { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46;
-    padding: 6px 14px; min-height: 28px; }
+_DIALOG_STYLE = """
+QDialog { background: transparent; }
+QFrame#forgeDialogCard { background: #1c1c24; border: 2px solid #c8c8d4; border-radius: 12px; }
+QLabel#forgeDialogTitle { color: #f4f1ea; font-size: 16px; font-weight: 600; background: transparent; }
+QLabel#qt_msgbox_label { color: #f4f1ea; font-size: 14px; background: transparent; }
+QPushButton { background: #2a2a33; color: #f4f1ea; border: 1px solid #5c5c6c; border-radius: 4px;
+    padding: 6px 16px; min-height: 32px; min-width: 96px; }
+QPushButton:hover { background: #34343f; }
+QPushButton[danger="true"] { background: #9a3030; color: #fff8f8; border: 1px solid #f0b0b0; font-weight: 600; }
+QPushButton[danger="true"]:hover { background: #b23c3c; }
 """
 _MENU_STYLE = """
 QMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
@@ -183,6 +188,8 @@ QMenu::item:selected { background: #3a3a46; color: #f4f1ea; }
 QMenu::separator { height: 1px; background: #3a3a46; margin: 4px 8px; }
 """
 _CHEVRON_W = 28
+_LABEL_PAD = 16
+_LABEL_GAP = 14
 _FADE_MS = 150
 _ROW_RADIUS = 4
 LOCALES = Path(__file__).resolve().parent / "locales"
@@ -470,6 +477,7 @@ class ForgeApp:
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
         self._loss_label = None
+        self._review_actions = None
         # A paused review replaces the training intro; Continue, train fully and Finish drive that screen.
         if not (step == "train" and self._review_waiting() and not self.runner.busy):  # type: ignore[attr-defined]
             self._intro(column, step)
@@ -505,6 +513,9 @@ class ForgeApp:
         status.setContentsMargins(0, 4, 0, 4)
         status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         stack.addWidget(scroll, 1)
+        # Continue / Finish stay under the scroll, so an 800 px window shows the heading and the row together.
+        if self._review_actions is not None:
+            stack.addWidget(self._review_actions)
         # The footer (status line, then the shell's Back/Next) is pinned under the scrolling step body;
         # a thin line marks where the body ends, so a row cut by the scroll edge reads as "scroll for more".
         line = QtWidgets.QFrame()
@@ -1424,10 +1435,14 @@ class ForgeApp:
         state = self._review_state()
         counted = rounds.counts(state)
         busy = self.runner.busy  # type: ignore[attr-defined]
+        # A flush first line sits under the viewport edge and reads as a cut-off header.
+        margins = column.contentsMargins()
+        column.setContentsMargins(margins.left(), max(margins.top(), 12), margins.right(), margins.bottom())
         heading = QtWidgets.QLabel(tr("forge.app.review.heading"))
         heading.setObjectName("forge.review.heading")
         heading.setProperty("emptyTitle", "true")
         heading.setWordWrap(True)
+        heading.setMinimumHeight(max(36, heading.fontMetrics().height() + 10))
         column.addWidget(heading)
         lead = QtWidgets.QLabel(tr("forge.app.review.lead"))
         lead.setObjectName("forge.review.lead")
@@ -1479,12 +1494,18 @@ class ForgeApp:
         row.addWidget(cont)
         row.addStretch(1)
         row.addWidget(finish)
-        column.addLayout(row)
         note = QtWidgets.QLabel(tr("forge.app.review.note"))
         note.setObjectName("forge.review.note")
         note.setProperty("muted", "true")
         note.setWordWrap(True)
-        column.addWidget(note)
+        bar = QtWidgets.QWidget()
+        bar.setObjectName("forge.review.actions")
+        pinned = QtWidgets.QVBoxLayout(bar)
+        pinned.setContentsMargins(0, 8, 0, 0)
+        pinned.setSpacing(6)
+        pinned.addLayout(row)
+        pinned.addWidget(note)
+        self._review_actions = bar
         self._review_continue = cont
 
     def _continue_control(self, busy: bool) -> "_ContinueToggle":
@@ -1532,7 +1553,7 @@ class ForgeApp:
 
     def _finish_menu(self, busy: bool) -> QtWidgets.QPushButton:
         """Small Finish button. Its menu saves or discards."""
-        button = QtWidgets.QPushButton(tr("forge.app.review.finish"))
+        button = _FinishButton(tr("forge.app.review.finish"))
         button.setObjectName("forge.review.finish")
         button.setProperty("reviewFinish", "true")
         button.setToolTip(tr("forge.app.review.finish.tip"))
@@ -2966,8 +2987,17 @@ class _ContinueToggle(QtWidgets.QWidget):
             self.toggled.emit(target)
 
     def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
-        """The longer label, plus the chevron."""
-        return self.minimumSize()
+        """The longer label, the chevron, and the padding. Both modes share it."""
+        return QtCore.QSize(self._needed_width(), self._needed_height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        """Do not let the row shrink the label."""
+        return self.sizeHint()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt override
+        """Measure again once the shell font is applied."""
+        super().showEvent(event)
+        self._fit()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802 - Qt override
         """Keep the ▾ segment on the right edge."""
@@ -2977,7 +3007,12 @@ class _ContinueToggle(QtWidgets.QWidget):
     def changeEvent(self, event: QtCore.QEvent) -> None:  # noqa: N802 - Qt override
         """Repaint when the row is enabled or disabled."""
         super().changeEvent(event)
-        if event.type() == QtCore.QEvent.Type.EnabledChange:
+        if event.type() in (
+            QtCore.QEvent.Type.EnabledChange,
+            QtCore.QEvent.Type.FontChange,
+            QtCore.QEvent.Type.StyleChange,
+        ):
+            self._fit()
             self.update()
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
@@ -3007,7 +3042,8 @@ class _ContinueToggle(QtWidgets.QWidget):
         painter.setPen(ink)
         painter.setFont(self.font())
         painter.drawText(chevron, int(QtCore.Qt.AlignmentFlag.AlignCenter), "▾")
-        label = QtCore.QRectF(14, 0, max(0.0, chevron.left() - 20), float(self.height()))
+        label_right = chevron.left() - _LABEL_GAP
+        label = QtCore.QRectF(_LABEL_PAD, 0, max(0.0, label_right - _LABEL_PAD), float(self.height()))
         align = int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft)
         painter.setOpacity(max(0.0, 1.0 - blend))
         painter.drawText(label, align, self._reinforced)
@@ -3032,17 +3068,37 @@ class _ContinueToggle(QtWidgets.QWidget):
         self._main.setToolTip(self._reinforced_tip)
         self._chevron.setToolTip(self._plain_tip)
 
-    def _fit(self) -> None:
+    def _text_width(self) -> int:
         font = self.font()
         font.setWeight(QtGui.QFont.Weight.DemiBold)
-        self.setFont(font)
-        self._main.setFont(font)
         metrics = QtGui.QFontMetrics(font)
         advance = max(metrics.horizontalAdvance(self._reinforced), metrics.horizontalAdvance(self._plain))
-        width = advance + _CHEVRON_W + 28
-        height = max(40, metrics.height() + 18)
-        self.setMinimumSize(width, height)
-        self.resize(max(self.width(), width), height)
+        ink = max(metrics.boundingRect(self._reinforced).width(), metrics.boundingRect(self._plain).width())
+        return max(advance, ink) + 4
+
+    def _needed_width(self) -> int:
+        return self._text_width() + _LABEL_PAD + _LABEL_GAP + _CHEVRON_W
+
+    def _needed_height(self) -> int:
+        font = self.font()
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        return max(40, QtGui.QFontMetrics(font).height() + 18)
+
+    def _fit(self) -> None:
+        if not hasattr(self, "_main"):
+            return
+        font = self.font()
+        if font.weight() != QtGui.QFont.Weight.DemiBold:
+            font.setWeight(QtGui.QFont.Weight.DemiBold)
+            self.setFont(font)
+            self._main.setFont(font)
+        needed = QtCore.QSize(self._needed_width(), self._needed_height())
+        if self.minimumSize() != needed:
+            self.setMinimumSize(needed)
+            self.updateGeometry()
+        if self.width() < needed.width() or self.height() < needed.height():
+            self.resize(max(self.width(), needed.width()), max(self.height(), needed.height()))
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
         self._place()
 
     def _place(self) -> None:
@@ -3083,22 +3139,184 @@ def _menu(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMenu:
     return menu
 
 
-def _message_box(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMessageBox:
-    """A dialog on the app theme: dark background, light text."""
-    box = QtWidgets.QMessageBox(parent)
-    box.setObjectName(name)
-    box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
-    box.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-    inherited = parent.styleSheet() if parent is not None else ""
-    box.setStyleSheet(inherited + _MESSAGE_BOX_STYLE)
-    palette = box.palette()
-    palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#1c1c24"))
-    palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#f4f1ea"))
-    palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#f4f1ea"))
-    palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#f4f1ea"))
-    box.setPalette(palette)
-    box.setAutoFillBackground(True)
-    return box
+class _FinishButton(QtWidgets.QPushButton):
+    """Finish opens its menu from the button's right edge, inside the window."""
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override
+        """Open the menu aligned to this button instead of past the window edge."""
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self.menu() is not None:
+            QtWidgets.QAbstractButton.mousePressEvent(self, event)
+            popup_menu(self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # noqa: N802 - Qt override
+        """Space, Enter and Down open the same aligned menu."""
+        if self.menu() is not None and event.key() in (
+            QtCore.Qt.Key.Key_Space, QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter, QtCore.Qt.Key.Key_Down,
+        ):
+            popup_menu(self)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+def _menu_width(menu: QtWidgets.QMenu) -> int:
+    metrics = menu.fontMetrics()
+    widest = 0
+    for action in menu.actions():
+        if not action.isSeparator():
+            widest = max(widest, metrics.horizontalAdvance(action.text()))
+    return widest + 48
+
+
+def menu_popup_point(button: QtWidgets.QAbstractButton) -> QtCore.QPoint:
+    """Global top-left for ``button``'s menu: right edges meet, then clamped on screen."""
+    menu = button.menu()
+    if menu is None:
+        return button.mapToGlobal(QtCore.QPoint(0, button.height()))
+    menu.setMinimumWidth(_menu_width(menu))
+    menu.adjustSize()
+    width = max(menu.sizeHint().width(), menu.minimumWidth())
+    height = max(menu.sizeHint().height(), 1)
+    bottom_right = button.mapToGlobal(QtCore.QPoint(button.width(), button.height()))
+    x = bottom_right.x() - width
+    y = bottom_right.y()
+    screen = button.screen() or QtGui.QGuiApplication.primaryScreen()
+    bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, width, height)
+    window = button.window()
+    if window is not None:
+        bounds = bounds.intersected(QtCore.QRect(window.mapToGlobal(QtCore.QPoint(0, 0)), window.size()))
+    if bounds.width() > 0:
+        x = min(max(x, bounds.left()), max(bounds.left(), bounds.right() - width + 1))
+    if y + height > bounds.bottom():
+        y = button.mapToGlobal(QtCore.QPoint(0, 0)).y() - height
+    if bounds.height() > 0:
+        y = min(max(y, bounds.top()), max(bounds.top(), bounds.bottom() - height + 1))
+    return QtCore.QPoint(x, y)
+
+
+def popup_menu(button: QtWidgets.QAbstractButton) -> None:
+    """Show ``button``'s menu anchored to its right edge."""
+    menu = button.menu()
+    if menu is None:
+        return
+    menu.popup(menu_popup_point(button))
+
+
+class _DarkDialog(QtWidgets.QDialog):
+    """A dark modal with a title, a border and a shadow. The frame is drawn, not the platform's."""
+
+    def __init__(self, parent: QtWidgets.QWidget, name: str) -> None:
+        super().__init__(parent)
+        self.setObjectName(name)
+        self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        self.setWindowFlags(QtCore.Qt.WindowType.Dialog | QtCore.Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._clicked: QtWidgets.QPushButton | None = None
+        self._roles: dict[QtWidgets.QPushButton, QtWidgets.QMessageBox.ButtonRole] = {}
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(28, 28, 28, 28)
+        card = QtWidgets.QFrame()
+        card.setObjectName("forgeDialogCard")
+        body = QtWidgets.QVBoxLayout(card)
+        body.setContentsMargins(20, 16, 20, 16)
+        body.setSpacing(12)
+        self._title = QtWidgets.QLabel()
+        self._title.setObjectName("forgeDialogTitle")
+        self._title.setWordWrap(True)
+        self._text = QtWidgets.QLabel()
+        self._text.setObjectName("qt_msgbox_label")
+        self._text.setWordWrap(True)
+        self._text.setMinimumWidth(420)
+        self._row = QtWidgets.QHBoxLayout()
+        self._row.addStretch(1)
+        self._button_list: list[QtWidgets.QPushButton] = []
+        body.addWidget(self._title)
+        body.addWidget(self._text)
+        body.addLayout(self._row)
+        outer.addWidget(card)
+        self.setStyleSheet(_DIALOG_STYLE)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Draw the shadow in the margin so a grab shows it. Effects do not."""
+        del event
+        card = self.findChild(QtWidgets.QFrame, "forgeDialogCard")
+        if card is None:
+            return
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        rect = QtCore.QRectF(card.geometry())
+        for step in range(14, 0, -1):
+            painter.setBrush(QtGui.QColor(0, 0, 0, 16))
+            painter.drawRoundedRect(
+                rect.adjusted(-step * 0.4, 1 + step * 0.2, step * 0.4, 3 + step * 0.7), 16, 16,
+            )
+        painter.end()
+
+    def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt override
+        """Show the title inside the card. A frameless window has no title bar."""
+        super().setWindowTitle(title)
+        self._title.setText(title)
+
+    def setText(self, text: str) -> None:
+        """The sentence under the title."""
+        self._text.setText(text)
+
+    def text(self) -> str:
+        """The sentence under the title."""
+        return self._text.text()
+
+    def addButton(self, label: str, role: QtWidgets.QMessageBox.ButtonRole) -> QtWidgets.QPushButton:
+        """A button on the card. The discard confirmation's accept button is danger-coloured."""
+        button = QtWidgets.QPushButton(label)
+        button.setAutoDefault(False)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        if role == QtWidgets.QMessageBox.ButtonRole.AcceptRole and self.objectName().endswith("discard.confirm"):
+            button.setProperty("danger", "true")
+            button.style().unpolish(button)
+            button.style().polish(button)
+        button.clicked.connect(lambda _checked=False, chosen=button: self._choose(chosen))
+        self._roles[button] = role
+        self._button_list.append(button)
+        self._row.addWidget(button)
+        return button
+
+    def buttons(self) -> list[QtWidgets.QPushButton]:
+        """The buttons on the card, in the order they were added."""
+        return list(self._button_list)
+
+    def clickedButton(self) -> QtWidgets.QPushButton | None:
+        """The button that closed the dialog, or none when it was dismissed."""
+        return self._clicked
+
+    def setDefaultButton(self, button: QtWidgets.QPushButton) -> None:
+        """The button Enter activates."""
+        button.setDefault(True)
+        button.setAutoDefault(True)
+
+    def exec(self) -> int:  # noqa: N802 - Qt override
+        """Centre the card on the parent window, then run it."""
+        self.adjustSize()
+        window = self.parentWidget().window() if self.parentWidget() is not None else None
+        if window is not None:
+            frame = window.frameGeometry()
+            self.move(frame.center().x() - self.width() // 2, frame.center().y() - self.height() // 2)
+        return super().exec()
+
+    def _choose(self, button: QtWidgets.QPushButton) -> None:
+        self._clicked = button
+        if self._roles.get(button) == QtWidgets.QMessageBox.ButtonRole.AcceptRole:
+            self.accept()
+            return
+        self.reject()
+
+
+def _message_box(parent: QtWidgets.QWidget, name: str) -> _DarkDialog:
+    """A dark modal: title, border and shadow, on the app theme."""
+    return _DarkDialog(parent, name)
 
 
 def _button(label: str, tip: str, slot: Callable[[], None], *, primary: bool = False) -> QtWidgets.QPushButton:
