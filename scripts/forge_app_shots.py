@@ -258,6 +258,24 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             if image.width() != 1280 or image.height() != 800:
                 raise SystemExit(f"review grab is {image.width()}x{image.height()}, want 1280x800")
             image.save(str(out / "ru-simple-5-review.png"))
+            combo = forge.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
+            if combo is None:
+                raise SystemExit("review attire combo is missing")
+            combo.showPopup()
+            app.processEvents()
+            popup = combo.view().window()
+            if popup is None or not popup.isVisible():
+                raise SystemExit("attire popup did not open")
+            listed = forge.window.grab()
+            if listed.width() != 1280 or listed.height() != 800:
+                raise SystemExit(f"attire grab is {listed.width()}x{listed.height()}, want 1280x800")
+            point = forge.window.mapFromGlobal(popup.mapToGlobal(QtCore.QPoint(0, 0)))
+            painter = QtGui.QPainter(listed)
+            painter.drawPixmap(point, popup.grab())
+            painter.end()
+            listed.save(str(out / "ru-simple-5-review-attire.png"))
+            combo.hidePopup()
+            app.processEvents()
             _save_button_tooltip(
                 forge.window,
                 forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue"),

@@ -1603,33 +1603,36 @@ class ForgeApp:
         column.addLayout(tools)
         row = QtWidgets.QHBoxLayout()
         row.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.setSpacing(12)
         cont = self._continue_control(busy)
         finish = self._finish_menu(busy)
-        row.addWidget(cont)
-        row.addStretch(1)
-        row.addWidget(finish)
         note = QtWidgets.QLabel()
         note.setObjectName("forge.review.note")
         note.setProperty("muted", "true")
         note.setWordWrap(False)
+        note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
         self._review_note = note
         self._show_review_note(cont.mode())
         cont.toggled.connect(self._show_review_note)
+        row.addWidget(cont, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(note, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch(1)
+        row.addWidget(self._review_attire(busy), 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(finish, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
         bar = QtWidgets.QWidget()
         bar.setObjectName("forge.review.actions")
         pinned = QtWidgets.QVBoxLayout(bar)
         pinned.setContentsMargins(0, 8, 0, 0)
-        pinned.setSpacing(6)
-        pinned.addWidget(self._review_attire(busy))
+        pinned.setSpacing(0)
         pinned.addLayout(row)
-        pinned.addWidget(note)
         self._review_actions = bar
         self._review_continue = cont
 
     def _review_attire(self, busy: bool) -> QtWidgets.QWidget:
-        """Attire for the next round's samples, left-aligned with the action row."""
+        """Attire for the next round, on the continue row and to the right of the help line."""
         row = QtWidgets.QWidget()
         row.setObjectName("forge.review.attire.row")
+        row.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
         layout = QtWidgets.QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -1648,6 +1651,7 @@ class ForgeApp:
             ("forge.app.review.attire.unclothed", "unclothed"),
         ):
             combo.addItem(tr(key), mode)
+        combo.fit_to_items()
         stored = self._stored_sample_attire()
         shown = stored if stored in ("clothed", "unclothed") else "auto"
         combo.blockSignals(True)
@@ -1658,7 +1662,6 @@ class ForgeApp:
         self._attire_combo = combo
         layout.addWidget(label, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(combo, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
-        layout.addStretch(1)
         return row
 
     def _stored_sample_attire(self) -> str:
@@ -3325,78 +3328,117 @@ def _menu(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMenu:
     return menu
 
 
+_ATTIRE_DROP_W = 22
+_ATTIRE_TEXT_PAD = 8
+_ATTIRE_ARROW = Path(__file__).resolve().parent / "review-chevron.svg"
 _ATTIRE_COMBO_STYLE = """
 QComboBox {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #5c5c6c; border-radius: 4px;
-    padding: 2px 22px 2px 8px; min-height: 28px; max-height: 28px;
+    padding: 2px 4px 2px 8px; min-height: 28px; max-height: 28px;
 }
 QComboBox:hover { border-color: #c8c8d4; }
 QComboBox:disabled { background: #22222b; color: #6e6e7e; border-color: #33333f; }
-QComboBox::drop-down { border: none; width: 18px; }
-QComboBox QAbstractItemView {
-    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4;
-    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0;
+QComboBox::drop-down {
+    subcontrol-origin: padding; subcontrol-position: center right;
+    width: 22px; border: none;
+    border-top-right-radius: 4px; border-bottom-right-radius: 4px;
 }
+QComboBox::down-arrow { image: url(@@ARROW@@); width: 12px; height: 8px; }
+QComboBox QAbstractItemView {
+    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4; border-radius: 4px;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0; padding: 2px;
+}
+"""
+_ATTIRE_POPUP_STYLE = """
+QFrame { background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4; border-radius: 4px; }
 """
 _ATTIRE_VIEW_STYLE = """
 QAbstractItemView {
-    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4;
-    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0;
+    background: #1c1c24; color: #f4f1ea; border: none;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0; padding: 2px;
 }
 """
 
 
+def _attire_combo_style() -> str:
+    """Dark combo face. The ▾ is the down-arrow image."""
+    return _ATTIRE_COMBO_STYLE.replace("@@ARROW@@", _ATTIRE_ARROW.as_posix())
+
+
 class _AttireCombo(QtWidgets.QComboBox):
-    """Dark attire list. The popup stays on the control and inside the window."""
+    """Dark attire list. The popup opens under the box."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("forge.review.attire")
-        self.setStyleSheet(_ATTIRE_COMBO_STYLE)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(_attire_combo_style())
+        self.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
         self.setFixedHeight(28)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.view().setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt override
         """Size the box to its longest item once the font is real."""
         super().showEvent(event)
         self.fit_to_items()
 
+    def changeEvent(self, event: QtCore.QEvent) -> None:  # noqa: N802 - Qt override
+        """Measure again when the font changes."""
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.FontChange:
+            self.fit_to_items()
+
     def fit_to_items(self) -> None:
-        """Keep every item on one line, with room for the arrow."""
+        """Minimum width is the longest item, plus the arrow and the padding."""
         self.ensurePolished()
         metrics = self.fontMetrics()
-        widest = max((metrics.horizontalAdvance(self.itemText(index)) for index in range(self.count())), default=0)
-        self.setFixedWidth(widest + 36)
+        widest = 0
+        for index in range(self.count()):
+            text = self.itemText(index)
+            widest = max(widest, metrics.horizontalAdvance(text), metrics.boundingRect(text).width())
+        floor = widest + _ATTIRE_TEXT_PAD + _ATTIRE_TEXT_PAD + _ATTIRE_DROP_W
+        self.setMinimumWidth(floor)
+        self.updateGeometry()
 
     def showPopup(self) -> None:  # noqa: N802 - Qt override
-        """Open the list under the box, or above it when the window ends first."""
-        self.view().setStyleSheet(_ATTIRE_VIEW_STYLE)
+        """Open the dark list directly under the box, sharing its left edge."""
+        view = self.view()
+        view.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         super().showPopup()
-        popup = self.view().window()
+        popup = view.window()
         if popup is None or popup is self.window():
             return
+        popup.setStyleSheet(_ATTIRE_POPUP_STYLE)
+        view.setStyleSheet(_ATTIRE_VIEW_STYLE)
         self._place_popup(popup)
 
     def _place_popup(self, popup: QtWidgets.QWidget) -> None:
-        popup.adjustSize()
-        width = max(self.width(), popup.sizeHint().width(), popup.width())
-        height = max(popup.sizeHint().height(), popup.height(), 1)
-        popup.resize(width, height)
+        view = self.view()
+        for child in popup.findChildren(QtWidgets.QWidget):
+            if child.metaObject().className() == "QComboBoxPrivateScroller":
+                child.hide()
+                child.setFixedHeight(0)
+        layout = popup.layout()
+        if layout is not None:
+            layout.setContentsMargins(1, 1, 1, 1)
+        metrics = self.fontMetrics()
+        widest = 0
+        for index in range(self.count()):
+            widest = max(widest, metrics.horizontalAdvance(self.itemText(index)))
+        width = max(self.width(), widest + _ATTIRE_TEXT_PAD * 2)
+        row = view.sizeHintForRow(0) if self.count() else metrics.height() + 6
+        height = row * max(1, self.count()) + 2
+        popup.setFixedSize(width, height)
+        view.setFixedSize(max(1, width - 2), max(1, height - 2))
         origin = self.mapToGlobal(QtCore.QPoint(0, 0))
-        below = origin.y() + self.height()
+        left = origin.x()
+        top = origin.y() + self.height()
         host = self.window()
-        if host is None:
-            popup.move(origin.x(), below)
-            return
-        frame = QtCore.QRect(host.mapToGlobal(QtCore.QPoint(0, 0)), host.size())
-        if below + popup.height() > frame.bottom() and origin.y() - popup.height() >= frame.top():
-            top = origin.y() - popup.height()
-        else:
-            top = below
-        left = min(max(origin.x(), frame.left()), frame.right() - popup.width() + 1)
-        top = min(max(top, frame.top()), frame.bottom() - popup.height() + 1)
+        if host is not None:
+            frame = QtCore.QRect(host.mapToGlobal(QtCore.QPoint(0, 0)), host.size())
+            left = min(max(left, frame.left()), max(frame.left(), frame.right() - popup.width() + 1))
         popup.move(left, top)
 
 

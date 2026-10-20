@@ -972,20 +972,37 @@ def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qap
     assert combo.itemData(0) == "auto"
     assert "следующего раунда" in combo.toolTip()
     assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
-    assert combo.width() >= combo.fontMetrics().horizontalAdvance("как на фото") + 16
+    longest = max(
+        (combo.itemText(index) for index in range(combo.count())),
+        key=lambda text: combo.fontMetrics().horizontalAdvance(text),
+    )
+    assert combo.width() >= combo.fontMetrics().horizontalAdvance(longest)
+    assert combo.width() >= combo.fontMetrics().horizontalAdvance(longest) + 22
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert note is not None and finish is not None
     label_box = label.mapTo(app.window, QtCore.QPoint(0, 0))
     combo_box = combo.mapTo(app.window, QtCore.QPoint(0, 0))
     host_box = host.mapTo(app.window, QtCore.QPoint(0, 0))
-    assert abs(label_box.x() - host_box.x()) <= 2
+    note_box = note.mapTo(app.window, QtCore.QPoint(0, 0))
+    finish_box = finish.mapTo(app.window, QtCore.QPoint(0, 0))
+    assert abs((combo_box.y() + combo.height() // 2) - (host_box.y() + host.height() // 2)) <= 6
+    assert combo_box.x() >= note_box.x() + note.width() - 2
+    assert combo_box.x() + combo.width() <= finish_box.x()
     assert combo_box.x() >= label_box.x() + label.width() - 2
-    assert abs((label_box.y() + label.height() // 2) - (combo_box.y() + combo.height() // 2)) <= 4
-    assert combo_box.y() + combo.height() <= host_box.y()
     assert combo_box.x() + combo.width() <= app.window.width()
+    assert note.width() >= note.fontMetrics().horizontalAdvance(note.text())
     face = combo.grab().toImage()
     background = face.pixelColor(6, face.height() // 2)
     assert background.lightness() < 80
     assert _has_light_pixel(combo)
     assert _has_light_pixel(label)
+    arrow = face.copy(face.width() - 18, 4, 14, max(1, face.height() - 8))
+    assert any(
+        arrow.pixelColor(x, y).lightness() > 140
+        for y in range(arrow.height())
+        for x in range(arrow.width())
+    )
     names = sorted(path.name for path in (app.project / "review").rglob("*.png"))
     combo.setCurrentIndex(2)
     qapp.processEvents()
@@ -998,9 +1015,7 @@ def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qap
     origin = combo.mapToGlobal(QtCore.QPoint(0, 0))
     frame = QtCore.QRect(app.window.mapToGlobal(QtCore.QPoint(0, 0)), app.window.size())
     assert abs(popup.x() - origin.x()) <= 2
-    touches_below = abs(popup.y() - (origin.y() + combo.height())) <= 2
-    touches_above = abs(origin.y() - (popup.y() + popup.height())) <= 2
-    assert touches_below or touches_above
+    assert abs(popup.y() - (origin.y() + combo.height())) <= 2
     assert frame.contains(QtCore.QRect(popup.pos(), popup.size()))
     fill = popup.grab().toImage().pixelColor(8, 8)
     assert fill.lightness() < 80
