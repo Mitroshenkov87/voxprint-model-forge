@@ -3415,6 +3415,7 @@ class _AttireCombo(QtWidgets.QComboBox):
         self._place_popup(popup)
 
     def _place_popup(self, popup: QtWidgets.QWidget) -> None:
+        """Put the list under the box. The extra scroll buttons stay hidden."""
         view = self.view()
         for child in popup.findChildren(QtWidgets.QWidget):
             if child.metaObject().className() == "QComboBoxPrivateScroller":
