@@ -202,25 +202,16 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
     def _save_button_tooltip(
         window: QtWidgets.QWidget, button: QtWidgets.QWidget | None, path: Path, application: QtWidgets.QApplication,
     ) -> None:
-        """Composite the real tooltip so it sits on the main button inside the 1280×800 grab."""
+        """Composite the real tooltip where the app opens it, under the main button."""
         if button is None or not button.toolTip().strip():
             raise SystemExit("review main button has no tooltip")
-        anchor = button.mapToGlobal(QtCore.QPoint(button.width() // 2, button.height() // 2))
-        QtWidgets.QToolTip.showText(anchor, button.toolTip(), button)
+        local = QtCore.QPoint(button.width() // 2, button.height() // 2)
+        event = QtGui.QHelpEvent(QtCore.QEvent.Type.ToolTip, local, button.mapToGlobal(local))
+        application.sendEvent(button, event)
         application.processEvents()
         tip = tooltip_widget()
         if tip is None:
             raise SystemExit("tooltip did not appear")
-        origin = window.mapToGlobal(QtCore.QPoint(0, 0))
-        button_at = button.mapToGlobal(QtCore.QPoint(0, 0))
-        x = button_at.x() + 12
-        y = button_at.y() + max(0, (button.height() - tip.height()) // 2)
-        if x + tip.width() > origin.x() + window.width() - 8:
-            x = origin.x() + window.width() - tip.width() - 8
-        if y + tip.height() > origin.y() + window.height() - 8:
-            y = origin.y() + window.height() - tip.height() - 8
-        tip.move(x, y)
-        application.processEvents()
         image = window.grab()
         if image.width() != 1280 or image.height() != 800:
             raise SystemExit(f"tooltip grab is {image.width()}x{image.height()}, want 1280x800")

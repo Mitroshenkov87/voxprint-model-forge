@@ -168,6 +168,11 @@ QPushButton:disabled, QPushButton:disabled:hover {
 QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
     background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
+QToolTip {
+    background-color: #2b2d36; color: #f4f1ea; border: 1px solid #c8c8d4;
+    border-radius: 4px; padding: 6px 8px; margin: 0px; max-width: 420px;
+    qproperty-margin: 0;
+}
 """
 FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
 _DIALOG_STYLE = """
@@ -195,6 +200,12 @@ _FINISH_INK = "#f4f1ea"
 _DANGER_TEXT = "#f3d0d0"
 _FINISH_RADIUS = 4
 _FINISH_SHADOW = 8
+# Tooltip copy wraps inside 420 px. Padding and the 1 px border sit outside that.
+_TOOLTIP_TEXT = 420
+_TOOLTIP_PAD_X = 8
+_TOOLTIP_PAD_Y = 6
+_TOOLTIP_BORDER = 1
+_TOOLTIP_GAP = 2
 _CHEVRON_W = 28
 _LABEL_PAD = 16
 _LABEL_GAP = 14
@@ -212,6 +223,99 @@ def register_catalogs() -> None:
         add_catalogs(Path(lora_i18n.__file__).resolve().parent)
     except ImportError:
         pass
+
+
+def _install_tooltip_placement() -> None:
+    """Open every tooltip under its control, once per process."""
+    app = QtWidgets.QApplication.instance()
+    if app is None or app.findChild(QtCore.QObject, "forge.tooltip.placement") is not None:
+        return
+    placement = _TooltipPlacement(app)
+    placement.setObjectName("forge.tooltip.placement")
+    app.installEventFilter(placement)
+
+
+class _TooltipPlacement(QtCore.QObject):
+    """Replace the cursor-shaped system tip so it does not cover the control."""
+
+    def __init__(self, parent: QtCore.QObject) -> None:
+        super().__init__(parent)
+        self._busy = False
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802 - Qt override
+        if self._busy or event.type() != QtCore.QEvent.Type.ToolTip:
+            return False
+        if not isinstance(watched, QtWidgets.QWidget) or not isinstance(event, QtGui.QHelpEvent):
+            return False
+        text, local = _tooltip_subject(watched, event.pos())
+        if not text:
+            return False
+        self._busy = True
+        try:
+            anchor = QtCore.QRect(watched.mapToGlobal(local.topLeft()), local.size())
+            below = QtCore.QPoint(anchor.x(), anchor.y() + anchor.height() + _TOOLTIP_GAP)
+            QtWidgets.QToolTip.showText(below, text, watched, local)
+            _settle_tooltip(watched, anchor)
+        finally:
+            self._busy = False
+        return True
+
+
+def _tooltip_subject(widget: QtWidgets.QWidget, pos: QtCore.QPoint) -> tuple[str, QtCore.QRect]:
+    """The tip text and the rectangle it must not cover, in ``widget`` coordinates."""
+    if isinstance(widget, QtWidgets.QMenu) and widget.toolTipsVisible():
+        action = widget.actionAt(pos)
+        if action is not None and action.toolTip().strip():
+            return action.toolTip(), widget.actionGeometry(action)
+        return "", QtCore.QRect()
+    text = widget.toolTip().strip()
+    if text:
+        return widget.toolTip(), widget.rect()
+    return "", QtCore.QRect()
+
+
+def _visible_tooltip() -> QtWidgets.QWidget | None:
+    """The live tip label, which Qt keeps off the window that owns the control."""
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return None
+    for widget in app.topLevelWidgets():
+        if not widget.isVisible():
+            continue
+        name = widget.metaObject().className()
+        if widget.windowType() == QtCore.Qt.WindowType.ToolTip or "Tip" in name:
+            return widget
+    return None
+
+
+def _settle_tooltip(widget: QtWidgets.QWidget, anchor: QtCore.QRect) -> None:
+    """Wrap the tip to 420 px, round its corners, and sit it under the control."""
+    tip = _visible_tooltip()
+    if tip is None or not isinstance(tip, QtWidgets.QLabel):
+        return
+    tip.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    tip.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    font = tip.font()
+    font.setStyleStrategy(QtGui.QFont.StyleStrategy.NoSubpixelAntialias)
+    tip.setFont(font)
+    tip.setWordWrap(True)
+    text = tip.text()
+    flags = int(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.TextFlag.TextWordWrap)
+    rect = tip.fontMetrics().boundingRect(0, 0, _TOOLTIP_TEXT, 2000, flags, text)
+    width = rect.width() + _TOOLTIP_PAD_X * 2 + _TOOLTIP_BORDER * 2
+    height = rect.height() + _TOOLTIP_PAD_Y * 2 + _TOOLTIP_BORDER * 2
+    tip.setFixedSize(max(width, 1), max(height, 1))
+    x = anchor.x()
+    y = anchor.y() + anchor.height() + _TOOLTIP_GAP
+    window = widget.window()
+    if isinstance(window, QtWidgets.QWidget):
+        origin = window.mapToGlobal(QtCore.QPoint(0, 0))
+        if y + tip.height() > origin.y() + window.height():
+            y = anchor.y() - tip.height() - _TOOLTIP_GAP
+        limit = origin.x() + window.width() - tip.width()
+        x = min(max(x, origin.x()), max(limit, origin.x()))
+        y = max(y, origin.y())
+    tip.move(x, y)
 
 
 def section_set(settings: object) -> SectionSet:
@@ -280,6 +384,7 @@ class ForgeApp:
         from voxprint_forge.app.runner import ProcessRunner
 
         register_catalogs()
+        _install_tooltip_placement()
         self.surface = surface_for(APP_ID)
         self.settings = lora_settings()
         self.home = home if home is not None else state_dir() / APP_ID

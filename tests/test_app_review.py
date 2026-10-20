@@ -278,6 +278,67 @@ def _assert_review_tooltips(window: QtWidgets.QWidget) -> None:
     assert all(item.toolTip().strip() for item in actions)
 
 
+def _tooltip_label() -> QtWidgets.QWidget | None:
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        if widget.isVisible() and "Tip" in widget.metaObject().className():
+            return widget
+    return None
+
+
+def test_the_review_tooltip_opens_under_the_button(make_app, tmp_path, qapp) -> None:
+    """The tip is a dark wrapped panel under the main button, not a yellow bubble on top of it."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "tip", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    assert button is not None and button.toolTip().strip()
+    local = QtCore.QPoint(button.width() // 2, button.height() // 2)
+    qapp.sendEvent(button, QtGui.QHelpEvent(QtCore.QEvent.Type.ToolTip, local, button.mapToGlobal(local)))
+    qapp.processEvents()
+    tip = _tooltip_label()
+    assert isinstance(tip, QtWidgets.QLabel)
+    assert tip.text() == button.toolTip()
+    assert tip.width() <= 420 + 8 * 2 + 2
+    origin = app.window.mapToGlobal(QtCore.QPoint(0, 0))
+    button_top = button.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    button_bottom = button.mapToGlobal(QtCore.QPoint(0, button.height())).y()
+    tip_top = tip.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    tip_bottom = tip.mapToGlobal(QtCore.QPoint(0, tip.height())).y()
+    assert tip_bottom <= origin.y() + app.window.height()
+    assert tip_top >= origin.y()
+    if button_bottom + tip.height() + 2 <= origin.y() + app.window.height():
+        assert 0 <= tip_top - button_bottom <= 4
+    else:
+        assert 0 <= button_top - tip_bottom <= 4
+    assert tip_top >= button_bottom or tip_bottom <= button_top
+    image = tip.grab().toImage()
+    fill = image.pixelColor(12, image.height() // 2)
+    assert fill.red() < 80 and fill.green() < 80 and fill.blue() < 100
+    edge = image.pixelColor(image.width() // 2, 0)
+    assert edge.alpha() == 0 or edge.lightness() > fill.lightness() + 40
+    text_rows = []
+    for y in range(image.height()):
+        light = 0
+        for x in range(8, image.width() - 8, 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 220 and color.green() > 200 and color.blue() > 180:
+                light += 1
+        if light > 6:
+            text_rows.append(y)
+    assert text_rows
+    bands = 1
+    for earlier, later in zip(text_rows, text_rows[1:], strict=False):
+        if later > earlier + 3:
+            bands += 1
+    assert bands >= 2
+    assert text_rows[-1] <= image.height() - 4
+    QtWidgets.QToolTip.hideText()
+
+
 def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app, tmp_path, qapp) -> None:
     """One muted line names the current mode, and the long explanations live on the controls."""
     app = make_app("ru")
