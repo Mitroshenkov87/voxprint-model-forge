@@ -27,6 +27,17 @@ from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
 from voxprint_forge.lora.review import save_state, transition  # noqa: E402
 
 
+def _has_light_pixel(widget: QtWidgets.QWidget) -> bool:
+    """True when the widget paints a light pixel, so the text is visible on the theme."""
+    image = widget.grab().toImage()
+    for y in range(0, image.height(), 2):
+        for x in range(0, image.width(), 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 180 and color.green() > 180 and color.blue() > 170:
+                return True
+    return False
+
+
 @pytest.fixture
 def make_app(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
@@ -76,7 +87,7 @@ def test_the_sample_switch_adds_review_rounds_and_off_keeps_a_straight_train(mak
     flagged = app._train_args()
     assert flagged[flagged.index("--review-rounds") + 1] == "3"
     assert flagged[flagged.index("--samples-per-round") + 1] == "8"
-    assert flagged[flagged.index("--first-round-steps") + 1] == "200"
+    assert flagged[flagged.index("--first-round-steps") + 1] == "120"
     assert flagged[flagged.index("--first-round-samples") + 1] == "6"
     assert flagged[flagged.index("--sample-steps") + 1] == "28"
     app.draft.set_source("photos")
@@ -167,9 +178,19 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert not back.isVisible() and not nxt.isVisible()
     assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить"
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Завершить"
+    save_action = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save")
+    discard_action = next(
+        item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
+    )
+    assert save_action.text() == "Завершить с сохранением"
+    assert discard_action.text() == "Завершить принудительно"
     cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
     assert cont is not None and cont.text() == "Продолжить с подкреплением" and cont.isEnabled()
+    assert cont.width() >= cont.fontMetrics().horizontalAdvance(cont.text()) + 28
+    face = cont.grab().toImage().pixelColor(8, cont.height() // 2)
+    assert face.red() > 180 and face.green() > 140 and face.blue() < 180
     unattended = next(item for item in cont.menu().actions() if item.objectName() == "forge.review.unattended")
     assert unattended.text() == "Просто продолжить"
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
@@ -222,11 +243,15 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
         assert isinstance(box, QtWidgets.QMessageBox)
         assert box.objectName() == "forge.review.finish.confirm"
         assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
-        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish"))
+        background = box.grab().toImage().pixelColor(8, box.height() - 8)
+        assert background.red() < 80 and background.green() < 80 and background.blue() < 100
+        label = box.findChild(QtWidgets.QLabel, "qt_msgbox_label")
+        assert label is not None and _has_light_pixel(label)
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish.save"))
         button.click()
 
     QtCore.QTimer.singleShot(0, accept_finish)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
+    save_action.trigger()
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "finish"]
 
@@ -253,7 +278,11 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     app.repaint()
     qapp.processEvents()
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Round 1 of 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Finish"
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Finish"
+    assert next(
+        item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save"
+    ).text() == "Finish and save"
     cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
     assert cont is not None and cont.text() == "Continue with reinforcement"
     seen: list[str] = []
@@ -347,6 +376,8 @@ def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, q
     stop = next(button for button in buttons if button.text() == tr("forge.app.train.stop"))
     assert not start.isEnabled() and not estimate.isEnabled()
     assert pause.isEnabled() and stop.isEnabled()
+    muted = estimate.grab().toImage().pixelColor(8, estimate.height() // 2)
+    assert muted.red() < 80 and muted.green() < 80
 
 
 def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
@@ -452,13 +483,15 @@ def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
         button.click()
 
     QtCore.QTimer.singleShot(0, cancel)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    save = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save")
+    save.trigger()
     qapp.processEvents()
     assert app.runner.calls == []
     assert json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))["phase"] == "review"
 
 
-def test_the_result_names_the_steps_the_lora_got(make_app, qapp) -> None:
+def test_the_result_names_the_steps_the_lora_got(make_app, qapp, monkeypatch) -> None:
     app = make_app("ru")
     app.project.mkdir(parents=True, exist_ok=True)
     Project(app.project).write({
@@ -480,6 +513,17 @@ def test_the_result_names_the_steps_the_lora_got(make_app, qapp) -> None:
     label = app.window.findChild(QtWidgets.QLabel, "forge.result.steps")
     assert label is not None
     assert label.text() == "Завершено на 450 из 1500 шагов"
+    chosen = app.project / "shape.voxlora"
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(chosen), ""))
+    export = next(
+        button for button in app.window.findChildren(QtWidgets.QPushButton) if button.text() == "Экспорт LoRA"
+    )
+    assert export.objectName() == "primary"
+    export.click()
+    qapp.processEvents()
+    sent = app.runner.calls[-1]
+    assert sent[:4] == ["--json", "lora", "export", str(app.project)]
+    assert sent[sent.index("-o") + 1] == str(chosen)
 
 
 def test_review_rounds_live_under_details(make_app, qapp) -> None:
@@ -525,7 +569,7 @@ def test_first_round_steps_live_under_details(make_app, qapp) -> None:
     qapp.processEvents()
     spin = app.window.findChild(QtWidgets.QSpinBox, "forge.train.first_round_steps")
     assert spin is not None
-    assert spin.minimum() == 100 and spin.maximum() == 500 and spin.value() == 200
+    assert spin.minimum() == 100 and spin.maximum() == 500 and spin.value() == 120
     assert spin.toolTip() == tr("forge.app.train.first_round_steps.tip")
     spin.setValue(250)
     args = app._train_args()
@@ -559,3 +603,36 @@ def test_round_one_shows_the_first_pictures_line_and_a_grey_start_button(make_ap
     image = start.grab().toImage()
     color = image.pixelColor(6, image.height() // 2)
     assert color.red() < 160 and color.green() < 160
+
+
+def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> None:
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    discard = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard")
+
+    def cancel() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QMessageBox)
+        assert box.text() == tr("forge.app.review.finish.discard.confirm")
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, cancel)
+    discard.trigger()
+    qapp.processEvents()
+    assert app.runner.calls == []
+
+    def confirm() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish.discard"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, confirm)
+    discard.trigger()
+    qapp.processEvents()
+    assert app.runner.calls[-1] == ["--json", "lora", "finish", str(app.project), "--discard", "--yes"]

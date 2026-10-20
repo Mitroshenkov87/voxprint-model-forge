@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voxprint.dev/schemas/voxprint-model-1.json",
+  "title": "voxprint-model/1 LoRA package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "base",
+    "trigger",
+    "scale_default",
+    "kind",
+    "forge_version",
+    "created",
+    "scale_min",
+    "scale_max",
+    "weights_sha256",
+    "steps",
+    "steps_planned",
+    "previews",
+    "attest"
+  ],
+  "properties": {
+    "schema": {"const": "voxprint-model/1"},
+    "name": {"type": "string", "minLength": 1},
+    "base": {"type": "string", "minLength": 1},
+    "trigger": {"type": "string"},
+    "scale_default": {"type": "number"},
+    "kind": {"enum": ["object", "style", "subject"]},
+    "forge_version": {"type": "string"},
+    "created": {"type": "string"},
+    "scale_min": {"const": 0.0},
+    "scale_max": {"const": 1.2},
+    "weights_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "steps": {"type": "integer", "minimum": 0},
+    "steps_planned": {"type": "integer", "minimum": 0},
+    "previews": {"type": "array", "items": {"type": "string"}},
+    "attest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consent_obtained", "subject_adult"],
+      "properties": {
+        "consent_obtained": {"type": "boolean"},
+        "subject_adult": {"type": "boolean"}
+      }
+    }
+  }
+}

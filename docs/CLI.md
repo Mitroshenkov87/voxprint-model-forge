@@ -154,15 +154,17 @@ The Windows RTX 4090 laptop check is still the 16 GB fit. Nunchaku has sm_89 ker
 
 ```bash
 voxprint-forge-cli lora train --project DIR --review-rounds 3 \
-  --first-round-steps 200 --first-round-samples 6 --samples-per-round 8 --sample-steps 28
+  --first-round-steps 120 --first-round-samples 6 --samples-per-round 8 --sample-steps 28
 ```
 
 - `--review-rounds` is how many review pauses (1–6, default 3). `--review-rounds 0` trains straight through, including a resume of a run that never paused for review.
-- `--first-round-steps` is the first stage (100–500, default 200). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what `lora continue --unattended` runs.
+- `--first-round-steps` is the first stage (100–500, default 120). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what `lora continue --unattended` runs.
 - `--first-round-samples` (default 6) and `--samples-per-round` (default 8) are the pictures at the first review and at later reviews. Both are drawn at the training resolution. `--sample-steps` (default 28) is passed to the preview pipeline as `num_inference_steps`. Test pictures during a stage keep the pipeline default.
 - `lora continue PROJECT` trains the next planned round on the original photos and the liked samples, then pauses for another review.
 - `lora continue PROJECT --unattended` keeps the current liked set, uses disliked samples as negatives where the base supports them, and trains every remaining preset step with no more pauses. It is allowed on the last review; with nothing left it saves the LoRA and draws a final preview.
 - `lora finish PROJECT` saves the current LoRA, draws a final preview, and records the steps it got. `train.json` and the export store `steps` and `steps_planned`.
+- `lora finish PROJECT --discard` stops and removes temporary checkpoints and samples. Nothing is saved. Photos stay. Without a terminal, `--discard` also needs `--yes`.
+- `lora export PROJECT [-o PATH]` writes `<stage name or name>.voxlora`, an uncompressed zip with `model.safetensors`, `voxprint-model.json` and previews. The description schema is `docs/schemas/voxprint-model-1.json`. `lora export --project DIR` still writes the `.safetensors` file. `--preset quick` is 150 steps and follows the same path as the other presets.
 - `lora status PROJECT` prints `train.json`. During round 1 the result includes `first_pictures` (steps left times measured seconds per step, plus samples times measured seconds per sample; until a sample is timed, one denoising step counts as half a training step).
 
 The rest of the trainer is in `docs/LORA.md`.

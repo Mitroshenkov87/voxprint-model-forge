@@ -8,9 +8,13 @@ key may look like a gate or threshold setting; Canvas refuses such files.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import shutil
+import tempfile
+import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
@@ -22,12 +26,19 @@ from voxprint_forge.lora.bases import get_adapter
 from voxprint_forge.lora.consent import default_trigger
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.review import load_state, passes_output_check
 
 SCHEMA = "voxprint-model/1"
 MIN_SCHEMA = 1
 DEFAULT_STRENGTH = 0.8
 STRENGTH_RANGE = (0.0, 1.5)
+SCALE_DEFAULT = 0.8
+SCALE_MIN = 0.0
+SCALE_MAX = 1.2
+PREVIEW_LIMIT = 1024
+PREVIEW_EXTRAS = 6
+PACKAGE_KINDS = {"person": "subject", "thing": "object", "object": "object", "style": "style"}
 SIDECAR = "voxprint-model.json"
 PRODUCER = f"voxprint-model-forge {__version__}"
 RESERVED_TOKENS = frozenset({"safety", "minor", "minors", "age", "gate", "gates", "threshold", "thresholds", "nsfw"})
@@ -259,3 +270,196 @@ def _flag(value: object) -> str:
 
 def _write_json(path: Path, doc: dict[str, object]) -> None:
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def package_kind(kind: str) -> str:
+    """Canvas kind for a package: a person is ``subject``, a thing or object is ``object``."""
+    return PACKAGE_KINDS.get(kind, "object")
+
+
+def export_package(
+    project: Project,
+    progress: Progress,
+    *,
+    checkpoint: int | None = None,
+    out: Path | None = None,
+) -> dict[str, object]:
+    """Write ``<stage name or name>.voxlora``: the small LoRA package, and nothing merged.
+
+    The zip is stored uncompressed. It holds ``model.safetensors`` (today's
+    ``voxprint.subject.*`` and ``voxprint.lora.*`` header), ``voxprint-model.json``,
+    one ``preview.webp`` and up to six ``previews/NN.webp``. Pictures come only
+    from generated samples that already passed :func:`passes_output_check`.
+    Source photos are not included.
+    """
+    data = project.read()
+    train = data.get("train")
+    if data.get("gate_passed") is not True or not isinstance(train, dict) or not train.get("checkpoint"):
+        raise LoraUsageError("lora.err.no_checkpoint")
+    name = f"step-{checkpoint:06d}.safetensors" if checkpoint is not None else str(train["checkpoint"])
+    source = project.checkpoints / name
+    if not source.is_file():
+        raise LoraUsageError("lora.err.no_checkpoint")
+    info = get_adapter(str(train["base"])).info
+    progress.emit("export.write", "lora.progress.export", reason_key="lora.reason.export")
+    tensors = _lora_tensors(source)
+    shown = _export_train(train, name, checkpoint is None)
+    meta = header_metadata({**data, "train": shown}, tensors)
+    target = _package_target(project, data, out)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    weights = _safetensors_bytes(tensors, meta)
+    pictures = _package_pictures(project)
+    doc = _package_document(data, shown, info.mdl_id, hashlib.sha256(weights).hexdigest(), pictures)
+    _write_package(target, weights, doc, pictures)
+    progress.emit("export.done", "lora.progress.done", state="done")
+    return {"state": "done", "file": str(target), "sha256": doc["weights_sha256"], "name": target.name}
+
+
+def _lora_tensors(source: Path) -> dict[str, torch.Tensor]:
+    """``<module>.lora_A.weight`` and ``<module>.lora_B.weight`` only."""
+    loaded = load_file(str(source))
+    tensors = {
+        key: value.detach().cpu().contiguous()
+        for key, value in loaded.items()
+        if key.endswith(".lora_A.weight") or key.endswith(".lora_B.weight")
+    }
+    if not tensors:
+        raise LoraUsageError("lora.err.no_checkpoint")
+    return tensors
+
+
+def _safetensors_bytes(tensors: dict[str, torch.Tensor], meta: dict[str, str]) -> bytes:
+    """One safetensors blob, header included, without touching the checkpoint file."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "model.safetensors"
+        save_file(tensors, str(path), metadata=meta)
+        return path.read_bytes()
+
+
+def _package_target(project: Project, data: dict[str, object], out: Path | None) -> Path:
+    """Default ``<project>/export/<stem>.voxlora``, or ``out`` with that suffix."""
+    stem = package_stem(data)
+    if out is None:
+        return project.root / "export" / f"{stem}.voxlora"
+    path = Path(out)
+    if path.exists() and path.is_dir():
+        return path / f"{stem}.voxlora"
+    if path.suffix.lower() != ".voxlora":
+        path = path.with_suffix(".voxlora") if path.suffix else Path(f"{path}.voxlora")
+    return path
+
+
+def _package_document(
+    data: dict[str, object],
+    train: dict[str, object],
+    base: str,
+    digest: str,
+    pictures: list[tuple[str, bytes]],
+) -> dict[str, object]:
+    """The ``voxprint-model/1`` package descriptor. ``attest`` is two booleans."""
+    subject = dict(data.get("subject") or {})  # type: ignore[call-overload]
+    kind = package_kind(str(subject.get("kind") or data.get("kind") or ""))
+    done = train.get("step")
+    planned = train.get("steps_planned")
+    steps = done if isinstance(done, int) and not isinstance(done, bool) else 0
+    steps_planned = planned if isinstance(planned, int) and not isinstance(planned, bool) else steps
+    return {
+        "schema": SCHEMA,
+        "name": package_stem(data),
+        "base": base,
+        "trigger": str(subject.get("trigger") or ""),
+        "scale_default": SCALE_DEFAULT,
+        "kind": kind,
+        "forge_version": __version__,
+        "created": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "scale_min": SCALE_MIN,
+        "scale_max": SCALE_MAX,
+        "weights_sha256": digest,
+        "steps": steps,
+        "steps_planned": steps_planned,
+        "previews": [name for name, _blob in pictures],
+        "attest": {
+            "consent_obtained": subject.get("consent_obtained") is True,
+            "subject_adult": subject.get("adult_confirmed") is True,
+        },
+    }
+
+
+def _package_pictures(project: Project) -> list[tuple[str, bytes]]:
+    """``preview.webp`` plus up to six ``previews/NN.webp``, metadata stripped."""
+    blobs: list[bytes] = []
+    for path in _generated_samples(project):
+        blob = _clean_webp(path)
+        if blob is not None:
+            blobs.append(blob)
+        if len(blobs) >= 1 + PREVIEW_EXTRAS:
+            break
+    named: list[tuple[str, bytes]] = []
+    if blobs:
+        named.append(("preview.webp", blobs[0]))
+    for index, blob in enumerate(blobs[1:1 + PREVIEW_EXTRAS], start=1):
+        named.append((f"previews/{index:02d}.webp", blob))
+    return named
+
+
+def _generated_samples(project: Project) -> list[Path]:
+    """Review samples and test pictures inside the project. Source photos are skipped."""
+    found: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        if not path.is_file():
+            return
+        try:
+            relative = path.resolve().relative_to(project.root.resolve())
+        except ValueError:
+            return
+        if not relative.parts or relative.parts[0] not in {"previews", "review"}:
+            return
+        key = path.resolve()
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(path)
+
+    if project.previews.is_dir():
+        for pattern in ("*.png", "*.webp"):
+            for path in sorted(project.previews.glob(pattern)):
+                add(path)
+    state = load_state(project)
+    samples = state.get("samples")
+    if isinstance(samples, list):
+        for sample in samples:
+            if isinstance(sample, dict) and sample.get("file"):
+                add(project.root / str(sample["file"]))
+    return found
+
+
+def _clean_webp(path: Path) -> bytes | None:
+    """One RGB WebP at most 1024 px, or ``None`` when the picture fails the output check."""
+    try:
+        with Image.open(path) as image:
+            image.load()
+            if not passes_output_check(image):
+                return None
+            rgb = image.convert("RGB")
+    except (OSError, ValueError):
+        return None
+    clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
+    if max(clean.size) > PREVIEW_LIMIT:
+        clean.thumbnail((PREVIEW_LIMIT, PREVIEW_LIMIT), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    clean.save(buffer, format="WEBP", quality=90)
+    return buffer.getvalue()
+
+
+def _write_package(target: Path, weights: bytes, doc: dict[str, object], pictures: list[tuple[str, bytes]]) -> None:
+    """Write the zip with :data:`zipfile.ZIP_STORED` so every member is uncompressed."""
+    payload = json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    members = [("model.safetensors", weights), (SIDECAR, payload), *pictures]
+    with zipfile.ZipFile(target, "w") as archive:
+        for name, blob in members:
+            info = zipfile.ZipInfo(filename=name)
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, blob)

@@ -42,7 +42,7 @@ from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
 from voxprint_forge.lora.progress_log import read_progress
-from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
 APP_ID = "model-forge"
@@ -157,16 +157,25 @@ QPushButton[reviewPrimary="true"], QToolButton[reviewPrimary="true"] {
 QPushButton[reviewPrimary="true"]:disabled, QToolButton[reviewPrimary="true"]:disabled {
     background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
 QToolButton[reviewPrimary="true"]::menu-button {
-    border-left: 1px solid #c4a84a; width: 22px; background: #f5d76e; }
+    border-left: 1px solid #c4a84a; width: 28px; background: #f5d76e; }
 QToolButton[reviewPrimary="true"]:disabled::menu-button { background: #4a4430; border-left-color: #4a4430; }
 QMenu#forgeReviewMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
 QMenu#forgeReviewMenu::item { padding: 6px 18px; background: transparent; }
 QMenu#forgeReviewMenu::item:selected { background: #3a3a46; }
+QPushButton:disabled, QPushButton:disabled:hover {
+    background: #22222b; color: #6e6e7e; border: 1px solid #33333f; }
 QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
     background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
 """
 FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
+_MESSAGE_BOX_STYLE = """
+QMessageBox { background: #1c1c24; }
+QMessageBox QLabel { color: #f4f1ea; background: transparent; }
+QMessageBox QPushButton { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46;
+    padding: 6px 14px; min-height: 28px; }
+"""
+_SPLIT_MENU = 28
 LOCALES = Path(__file__).resolve().parent / "locales"
 
 
@@ -1307,7 +1316,8 @@ class ForgeApp:
         row = QtWidgets.QHBoxLayout()
         busy = self.runner.busy  # type: ignore[attr-defined]
         for label, tip, slot, primary in (
-            ("forge.app.result.save", "lora.result.save.tip", self.save, True),
+            ("forge.app.result.export_lora", "forge.app.result.export_lora.tip", self.export_lora, True),
+            ("forge.app.result.save", "lora.result.save.tip", self.save, False),
             ("forge.app.result.canvas", "lora.result.canvas.tip", self.install, False),
             ("forge.app.result.extend", "lora.result.extend.tip", self.extend_this, False),
         ):
@@ -1455,9 +1465,7 @@ class ForgeApp:
         column.addLayout(tools)
         row = QtWidgets.QHBoxLayout()
         cont = self._continue_split(busy)
-        finish = _button("forge.app.review.finish", "forge.app.review.finish.tip", self.finish_review)
-        finish.setObjectName("forge.review.finish")
-        finish.setEnabled(not busy)
+        finish = self._finish_menu(busy)
         row.addWidget(cont)
         row.addWidget(finish)
         row.addStretch(1)
@@ -1471,17 +1479,8 @@ class ForgeApp:
 
     def _continue_split(self, busy: bool) -> QtWidgets.QToolButton:
         """Primary split button: the next review, or every remaining step with no more pauses."""
-        button = QtWidgets.QToolButton()
-        button.setObjectName("forge.review.continue")
-        button.setText(tr("forge.app.review.continue"))
-        button.setToolTip(tr("forge.app.review.continue.tip"))
-        button.setProperty("reviewPrimary", "true")
-        button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
-        button.setAutoRaise(False)
-        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        button = _PrimarySplit(tr("forge.app.review.continue"), tr("forge.app.review.continue.tip"))
         button.setEnabled(not busy)
-        button.setMinimumWidth(button.fontMetrics().horizontalAdvance(button.text()) + 48)
         menu = QtWidgets.QMenu(button)
         menu.setObjectName("forgeReviewMenu")
         action = menu.addAction(tr("forge.app.review.unattended"))
@@ -1490,6 +1489,26 @@ class ForgeApp:
         action.triggered.connect(self.continue_unattended)
         button.setMenu(menu)
         button.clicked.connect(self.continue_review)
+        return button
+
+    def _finish_menu(self, busy: bool) -> QtWidgets.QPushButton:
+        """Finish opens save or discard. The button keeps the shell push-button style."""
+        button = QtWidgets.QPushButton(tr("forge.app.review.finish"))
+        button.setObjectName("forge.review.finish")
+        button.setToolTip(tr("forge.app.review.finish.tip"))
+        button.setAutoDefault(False)
+        button.setEnabled(not busy)
+        menu = QtWidgets.QMenu(button)
+        menu.setObjectName("forgeReviewMenu")
+        save = menu.addAction(tr("forge.app.review.finish.save"))
+        save.setObjectName("forge.review.finish.save")
+        save.setToolTip(tr("forge.app.review.finish.save.tip"))
+        save.triggered.connect(self.finish_review)
+        discard = menu.addAction(tr("forge.app.review.finish.discard"))
+        discard.setObjectName("forge.review.finish.discard")
+        discard.setToolTip(tr("forge.app.review.finish.discard.tip"))
+        discard.triggered.connect(self.discard_review)
+        button.setMenu(menu)
         return button
 
     def _review_originals(self) -> list[Path]:
@@ -1694,9 +1713,7 @@ class ForgeApp:
 
     def _confirm_unmarked(self, title_key: str = "forge.app.review.continue") -> bool:
         """Ask before a pass that would drop pictures the user has not marked."""
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.review.unmarked")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box = _message_box(self.window, "forge.review.unmarked")
         box.setWindowTitle(tr(title_key))
         box.setText(tr("forge.app.review.unmarked"))
         go = box.addButton(
@@ -1768,18 +1785,44 @@ class ForgeApp:
 
         self._run(["--json", "lora", "finish", str(self.project)], done)
 
+    def discard_review(self) -> None:
+        """``lora finish --discard --yes``: confirm, then remove temporary files. Photos stay."""
+        if not self._needs("finish"):
+            return
+        if not self._confirm_discard():
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            if outcome.ok and result.get("state") == "discarded":
+                self.draft.trained = False
+                self.paused = False
+
+        self._run(["--json", "lora", "finish", str(self.project), "--discard", "--yes"], done)
+
+    def _confirm_discard(self) -> bool:
+        """Ask before a discard that removes temporary versions and samples."""
+        box = _message_box(self.window, "forge.review.finish.discard.confirm")
+        box.setWindowTitle(tr("forge.app.review.finish.discard"))
+        box.setText(tr("forge.app.review.finish.discard.confirm"))
+        go = box.addButton(tr("forge.app.review.finish.discard"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(
+            tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
+
     def _confirm_finish(self) -> bool:
         """Ask before ending the run, and show the steps done out of the plan."""
         state = self._review_state()
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.review.finish.confirm")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
-        box.setWindowTitle(tr("forge.app.review.finish"))
+        box = _message_box(self.window, "forge.review.finish.confirm")
+        box.setWindowTitle(tr("forge.app.review.finish.save"))
         box.setText(tr(
             "forge.app.review.finish.confirm",
             done=rounds.steps_completed(state), planned=rounds.total_steps_of(state),
         ))
-        go = box.addButton(tr("forge.app.review.finish"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        go = box.addButton(tr("forge.app.review.finish.save"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton(
             tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
         )
@@ -2249,9 +2292,7 @@ class ForgeApp:
 
     def _confirm_stop(self) -> bool:
         """True when the user confirms ending the run."""
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.train.stop.ask")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box = _message_box(self.window, "forge.train.stop.ask")
         box.setWindowTitle(tr("forge.app.train.stop"))
         box.setText(tr("forge.app.train.stop.ask"))
         stop = box.addButton(tr("forge.app.train.stop.confirm"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
@@ -2281,6 +2322,29 @@ class ForgeApp:
 
         self._run(engine.export_args(self.draft, self.project, out, checkpoint=self.draft.checkpoint,
                                      install=install), done)
+
+    def export_lora(self) -> None:
+        """Save the small ``.voxlora`` package. Source photos are not included."""
+        if not self._needs("export"):
+            return
+        stem = package_stem(Project(self.project).read())
+        path, _chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            tr("forge.app.result.export_lora"),
+            str(Path.home() / f"{stem}.voxlora"),
+            tr("forge.app.result.export_filter"),
+        )
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.lower() != ".voxlora":
+            target = Path(f"{target}.voxlora") if not target.suffix else target.with_suffix(".voxlora")
+
+        def done(outcome: engine.Outcome) -> None:
+            if outcome.ok:
+                self.status = ("forge.app.result.exported", {"name": target.name}, False)
+
+        self._run(engine.package_args(self.project, target), done)
 
     def save(self) -> None:
         """Save one .safetensors file with its ``voxprint-model/1`` description."""
@@ -2714,6 +2778,83 @@ class _ClickLabel(QtWidgets.QLabel):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+class _PrimarySplit(QtWidgets.QToolButton):
+    """Gold split button sized to its label, with a 28 px menu edge."""
+
+    def __init__(self, text: str, tip: str) -> None:
+        super().__init__()
+        self.setObjectName("forge.review.continue")
+        self.setText(text)
+        self.setToolTip(tip)
+        self.setProperty("reviewPrimary", "true")
+        self.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.setAutoRaise(False)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        font = self.font()
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        self.setFont(font)
+        self._fit()
+
+    def _fit(self) -> None:
+        advance = QtGui.QFontMetrics(self.font()).horizontalAdvance(self.text())
+        self.setMinimumWidth(advance + _SPLIT_MENU + 28)
+        self.setMinimumHeight(max(36, self.fontMetrics().height() + 16))
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        """Width for the full label plus the menu edge."""
+        return QtCore.QSize(self.minimumWidth(), self.minimumHeight())
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Paint the gold face and the menu chevron. The style still owns the click areas."""
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        enabled = self.isEnabled()
+        fill = QtGui.QColor("#f5d76e" if enabled else "#4a4430")
+        border = QtGui.QColor("#fbe8a6" if enabled else "#4a4430")
+        ink = QtGui.QColor("#1c1604" if enabled else "#6e6e7e")
+        painter.setPen(QtGui.QPen(border, 1))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), _BUTTON_RADIUS, _BUTTON_RADIUS)
+        menu = QtCore.QRect(rect.right() - _SPLIT_MENU + 1, 0, _SPLIT_MENU, rect.height())
+        painter.setPen(QtGui.QPen(QtGui.QColor("#c4a84a" if enabled else "#4a4430"), 1))
+        painter.drawLine(menu.left(), 6, menu.left(), rect.height() - 7)
+        painter.setPen(QtGui.QPen(ink, 1.6))
+        center = menu.center()
+        path = QtGui.QPainterPath()
+        path.moveTo(center.x() - 4, center.y() - 2)
+        path.lineTo(center.x(), center.y() + 2)
+        path.lineTo(center.x() + 4, center.y() - 2)
+        painter.drawPath(path)
+        label = QtCore.QRect(12, 0, max(0, rect.width() - _SPLIT_MENU - 16), rect.height())
+        painter.setPen(ink)
+        painter.drawText(
+            label,
+            int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
+            self.text(),
+        )
+
+
+def _message_box(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMessageBox:
+    """A dialog on the app theme: dark background, light text."""
+    box = QtWidgets.QMessageBox(parent)
+    box.setObjectName(name)
+    box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+    box.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    inherited = parent.styleSheet() if parent is not None else ""
+    box.setStyleSheet(inherited + _MESSAGE_BOX_STYLE)
+    palette = box.palette()
+    palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#1c1c24"))
+    palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#f4f1ea"))
+    palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#f4f1ea"))
+    palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#f4f1ea"))
+    box.setPalette(palette)
+    box.setAutoFillBackground(True)
+    return box
 
 
 def _button(label: str, tip: str, slot: Callable[[], None], *, primary: bool = False) -> QtWidgets.QPushButton:

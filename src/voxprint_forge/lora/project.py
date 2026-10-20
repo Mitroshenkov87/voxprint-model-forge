@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -111,6 +112,15 @@ class Project:
         ]
         self.root.mkdir(parents=True, exist_ok=True)
         _atomic(self.captions, "".join(line + "\n" for line in lines))
+
+
+def package_stem(data: dict[str, object]) -> str:
+    """``.voxlora`` file stem: the stage name, or the name when the stage name is empty."""
+    subject = data.get("subject")
+    fields = subject if isinstance(subject, dict) else {}
+    raw = str(fields.get("stage_name") or "").strip() or str(fields.get("name") or "").strip() or "lora"
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", raw).strip().rstrip(".")
+    return cleaned or "lora"
 
 
 def _atomic(path: Path, content: str) -> None:

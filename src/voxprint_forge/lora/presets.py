@@ -10,7 +10,7 @@ import os
 from dataclasses import asdict, dataclass, fields, replace
 
 PRESETS: dict[str, dict[str, object]] = {
-    "quick": {"rank": 16, "alpha": 16, "steps": 600, "lr": 1e-4, "resolution": 768},
+    "quick": {"rank": 16, "alpha": 16, "steps": 150, "lr": 1e-4, "resolution": 768},
     "balanced": {"rank": 32, "alpha": 32, "steps": 1500, "lr": 1e-4, "resolution": 1024},
     "best": {"rank": 32, "alpha": 32, "steps": 3000, "lr": 8e-5, "resolution": 1024},
 }
@@ -36,16 +36,20 @@ class Measured:
     resolution: int
     te_quant: str
     source: str
+    peak_measured: bool = True
 
 
-# Measured on an RTX 4090 (24 GiB) with FORGE_VRAM_CAP_GB 16 (16 GB tier) or 22.5 (24 GB tier):
-# Balanced preset, rank 32, 1024 px, batch 1 x accum 2, 40 steps, Forge 73c2250a (moss-memprobe v2,
-# 18 Oct 2026, summary.json train16/train24 s_per_step and peak_reserved_gb). Z-Image has no
-# completed per-tier training measurement yet, so it is not listed and keeps the planned figures.
+# MOSS-Image Base: RTX 4090 with FORGE_VRAM_CAP_GB 16 or 22.5, Balanced, rank 32, 1024 px,
+# batch 1 x accum 2, moss-memprobe v2 (18 Oct 2026). Z-Image on the 16 GB RTX 4090 laptop
+# tier is 9.7 s/step at 1024; that run did not record a peak, so the card line stays the
+# preset tier. The 24 GB Z-Image time stays the unmeasured 1.6 s/step.
 MEASURED: dict[str, dict[int, Measured]] = {
     "moss-image-base": {
         16: Measured(4.89, 13.6, 2, 1024, "int8", "moss-memprobe v2 train16"),
         24: Measured(4.90, 18.5, 2, 1024, "none", "moss-memprobe v2 train24"),
+    },
+    "z-image": {
+        16: Measured(9.7, 0.0, 1, 1024, "none", "rtx 4090 16 GB laptop", peak_measured=False),
     },
 }
 
@@ -53,6 +57,16 @@ MEASURED: dict[str, dict[int, Measured]] = {
 def measured(mdl_id: str, tier: int) -> Measured | None:
     """The measured run for ``mdl_id`` on memory tier ``tier``, or ``None`` when it was not measured."""
     return MEASURED.get(mdl_id, {}).get(int(tier))
+
+
+def measured_peaks() -> dict[str, dict[int, float]]:
+    """Peak reserved GiB for tiers whose peak was measured. A timing-only run is left out."""
+    found: dict[str, dict[int, float]] = {}
+    for mdl_id, tiers in MEASURED.items():
+        peaks = {tier: run.peak_reserved_gb for tier, run in tiers.items() if run.peak_measured}
+        if peaks:
+            found[mdl_id] = peaks
+    return found
 SCHEDULERS = ("constant", "cosine")
 CAPTION_MODES = ("long", "short", "both")
 PRECISIONS = ("bf16", "fp16")

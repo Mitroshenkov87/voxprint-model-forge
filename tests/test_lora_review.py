@@ -242,7 +242,7 @@ def test_cli_review_continue_flags_and_finish(tmp_path: Path, capsys: pytest.Cap
     parsed = build_parser().parse_args(["lora", "train", "--project", str(tmp_path), "--review-rounds", "2"])
     assert parsed.review_rounds == 2
     assert parsed.samples_per_round == 8
-    assert parsed.first_round_steps == 200
+    assert parsed.first_round_steps == 120
     assert parsed.first_round_samples == 6
     assert parsed.sample_steps == 28
     continued = build_parser().parse_args(["lora", "continue", str(tmp_path), "--unattended"])
@@ -493,3 +493,62 @@ def test_train_refuses_to_start_while_a_review_is_waiting(tmp_path: Path) -> Non
     with pytest.raises(LoraUsageError) as pending:
         train(project, _config(), DrawingAdapter(), Progress(), review_rounds=1, samples_per_round=1)
     assert pending.value.code == "lora.err.review_pending"
+
+
+def test_discard_keeps_photos_and_needs_yes_when_not_interactive(tmp_path: Path, capsys, monkeypatch) -> None:
+    from voxprint_forge.cli import main
+
+    project = make_project(tmp_path / "proj", count=2)
+    photos = project.root / "photos"
+    photos.mkdir()
+    (photos / "kept.png").write_bytes(b"USER-PHOTO-STAYS")
+    project.checkpoints.mkdir()
+    (project.checkpoints / "step-000001.safetensors").write_bytes(b"weights")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.bin").write_bytes(b"SECRET")
+    (project.checkpoints / "escape").symlink_to(outside)
+    project.previews.mkdir()
+    (project.previews / "sample.png").write_bytes(b"sample")
+    review = project.root / "review"
+    review.mkdir()
+    (review / "state.json").write_text("{}\n", encoding="utf-8")
+    (project.root / "train.json").write_text("{}\n", encoding="utf-8")
+    (project.root / "train.log").write_text("log\n", encoding="utf-8")
+    (project.root / "vram.csv").write_text("row\n", encoding="utf-8")
+    exported = project.root / "export"
+    exported.mkdir()
+    (exported / "kept.safetensors").write_bytes(b"exported")
+    data = project.read()
+    data["train"] = {"state": "paused", "step": 12}
+    data["review"] = {"phase": "review"}
+    project.write(data)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("discard loaded an adapter")
+
+    monkeypatch.setattr(bases, "get_adapter", boom)
+    capsys.readouterr()
+    assert main(["--json", "lora", "finish", str(project.root), "--discard"]) == 2
+    refused = _envelope(capsys.readouterr().out)
+    assert refused["ok"] is False
+    assert refused["error"]["code"] == "lora.err.discard_confirm"
+    assert (project.checkpoints / "step-000001.safetensors").is_file()
+    assert (photos / "kept.png").read_bytes() == b"USER-PHOTO-STAYS"
+    assert main(["--json", "lora", "finish", str(project.root), "--discard", "--yes"]) == 0
+    result = _envelope(capsys.readouterr().out)["result"]
+    assert result == {"state": "discarded", "saved": False}
+    assert not project.checkpoints.exists()
+    assert not project.previews.exists()
+    assert not review.exists()
+    assert not (project.root / "train.json").exists()
+    assert not (project.root / "train.log").exists()
+    assert not (project.root / "vram.csv").exists()
+    assert (photos / "kept.png").read_bytes() == b"USER-PHOTO-STAYS"
+    assert (project.prepared / "p00.png").is_file()
+    assert project.captions.is_file()
+    saved = project.read()
+    assert "train" not in saved and "review" not in saved
+    assert saved["subject"]["trigger"] == "tcube"  # type: ignore[index]
+    assert (exported / "kept.safetensors").read_bytes() == b"exported"
+    assert (outside / "secret.bin").read_bytes() == b"SECRET"

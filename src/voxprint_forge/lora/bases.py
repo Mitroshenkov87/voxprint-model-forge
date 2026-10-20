@@ -393,8 +393,13 @@ class ZImageAdapter(BaseAdapter):
                 torch.cuda.empty_cache()
 
     def seconds_per_step(self, config: TrainConfig) -> float:
-        """[U] until the 16 GB calibration run: about 1.6 s (24 GB) or 3.0 s (16 GB) per step at 1024."""
-        per = 3.0 if config.vram == 16 else 1.6
+        """Seconds for one optimizer step, scaled from 1024 px.
+
+        The 16 GB tier uses the measured 9.7 s at 1024 px (:data:`presets.MEASURED`).
+        The 24 GB figure, 1.6 s at 1024 px, has not been measured.
+        """
+        run = measured(self.info.mdl_id, config.vram)
+        per = run.s_per_step / run.micro_batches if run is not None else 1.6
         return per * (config.resolution / 1024) ** 2 * config.batch * config.grad_accum
 
     def vram_need_gb(self, config: TrainConfig) -> float:

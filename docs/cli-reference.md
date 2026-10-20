@@ -425,8 +425,8 @@ usage: forge lora [-h]
 positional arguments:
   {prepare,export,train,extend,refset,review,continue,finish,status}
     prepare             Check, crop and describe photos into a project.
-    export              Save the LoRA as one .safetensors file with voxprint-
-                        model.json.
+    export              Save a .voxlora package, or a .safetensors file with
+                        voxprint-model.json.
     train               Train a LoRA on the prepared photos of a project.
     extend              Continue an existing LoRA with the newest photos of a
                         project.
@@ -511,16 +511,21 @@ options:
 ## `forge lora export`
 
 ```text
-usage: forge lora export [-h] --project PROJECT [--checkpoint CHECKPOINT]
-                         [--out OUT] [--install-to-mdl] [--tag TAG]
+usage: forge lora export [-h] [--project PROJECT] [--checkpoint CHECKPOINT]
+                         [-o OUT] [--install-to-mdl] [--tag TAG]
+                         [PROJECT]
+
+positional arguments:
+  PROJECT               Project folder for a .voxlora package.
 
 options:
   -h, --help            show this help message and exit
-  --project PROJECT     Project folder.
+  --project PROJECT     Project folder for a .safetensors file.
   --checkpoint CHECKPOINT
                         Step of the version to save. Default: last.
-  --out OUT             Target .safetensors. Default: <project>/export/.
-  --install-to-mdl      Also add it to your models for Canvas.
+  -o, --out OUT         Target file. Default: <project>/export/.
+  --install-to-mdl      Also add the .safetensors file to your models for
+                        Canvas.
   --tag TAG             Plain-word tag for Canvas. Repeat as needed.
 ```
 
@@ -601,7 +606,7 @@ options:
                         trains straight through.
   --first-round-steps FIRST_ROUND_STEPS
                         Steps before the first review. From 100 to 500.
-                        Default: 200.
+                        Default: 120.
   --first-round-samples FIRST_ROUND_SAMPLES
                         Pictures drawn at the first review, at the training
                         resolution. Default: 6.
@@ -806,13 +811,17 @@ options:
 ## `forge lora finish`
 
 ```text
-usage: forge lora finish [-h] project
+usage: forge lora finish [-h] [--discard] [--yes] project
 
 positional arguments:
   project     Project folder.
 
 options:
   -h, --help  show this help message and exit
+  --discard   Stop and remove temporary versions and samples. Photos stay.
+              Nothing is saved.
+  --yes       Confirm --discard without a prompt. Required when the terminal
+              is not interactive.
 ```
 
 ## `forge lora status`

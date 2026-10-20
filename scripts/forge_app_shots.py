@@ -220,13 +220,14 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         if area is not None and anchor is not None:
             area.ensureWidgetVisible(anchor, 0, 120)
             app.processEvents()
-        if lang == "ru" and button is not None and button.menu() is not None:
-            menu = button.menu()
-            menu.popup(button.mapToGlobal(QtCore.QPoint(0, button.height())))
+        finish = forge.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+        if lang == "ru" and finish is not None and finish.menu() is not None:
+            menu = finish.menu()
+            menu.popup(finish.mapToGlobal(QtCore.QPoint(0, finish.height())))
             app.processEvents()
             image = forge.window.grab()
             popup = menu.grab()
-            point = button.mapTo(forge.window, QtCore.QPoint(0, button.height()))
+            point = finish.mapTo(forge.window, QtCore.QPoint(0, finish.height()))
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()
@@ -292,7 +293,7 @@ def shot_train_live(out: Path, home: Path) -> None:
     )
     forge.project.mkdir(parents=True, exist_ok=True)
     save_state(Project(forge.project), transition(
-        {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, first_round_samples=6,
+        {}, "start", rounds=3, samples_per_round=8, first_round_steps=120, first_round_samples=6,
         sample_steps=28, total_steps=1500, prompts=["a soft shape"], seed=1,
         base="draw-test", config={"steps": 1500},
     ))
@@ -302,7 +303,7 @@ def shot_train_live(out: Path, home: Path) -> None:
         "loss": 0.21,
         "stage": "step",
         "step": 40,
-        "total": 200,
+        "total": 120,
         "round": 1,
         "first_pictures_seconds": 480,
         "seconds_per_sample": 18,
@@ -316,6 +317,51 @@ def shot_train_live(out: Path, home: Path) -> None:
     app.processEvents()
     forge.window.grab().save(str(out / "ru-simple-5-train-live.png"))
     forge.window.close()
+    shot_result_export(out, home)
+
+
+def shot_result_export(out: Path, home: Path) -> None:
+    """1280 px: the result step with Export LoRA and the steps done out of the plan."""
+    from PySide6 import QtGui, QtWidgets
+    from tests.forge_app_stub import ALL_COMMANDS, StubRunner
+    from voxprint_common.i18n import set_language
+
+    from voxprint_forge.app.draft import STEPS
+    from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.lora.project import Project
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    set_language("ru")
+    forge = ForgeApp(
+        runner=StubRunner(), home=home / "result-export", commands=ALL_COMMANDS,
+        open_path=lambda _p: None, launch=lambda _a: None,
+    )
+    forge.project.mkdir(parents=True, exist_ok=True)
+    previews = forge.project / "previews"
+    previews.mkdir()
+    image = QtGui.QImage(256, 256, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.qRgb(90, 140, 180))
+    image.save(str(previews / "final.png"))
+    Project(forge.project).write({
+        "kind": "object",
+        "gate_passed": True,
+        "subject": {
+            "name": "Soft shape", "stage_name": "Soft shape", "trigger": "soft_shape", "kind": "object",
+        },
+        "train": {
+            "state": "done", "step": 450, "steps_planned": 1500,
+            "checkpoint": "checkpoints/step-000450.safetensors",
+        },
+    })
+    forge.draft.trained = True
+    forge.window.resize(1280, 960)
+    forge.window.show()
+    forge.layout.sections._index = STEPS.index("result")
+    forge.repaint()
+    app.processEvents()
+    forge.window.grab().save(str(out / "ru-simple-6-result.png"))
+    forge.window.close()
+    set_language("en")
 
 
 def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import shutil
 import threading
 import time
 from collections.abc import Sequence
@@ -98,6 +99,46 @@ def finish_review(project: Project, adapter: BaseAdapter, progress: Progress) ->
     drawn, so a failed close does not look like a finished run.
     """
     return _seal_finished(project, load_state(project), adapter, progress)
+
+
+def discard_run(project: Project) -> dict[str, object]:
+    """Stop and discard: remove temporary checkpoints and samples. Photos stay.
+
+    Nothing is written for export. ``prepared/``, ``photos/``, captions and the
+    subject record stay. A link that points outside the project is left alone.
+    """
+    root = project.root.resolve()
+    for path in (
+        project.checkpoints,
+        project.previews,
+        project.root / "review",
+        project.root / "train.json",
+        project.root / "train.log",
+        project.root / "vram.csv",
+        project.pause,
+    ):
+        _remove_inside(root, path)
+    data = project.read()
+    cleaned = {key: value for key, value in data.items() if key not in {"train", "review"}}
+    project.write(cleaned)
+    return {"state": "discarded", "saved": False}
+
+
+def _remove_inside(root: Path, path: Path) -> None:
+    """Delete ``path`` when it stays inside ``root``. An outside link is skipped."""
+    if not path.exists() and not path.is_symlink():
+        return
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return
+    if resolved == root:
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    shutil.rmtree(path)
 
 
 def lora_base(path: Path) -> dict[str, str]:

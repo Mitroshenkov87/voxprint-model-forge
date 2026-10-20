@@ -11,7 +11,7 @@ Everything happens on your computer. Your photos, the descriptions and the train
 1. [Install](install.md): requirements, setup and removal.
 2. [Model download](models.md): the VOXPrint model downloader (MDL), sources, licences and disk space.
 3. [Creating a LoRA project](project.md): photos, names, consent, the 18+ confirmation and the optional release file.
-4. [Presets](presets.md): Quick test, Balanced and Best quality, likeness, graphics card tiers and the measured figures.
+4. [Presets](presets.md): Quick check, Balanced and Best quality, likeness, graphics card tiers and the measured figures.
 5. [Training](training.md): checking and preparing photos, settings, progress, pause and stop.
 6. [Export](export.md): choosing a version, saving the LoRA and using it in Canvas.
 7. [Compression tests](compression.md): how compressed model parts are tested before the app uses them.
