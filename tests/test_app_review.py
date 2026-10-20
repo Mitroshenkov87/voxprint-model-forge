@@ -27,6 +27,15 @@ from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
 from voxprint_forge.lora.review import save_state, transition  # noqa: E402
 
 
+def _saturation(color: QtGui.QColor) -> float:
+    """How far the colour is from grey, from 0 to 1."""
+    hi = max(color.red(), color.green(), color.blue())
+    lo = min(color.red(), color.green(), color.blue())
+    if hi == 0:
+        return 0.0
+    return (hi - lo) / hi
+
+
 def _has_light_pixel(widget: QtWidgets.QWidget) -> bool:
     """True when the widget paints a light pixel, so the text is visible on the theme."""
     image = widget.grab().toImage()
@@ -184,15 +193,28 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     discard_action = next(
         item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
     )
-    assert save_action.text() == "Завершить с сохранением"
-    assert discard_action.text() == "Завершить принудительно"
-    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
-    assert cont is not None and cont.text() == "Продолжить с подкреплением" and cont.isEnabled()
-    assert cont.width() >= cont.fontMetrics().horizontalAdvance(cont.text()) + 28
-    face = cont.grab().toImage().pixelColor(8, cont.height() // 2)
-    assert face.red() > 180 and face.green() > 140 and face.blue() < 180
-    unattended = next(item for item in cont.menu().actions() if item.objectName() == "forge.review.unattended")
-    assert unattended.text() == "Просто продолжить"
+    assert save_action.text() == "Сохранить"
+    assert discard_action.text() == "Принудительно, без сохранения"
+    menu = finish.menu()
+    assert menu is not None
+    menu.popup(finish.mapToGlobal(QtCore.QPoint(0, finish.height())))
+    qapp.processEvents()
+    menu_pixel = menu.grab().toImage().pixelColor(6, 6)
+    assert menu_pixel.red() < 90 and menu_pixel.green() < 90 and menu_pixel.blue() < 110
+    menu.close()
+    qapp.processEvents()
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    host = cont.parentWidget()
+    assert cont is not None and chevron is not None and host is not None
+    assert cont.text() == "Продолжить с подкреплением" and cont.isEnabled() and cont.menu() is None
+    assert host.width() >= host.fontMetrics().horizontalAdvance(cont.text()) + 28
+    assert finish.x() > host.x() and finish.width() < host.width() and finish.height() <= host.height()
+    face_image = host.grab().toImage()
+    face = face_image.pixelColor(12, host.height() // 2)
+    assert face.red() > 200 and face.green() > 180 and face.blue() < 160
+    corner = face_image.pixelColor(0, 0)
+    assert 10 < corner.red() < 80 and corner.green() < 80 and corner.blue() < 90
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
     assert note.text() == tr("forge.app.review.note")
@@ -282,8 +304,8 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     assert finish is not None and finish.text() == "Finish"
     assert next(
         item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save"
-    ).text() == "Finish and save"
-    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+    ).text() == "Save"
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
     assert cont is not None and cont.text() == "Continue with reinforcement"
     seen: list[str] = []
 
@@ -456,12 +478,41 @@ def test_just_continue_sends_unattended(make_app, tmp_path, qapp) -> None:
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
-    button = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
-    action = next(item for item in button.menu().actions() if item.objectName() == "forge.review.unattended")
-    assert action.text() == "Just continue"
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    host = button.parentWidget()
+    assert button.text() == "Continue with reinforcement"
+    assert host._anim.duration() == 150
+    gold = host.grab().toImage().pixelColor(12, host.height() // 2)
+    chevron.setFocus()
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Right)
+    qapp.processEvents()
+    assert button.text() == "Just continue"
+    saved = json.loads((app.project / "project.json").read_text(encoding="utf-8"))
+    assert saved["continue_mode"] == "plain"
+    QtTest.QTest.qWait(200)
+    qapp.processEvents()
+    plain = host.grab().toImage().pixelColor(12, host.height() // 2)
+    assert _saturation(plain) < _saturation(gold)
+    assert plain.red() > 140 and plain.green() > 120
+    app.repaint()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    assert button.text() == "Just continue"
+    chevron.setFocus()
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Left)
+    qapp.processEvents()
+    assert button.text() == "Continue with reinforcement"
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Down)
+    qapp.processEvents()
+    assert button.text() == "Just continue"
     app.window.findChild(QtWidgets.QPushButton, "forge.review.like_all").click()
     qapp.processEvents()
-    action.trigger()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    assert button.text() == "Just continue"
+    button.setFocus()
+    QtTest.QTest.keyClick(button, QtCore.Qt.Key.Key_Return)
     qapp.processEvents()
     assert app.runner.calls[-1][:4] == ["--json", "lora", "continue", str(app.project)]
     assert app.runner.calls[-1][-1] == "--unattended"

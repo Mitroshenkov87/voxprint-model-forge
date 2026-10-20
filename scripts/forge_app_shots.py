@@ -133,7 +133,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
     """1280 px grabs: the photos switch on (ru) and a review with mixed marks (en and ru)."""
     import json
 
-    from PySide6 import QtCore, QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtTest, QtWidgets
     from tests.forge_app_stub import ALL_COMMANDS, StubRunner
     from voxprint_common.i18n import set_language
 
@@ -211,7 +211,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
         app.processEvents()
-        button = forge.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+        button = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
         note = forge.window.findChild(QtWidgets.QLabel, "forge.review.note")
         anchor = note if note is not None else button
         area = anchor.parentWidget() if anchor is not None else None
@@ -222,23 +222,36 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             app.processEvents()
         finish = forge.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
         if lang == "ru" and finish is not None and finish.menu() is not None:
+            forge.window.grab().save(str(out / "ru-simple-5-review.png"))
             menu = finish.menu()
             menu.popup(finish.mapToGlobal(QtCore.QPoint(0, finish.height())))
             app.processEvents()
             image = forge.window.grab()
             popup = menu.grab()
             point = finish.mapTo(forge.window, QtCore.QPoint(0, finish.height()))
+            if point.x() + popup.width() > image.width():
+                point.setX(max(0, image.width() - popup.width() - 12))
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()
-            image.save(str(out / "ru-simple-5-review.png"))
+            image.save(str(out / "ru-simple-5-finish-menu.png"))
             menu.close()
             app.processEvents()
+            chevron = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+            if chevron is not None:
+                chevron.click()
+                QtTest.QTest.qWait(200)
+                app.processEvents()
+            forge.window.grab().save(str(out / "ru-simple-5-review-plain.png"))
+            if chevron is not None:
+                chevron.click()
+                QtTest.QTest.qWait(200)
+                app.processEvents()
 
-            def grab_confirm() -> None:
+            def grab_dialog(path: str) -> None:
                 box = QtWidgets.QApplication.activeModalWidget()
                 if not isinstance(box, QtWidgets.QMessageBox):
-                    QtCore.QTimer.singleShot(0, grab_confirm)
+                    QtCore.QTimer.singleShot(0, lambda: grab_dialog(path))
                     return
                 base = forge.window.grab()
                 dialog = box.grab()
@@ -247,10 +260,16 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
                 y = max(0, (base.height() - dialog.height()) // 2)
                 painter.drawPixmap(x, y, dialog)
                 painter.end()
-                base.save(str(out / "ru-simple-5-finish-confirm.png"))
+                base.save(path)
                 box.reject()
 
-            QtCore.QTimer.singleShot(0, grab_confirm)
+            discard = next(
+                item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
+            )
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-discard.png")))
+            discard.trigger()
+            app.processEvents()
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-confirm.png")))
             forge.finish_review()
             app.processEvents()
         else:
