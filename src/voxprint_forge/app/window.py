@@ -1637,7 +1637,7 @@ class ForgeApp:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        label = QtWidgets.QLabel(tr("forge.app.review.attire"))
+        label = _FullWidthLabel(tr("forge.app.review.attire"))
         label.setObjectName("forge.review.attire.label")
         label.setStyleSheet("color: #f4f1ea; background: transparent;")
         combo = _AttireCombo()
@@ -1645,7 +1645,6 @@ class ForgeApp:
         combo.setToolTip(tip)
         label.setToolTip(tip)
         label.setBuddy(combo)
-        label.setMinimumWidth(label.fontMetrics().horizontalAdvance(label.text()) + 2)
         label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Preferred)
         for key, mode in (
             ("forge.app.review.attire.as_photos", "auto"),
@@ -3365,6 +3364,23 @@ QAbstractItemView {
 def _attire_combo_style() -> str:
     """Dark combo face. The ▾ is the down-arrow image."""
     return _ATTIRE_COMBO_STYLE.replace("@@ARROW@@", _ATTIRE_ARROW.as_posix())
+
+
+class _FullWidthLabel(QtWidgets.QLabel):
+    """A label that never gets narrower than its text in the font it ends up with."""
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        hint = super().minimumSizeHint()
+        return QtCore.QSize(max(hint.width(), self.fontMetrics().horizontalAdvance(self.text()) + 2), hint.height())
+
+    def sizeHint(self) -> QtCore.QSize:
+        hint = super().sizeHint()
+        return QtCore.QSize(max(hint.width(), self.minimumSizeHint().width()), hint.height())
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() in (QtCore.QEvent.Type.FontChange, QtCore.QEvent.Type.StyleChange):
+            self.updateGeometry()
 
 
 class _AttireCombo(QtWidgets.QComboBox):
