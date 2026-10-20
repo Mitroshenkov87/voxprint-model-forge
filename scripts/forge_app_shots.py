@@ -138,7 +138,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
     from voxprint_common.i18n import set_language
 
     from voxprint_forge.app.draft import STEPS
-    from voxprint_forge.app.window import ForgeApp, menu_popup_point
+    from voxprint_forge.app.window import ForgeApp, popup_menu
     from voxprint_forge.lora.project import Project
     from voxprint_forge.lora.review import save_state, transition
 
@@ -227,14 +227,12 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
                 raise SystemExit(f"review grab is {image.width()}x{image.height()}, want 1280x800")
             image.save(str(out / "ru-simple-5-review.png"))
             menu = finish.menu()
-            origin = menu_popup_point(finish)
-            menu.popup(origin)
+            popup_menu(finish)
             app.processEvents()
             image = forge.window.grab()
             popup = menu.grab()
-            point = forge.window.mapFromGlobal(menu.pos())
-            point.setX(min(max(0, point.x()), max(0, image.width() - popup.width())))
-            point.setY(min(max(0, point.y()), max(0, image.height() - popup.height())))
+            # A popup is its own window, so paint it where it sits on this one.
+            point = forge.window.mapFromGlobal(menu.mapToGlobal(QtCore.QPoint(0, 0)))
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()

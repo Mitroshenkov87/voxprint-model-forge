@@ -22,6 +22,7 @@ from voxprint_forge.app.window import (  # noqa: E402
     button_radius_px,
     format_span,
     menu_popup_point,
+    popup_menu,
     register_catalogs,
 )
 from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
@@ -188,6 +189,88 @@ def _assert_review_fits(app, qapp) -> None:
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     note_at = note.mapTo(app.window, QtCore.QPoint(0, note.height()))
     assert note_at.y() <= app.window.height()
+
+
+def _assert_menu_anchored_to_button(
+    menu: QtWidgets.QMenu, button: QtWidgets.QAbstractButton, window: QtWidgets.QWidget,
+) -> None:
+    """The menu's right edge meets the button's, and it touches the button from below or from above."""
+    origin = window.mapFromGlobal(menu.pos())
+    top_left = button.mapTo(window, QtCore.QPoint(0, 0))
+    bottom_right = button.mapTo(window, QtCore.QPoint(button.width(), button.height()))
+    menu_right = origin.x() + menu.width()
+    menu_bottom = origin.y() + menu.height()
+    assert abs(menu_right - bottom_right.x()) <= 2
+    gap_below = origin.y() - bottom_right.y()
+    gap_above = top_left.y() - menu_bottom
+    if bottom_right.y() + menu.height() <= window.height():
+        assert 0 <= gap_below <= 2
+    else:
+        assert 0 <= gap_above <= 2
+
+
+def test_the_finish_menu_hangs_off_the_finish_button(make_app, tmp_path, qapp) -> None:
+    """At 1280×800 the menu's top meets the button's bottom and their right edges line up."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Завершить"
+    menu = finish.menu()
+    assert menu is not None
+    QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert menu.isVisible()
+    _assert_menu_anchored_to_button(menu, finish, app.window)
+    image = menu.grab().toImage()
+    edge = image.pixelColor(0, image.height() // 2)
+    fill = image.pixelColor(12, image.height() // 2)
+    assert edge.lightness() > fill.lightness() + 40
+    discard = next(item for item in menu.actions() if item.objectName() == "forge.review.finish.discard")
+    assert _has_danger_text(image, menu.actionGeometry(discard))
+    assert not _has_danger_text(image, menu.actionGeometry(menu.actions()[0]))
+
+
+def test_the_finish_menu_flips_above_the_button_when_nothing_fits_below(qapp) -> None:
+    """A button on the bottom edge opens the menu upward, still sharing its right edge."""
+    window = QtWidgets.QWidget()
+    window.setFixedSize(1280, 220)
+    window.show()
+    button = QtWidgets.QPushButton("Завершить", window)
+    button.setGeometry(1080, 176, 140, 32)
+    menu = QtWidgets.QMenu(button)
+    menu.setObjectName("forgeReviewMenu")
+    save = menu.addAction("Сохранить")
+    save.setObjectName("forge.review.finish.save")
+    discard = menu.addAction("Принудительно, без сохранения")
+    discard.setObjectName("forge.review.finish.discard")
+    button.setMenu(menu)
+    button.show()
+    qapp.processEvents()
+    popup_menu(button)
+    qapp.processEvents()
+    assert menu.isVisible()
+    _assert_menu_anchored_to_button(menu, button, window)
+    origin = window.mapFromGlobal(menu.pos())
+    top = button.mapTo(window, QtCore.QPoint(0, 0)).y()
+    assert 0 <= top - (origin.y() + menu.height()) <= 2
+    menu.close()
+    window.close()
+
+
+def _has_danger_text(image: QtGui.QImage, rect: QtCore.QRect) -> bool:
+    """True when ``rect`` paints the danger text colour, a light red."""
+    inset = rect.adjusted(8, 4, -8, -4)
+    for y in range(inset.top(), inset.bottom(), 2):
+        for x in range(inset.left(), inset.right(), 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 210 and color.red() > color.green() + 20 and color.blue() > 170:
+                return True
+    return False
 
 
 def _card(button: QtWidgets.QPushButton) -> QtWidgets.QFrame:

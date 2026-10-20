@@ -187,6 +187,14 @@ QMenu::item { padding: 6px 18px; background: transparent; color: #f4f1ea; }
 QMenu::item:selected { background: #3a3a46; color: #f4f1ea; }
 QMenu::separator { height: 1px; background: #3a3a46; margin: 4px 8px; }
 """
+# The finish menu matches the discard dialog's card: dark fill, a light border, a short shadow.
+# ``_DANGER_TEXT`` is the text colour on the dislike / danger state.
+_FINISH_PANEL = "#1c1c24"
+_FINISH_BORDER = "#c8c8d4"
+_FINISH_INK = "#f4f1ea"
+_DANGER_TEXT = "#f3d0d0"
+_FINISH_RADIUS = 4
+_FINISH_SHADOW = 8
 _CHEVRON_W = 28
 _LABEL_PAD = 16
 _LABEL_GAP = 14
@@ -1564,7 +1572,7 @@ class ForgeApp:
         button.setEnabled(not busy)
         button.style().unpolish(button)
         button.style().polish(button)
-        menu = _menu(button, "forgeReviewMenu")
+        menu = _FinishMenu(button)
         save = menu.addAction(tr("forge.app.review.finish.save"))
         save.setObjectName("forge.review.finish.save")
         save.setToolTip(tr("forge.app.review.finish.save.tip"))
@@ -3139,13 +3147,66 @@ def _menu(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMenu:
     return menu
 
 
+class _FinishMenu(QtWidgets.QMenu):
+    """Dark finish menu. The panel is drawn here so a grab shows the border, radius and shadow."""
+
+    def __init__(self, parent: QtWidgets.QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("forgeReviewMenu")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.NoDropShadowWindowHint, True)
+        self.setProperty("forgeShadowBelow", _FINISH_SHADOW)
+
+    def shadow_below(self) -> int:
+        """Pixels of shadow under the panel. Zero when the menu opens above the button."""
+        value = self.property("forgeShadowBelow")
+        return value if isinstance(value, int) else 0
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Fill, light border, shadow under the panel, and the two actions."""
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        font = self.font()
+        # Subpixel antialiasing turns the danger pink into orange and cyan fringes.
+        font.setStyleStrategy(QtGui.QFont.StyleStrategy.NoSubpixelAntialias)
+        painter.setFont(font)
+        shadow = self.shadow_below()
+        panel = QtCore.QRectF(0, 0, self.width(), max(1, self.height() - shadow))
+        if shadow:
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            for step in range(shadow, 0, -1):
+                painter.setBrush(QtGui.QColor(0, 0, 0, 16))
+                painter.drawRoundedRect(panel.adjusted(1, 2, -1, step), _FINISH_RADIUS, _FINISH_RADIUS)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(_FINISH_BORDER))
+        painter.drawRoundedRect(panel, _FINISH_RADIUS, _FINISH_RADIUS)
+        painter.setBrush(QtGui.QColor(_FINISH_PANEL))
+        painter.drawRoundedRect(panel.adjusted(1, 1, -1, -1), max(0, _FINISH_RADIUS - 1), max(0, _FINISH_RADIUS - 1))
+        for action in self.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+            rect = self.actionGeometry(action)
+            if rect.isEmpty():
+                continue
+            if self.activeAction() is action:
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.setBrush(QtGui.QColor("#3a3a46"))
+                painter.drawRect(rect.adjusted(2, 1, -2, -1))
+            color = _DANGER_TEXT if action.objectName() == "forge.review.finish.discard" else _FINISH_INK
+            painter.setPen(QtGui.QColor(color))
+            flags = QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft
+            painter.drawText(rect.adjusted(16, 0, -8, 0), flags, action.text())
+        painter.end()
+
+
 class _FinishButton(QtWidgets.QPushButton):
     """Finish opens its menu from the button's right edge, inside the window."""
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override
         """Open the menu aligned to this button instead of past the window edge."""
         if event.button() == QtCore.Qt.MouseButton.LeftButton and self.menu() is not None:
-            QtWidgets.QAbstractButton.mousePressEvent(self, event)
             popup_menu(self)
             event.accept()
             return
@@ -3171,29 +3232,42 @@ def _menu_width(menu: QtWidgets.QMenu) -> int:
     return widest + 48
 
 
+def _menu_panel_size(menu: QtWidgets.QMenu) -> tuple[int, int]:
+    """Width and height of the menu panel, without the shadow strip under a finish menu."""
+    menu.setMinimumWidth(_menu_width(menu))
+    if not menu.isVisible():
+        menu.adjustSize()
+    hint = menu.sizeHint()
+    return max(hint.width(), menu.minimumWidth()), max(hint.height(), 1)
+
+
 def menu_popup_point(button: QtWidgets.QAbstractButton) -> QtCore.QPoint:
-    """Global top-left for ``button``'s menu: right edges meet, then clamped on screen."""
+    """Global top-left: the menu's right edge meets the button's, and it hangs just below.
+
+    It flips above the button only when that panel would pass the bottom of the window.
+    The anchor is the window. The offscreen screen is smaller than a 1280 px window, and
+    clamping to the screen leaves the menu in the middle, over the help text.
+    """
     menu = button.menu()
     if menu is None:
         return button.mapToGlobal(QtCore.QPoint(0, button.height()))
-    menu.setMinimumWidth(_menu_width(menu))
-    menu.adjustSize()
-    width = max(menu.sizeHint().width(), menu.minimumWidth())
-    height = max(menu.sizeHint().height(), 1)
-    bottom_right = button.mapToGlobal(QtCore.QPoint(button.width(), button.height()))
-    x = bottom_right.x() - width
-    y = bottom_right.y()
-    screen = button.screen() or QtGui.QGuiApplication.primaryScreen()
-    bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, width, height)
+    if isinstance(menu, _FinishMenu):
+        menu.setProperty("forgeShadowBelow", _FINISH_SHADOW)
+    width, panel = _menu_panel_size(menu)
+    shadow = menu.shadow_below() if isinstance(menu, _FinishMenu) else 0
+    height = panel + shadow
+    right = button.mapToGlobal(QtCore.QPoint(button.width(), 0)).x()
+    bottom = button.mapToGlobal(QtCore.QPoint(0, button.height())).y()
+    top = button.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    x = right - width
+    y = bottom
     window = button.window()
     if window is not None:
-        bounds = bounds.intersected(QtCore.QRect(window.mapToGlobal(QtCore.QPoint(0, 0)), window.size()))
-    if bounds.width() > 0:
-        x = min(max(x, bounds.left()), max(bounds.left(), bounds.right() - width + 1))
-    if y + height > bounds.bottom():
-        y = button.mapToGlobal(QtCore.QPoint(0, 0)).y() - height
-    if bounds.height() > 0:
-        y = min(max(y, bounds.top()), max(bounds.top(), bounds.bottom() - height + 1))
+        bounds = QtCore.QRect(window.mapToGlobal(QtCore.QPoint(0, 0)), window.size())
+        if y + height - 1 > bounds.bottom():
+            if isinstance(menu, _FinishMenu):
+                menu.setProperty("forgeShadowBelow", 0)
+            y = top - panel
     return QtCore.QPoint(x, y)
 
 
@@ -3203,6 +3277,14 @@ def popup_menu(button: QtWidgets.QAbstractButton) -> None:
     if menu is None:
         return
     menu.popup(menu_popup_point(button))
+    # QMenu::popup() pulls the menu onto the screen. Move it back onto the button.
+    point = menu_popup_point(button)
+    width, panel = _menu_panel_size(menu)
+    shadow = menu.shadow_below() if isinstance(menu, _FinishMenu) else 0
+    menu.resize(max(width, menu.width()), panel + shadow)
+    right = button.mapToGlobal(QtCore.QPoint(button.width(), 0)).x()
+    menu.move(right - menu.width(), point.y())
+    menu.setActiveAction(None)
 
 
 class _DarkDialog(QtWidgets.QDialog):
