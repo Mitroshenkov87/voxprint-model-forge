@@ -68,6 +68,9 @@ def header_metadata(
         "voxprint.lora.trained_on": str(train.get("trained_on", "")),
         "voxprint.lora.adult_content": _flag(subject.get("adult_content")),
     }
+    planned = train.get("steps_planned")
+    if isinstance(planned, int) and not isinstance(planned, bool):
+        meta["voxprint.lora.steps_planned"] = str(planned)
     if kind == "person":
         meta["voxprint.subject.consent_method"] = consent_method(subject)
     if kind in ("object", "style"):
@@ -153,14 +156,15 @@ def export(
         progress.emit("export.licence", "lora.err.base_restrictive")
     tensors = {key: value.detach().cpu().contiguous() for key, value in load_file(str(source)).items()}
     mid = model_id(data, tensors_digest(tensors))
-    meta = header_metadata({**data, "train": {**train, "step": _step(name)}}, tensors)
+    shown = _export_train(train, name, checkpoint is None)
+    meta = header_metadata({**data, "train": shown}, tensors)
     target = Path(out) if out is not None else project.root / "export" / f"{mid}.safetensors"
     if target.suffix != ".safetensors":
         raise LoraUsageError("lora.err.no_checkpoint")
     target.parent.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(target), metadata=meta)
     preview = _preview(project, _step(name), target.parent)
-    sidecar = sidecar_document(mid, data, target, info, preview, tags)
+    sidecar = sidecar_document(mid, {**data, "train": shown}, target, info, preview, tags)
     _write_json(target.parent / SIDECAR, sidecar)
     if info.licence.lower() == "apache-2.0":
         shutil.copyfile(_LICENCES / "Apache-2.0.txt", target.parent / "LICENSE")
@@ -206,6 +210,13 @@ def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) 
         "tags": [str(tag) for tag in tags if str(tag).strip()],
         "voxprint.lora.adult_content": subject.get("adult_content") is True,
     }
+    trained = dict(data.get("train") or {})
+    done_steps = trained.get("step")
+    planned = trained.get("steps_planned")
+    if isinstance(done_steps, int) and not isinstance(done_steps, bool):
+        doc["steps"] = done_steps
+    if isinstance(planned, int) and not isinstance(planned, bool):
+        doc["steps_planned"] = planned
     if kind == "person":
         doc["voxprint.subject.consent_method"] = consent_method(subject)
     if preview is not None:
@@ -222,6 +233,19 @@ def _preview(project: Project, step: int, folder: Path) -> Path | None:
     with Image.open(found[0]) as image:
         image.convert("RGB").save(target, "WEBP", quality=90)
     return target
+
+
+def _export_train(train: dict[str, object], name: str, final: bool) -> dict[str, object]:
+    """Steps recorded on an export.
+
+    The final file reports the steps the LoRA got. An earlier ``--checkpoint`` reports that file's step.
+    ``steps_planned`` stays the preset total when the run stored one.
+    """
+    file_step = _step(name)
+    recorded = train.get("step")
+    step = recorded if final and isinstance(recorded, int) and not isinstance(recorded, bool) else file_step
+    shown = {**train, "step": step}
+    return shown
 
 
 def _step(name: str) -> int:

@@ -10,7 +10,9 @@ from pathlib import Path
 
 from voxprint_forge.app.engine import EngineEvent, Outcome
 
-ALL_COMMANDS = frozenset({"prepare", "train", "extend", "export", "refset"})
+ALL_COMMANDS = frozenset({
+    "prepare", "train", "extend", "export", "refset", "review", "continue", "finish", "status",
+})
 
 
 def make_photos(folder: Path, count: int) -> list[Path]:
@@ -43,6 +45,13 @@ def write_prepared(project: Path, photos: list[Path], drops: list[tuple[Path, st
     (project / "drops.jsonl").write_text("".join(line + "\n" for line in lines), encoding="utf-8")
 
 
+def _project_of(args: list[str]) -> Path:
+    """The project folder: ``--project`` when present, otherwise the positional folder."""
+    if "--project" in args:
+        return Path(args[args.index("--project") + 1])
+    return Path(args[-1])
+
+
 class StubRunner:
     """Answers each ``lora`` command from ``script``: events, then an outcome."""
 
@@ -58,13 +67,13 @@ class StubRunner:
 
     def start(self, args, on_event, on_done) -> None:
         self.calls.append(list(args))
-        project = Path(args[args.index("--project") + 1])
+        project = _project_of(args)
         self.pause_seen_at_start.append((project / "PAUSE").exists())
         key = f"refset.{args[3]}" if args[2] == "refset" else args[2]
         events, outcome = self.script.get(key, ([], Outcome(True, {})))
         effect = self.effects.get(key)
         if effect is not None:
-            effect(Path(args[args.index("--project") + 1]))
+            effect(project)
         self.busy = True
         for event in events:
             on_event(event)

@@ -31,7 +31,8 @@ positional arguments:
     diffusion-int4      Wan 2.2 GGUF and FP8.
     compare             Score original and compressed arms for one synth4 job.
     kl                  Perplexity and KL of GGUF quants against an F16 base.
-    lora                Train a LoRA from your photos: prepare, train, extend, export.
+    lora                Train a LoRA from your photos: prepare, train, extend, export,
+                        review, continue, finish, status.
     models              List or fetch model-forge model ids.
     index               Build or push the model index, or backfill voxprint-model.json.
 
@@ -418,10 +419,11 @@ options:
 ## `forge lora`
 
 ```text
-usage: forge lora [-h] {prepare,export,train,extend,refset} ...
+usage: forge lora [-h]
+                  {prepare,export,train,extend,refset,review,continue,finish,status} ...
 
 positional arguments:
-  {prepare,export,train,extend,refset}
+  {prepare,export,train,extend,refset,review,continue,finish,status}
     prepare             Check, crop and describe photos into a project.
     export              Save the LoRA as one .safetensors file with voxprint-
                         model.json.
@@ -430,6 +432,12 @@ positional arguments:
                         project.
     refset              Build a photo set from 1-10 references, round by
                         round.
+    review              List or mark the samples of a paused review.
+    continue            Train the next round on the liked pictures, then pause
+                        for another review.
+    finish              Save the current LoRA, draw a final preview, and
+                        record the steps it got.
+    status              Read live training progress from train.json.
 
 options:
   -h, --help            show this help message and exit
@@ -536,7 +544,12 @@ usage: forge lora train [-h] --project PROJECT
                         [--preview-every PREVIEW_EVERY]
                         [--preview-prompts PREVIEW_PROMPTS] [--resume]
                         [--dry-run] [--fetch-missing | --no-fetch]
-                        [--base BASE] [--rank RANK] [--alpha ALPHA]
+                        [--review-rounds REVIEW_ROUNDS]
+                        [--first-round-steps FIRST_ROUND_STEPS]
+                        [--first-round-samples FIRST_ROUND_SAMPLES]
+                        [--samples-per-round SAMPLES_PER_ROUND]
+                        [--sample-steps SAMPLE_STEPS] [--base BASE]
+                        [--rank RANK] [--alpha ALPHA]
                         [--resolution RESOLUTION] [--train-text-encoder]
 
 options:
@@ -583,6 +596,19 @@ options:
   --dry-run             Print the plan and time estimate; train nothing.
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
+  --review-rounds REVIEW_ROUNDS
+                        How many review pauses. From 1 to 6. Default: 3. 0
+                        trains straight through.
+  --first-round-steps FIRST_ROUND_STEPS
+                        Steps before the first review. From 100 to 500.
+                        Default: 200.
+  --first-round-samples FIRST_ROUND_SAMPLES
+                        Pictures drawn at the first review, at the training
+                        resolution. Default: 6.
+  --samples-per-round SAMPLES_PER_ROUND
+                        Pictures drawn after the first review. Default: 8.
+  --sample-steps SAMPLE_STEPS
+                        Inference steps for each review picture. Default: 28.
   --base BASE           Base model MDL id. Default: z-image.
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).
@@ -743,6 +769,62 @@ options:
   --base BASE           Base model the set is for. Default: z-image.
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
+```
+
+## `forge lora review`
+
+```text
+usage: forge lora review [-h] [--like ID] [--dislike ID]
+                         [--from-file FROM_FILE]
+                         project
+
+positional arguments:
+  project               Project folder.
+
+options:
+  -h, --help            show this help message and exit
+  --like ID             Mark this sample as liked.
+  --dislike ID          Mark this sample as disliked.
+  --from-file FROM_FILE
+                        Verdicts from a text or JSON file.
+```
+
+## `forge lora continue`
+
+```text
+usage: forge lora continue [-h] [--unattended] project
+
+positional arguments:
+  project       Project folder.
+
+options:
+  -h, --help    show this help message and exit
+  --unattended  Keep the liked pictures and train every remaining step with no
+                more pauses.
+```
+
+## `forge lora finish`
+
+```text
+usage: forge lora finish [-h] project
+
+positional arguments:
+  project     Project folder.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## `forge lora status`
+
+```text
+usage: forge lora status [-h] project
+
+positional arguments:
+  project     Project folder.
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## `forge models`

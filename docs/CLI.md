@@ -148,6 +148,25 @@ The Windows RTX 4090 laptop check is still the 16 GB fit. Nunchaku has sm_89 ker
 
 `scripts/smoke_laptop.ps1` runs only the `zimage` step. `scripts/nunchaku_zimage_test.ps1` (Windows) and `scripts/nunchaku_zimage_test.sh` (Linux) run tag `nunchaku-test-2`: `zimage-r128` and optional `zimage-r256`, with `cap16` as the 16 GB cap. The module is `python -m voxprint_forge.diffusion.nunchaku_zimage`.
 
+## LoRA review rounds
+
+`voxprint-forge-cli lora` trains a LoRA. With review rounds on, the first stage is short so the first pictures arrive before the rest of the preset.
+
+```bash
+voxprint-forge-cli lora train --project DIR --review-rounds 3 \
+  --first-round-steps 200 --first-round-samples 6 --samples-per-round 8 --sample-steps 28
+```
+
+- `--review-rounds` is how many review pauses (1–6, default 3). `--review-rounds 0` trains straight through, including a resume of a run that never paused for review.
+- `--first-round-steps` is the first stage (100–500, default 200). Later rounds share the preset steps that remain; the last of them takes the remainder. The preset total does not change. One planned round is only the first-round length. The steps still left are what `lora continue --unattended` runs.
+- `--first-round-samples` (default 6) and `--samples-per-round` (default 8) are the pictures at the first review and at later reviews. Both are drawn at the training resolution. `--sample-steps` (default 28) is passed to the preview pipeline as `num_inference_steps`. Test pictures during a stage keep the pipeline default.
+- `lora continue PROJECT` trains the next planned round on the original photos and the liked samples, then pauses for another review.
+- `lora continue PROJECT --unattended` keeps the current liked set, uses disliked samples as negatives where the base supports them, and trains every remaining preset step with no more pauses. It is allowed on the last review; with nothing left it saves the LoRA and draws a final preview.
+- `lora finish PROJECT` saves the current LoRA, draws a final preview, and records the steps it got. `train.json` and the export store `steps` and `steps_planned`.
+- `lora status PROJECT` prints `train.json`. During round 1 the result includes `first_pictures` (steps left times measured seconds per step, plus samples times measured seconds per sample; until a sample is timed, one denoising step counts as half a training step).
+
+The rest of the trainer is in `docs/LORA.md`.
+
 ## Fit
 
 `fit --budget-gb 16 --budget-gb 24` keeps tiers of those sizes. A 16 GB tier must fit at the shortest context (8k in the A100 plan). A 24 GB tier must fit every context (8k and 16k). Headroom defaults to 3 GB. KV is q8_0 unless only q4_0 fits. For each quant, best first, fit tries placements in order: everything on the GPU, KV in RAM (`--no-kv-offload`), MoE experts on CPU (`--n-cpu-moe`, when the plan sets `moe_layers` and `expert_fraction`), then a diffusion text encoder in RAM or sequential loading (when the plan sets `encoder_gib`). An offload that fits is kept instead of a smaller quant. GPU and flagged offloads are measured with llama-server on the target. Encoder offload and sequential loading have no llama-server flag, so those two are the byte formula. The fit marker, the registry draft, and the model card record the split that tier assumes. The gate uses on-card weights + KV and the llama-server `model buffer size` / `KV buffer size` lines. `nvidia-smi` usage is recorded and is not the gate.

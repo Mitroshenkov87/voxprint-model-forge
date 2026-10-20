@@ -311,6 +311,7 @@ class _Parked:
         return torch.device("cpu")
 
     def __call__(self, **kwargs):
+        self.kwargs = kwargs
         self.during.append(self.text_encoder)
         generator = kwargs["generator"]
         if generator.device.type != "cpu":
@@ -328,6 +329,10 @@ def test_preview_parks_the_text_encoder_and_seeds_a_cpu_generator() -> None:
     image = adapter.preview(nn.Identity(), "a red cube", 7, config)
     assert image is not None and adapter.pipe.during == [None]
     assert isinstance(adapter.pipe.text_encoder, nn.Module)
+    assert "num_inference_steps" not in adapter.pipe.kwargs
+    adapter.preview(nn.Identity(), "a red cube", 7, config, steps=28)
+    assert adapter.pipe.kwargs["num_inference_steps"] == 28
+    assert adapter.pipe.kwargs["height"] == config.resolution == adapter.pipe.kwargs["width"]
 
 
 def test_preview_device_mismatch_is_named() -> None:

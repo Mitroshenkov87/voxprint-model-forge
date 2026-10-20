@@ -1,4 +1,4 @@
-"""``forge lora prepare|train|extend|export``: the LoRA trainer without the GUI."""
+"""``forge lora prepare|train|extend|export|review|continue|finish|status``: the LoRA trainer without the GUI."""
 
 from __future__ import annotations
 
@@ -28,7 +28,9 @@ _EXPERT = "{}-{}".format(*EXPERT_RANGE)
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register ``lora`` and its subcommands."""
-    lora = sub.add_parser("lora", help="Train a LoRA from your photos: prepare, train, extend, export.")
+    lora = sub.add_parser(
+        "lora", help="Train a LoRA from your photos: prepare, train, extend, export, review, continue, finish, status."
+    )
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
     _prepare_flags(lora_sub.add_parser("prepare", help="Check, crop and describe photos into a project."))
     export = lora_sub.add_parser("export", help="Save the LoRA as one .safetensors file with voxprint-model.json.")
@@ -41,6 +43,7 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
     for command in (train, extend):
         _training_flags(command)
+    _review_flags(train)
     train.add_argument("--base", default=DEFAULT_BASE, help="Base model MDL id. Default: z-image.")
     train.add_argument("--rank", type=int, default=None, help="Adapter size (Expert).")
     train.add_argument("--alpha", type=int, default=None, help="Adapter scale, usually equal to rank (Expert).")
@@ -49,6 +52,7 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     extend.add_argument("--from", dest="from_lora", type=Path, required=True, help="Existing LoRA .safetensors.")
     extend.add_argument("--replay", type=float, default=None, help="Share of older photos kept, 0.0-1.0.")
     _refset_flags(lora_sub.add_parser("refset", help="Build a photo set from 1-10 references, round by round."))
+    _project_commands(lora_sub)
 
 
 def _refset_flags(command: argparse.ArgumentParser) -> None:
@@ -195,6 +199,53 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
     _fetch_flags(command)
 
 
+def _review_flags(train: argparse.ArgumentParser) -> None:
+    """Round options on ``lora train``. The default is 3 reviews; 0 trains straight through."""
+    train.add_argument(
+        "--review-rounds", type=int, default=3,
+        help="How many review pauses. From 1 to 6. Default: 3. 0 trains straight through.",
+    )
+    train.add_argument(
+        "--first-round-steps", type=int, default=200,
+        help="Steps before the first review. From 100 to 500. Default: 200.",
+    )
+    train.add_argument(
+        "--first-round-samples", type=int, default=6,
+        help="Pictures drawn at the first review, at the training resolution. Default: 6.",
+    )
+    train.add_argument(
+        "--samples-per-round", type=int, default=8,
+        help="Pictures drawn after the first review. Default: 8.",
+    )
+    train.add_argument(
+        "--sample-steps", type=int, default=28,
+        help="Inference steps for each review picture. Default: 28.",
+    )
+
+
+def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """``review``, ``continue``, ``finish`` and ``status`` take the project folder."""
+    review = lora_sub.add_parser("review", help="List or mark the samples of a paused review.")
+    review.add_argument("project", type=Path, help="Project folder.")
+    review.add_argument("--like", action="append", default=[], metavar="ID", help="Mark this sample as liked.")
+    review.add_argument("--dislike", action="append", default=[], metavar="ID", help="Mark this sample as disliked.")
+    review.add_argument("--from-file", type=Path, default=None, help="Verdicts from a text or JSON file.")
+    cont = lora_sub.add_parser(
+        "continue", help="Train the next round on the liked pictures, then pause for another review.",
+    )
+    cont.add_argument("project", type=Path, help="Project folder.")
+    cont.add_argument(
+        "--unattended", action="store_true",
+        help="Keep the liked pictures and train every remaining step with no more pauses.",
+    )
+    finish = lora_sub.add_parser(
+        "finish", help="Save the current LoRA, draw a final preview, and record the steps it got.",
+    )
+    finish.add_argument("project", type=Path, help="Project folder.")
+    status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
+    status.add_argument("project", type=Path, help="Project folder.")
+
+
 _CONFIG_FLAGS = (
     "rank alpha steps lr scheduler warmup batch grad_accum resolution precision grad_checkpointing "
     "train_text_encoder caption_mode caption_dropout seed save_every previews preview_every replay te_quant te_device"
@@ -220,6 +271,14 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         return _train(args)
     if args.lora_command == "refset":
         return _refset(args)
+    if args.lora_command == "review":
+        return _review(args)
+    if args.lora_command == "continue":
+        return _continue(args)
+    if args.lora_command == "finish":
+        return _finish_review(args)
+    if args.lora_command == "status":
+        return _status(args)
     raise LoraUsageError("lora.err.not_prepared")
 
 
@@ -269,6 +328,12 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             from_lora=from_lora,
             stop=stop,
             preview_prompts=prompts,
+            # ``extend`` has no review flags. A missing value trains straight through.
+            review_rounds=getattr(args, "review_rounds", 0),
+            samples_per_round=getattr(args, "samples_per_round", 8),
+            first_round_steps=getattr(args, "first_round_steps", 200),
+            first_round_samples=getattr(args, "first_round_samples", 6),
+            sample_steps=getattr(args, "sample_steps", 28),
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -369,6 +434,95 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)
+    return result
+
+
+def _review(args: argparse.Namespace) -> dict[str, object]:
+    """List the paused samples, or set verdicts from flags and ``--from-file``."""
+    from voxprint_forge.lora.review import apply_file, counts, load_state, save_state, set_verdicts
+
+    project = Project(args.project)
+    state = load_state(project)
+    if args.from_file is not None:
+        state = apply_file(state, args.from_file)
+    if args.like or args.dislike:
+        state = set_verdicts(state, like=args.like, dislike=args.dislike)
+    if args.from_file is not None or args.like or args.dislike:
+        save_state(project, state)
+    counted = counts(state)
+    samples = [
+        {
+            "id": sample.get("id"),
+            "file": sample.get("file"),
+            "seed": sample.get("seed"),
+            "prompt": sample.get("prompt"),
+            "verdict": sample.get("verdict", "unmarked"),
+            "round": sample.get("round"),
+        }
+        for sample in state.get("samples") or []
+        if isinstance(sample, dict)
+    ]
+    originals = [{"id": item.id, "file": item.file} for item in project.items()]
+    return {"phase": state.get("phase"), **counted, "samples": samples, "originals": originals}
+
+
+def _continue(args: argparse.Namespace) -> dict[str, object]:
+    """Train the next review stage from the checkpoint and the liked samples."""
+    from voxprint_forge.lora.bases import get_adapter
+    from voxprint_forge.lora.presets import TrainConfig
+    from voxprint_forge.lora.review import load_state
+    from voxprint_forge.lora.train import train
+
+    project = Project(args.project)
+    state = load_state(project)
+    adapter = get_adapter(str(state.get("base") or ""), training=True)
+    raw_prompts = state.get("prompts")
+    prompts = [str(prompt) for prompt in raw_prompts] if isinstance(raw_prompts, list) else []
+    stop = threading.Event()
+    previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
+    try:
+        return train(
+            project,
+            TrainConfig(),
+            adapter,
+            Progress(printer(args.json)),
+            stop=stop,
+            preview_prompts=prompts,
+            review_continue=True,
+            no_more_reviews=bool(getattr(args, "unattended", False)),
+        )
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def _finish_review(args: argparse.Namespace) -> dict[str, object]:
+    """Save the current LoRA, draw a final preview, and record the steps it got."""
+    from voxprint_forge.lora.bases import get_adapter
+    from voxprint_forge.lora.review import load_state
+    from voxprint_forge.lora.train import finish_review
+
+    project = Project(args.project)
+    state = load_state(project)
+    adapter = get_adapter(str(state.get("base") or ""))
+    return finish_review(project, adapter, Progress(printer(args.json)))
+
+
+def _status(args: argparse.Namespace) -> dict[str, object]:
+    """The latest ``train.json`` line, plus the review phase when one is saved."""
+    from voxprint_forge.lora.progress_log import first_pictures_text, read_progress
+    from voxprint_forge.lora.review import counts, load_state
+
+    project = Project(args.project)
+    row = read_progress(project.root)
+    state = load_state(project)
+    if row is None and state.get("phase") in (None, "idle"):
+        raise LoraUsageError("lora.err.no_progress")
+    result: dict[str, object] = dict(row or {})
+    pictures = first_pictures_text(result)
+    if pictures:
+        result["first_pictures"] = pictures
+    if state.get("phase") not in (None, "idle"):
+        result["review"] = {"phase": state.get("phase"), **counts(state)}
     return result
 
 
