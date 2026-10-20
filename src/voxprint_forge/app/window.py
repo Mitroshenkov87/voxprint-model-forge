@@ -1632,7 +1632,7 @@ class ForgeApp:
         """Attire for the next round, on the continue row and to the right of the help line."""
         row = QtWidgets.QWidget()
         row.setObjectName("forge.review.attire.row")
-        row.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
+        row.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
         layout = QtWidgets.QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -1645,6 +1645,8 @@ class ForgeApp:
         combo.setToolTip(tip)
         label.setToolTip(tip)
         label.setBuddy(combo)
+        label.setMinimumWidth(label.fontMetrics().horizontalAdvance(label.text()) + 2)
+        label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Preferred)
         for key, mode in (
             ("forge.app.review.attire.as_photos", "auto"),
             ("forge.app.review.attire.clothed", "clothed"),
