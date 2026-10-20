@@ -262,6 +262,66 @@ def test_the_finish_menu_flips_above_the_button_when_nothing_fits_below(qapp) ->
     window.close()
 
 
+def _assert_review_tooltips(window: QtWidgets.QWidget) -> None:
+    """The main button, ▾, Finish, and every finish-menu item explain themselves."""
+    cont = window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    finish = window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert cont is not None and chevron is not None and finish is not None
+    assert cont.toolTip().strip()
+    assert chevron.toolTip().strip()
+    assert finish.toolTip().strip()
+    menu = finish.menu()
+    assert menu is not None and menu.toolTipsVisible()
+    actions = [item for item in menu.actions() if not item.isSeparator()]
+    assert actions
+    assert all(item.toolTip().strip() for item in actions)
+
+
+def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app, tmp_path, qapp) -> None:
+    """One muted line names the current mode, and the long explanations live on the controls."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert note is not None and cont is not None and chevron is not None and finish is not None
+    assert note.property("muted") == "true"
+    assert note.text() == "Следующий раунд и снова проверка"
+    assert "\n" not in note.text()
+    assert cont.toolTip() == tr("forge.app.review.continue.tip")
+    assert chevron.toolTip() == tr("forge.app.review.unattended.tip")
+    assert finish.toolTip() == tr("forge.app.review.finish.tip")
+    _assert_review_tooltips(app.window)
+    QtTest.QTest.mouseClick(chevron, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert note.text() == "Дообучить без проверок"
+    assert cont.toolTip() == tr("forge.app.review.unattended.tip")
+    assert chevron.toolTip() == tr("forge.app.review.continue.tip")
+    _assert_review_tooltips(app.window)
+    app.window.close()
+    english = make_app("en")
+    _seed_review(english.project, photos)
+    english.layout.sections._index = STEPS.index("train")
+    english.repaint()
+    qapp.processEvents()
+    en_note = english.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    en_chevron = english.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    assert en_note is not None and en_chevron is not None
+    assert en_note.text() == "Next round, then another review"
+    assert "\n" not in en_note.text()
+    _assert_review_tooltips(english.window)
+    QtTest.QTest.mouseClick(en_chevron, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert en_note.text() == "Train on without reviews"
+    _assert_review_tooltips(english.window)
+
+
 def _has_danger_text(image: QtGui.QImage, rect: QtCore.QRect) -> bool:
     """True when ``rect`` paints the danger text colour, a light red."""
     inset = rect.adjusted(8, 4, -8, -4)
@@ -345,8 +405,8 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     _assert_review_fits(app, qapp)
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
-    assert note.text() == tr("forge.app.review.note")
-    assert note.text().count("\n") == 2
+    assert note.text() == tr("forge.app.review.note.reinforced")
+    assert "\n" not in note.text()
     counts = app.window.findChild(QtWidgets.QLabel, "forge.review.counts")
     assert counts.text() == tr("forge.app.review.counts", liked=1, disliked=1, unmarked=1)
     assert len(app.window.findChildren(QtWidgets.QLabel, "forge.review.original")) == 2

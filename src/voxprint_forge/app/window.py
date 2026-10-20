@@ -1502,10 +1502,13 @@ class ForgeApp:
         row.addWidget(cont)
         row.addStretch(1)
         row.addWidget(finish)
-        note = QtWidgets.QLabel(tr("forge.app.review.note"))
+        note = QtWidgets.QLabel()
         note.setObjectName("forge.review.note")
         note.setProperty("muted", "true")
-        note.setWordWrap(True)
+        note.setWordWrap(False)
+        self._review_note = note
+        self._show_review_note(cont.mode())
+        cont.toggled.connect(self._show_review_note)
         bar = QtWidgets.QWidget()
         bar.setObjectName("forge.review.actions")
         pinned = QtWidgets.QVBoxLayout(bar)
@@ -1515,6 +1518,14 @@ class ForgeApp:
         pinned.addWidget(note)
         self._review_actions = bar
         self._review_continue = cont
+
+    def _show_review_note(self, mode: str) -> None:
+        """One muted line for the mode the main button would start."""
+        note = getattr(self, "_review_note", None)
+        if not isinstance(note, QtWidgets.QLabel):
+            return
+        key = "forge.app.review.note.plain" if mode == "plain" else "forge.app.review.note.reinforced"
+        note.setText(tr(key))
 
     def _continue_control(self, busy: bool) -> "_ContinueToggle":
         """Large primary button. ▾ swaps reinforcement and plain continue."""
@@ -1581,6 +1592,7 @@ class ForgeApp:
         discard.setObjectName("forge.review.finish.discard")
         discard.setToolTip(tr("forge.app.review.finish.discard.tip"))
         discard.triggered.connect(self.discard_review)
+        menu.setToolTipsVisible(True)
         button.setMenu(menu)
         return button
 
