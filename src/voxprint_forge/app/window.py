@@ -42,7 +42,8 @@ from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
 from voxprint_forge.lora.progress_log import read_progress
-from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.sample_prompts import read_attire, store_attire
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
 APP_ID = "model-forge"
@@ -119,7 +120,7 @@ QPushButton[reviewMark="true"][down="true"]:checked {
     background: #5a3030; color: #f3d0d0; border-color: #c45c5c; }
 QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
-QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; }
+QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; padding: 0; min-height: 28px; }
 QLabel[muted="true"] { color: #9a9aa8; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
@@ -151,22 +152,66 @@ QToolButton[selectionRemove="true"] {
 QToolButton[selectionRemove="true"]:hover { background: #2a2a35; border-color: #f5d76e; }
 QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
 QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
-QPushButton[reviewPrimary="true"], QToolButton[reviewPrimary="true"] {
-    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604;
-    padding: 4px 12px; border-radius: @@RADIUS@@px; }
-QPushButton[reviewPrimary="true"]:disabled, QToolButton[reviewPrimary="true"]:disabled {
-    background: #4a4430; color: #6e6e7e; border-color: #4a4430; }
-QToolButton[reviewPrimary="true"]::menu-button {
-    border-left: 1px solid #c4a84a; width: 22px; background: #f5d76e; }
-QToolButton[reviewPrimary="true"]:disabled::menu-button { background: #4a4430; border-left-color: #4a4430; }
-QMenu#forgeReviewMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
-QMenu#forgeReviewMenu::item { padding: 6px 18px; background: transparent; }
-QMenu#forgeReviewMenu::item:selected { background: #3a3a46; }
+QPushButton[reviewFinish="true"] {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46;
+    border-radius: 4px; padding: 2px 12px; min-height: 28px; font-weight: 500; }
+QPushButton[reviewFinish="true"]:hover { background: #34343f; }
+QPushButton[reviewFinish="true"]:disabled {
+    background: #22222b; color: #6e6e7e; border-color: #33333f; }
+QMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
+QMenu::item { padding: 6px 18px; background: transparent; color: #f4f1ea; }
+QMenu::item:selected { background: #3a3a46; color: #f4f1ea; }
+QMenu::separator { height: 1px; background: #3a3a46; margin: 4px 8px; }
+QDialog { background: #1c1c24; color: #f4f1ea; }
+QDialog QLabel { color: #f4f1ea; background: transparent; }
+QPushButton:disabled, QPushButton:disabled:hover {
+    background: #22222b; color: #6e6e7e; border: 1px solid #33333f; }
 QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
     background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
+QToolTip {
+    background-color: #2b2d36; color: #f4f1ea; border: 1px solid #c8c8d4;
+    border-radius: 4px; padding: 6px 8px; margin: 0px; max-width: 420px;
+    qproperty-margin: 0;
+}
 """
 FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
+_DIALOG_STYLE = """
+QDialog { background: transparent; }
+QFrame#forgeDialogCard { background: #1c1c24; border: 2px solid #c8c8d4; border-radius: 12px; }
+QLabel#forgeDialogTitle { color: #f4f1ea; font-size: 16px; font-weight: 600; background: transparent; }
+QLabel#qt_msgbox_label { color: #f4f1ea; font-size: 14px; background: transparent; }
+QPushButton { background: #2a2a33; color: #f4f1ea; border: 1px solid #5c5c6c; border-radius: 4px;
+    padding: 6px 16px; min-height: 32px; min-width: 96px; }
+QPushButton:hover { background: #34343f; }
+QPushButton[danger="true"] { background: #9a3030; color: #fff8f8; border: 1px solid #f0b0b0; font-weight: 600; }
+QPushButton[danger="true"]:hover { background: #b23c3c; }
+"""
+_MENU_STYLE = """
+QMenu { background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; padding: 4px; }
+QMenu::item { padding: 6px 18px; background: transparent; color: #f4f1ea; }
+QMenu::item:selected { background: #3a3a46; color: #f4f1ea; }
+QMenu::separator { height: 1px; background: #3a3a46; margin: 4px 8px; }
+"""
+# The finish menu matches the discard dialog's card: dark fill, a light border, a short shadow.
+# ``_DANGER_TEXT`` is the text colour on the dislike / danger state.
+_FINISH_PANEL = "#1c1c24"
+_FINISH_BORDER = "#c8c8d4"
+_FINISH_INK = "#f4f1ea"
+_DANGER_TEXT = "#f3d0d0"
+_FINISH_RADIUS = 4
+_FINISH_SHADOW = 8
+# Tooltip copy wraps inside 420 px. Padding and the 1 px border sit outside that.
+_TOOLTIP_TEXT = 420
+_TOOLTIP_PAD_X = 8
+_TOOLTIP_PAD_Y = 6
+_TOOLTIP_BORDER = 1
+_TOOLTIP_GAP = 2
+_CHEVRON_W = 28
+_LABEL_PAD = 16
+_LABEL_GAP = 14
+_FADE_MS = 150
+_ROW_RADIUS = 4
 LOCALES = Path(__file__).resolve().parent / "locales"
 
 
@@ -179,6 +224,99 @@ def register_catalogs() -> None:
         add_catalogs(Path(lora_i18n.__file__).resolve().parent)
     except ImportError:
         pass
+
+
+def _install_tooltip_placement() -> None:
+    """Open every tooltip under its control, once per process."""
+    app = QtWidgets.QApplication.instance()
+    if app is None or app.findChild(QtCore.QObject, "forge.tooltip.placement") is not None:
+        return
+    placement = _TooltipPlacement(app)
+    placement.setObjectName("forge.tooltip.placement")
+    app.installEventFilter(placement)
+
+
+class _TooltipPlacement(QtCore.QObject):
+    """Replace the cursor-shaped system tip so it does not cover the control."""
+
+    def __init__(self, parent: QtCore.QObject) -> None:
+        super().__init__(parent)
+        self._busy = False
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802 - Qt override
+        if self._busy or event.type() != QtCore.QEvent.Type.ToolTip:
+            return False
+        if not isinstance(watched, QtWidgets.QWidget) or not isinstance(event, QtGui.QHelpEvent):
+            return False
+        text, local = _tooltip_subject(watched, event.pos())
+        if not text:
+            return False
+        self._busy = True
+        try:
+            anchor = QtCore.QRect(watched.mapToGlobal(local.topLeft()), local.size())
+            below = QtCore.QPoint(anchor.x(), anchor.y() + anchor.height() + _TOOLTIP_GAP)
+            QtWidgets.QToolTip.showText(below, text, watched, local)
+            _settle_tooltip(watched, anchor)
+        finally:
+            self._busy = False
+        return True
+
+
+def _tooltip_subject(widget: QtWidgets.QWidget, pos: QtCore.QPoint) -> tuple[str, QtCore.QRect]:
+    """The tip text and the rectangle it must not cover, in ``widget`` coordinates."""
+    if isinstance(widget, QtWidgets.QMenu) and widget.toolTipsVisible():
+        action = widget.actionAt(pos)
+        if action is not None and action.toolTip().strip():
+            return action.toolTip(), widget.actionGeometry(action)
+        return "", QtCore.QRect()
+    text = widget.toolTip().strip()
+    if text:
+        return widget.toolTip(), widget.rect()
+    return "", QtCore.QRect()
+
+
+def _visible_tooltip() -> QtWidgets.QWidget | None:
+    """The live tip label, which Qt keeps off the window that owns the control."""
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return None
+    for widget in app.topLevelWidgets():
+        if not widget.isVisible():
+            continue
+        name = widget.metaObject().className()
+        if widget.windowType() == QtCore.Qt.WindowType.ToolTip or "Tip" in name:
+            return widget
+    return None
+
+
+def _settle_tooltip(widget: QtWidgets.QWidget, anchor: QtCore.QRect) -> None:
+    """Wrap the tip to 420 px, round its corners, and sit it under the control."""
+    tip = _visible_tooltip()
+    if tip is None or not isinstance(tip, QtWidgets.QLabel):
+        return
+    tip.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    tip.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    font = tip.font()
+    font.setStyleStrategy(QtGui.QFont.StyleStrategy.NoSubpixelAntialias)
+    tip.setFont(font)
+    tip.setWordWrap(True)
+    text = tip.text()
+    flags = int(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.TextFlag.TextWordWrap)
+    rect = tip.fontMetrics().boundingRect(0, 0, _TOOLTIP_TEXT, 2000, flags, text)
+    width = rect.width() + _TOOLTIP_PAD_X * 2 + _TOOLTIP_BORDER * 2
+    height = rect.height() + _TOOLTIP_PAD_Y * 2 + _TOOLTIP_BORDER * 2
+    tip.setFixedSize(max(width, 1), max(height, 1))
+    x = anchor.x()
+    y = anchor.y() + anchor.height() + _TOOLTIP_GAP
+    window = widget.window()
+    if isinstance(window, QtWidgets.QWidget):
+        origin = window.mapToGlobal(QtCore.QPoint(0, 0))
+        if y + tip.height() > origin.y() + window.height():
+            y = anchor.y() - tip.height() - _TOOLTIP_GAP
+        limit = origin.x() + window.width() - tip.width()
+        x = min(max(x, origin.x()), max(limit, origin.x()))
+        y = max(y, origin.y())
+    tip.move(x, y)
 
 
 def section_set(settings: object) -> SectionSet:
@@ -247,6 +385,7 @@ class ForgeApp:
         from voxprint_forge.app.runner import ProcessRunner
 
         register_catalogs()
+        _install_tooltip_placement()
         self.surface = surface_for(APP_ID)
         self.settings = lora_settings()
         self.home = home if home is not None else state_dir() / APP_ID
@@ -407,6 +546,7 @@ class ForgeApp:
         menu.setToolTipsVisible(True)
         if first is not None:
             menu.insertSeparator(first)
+        _style_menu(menu)
 
     def command(self, command_id: str) -> None:
         """Shell commands: Save, Open folder, Manage models, Expert mode."""
@@ -451,6 +591,7 @@ class ForgeApp:
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
         self._loss_label = None
+        self._review_actions = None
         # A paused review replaces the training intro; Continue, train fully and Finish drive that screen.
         if not (step == "train" and self._review_waiting() and not self.runner.busy):  # type: ignore[attr-defined]
             self._intro(column, step)
@@ -486,6 +627,9 @@ class ForgeApp:
         status.setContentsMargins(0, 4, 0, 4)
         status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         stack.addWidget(scroll, 1)
+        # Continue / Finish stay under the scroll, so an 800 px window shows the heading and the row together.
+        if self._review_actions is not None:
+            stack.addWidget(self._review_actions)
         # The footer (status line, then the shell's Back/Next) is pinned under the scrolling step body;
         # a thin line marks where the body ends, so a row cut by the scroll edge reads as "scroll for more".
         line = QtWidgets.QFrame()
@@ -712,8 +856,7 @@ class ForgeApp:
         button.setProperty("photosAdd", "true")
         button.setToolTip(tr("lora.photos.add.tip"))
         button.setAutoDefault(False)
-        menu = QtWidgets.QMenu(button)
-        menu.setObjectName("forge.photos.add_menu")
+        menu = _menu(button, "forge.photos.add_menu")
         files = menu.addAction(tr("forge.app.photos.add_files"))
         files.triggered.connect(self.choose_photos)
         folder = menu.addAction(tr("forge.app.photos.add_folder"))
@@ -1307,7 +1450,8 @@ class ForgeApp:
         row = QtWidgets.QHBoxLayout()
         busy = self.runner.busy  # type: ignore[attr-defined]
         for label, tip, slot, primary in (
-            ("forge.app.result.save", "lora.result.save.tip", self.save, True),
+            ("forge.app.result.export_lora", "forge.app.result.export_lora.tip", self.export_lora, True),
+            ("forge.app.result.save", "lora.result.save.tip", self.save, False),
             ("forge.app.result.canvas", "lora.result.canvas.tip", self.install, False),
             ("forge.app.result.extend", "lora.result.extend.tip", self.extend_this, False),
         ):
@@ -1405,10 +1549,14 @@ class ForgeApp:
         state = self._review_state()
         counted = rounds.counts(state)
         busy = self.runner.busy  # type: ignore[attr-defined]
+        # A flush first line sits under the viewport edge and reads as a cut-off header.
+        margins = column.contentsMargins()
+        column.setContentsMargins(margins.left(), max(margins.top(), 12), margins.right(), margins.bottom())
         heading = QtWidgets.QLabel(tr("forge.app.review.heading"))
         heading.setObjectName("forge.review.heading")
         heading.setProperty("emptyTitle", "true")
         heading.setWordWrap(True)
+        heading.setMinimumHeight(max(36, heading.fontMetrics().height() + 10))
         column.addWidget(heading)
         lead = QtWidgets.QLabel(tr("forge.app.review.lead"))
         lead.setObjectName("forge.review.lead")
@@ -1454,42 +1602,168 @@ class ForgeApp:
         tools.addStretch(1)
         column.addLayout(tools)
         row = QtWidgets.QHBoxLayout()
-        cont = self._continue_split(busy)
-        finish = _button("forge.app.review.finish", "forge.app.review.finish.tip", self.finish_review)
-        finish.setObjectName("forge.review.finish")
-        finish.setEnabled(not busy)
-        row.addWidget(cont)
-        row.addWidget(finish)
-        row.addStretch(1)
-        column.addLayout(row)
-        note = QtWidgets.QLabel(tr("forge.app.review.note"))
+        row.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.setSpacing(12)
+        cont = self._continue_control(busy)
+        finish = self._finish_menu(busy)
+        note = QtWidgets.QLabel()
         note.setObjectName("forge.review.note")
         note.setProperty("muted", "true")
-        note.setWordWrap(True)
-        column.addWidget(note)
+        note.setWordWrap(False)
+        note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._review_note = note
+        self._show_review_note(cont.mode())
+        cont.toggled.connect(self._show_review_note)
+        row.addWidget(cont, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(note, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch(1)
+        row.addWidget(self._review_attire(busy), 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(finish, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        bar = QtWidgets.QWidget()
+        bar.setObjectName("forge.review.actions")
+        pinned = QtWidgets.QVBoxLayout(bar)
+        pinned.setContentsMargins(0, 8, 0, 0)
+        pinned.setSpacing(0)
+        pinned.addLayout(row)
+        self._review_actions = bar
         self._review_continue = cont
 
-    def _continue_split(self, busy: bool) -> QtWidgets.QToolButton:
-        """Primary split button: the next review, or every remaining step with no more pauses."""
-        button = QtWidgets.QToolButton()
-        button.setObjectName("forge.review.continue")
-        button.setText(tr("forge.app.review.continue"))
-        button.setToolTip(tr("forge.app.review.continue.tip"))
-        button.setProperty("reviewPrimary", "true")
-        button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
-        button.setAutoRaise(False)
+    def _review_attire(self, busy: bool) -> QtWidgets.QWidget:
+        """Attire for the next round, on the continue row and to the right of the help line."""
+        row = QtWidgets.QWidget()
+        row.setObjectName("forge.review.attire.row")
+        row.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        label = _FullWidthLabel(tr("forge.app.review.attire"))
+        label.setObjectName("forge.review.attire.label")
+        label.setStyleSheet("color: #f4f1ea; background: transparent;")
+        combo = _AttireCombo()
+        tip = tr("forge.app.review.attire.tip")
+        combo.setToolTip(tip)
+        label.setToolTip(tip)
+        label.setBuddy(combo)
+        label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Preferred)
+        for key, mode in (
+            ("forge.app.review.attire.as_photos", "auto"),
+            ("forge.app.review.attire.clothed", "clothed"),
+            ("forge.app.review.attire.unclothed", "unclothed"),
+        ):
+            combo.addItem(tr(key), mode)
+        combo.fit_to_items()
+        stored = self._stored_sample_attire()
+        shown = stored if stored in ("clothed", "unclothed") else "auto"
+        combo.blockSignals(True)
+        combo.setCurrentIndex(max(0, combo.findData(shown)))
+        combo.blockSignals(False)
+        combo.setEnabled(not busy)
+        combo.currentIndexChanged.connect(self._store_sample_attire)
+        self._attire_combo = combo
+        layout.addWidget(label, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(combo, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        return row
+
+    def _stored_sample_attire(self) -> str:
+        """The attire mode saved on the project, or ``auto``."""
+        try:
+            return read_attire(Project(self.project).read())
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return "auto"
+
+    def _store_sample_attire(self, index: int) -> None:
+        """Keep the combo's choice on the project. The open round is left as it is."""
+        combo = getattr(self, "_attire_combo", None)
+        if not isinstance(combo, QtWidgets.QComboBox):
+            return
+        mode = combo.itemData(index)
+        if mode not in ("auto", "clothed", "unclothed"):
+            return
+        project = Project(self.project)
+        try:
+            data = project.read()
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return
+        if data.get("sample_attire") == mode:
+            return
+        store_attire(project, str(mode))
+
+    def _show_review_note(self, mode: str) -> None:
+        """One muted line for the mode the main button would start."""
+        note = getattr(self, "_review_note", None)
+        if not isinstance(note, QtWidgets.QLabel):
+            return
+        key = "forge.app.review.note.plain" if mode == "plain" else "forge.app.review.note.reinforced"
+        note.setText(tr(key))
+
+    def _continue_control(self, busy: bool) -> "_ContinueToggle":
+        """Large primary button. ▾ swaps reinforcement and plain continue."""
+        control = _ContinueToggle(
+            tr("forge.app.review.continue"),
+            tr("forge.app.review.unattended"),
+            tr("forge.app.review.continue.tip"),
+            tr("forge.app.review.unattended.tip"),
+            self._stored_continue_mode(),
+        )
+        control.setEnabled(not busy)
+        control.activated.connect(self._start_continue)
+        control.toggled.connect(self._store_continue_mode)
+        return control
+
+    def _stored_continue_mode(self) -> str:
+        """``plain`` when the project saved that choice, otherwise reinforcement."""
+        try:
+            data = Project(self.project).read()
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return "reinforced"
+        return "plain" if data.get("continue_mode") == "plain" else "reinforced"
+
+    def _store_continue_mode(self, mode: str) -> None:
+        """Write the continue choice onto ``project.json``."""
+        if mode not in ("plain", "reinforced"):
+            return
+        project = Project(self.project)
+        try:
+            data = project.read()
+        except (OSError, LoraUsageError, json.JSONDecodeError, ValueError):
+            return
+        if data.get("continue_mode") == mode:
+            return
+        project.write({**data, "continue_mode": mode})
+
+    def _start_continue(self) -> None:
+        """Enter on the main face starts the mode the ▾ last selected."""
+        control = getattr(self, "_review_continue", None)
+        if control is not None and control.mode() == "plain":
+            self.continue_unattended()
+            return
+        self.continue_review()
+
+    def _finish_menu(self, busy: bool) -> QtWidgets.QPushButton:
+        """Small Finish button. Its menu saves or discards."""
+        button = _FinishButton(tr("forge.app.review.finish"))
+        button.setObjectName("forge.review.finish")
+        button.setProperty("reviewFinish", "true")
+        button.setToolTip(tr("forge.app.review.finish.tip"))
+        button.setAutoDefault(False)
         button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        button.setMinimumHeight(28)
+        button.setMaximumHeight(32)
         button.setEnabled(not busy)
-        button.setMinimumWidth(button.fontMetrics().horizontalAdvance(button.text()) + 48)
-        menu = QtWidgets.QMenu(button)
-        menu.setObjectName("forgeReviewMenu")
-        action = menu.addAction(tr("forge.app.review.unattended"))
-        action.setObjectName("forge.review.unattended")
-        action.setToolTip(tr("forge.app.review.unattended.tip"))
-        action.triggered.connect(self.continue_unattended)
+        button.style().unpolish(button)
+        button.style().polish(button)
+        menu = _FinishMenu(button)
+        save = menu.addAction(tr("forge.app.review.finish.save"))
+        save.setObjectName("forge.review.finish.save")
+        save.setToolTip(tr("forge.app.review.finish.save.tip"))
+        save.triggered.connect(self.finish_review)
+        discard = menu.addAction(tr("forge.app.review.finish.discard"))
+        discard.setObjectName("forge.review.finish.discard")
+        discard.setToolTip(tr("forge.app.review.finish.discard.tip"))
+        discard.triggered.connect(self.discard_review)
+        menu.setToolTipsVisible(True)
         button.setMenu(menu)
-        button.clicked.connect(self.continue_review)
         return button
 
     def _review_originals(self) -> list[Path]:
@@ -1650,7 +1924,7 @@ class ForgeApp:
             ))
             button = getattr(self, "_review_continue", None)
             if button is not None:
-                # The menu stays available when no further round is planned. The main click checks that itself.
+                # Both modes stay available while the review is open. The click checks the round itself.
                 button.setEnabled(not self.runner.busy)  # type: ignore[attr-defined]
             self._paint_review_footer(counted)
         except RuntimeError:
@@ -1694,9 +1968,7 @@ class ForgeApp:
 
     def _confirm_unmarked(self, title_key: str = "forge.app.review.continue") -> bool:
         """Ask before a pass that would drop pictures the user has not marked."""
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.review.unmarked")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box = _message_box(self.window, "forge.review.unmarked")
         box.setWindowTitle(tr(title_key))
         box.setText(tr("forge.app.review.unmarked"))
         go = box.addButton(
@@ -1768,18 +2040,44 @@ class ForgeApp:
 
         self._run(["--json", "lora", "finish", str(self.project)], done)
 
+    def discard_review(self) -> None:
+        """``lora finish --discard --yes``: confirm, then remove temporary files. Photos stay."""
+        if not self._needs("finish"):
+            return
+        if not self._confirm_discard():
+            return
+
+        def done(outcome: engine.Outcome) -> None:
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            if outcome.ok and result.get("state") == "discarded":
+                self.draft.trained = False
+                self.paused = False
+
+        self._run(["--json", "lora", "finish", str(self.project), "--discard", "--yes"], done)
+
+    def _confirm_discard(self) -> bool:
+        """Ask before a discard that removes temporary versions and samples."""
+        box = _message_box(self.window, "forge.review.finish.discard.confirm")
+        box.setWindowTitle(tr("forge.app.review.finish.discard"))
+        box.setText(tr("forge.app.review.finish.discard.confirm"))
+        go = box.addButton(tr("forge.app.review.finish.discard"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(
+            tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
+
     def _confirm_finish(self) -> bool:
         """Ask before ending the run, and show the steps done out of the plan."""
         state = self._review_state()
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.review.finish.confirm")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
-        box.setWindowTitle(tr("forge.app.review.finish"))
+        box = _message_box(self.window, "forge.review.finish.confirm")
+        box.setWindowTitle(tr("forge.app.review.finish.save"))
         box.setText(tr(
             "forge.app.review.finish.confirm",
             done=rounds.steps_completed(state), planned=rounds.total_steps_of(state),
         ))
-        go = box.addButton(tr("forge.app.review.finish"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        go = box.addButton(tr("forge.app.review.finish.save"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton(
             tr("forge.app.review.unmarked.cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole,
         )
@@ -2249,9 +2547,7 @@ class ForgeApp:
 
     def _confirm_stop(self) -> bool:
         """True when the user confirms ending the run."""
-        box = QtWidgets.QMessageBox(self.window)
-        box.setObjectName("forge.train.stop.ask")
-        box.setIcon(QtWidgets.QMessageBox.Icon.NoIcon)
+        box = _message_box(self.window, "forge.train.stop.ask")
         box.setWindowTitle(tr("forge.app.train.stop"))
         box.setText(tr("forge.app.train.stop.ask"))
         stop = box.addButton(tr("forge.app.train.stop.confirm"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
@@ -2281,6 +2577,29 @@ class ForgeApp:
 
         self._run(engine.export_args(self.draft, self.project, out, checkpoint=self.draft.checkpoint,
                                      install=install), done)
+
+    def export_lora(self) -> None:
+        """Save the small ``.voxlora`` package. Source photos are not included."""
+        if not self._needs("export"):
+            return
+        stem = package_stem(Project(self.project).read())
+        path, _chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            tr("forge.app.result.export_lora"),
+            str(Path.home() / f"{stem}.voxlora"),
+            tr("forge.app.result.export_filter"),
+        )
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.lower() != ".voxlora":
+            target = Path(f"{target}.voxlora") if not target.suffix else target.with_suffix(".voxlora")
+
+        def done(outcome: engine.Outcome) -> None:
+            if outcome.ok:
+                self.status = ("forge.app.result.exported", {"name": target.name}, False)
+
+        self._run(engine.package_args(self.project, target), done)
 
     def save(self) -> None:
         """Save one .safetensors file with its ``voxprint-model/1`` description."""
@@ -2714,6 +3033,686 @@ class _ClickLabel(QtWidgets.QLabel):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+def _page_color() -> QtGui.QColor:
+    """The wizard card behind the continue button, so the rounded corners match it."""
+    try:
+        return QtGui.QColor(str(load_tokens().colors["CARD_PLAIN"]))
+    except Exception:  # noqa: BLE001 - a missing token still paints the card colour
+        return QtGui.QColor("#202029")
+
+
+def _mix(start: QtGui.QColor, end: QtGui.QColor, t: float) -> QtGui.QColor:
+    """Linear blend of two colours. ``t`` is 0 at ``start`` and 1 at ``end``."""
+    clamped = max(0.0, min(1.0, t))
+    return QtGui.QColor(
+        int(start.red() + (end.red() - start.red()) * clamped),
+        int(start.green() + (end.green() - start.green()) * clamped),
+        int(start.blue() + (end.blue() - start.blue()) * clamped),
+    )
+
+
+class _FlatButton(QtWidgets.QPushButton):
+    """Focusable hit target. The parent paints the face."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.setObjectName(name)
+        self.setFlat(True)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setAutoDefault(False)
+        self.setStyleSheet(
+            "QPushButton, QPushButton:hover, QPushButton:pressed, QPushButton:focus, QPushButton:disabled {"
+            " background: transparent; border: none; color: transparent; }"
+        )
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Draw nothing, so the parent's crossfade stays visible."""
+        del event
+
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:  # noqa: N802 - Qt override
+        """Ask the parent to draw the focus mark."""
+        super().focusInEvent(event)
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.update()
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:  # noqa: N802 - Qt override
+        """Clear the parent's focus mark."""
+        super().focusOutEvent(event)
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.update()
+
+
+class _ContinueMain(_FlatButton):
+    """The wide face. Enter starts the current mode."""
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # noqa: N802 - Qt override
+        """Enter starts. Other keys keep the button's own behaviour."""
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _ContinueChevron(_FlatButton):
+    """The narrow ▾ edge. Arrow keys swap the mode."""
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # noqa: N802 - Qt override
+        """Arrow keys toggle. Enter does not start the run."""
+        if event.key() in (
+            QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Right, QtCore.Qt.Key.Key_Up, QtCore.Qt.Key.Key_Down,
+        ):
+            self.click()
+            event.accept()
+            return
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _ContinueToggle(QtWidgets.QWidget):
+    """One primary button: the label and colour swap when ▾ is pressed."""
+
+    toggled = QtCore.Signal(str)
+    activated = QtCore.Signal()
+
+    def __init__(self, reinforced: str, plain: str, reinforced_tip: str, plain_tip: str, mode: str) -> None:
+        super().__init__()
+        self.setObjectName("forge.review.continue.host")
+        self.setAutoFillBackground(False)
+        self._reinforced = reinforced
+        self._plain = plain
+        self._reinforced_tip = reinforced_tip
+        self._plain_tip = plain_tip
+        self._mode = "plain" if mode == "plain" else "reinforced"
+        self._blend = 1.0 if self._mode == "plain" else 0.0
+        self._main = _ContinueMain("forge.review.continue")
+        self._chevron = _ContinueChevron("forge.review.continue.chevron")
+        self._main.setParent(self)
+        self._chevron.setParent(self)
+        self._chevron.setAccessibleName("▾")
+        self._apply_text()
+        self._main.clicked.connect(lambda _checked=False: self.activated.emit())
+        self._chevron.clicked.connect(lambda _checked=False: self.toggle())
+        self._anim = QtCore.QVariantAnimation(self)
+        self._anim.setDuration(_FADE_MS)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.InOutQuad)
+        self._anim.valueChanged.connect(self._on_blend)
+        self._fit()
+
+    def mode(self) -> str:
+        """``reinforced`` or ``plain``."""
+        return self._mode
+
+    def text(self) -> str:
+        """The label Enter would start."""
+        return self._main.text()
+
+    def toggle(self) -> None:
+        """Swap reinforcement and plain continue, then crossfade the label."""
+        self.set_mode("reinforced" if self._mode == "plain" else "plain")
+
+    def set_mode(self, mode: str) -> None:
+        """Show ``reinforced`` or ``plain``. An unknown value stays on reinforcement."""
+        target = "plain" if mode == "plain" else "reinforced"
+        changed = target != self._mode
+        self._mode = target
+        self._apply_text()
+        end = 1.0 if target == "plain" else 0.0
+        self._anim.stop()
+        if changed and abs(self._blend - end) > 0.001:
+            self._anim.setStartValue(float(self._blend))
+            self._anim.setEndValue(end)
+            self._anim.start()
+        else:
+            self._blend = end
+            self.update()
+        if changed:
+            self.toggled.emit(target)
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        """The longer label, the chevron, and the padding. Both modes share it."""
+        return QtCore.QSize(self._needed_width(), self._needed_height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        """Do not let the row shrink the label."""
+        return self.sizeHint()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt override
+        """Measure again once the shell font is applied."""
+        super().showEvent(event)
+        self._fit()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802 - Qt override
+        """Keep the ▾ segment on the right edge."""
+        super().resizeEvent(event)
+        self._place()
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:  # noqa: N802 - Qt override
+        """Repaint when the row is enabled or disabled."""
+        super().changeEvent(event)
+        if event.type() in (
+            QtCore.QEvent.Type.EnabledChange,
+            QtCore.QEvent.Type.FontChange,
+            QtCore.QEvent.Type.StyleChange,
+        ):
+            self._fit()
+            self.update()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Gold or a calmer sand, with both labels crossfading."""
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), _page_color())
+        blend = self._blend
+        if self.isEnabled():
+            fill = _mix(QtGui.QColor("#f5d76e"), QtGui.QColor("#d2c4a4"), blend)
+            border = _mix(QtGui.QColor("#fbe8a6"), QtGui.QColor("#e6dcc4"), blend)
+            ink = _mix(QtGui.QColor("#1c1604"), QtGui.QColor("#2a2416"), blend)
+            rule = _mix(QtGui.QColor("#c4a84a"), QtGui.QColor("#a89878"), blend)
+        else:
+            fill = QtGui.QColor("#4a4430")
+            border = fill
+            ink = QtGui.QColor("#6e6e7e")
+            rule = fill
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QtGui.QPen(border, 1))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, _ROW_RADIUS, _ROW_RADIUS)
+        chevron = self._chevron.geometry()
+        painter.setPen(QtGui.QPen(rule, 1))
+        painter.drawLine(chevron.left(), 6, chevron.left(), max(6, self.height() - 7))
+        painter.setPen(ink)
+        painter.setFont(self.font())
+        painter.drawText(chevron, int(QtCore.Qt.AlignmentFlag.AlignCenter), "▾")
+        label_right = chevron.left() - _LABEL_GAP
+        label = QtCore.QRectF(_LABEL_PAD, 0, max(0.0, label_right - _LABEL_PAD), float(self.height()))
+        align = int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft)
+        painter.setOpacity(max(0.0, 1.0 - blend))
+        painter.drawText(label, align, self._reinforced)
+        painter.setOpacity(max(0.0, blend))
+        painter.drawText(label, align, self._plain)
+        painter.setOpacity(1.0)
+        if self._chevron.hasFocus():
+            pen = QtGui.QPen(ink)
+            pen.setWidthF(1.4)
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QtCore.QRectF(chevron.adjusted(3, 4, -4, -5)), 2, 2)
+        painter.end()
+
+    def _apply_text(self) -> None:
+        if self._mode == "plain":
+            self._main.setText(self._plain)
+            self._main.setToolTip(self._plain_tip)
+            self._chevron.setToolTip(self._reinforced_tip)
+            return
+        self._main.setText(self._reinforced)
+        self._main.setToolTip(self._reinforced_tip)
+        self._chevron.setToolTip(self._plain_tip)
+
+    def _text_width(self) -> int:
+        font = self.font()
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        metrics = QtGui.QFontMetrics(font)
+        advance = max(metrics.horizontalAdvance(self._reinforced), metrics.horizontalAdvance(self._plain))
+        ink = max(metrics.boundingRect(self._reinforced).width(), metrics.boundingRect(self._plain).width())
+        return max(advance, ink) + 4
+
+    def _needed_width(self) -> int:
+        return self._text_width() + _LABEL_PAD + _LABEL_GAP + _CHEVRON_W
+
+    def _needed_height(self) -> int:
+        font = self.font()
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        return max(40, QtGui.QFontMetrics(font).height() + 18)
+
+    def _fit(self) -> None:
+        if not hasattr(self, "_main"):
+            return
+        font = self.font()
+        if font.weight() != QtGui.QFont.Weight.DemiBold:
+            font.setWeight(QtGui.QFont.Weight.DemiBold)
+            self.setFont(font)
+            self._main.setFont(font)
+        needed = QtCore.QSize(self._needed_width(), self._needed_height())
+        if self.minimumSize() != needed:
+            self.setMinimumSize(needed)
+            self.updateGeometry()
+        if self.width() < needed.width() or self.height() < needed.height():
+            self.resize(max(self.width(), needed.width()), max(self.height(), needed.height()))
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._place()
+
+    def _place(self) -> None:
+        width = self.width()
+        height = self.height()
+        chevron = min(_CHEVRON_W, width)
+        self._chevron.setGeometry(width - chevron, 0, chevron, height)
+        self._main.setGeometry(0, 0, max(0, width - chevron), height)
+
+    def _on_blend(self, value: float) -> None:
+        self._blend = float(value)
+        self.update()
+
+
+def _style_menu(menu: QtWidgets.QMenu) -> None:
+    """Dark popup. A menu is top-level and does not inherit the window sheet."""
+    menu.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    menu.setStyleSheet(_MENU_STYLE)
+    palette = menu.palette()
+    ground = QtGui.QColor("#2a2a33")
+    ink = QtGui.QColor("#f4f1ea")
+    palette.setColor(QtGui.QPalette.ColorRole.Window, ground)
+    palette.setColor(QtGui.QPalette.ColorRole.Base, ground)
+    palette.setColor(QtGui.QPalette.ColorRole.Button, ground)
+    palette.setColor(QtGui.QPalette.ColorRole.WindowText, ink)
+    palette.setColor(QtGui.QPalette.ColorRole.Text, ink)
+    palette.setColor(QtGui.QPalette.ColorRole.ButtonText, ink)
+    palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor("#3a3a46"))
+    palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, ink)
+    menu.setPalette(palette)
+
+
+def _menu(parent: QtWidgets.QWidget, name: str) -> QtWidgets.QMenu:
+    """A dark menu owned by ``parent``."""
+    menu = QtWidgets.QMenu(parent)
+    menu.setObjectName(name)
+    _style_menu(menu)
+    return menu
+
+
+_ATTIRE_DROP_W = 22
+_ATTIRE_TEXT_PAD = 8
+_ATTIRE_ARROW = Path(__file__).resolve().parent / "review-chevron.svg"
+_ATTIRE_COMBO_STYLE = """
+QComboBox {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #5c5c6c; border-radius: 4px;
+    padding: 2px 4px 2px 8px; min-height: 28px; max-height: 28px;
+}
+QComboBox:hover { border-color: #c8c8d4; }
+QComboBox:disabled { background: #22222b; color: #6e6e7e; border-color: #33333f; }
+QComboBox::drop-down {
+    subcontrol-origin: padding; subcontrol-position: center right;
+    width: 22px; border: none;
+    border-top-right-radius: 4px; border-bottom-right-radius: 4px;
+}
+QComboBox::down-arrow { image: url(@@ARROW@@); width: 12px; height: 8px; }
+QComboBox QAbstractItemView {
+    background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4; border-radius: 4px;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0; padding: 2px;
+}
+"""
+_ATTIRE_POPUP_STYLE = """
+QFrame { background: #1c1c24; color: #f4f1ea; border: 1px solid #c8c8d4; border-radius: 4px; }
+"""
+_ATTIRE_VIEW_STYLE = """
+QAbstractItemView {
+    background: #1c1c24; color: #f4f1ea; border: none;
+    selection-background-color: #3a3a46; selection-color: #f4f1ea; outline: 0; padding: 2px;
+}
+"""
+
+
+def _attire_combo_style() -> str:
+    """Dark combo face. The ▾ is the down-arrow image."""
+    return _ATTIRE_COMBO_STYLE.replace("@@ARROW@@", _ATTIRE_ARROW.as_posix())
+
+
+class _FullWidthLabel(QtWidgets.QLabel):
+    """A label that never gets narrower than its text in the font it ends up with."""
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        hint = super().minimumSizeHint()
+        return QtCore.QSize(max(hint.width(), self.fontMetrics().horizontalAdvance(self.text()) + 2), hint.height())
+
+    def sizeHint(self) -> QtCore.QSize:
+        hint = super().sizeHint()
+        return QtCore.QSize(max(hint.width(), self.minimumSizeHint().width()), hint.height())
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() in (QtCore.QEvent.Type.FontChange, QtCore.QEvent.Type.StyleChange):
+            self.updateGeometry()
+
+
+class _AttireCombo(QtWidgets.QComboBox):
+    """Dark attire list. The popup opens under the box."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("forge.review.attire")
+        self.setStyleSheet(_attire_combo_style())
+        self.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(28)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.view().setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt override
+        """Size the box to its longest item once the font is real."""
+        super().showEvent(event)
+        self.fit_to_items()
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:  # noqa: N802 - Qt override
+        """Measure again when the font changes."""
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.FontChange:
+            self.fit_to_items()
+
+    def fit_to_items(self) -> None:
+        """Minimum width is the longest item, plus the arrow and the padding."""
+        self.ensurePolished()
+        metrics = self.fontMetrics()
+        widest = 0
+        for index in range(self.count()):
+            text = self.itemText(index)
+            widest = max(widest, metrics.horizontalAdvance(text), metrics.boundingRect(text).width())
+        floor = widest + _ATTIRE_TEXT_PAD + _ATTIRE_TEXT_PAD + _ATTIRE_DROP_W
+        self.setMinimumWidth(floor)
+        self.updateGeometry()
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt override
+        """Open the dark list directly under the box, sharing its left edge."""
+        view = self.view()
+        view.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
+        super().showPopup()
+        popup = view.window()
+        if popup is None or popup is self.window():
+            return
+        popup.setStyleSheet(_ATTIRE_POPUP_STYLE)
+        view.setStyleSheet(_ATTIRE_VIEW_STYLE)
+        self._place_popup(popup)
+
+    def _place_popup(self, popup: QtWidgets.QWidget) -> None:
+        """Put the list under the box. The extra scroll buttons stay hidden."""
+        view = self.view()
+        for child in popup.findChildren(QtWidgets.QWidget):
+            if child.metaObject().className() == "QComboBoxPrivateScroller":
+                child.hide()
+                child.setFixedHeight(0)
+        layout = popup.layout()
+        if layout is not None:
+            layout.setContentsMargins(1, 1, 1, 1)
+        metrics = self.fontMetrics()
+        widest = 0
+        for index in range(self.count()):
+            widest = max(widest, metrics.horizontalAdvance(self.itemText(index)))
+        width = max(self.width(), widest + _ATTIRE_TEXT_PAD * 2)
+        row = view.sizeHintForRow(0) if self.count() else metrics.height() + 6
+        height = row * max(1, self.count()) + 2
+        popup.setFixedSize(width, height)
+        view.setFixedSize(max(1, width - 2), max(1, height - 2))
+        origin = self.mapToGlobal(QtCore.QPoint(0, 0))
+        left = origin.x()
+        top = origin.y() + self.height()
+        host = self.window()
+        if host is not None:
+            frame = QtCore.QRect(host.mapToGlobal(QtCore.QPoint(0, 0)), host.size())
+            left = min(max(left, frame.left()), max(frame.left(), frame.right() - popup.width() + 1))
+        popup.move(left, top)
+
+
+class _FinishMenu(QtWidgets.QMenu):
+    """Dark finish menu. The panel is drawn here so a grab shows the border, radius and shadow."""
+
+    def __init__(self, parent: QtWidgets.QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("forgeReviewMenu")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.NoDropShadowWindowHint, True)
+        self.setProperty("forgeShadowBelow", _FINISH_SHADOW)
+
+    def shadow_below(self) -> int:
+        """Pixels of shadow under the panel. Zero when the menu opens above the button."""
+        value = self.property("forgeShadowBelow")
+        return value if isinstance(value, int) else 0
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Fill, light border, shadow under the panel, and the two actions."""
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        font = self.font()
+        # Subpixel antialiasing turns the danger pink into orange and cyan fringes.
+        font.setStyleStrategy(QtGui.QFont.StyleStrategy.NoSubpixelAntialias)
+        painter.setFont(font)
+        shadow = self.shadow_below()
+        panel = QtCore.QRectF(0, 0, self.width(), max(1, self.height() - shadow))
+        if shadow:
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            for step in range(shadow, 0, -1):
+                painter.setBrush(QtGui.QColor(0, 0, 0, 16))
+                painter.drawRoundedRect(panel.adjusted(1, 2, -1, step), _FINISH_RADIUS, _FINISH_RADIUS)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(_FINISH_BORDER))
+        painter.drawRoundedRect(panel, _FINISH_RADIUS, _FINISH_RADIUS)
+        painter.setBrush(QtGui.QColor(_FINISH_PANEL))
+        painter.drawRoundedRect(panel.adjusted(1, 1, -1, -1), max(0, _FINISH_RADIUS - 1), max(0, _FINISH_RADIUS - 1))
+        for action in self.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+            rect = self.actionGeometry(action)
+            if rect.isEmpty():
+                continue
+            if self.activeAction() is action:
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.setBrush(QtGui.QColor("#3a3a46"))
+                painter.drawRect(rect.adjusted(2, 1, -2, -1))
+            color = _DANGER_TEXT if action.objectName() == "forge.review.finish.discard" else _FINISH_INK
+            painter.setPen(QtGui.QColor(color))
+            flags = QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft
+            painter.drawText(rect.adjusted(16, 0, -8, 0), flags, action.text())
+        painter.end()
+
+
+class _FinishButton(QtWidgets.QPushButton):
+    """Finish opens its menu from the button's right edge, inside the window."""
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override
+        """Open the menu aligned to this button instead of past the window edge."""
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self.menu() is not None:
+            popup_menu(self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # noqa: N802 - Qt override
+        """Space, Enter and Down open the same aligned menu."""
+        if self.menu() is not None and event.key() in (
+            QtCore.Qt.Key.Key_Space, QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter, QtCore.Qt.Key.Key_Down,
+        ):
+            popup_menu(self)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+def _menu_width(menu: QtWidgets.QMenu) -> int:
+    metrics = menu.fontMetrics()
+    widest = 0
+    for action in menu.actions():
+        if not action.isSeparator():
+            widest = max(widest, metrics.horizontalAdvance(action.text()))
+    return widest + 48
+
+
+def _menu_panel_size(menu: QtWidgets.QMenu) -> tuple[int, int]:
+    """Width and height of the menu panel, without the shadow strip under a finish menu."""
+    menu.setMinimumWidth(_menu_width(menu))
+    if not menu.isVisible():
+        menu.adjustSize()
+    hint = menu.sizeHint()
+    return max(hint.width(), menu.minimumWidth()), max(hint.height(), 1)
+
+
+def menu_popup_point(button: QtWidgets.QAbstractButton) -> QtCore.QPoint:
+    """Global top-left: the menu's right edge meets the button's, and it hangs just below.
+
+    It flips above the button only when that panel would pass the bottom of the window.
+    The anchor is the window. The offscreen screen is smaller than a 1280 px window, and
+    clamping to the screen leaves the menu in the middle, over the help text.
+    """
+    menu = button.menu()
+    if menu is None:
+        return button.mapToGlobal(QtCore.QPoint(0, button.height()))
+    if isinstance(menu, _FinishMenu):
+        menu.setProperty("forgeShadowBelow", _FINISH_SHADOW)
+    width, panel = _menu_panel_size(menu)
+    shadow = menu.shadow_below() if isinstance(menu, _FinishMenu) else 0
+    height = panel + shadow
+    right = button.mapToGlobal(QtCore.QPoint(button.width(), 0)).x()
+    bottom = button.mapToGlobal(QtCore.QPoint(0, button.height())).y()
+    top = button.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    x = right - width
+    y = bottom
+    window = button.window()
+    if window is not None:
+        bounds = QtCore.QRect(window.mapToGlobal(QtCore.QPoint(0, 0)), window.size())
+        if y + height - 1 > bounds.bottom():
+            if isinstance(menu, _FinishMenu):
+                menu.setProperty("forgeShadowBelow", 0)
+            y = top - panel
+    return QtCore.QPoint(x, y)
+
+
+def popup_menu(button: QtWidgets.QAbstractButton) -> None:
+    """Show ``button``'s menu anchored to its right edge."""
+    menu = button.menu()
+    if menu is None:
+        return
+    menu.popup(menu_popup_point(button))
+    # QMenu::popup() pulls the menu onto the screen. Move it back onto the button.
+    point = menu_popup_point(button)
+    width, panel = _menu_panel_size(menu)
+    shadow = menu.shadow_below() if isinstance(menu, _FinishMenu) else 0
+    menu.resize(max(width, menu.width()), panel + shadow)
+    right = button.mapToGlobal(QtCore.QPoint(button.width(), 0)).x()
+    menu.move(right - menu.width(), point.y())
+    menu.setActiveAction(None)
+
+
+class _DarkDialog(QtWidgets.QDialog):
+    """A dark modal with a title, a border and a shadow. The frame is drawn, not the platform's."""
+
+    def __init__(self, parent: QtWidgets.QWidget, name: str) -> None:
+        super().__init__(parent)
+        self.setObjectName(name)
+        self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        self.setWindowFlags(QtCore.Qt.WindowType.Dialog | QtCore.Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._clicked: QtWidgets.QPushButton | None = None
+        self._roles: dict[QtWidgets.QPushButton, QtWidgets.QMessageBox.ButtonRole] = {}
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(28, 28, 28, 28)
+        card = QtWidgets.QFrame()
+        card.setObjectName("forgeDialogCard")
+        body = QtWidgets.QVBoxLayout(card)
+        body.setContentsMargins(20, 16, 20, 16)
+        body.setSpacing(12)
+        self._title = QtWidgets.QLabel()
+        self._title.setObjectName("forgeDialogTitle")
+        self._title.setWordWrap(True)
+        self._text = QtWidgets.QLabel()
+        self._text.setObjectName("qt_msgbox_label")
+        self._text.setWordWrap(True)
+        self._text.setMinimumWidth(420)
+        self._row = QtWidgets.QHBoxLayout()
+        self._row.addStretch(1)
+        self._button_list: list[QtWidgets.QPushButton] = []
+        body.addWidget(self._title)
+        body.addWidget(self._text)
+        body.addLayout(self._row)
+        outer.addWidget(card)
+        self.setStyleSheet(_DIALOG_STYLE)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """Draw the shadow in the margin so a grab shows it. Effects do not."""
+        del event
+        card = self.findChild(QtWidgets.QFrame, "forgeDialogCard")
+        if card is None:
+            return
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        rect = QtCore.QRectF(card.geometry())
+        for step in range(14, 0, -1):
+            painter.setBrush(QtGui.QColor(0, 0, 0, 16))
+            painter.drawRoundedRect(
+                rect.adjusted(-step * 0.4, 1 + step * 0.2, step * 0.4, 3 + step * 0.7), 16, 16,
+            )
+        painter.end()
+
+    def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt override
+        """Show the title inside the card. A frameless window has no title bar."""
+        super().setWindowTitle(title)
+        self._title.setText(title)
+
+    def setText(self, text: str) -> None:
+        """The sentence under the title."""
+        self._text.setText(text)
+
+    def text(self) -> str:
+        """The sentence under the title."""
+        return self._text.text()
+
+    def addButton(self, label: str, role: QtWidgets.QMessageBox.ButtonRole) -> QtWidgets.QPushButton:
+        """A button on the card. The discard confirmation's accept button is danger-coloured."""
+        button = QtWidgets.QPushButton(label)
+        button.setAutoDefault(False)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        if role == QtWidgets.QMessageBox.ButtonRole.AcceptRole and self.objectName().endswith("discard.confirm"):
+            button.setProperty("danger", "true")
+            button.style().unpolish(button)
+            button.style().polish(button)
+        button.clicked.connect(lambda _checked=False, chosen=button: self._choose(chosen))
+        self._roles[button] = role
+        self._button_list.append(button)
+        self._row.addWidget(button)
+        return button
+
+    def buttons(self) -> list[QtWidgets.QPushButton]:
+        """The buttons on the card, in the order they were added."""
+        return list(self._button_list)
+
+    def clickedButton(self) -> QtWidgets.QPushButton | None:
+        """The button that closed the dialog, or none when it was dismissed."""
+        return self._clicked
+
+    def setDefaultButton(self, button: QtWidgets.QPushButton) -> None:
+        """The button Enter activates."""
+        button.setDefault(True)
+        button.setAutoDefault(True)
+
+    def exec(self) -> int:  # noqa: N802 - Qt override
+        """Centre the card on the parent window, then run it."""
+        self.adjustSize()
+        window = self.parentWidget().window() if self.parentWidget() is not None else None
+        if window is not None:
+            frame = window.frameGeometry()
+            self.move(frame.center().x() - self.width() // 2, frame.center().y() - self.height() // 2)
+        return super().exec()
+
+    def _choose(self, button: QtWidgets.QPushButton) -> None:
+        self._clicked = button
+        if self._roles.get(button) == QtWidgets.QMessageBox.ButtonRole.AcceptRole:
+            self.accept()
+            return
+        self.reject()
+
+
+def _message_box(parent: QtWidgets.QWidget, name: str) -> _DarkDialog:
+    """A dark modal: title, border and shadow, on the app theme."""
+    return _DarkDialog(parent, name)
 
 
 def _button(label: str, tip: str, slot: Callable[[], None], *, primary: bool = False) -> QtWidgets.QPushButton:

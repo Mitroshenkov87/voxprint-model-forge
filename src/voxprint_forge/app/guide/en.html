@@ -16,7 +16,7 @@
 <li><a href="#page-install">Install</a>: requirements, setup and removal.</li>
 <li><a href="#page-models">Model download</a>: the VOXPrint model downloader (MDL), sources, licences and disk space.</li>
 <li><a href="#page-project">Creating a LoRA project</a>: photos, names, consent, the 18+ confirmation and the optional release file.</li>
-<li><a href="#page-presets">Presets</a>: Quick test, Balanced and Best quality, likeness, graphics card tiers and the measured figures.</li>
+<li><a href="#page-presets">Presets</a>: Quick check, Balanced and Best quality, likeness, graphics card tiers and the measured figures.</li>
 <li><a href="#page-training">Training</a>: checking and preparing photos, settings, progress, pause and stop.</li>
 <li><a href="#page-export">Export</a>: choosing a version, saving the LoRA and using it in Canvas.</li>
 <li><a href="#page-compression">Compression tests</a>: how compressed model parts are tested before the app uses them.</li>
@@ -224,12 +224,12 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Quick test</strong></td>
-<td>600</td>
+<td><strong>Quick check</strong></td>
+<td>150</td>
 <td>16</td>
 <td>0.0001</td>
 <td>768 px</td>
-<td>A fast first look at your photos</td>
+<td>A short run of the whole path: prepare, train, samples, finish and export</td>
 </tr>
 <tr>
 <td><strong>Balanced</strong> (recommended)</td>
@@ -280,7 +280,7 @@
 <h2 id="graphics-card-memory-16-gb-and-24-gb">Graphics card memory: 16 GB and 24 GB</h2>
 <p><strong>Auto</strong> reads your card: under 20 GB is the 16 GB tier, otherwise the 24 GB tier. You can also pick <strong>16 GB</strong> or <strong>24 GB</strong> yourself.</p>
 <ul>
-<li>Both tiers train one picture at a time with gradient checkpointing on. Balanced and Best quality add two pictures up before each step; Quick test does one.</li>
+<li>Both tiers train one picture at a time with gradient checkpointing on. Balanced and Best quality add two pictures up before each step; Quick check does one.</li>
 <li><strong>Z-Image</strong>, 16 GB tier: the base model is stored in a compact 8-bit form to fit the card. 24 GB tier: full precision.</li>
 <li><strong>MOSS-Image Base</strong>: the picture model stays in full precision on both tiers. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see <a href="#page-compression">Compression tests</a>).</li>
 </ul>
@@ -313,14 +313,21 @@
 </tr>
 <tr>
 <td>Z-Image</td>
-<td>16 GB and 24 GB</td>
+<td>16 GB</td>
 <td>full precision</td>
-<td>not measured yet</td>
-<td>not measured yet</td>
+<td>9.7 s at 1024 px</td>
+<td>not measured</td>
+</tr>
+<tr>
+<td>Z-Image</td>
+<td>24 GB</td>
+<td>full precision</td>
+<td>1.6 s at 1024 px, not measured</td>
+<td>not measured</td>
 </tr>
 </tbody>
 </table>
-<p>So a Balanced run on MOSS-Image Base (1500 steps) takes about 2 hours of training on such a card, plus a few minutes to load. The base model list on the Train step shows the measured peak for MOSS-Image Base; for Z-Image it shows the smallest card the presets target (16 GB+). <strong>Estimate time</strong> gives the forecast for your settings.</p>
+<p>The Z-Image 16 GB time was measured on a 16 GB RTX 4090 laptop, one picture at 1024 px. That run did not record a peak, so the card line stays 16 GB+. The 24 GB Z-Image time has not been measured. <strong>Estimate time</strong> and the first-pictures line use these seconds per step. A Balanced run on MOSS-Image Base (1500 steps) takes about 2 hours of training on such a card, plus a few minutes to load. The base model list on the Train step shows the measured peak for MOSS-Image Base; for Z-Image it shows the smallest card the presets target (16 GB+).</p>
 <p><a id="page-training"></a></p>
 <h1 id="training">Training</h1>
 <h2 id="step-4-check-and-prepare">Step 4: Check and prepare</h2>
@@ -344,8 +351,8 @@
 <ul>
 <li><strong>Show test pictures</strong> is a switch. While it is on, the app draws a few pictures during training so you can see progress. Those pictures are separate from the ones you mark between rounds.</li>
 </ul>
-<p><strong>Details ▸</strong> on this step, when review rounds are on, holds <strong>Review rounds</strong> (1 to 6, default 3) and <strong>First-round steps</strong> (100 to 500, default 200). Review rounds is how many times training pauses. First-round steps is the length of the stage before the first review.</p>
-<p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. While a stage is running, the step says that training is running, and the preset, likeness, memory and base model stay locked. <strong>Start training</strong> is greyed out. A line shows the step out of the total, how long the stage has been running and the time left, in hours and minutes. During the first round the same line says when the first pictures will be ready: steps still to run times the measured seconds per step, plus the pictures still to draw times the seconds per picture. Until one picture has been timed, each denoising step is estimated as half a training step. Once a picture has been timed, the line also shows the seconds per picture. The bar under that line ends with the percent. The loss is under <strong>Details</strong>. <strong>Pause</strong> and <strong>Stop</strong> stay available. <strong>Stop</strong> asks before it ends the run.</p>
+<p><strong>Details ▸</strong> on this step, when review rounds are on, holds <strong>Review rounds</strong> (1 to 6, default 3) and <strong>First-round steps</strong> (100 to 500, default 120). Review rounds is how many times training pauses. First-round steps is the length of the stage before the first review. While a stage is running, <strong>Estimate time</strong> is greyed out, the same as <strong>Start training</strong>.</p>
+<p>Press <strong>Estimate time</strong> for a forecast, then <strong>Start training</strong>. While a stage is running, the step says that training is running, and the preset, likeness, memory and base model stay locked. <strong>Start training</strong> and <strong>Estimate time</strong> are greyed out. A line shows the step out of the total, how long the stage has been running and the time left, in hours and minutes. During the first round the same line says when the first pictures will be ready: steps still to run times the measured seconds per step, plus the pictures still to draw times the seconds per picture. Until one picture has been timed, each denoising step is estimated as half a training step. Once a picture has been timed, the line also shows the seconds per picture. The bar under that line ends with the percent. The loss is under <strong>Details</strong>. <strong>Pause</strong> and <strong>Stop</strong> stay available. <strong>Stop</strong> asks before it ends the run.</p>
 <p><img alt="Training in progress" src="img/en-simple-5-train-running.png" /></p>
 <ul>
 <li><strong>Pause</strong> saves a version and stops. Press <strong>Continue</strong> later to go on from that version.</li>
@@ -353,11 +360,11 @@
 <li>The app saves a version six times during a run, so you can compare them on the next step.</li>
 </ul>
 <h2 id="review-rounds">Review rounds</h2>
-<p>With <strong>Extend the set from samples</strong> on (Photos step), training pauses for review. <strong>Review rounds</strong> (1 to 6, default 3) is how many pauses are planned. The first stage is <strong>First-round steps</strong> (default 200, from 100 to 500). The app then draws 6 pictures at the training resolution, 28 inference steps each. Later rounds draw 8 pictures, also at 28 steps. The preset steps that remain (the preset total minus the first-round steps) are split evenly across the remaining planned rounds, and the last of those rounds takes the remainder. The preset total does not change. A single planned round is only the first-round length; the steps still left are what <strong>Just continue</strong> runs.</p>
+<p>With <strong>Extend the set from samples</strong> on (Photos step), training pauses for review. <strong>Review rounds</strong> (1 to 6, default 3) is how many pauses are planned. The first stage is <strong>First-round steps</strong> (default 120, from 100 to 500). The app then draws 6 pictures at the training resolution, 28 inference steps each. Later rounds draw 8 pictures, also at 28 steps. The preset steps that remain (the preset total minus the first-round steps) are split evenly across the remaining planned rounds, and the last of those rounds takes the remainder. The preset total does not change. A single planned round is only the first-round length; the steps still left are what <strong>Just continue</strong> runs.</p>
 <p>The heading is <strong>Check the new pictures</strong>. Your photos stay beside the new pictures. Each new picture has <strong>Include</strong> and <strong>Leave out</strong>. A picture you include gets a gold border and a check. A picture you leave out is dimmed, with a red border and a cross. A picture with no mark stays plain.</p>
 <p><img alt="A review round" src="img/en-simple-5-review.png" /></p>
-<p><strong>Mark all 👍</strong> includes every new picture. <strong>Reset</strong> clears the marks. The footer counts pictures you included, pictures you left out, and pictures with no mark. The primary button is split. <strong>Continue with reinforcement</strong> trains the next round, then pauses for another review. Its menu item <strong>Just continue</strong> keeps the pictures you liked and trains the remaining steps with no more pauses. <strong>Finish</strong> is separate. It asks first and shows the steps done out of the plan, then saves the model at the steps it has and draws a final preview. The result is a finished LoRA you can export, labelled with the steps it got (for example, finished at 450 of 1500 steps) on the result screen, in <code>train.json</code>, and in the export (<code>steps</code> and <code>steps_planned</code>). If any picture has no mark, <strong>Continue with reinforcement</strong> and <strong>Just continue</strong> ask you to confirm: unmarked pictures will not join the set. A short note under the buttons explains the three actions. You can finish before the last planned round. Back and Next stay hidden. Closing the app does not drop a paused review: open the project again and the same screen is there.</p>
-<p>On the command line, <code>lora train --review-rounds N --first-round-steps 200 --first-round-samples 6 --samples-per-round 8 --sample-steps 28</code> pauses the same way. N is from 1 to 6, and the default is 3. <code>lora review</code> lists the pictures and sets marks (<code>--like</code>, <code>--dislike</code>, or <code>--from-file</code>). <code>lora continue PROJECT</code> trains the next round, then pauses for another review. <code>lora continue PROJECT --unattended</code> trains the remaining steps with no more pauses. <code>lora finish PROJECT</code> saves the model, draws a final preview, and records the steps it got. <code>lora status</code> prints the same first-pictures line during round 1. <code>--review-rounds 0</code> trains straight through.</p>
+<p><strong>Mark all 👍</strong> includes every new picture. <strong>Reset</strong> clears the marks. The footer counts pictures you included, pictures you left out, and pictures with no mark. On the action row, to the right of the help line, <strong>Sample pictures</strong> offers <strong>as in the photos</strong>, <strong>clothed</strong>, or <strong>unclothed</strong>. The choice is kept in the project and applies from the next round. Each sample uses the trigger word, one framing (close-up portrait, waist-up, or full body), and one attire word. <strong>As in the photos</strong> follows the prepared captions: unclothed when any caption is marked unclothed, otherwise clothed like the photos. The list does not add clothing on its own. The action row has a large button on the left and a small <strong>Finish</strong> button on the right. <strong>Continue with reinforcement</strong> is the default. It trains the next round, then pauses for another review. The <strong>▾</strong> cut into its right edge switches that same button to <strong>Just continue</strong>, in a calmer colour, with a short crossfade. <strong>Just continue</strong> keeps the pictures you liked and trains the remaining steps with no more pauses. Pressing <strong>▾</strong> again returns to reinforcement. The choice is kept in the project. <strong>Finish</strong> opens a small menu. <strong>Save</strong> asks first and shows the steps done out of the plan, then saves the model and draws a final preview. The result is a finished LoRA you can export, labelled with the steps it got (for example, finished at 450 of 1500 steps) on the result screen, in <code>train.json</code>, and in the export (<code>steps</code> and <code>steps_planned</code>). <strong>Force, without saving</strong> asks first, then stops and removes the project's temporary versions and samples. Nothing is saved. Your photos stay. If any picture has no mark, <strong>Continue with reinforcement</strong> and <strong>Just continue</strong> ask you to confirm: unmarked pictures will not join the set. One short muted line on that row, just to the right of the continue button, names the current main-button mode and changes when ▾ switches it. The full explanations are tooltips on the main button, ▾, Finish, and each menu item. You can finish before the last planned round. Back and Next stay hidden. Closing the app does not drop a paused review: open the project again and the same screen is there.</p>
+<p>On the command line, <code>lora train --review-rounds N --first-round-steps 120 --first-round-samples 6 --samples-per-round 8 --sample-steps 28 --sample-attire auto</code> pauses the same way. <code>--sample-attire</code> is <code>auto</code> (the default), <code>as_photos</code>, <code>clothed</code>, or <code>unclothed</code>, and it is stored on the project. N is from 1 to 6, and the default is 3. <code>lora review</code> lists the pictures and sets marks (<code>--like</code>, <code>--dislike</code>, or <code>--from-file</code>). <code>lora continue PROJECT</code> trains the next round, then pauses for another review. <code>lora continue PROJECT --unattended</code> trains the remaining steps with no more pauses. <code>lora finish PROJECT</code> saves the model, draws a final preview, and records the steps it got. <code>lora finish PROJECT --discard</code> stops and removes temporary versions and samples; without a terminal it also needs <code>--yes</code>. Your photos stay. <code>lora status</code> prints the same first-pictures line during round 1. <code>--review-rounds 0</code> trains straight through.</p>
 <h2 id="expert-settings">Expert settings</h2>
 <p>In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Learning rate, Scheduler, Warm-up steps, Batch size, Gradient accumulation, Resolution, Precision, Gradient checkpointing, Train the text encoder, Descriptions, Description model, Caption dropout, Seed, Save every N steps and Test picture every N steps. The reset button next to the presets puts back the values of the chosen preset.</p>
 <p><img alt="Expert mode while training" src="img/en-expert-5-train-running.png" /></p>
@@ -368,8 +375,9 @@
 <p><img alt="Step 6, Result" src="img/en-simple-6-result.png" /></p>
 <ol>
 <li>Look at the test pictures and choose a <strong>Version</strong>. A later version is not always better; pick the one you like.</li>
+<li><strong>Export LoRA</strong> writes one <code>.voxlora</code> package: the LoRA weights, a <code>voxprint-model.json</code> description and preview pictures. Your photos are not in it. The file name is the stage name, or the name when the stage name is empty.</li>
 <li><strong>Save</strong> writes one <code>.safetensors</code> file with its description file (<code>voxprint-model.json</code>), licence and notice. You can keep it or share it under the base model's licence.</li>
-<li><strong>Open in Canvas</strong> adds it to your models. In Canvas, choose the LoRA, type the trigger word in your prompt, and set the strength (0.8 is a good start).</li>
+<li><strong>Open in Canvas</strong> adds the <code>.safetensors</code> file to your models. In Canvas, choose the LoRA, type the trigger word in your prompt, and set the strength (0.8 is a good start).</li>
 </ol>
 <p>To improve a model later, press <strong>Add more photos</strong> on this step. Training continues from the model with the new photos and a share of the old ones.</p>
 <h2 id="where-the-files-go">Where the files go</h2>
@@ -381,10 +389,11 @@
 <h2 id="what-the-model-file-contains">What the model file contains</h2>
 <p>The names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</p>
 <h2 id="command-line">Command line</h2>
-<p>The same export is available from the command line:</p>
-<pre><code class="language-text">voxprint-forge-cli lora export --project &lt;project folder&gt; [--checkpoint &lt;step&gt;] [--out &lt;file.safetensors&gt;] [--install-to-mdl]
+<p>The same exports are available from the command line:</p>
+<pre><code class="language-text">voxprint-forge-cli lora export &lt;project folder&gt; [-o &lt;file.voxlora&gt;]
+voxprint-forge-cli lora export --project &lt;project folder&gt; [--checkpoint &lt;step&gt;] [--out &lt;file.safetensors&gt;] [--install-to-mdl]
 </code></pre>
-<p><code>--install-to-mdl</code> also adds the LoRA to your models for Canvas. See the <a href="https://mitroshenkov87.github.io/voxprint-model-forge/cli-reference/">CLI reference</a>.</p>
+<p>The first command writes the <code>.voxlora</code> package (uncompressed zip): <code>model.safetensors</code>, <code>voxprint-model.json</code> and previews from samples that passed the output check. The description follows <code>docs/schemas/voxprint-model-1.json</code>. It records the steps done and the steps planned. <code>--install-to-mdl</code> applies to the second command and adds the <code>.safetensors</code> file to your models for Canvas. See the <a href="https://mitroshenkov87.github.io/voxprint-model-forge/cli-reference/">CLI reference</a>.</p>
 <p><a id="page-compression"></a></p>
 <h1 id="compression-tests">Compression tests</h1>
 <p>Some model parts can run in a compressed (quantized) form that needs less video memory. Model Forge uses a compressed part only after it has been tested against the original, and the results are published here.</p>

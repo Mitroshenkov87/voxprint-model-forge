@@ -372,7 +372,7 @@ def test_simple_choices_write_live_expert_values(make_app, tmp_path) -> None:
     assert state.get("lora.rank") == 16
     app.window.findChild(QtWidgets.QPushButton, "forge.chip.24").click()
     app.window.findChild(QtWidgets.QPushButton, "forge.chip.close").click()
-    assert state.get("lora.steps") == 780
+    assert state.get("lora.steps") == 195
     assert not app.custom()
     app.layout.set_value("lora.rank", 64)
     assert app.custom()

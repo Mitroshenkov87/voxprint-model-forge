@@ -21,10 +21,32 @@ from voxprint_forge.app.window import (  # noqa: E402
     _control_width,
     button_radius_px,
     format_span,
+    menu_popup_point,
+    popup_menu,
     register_catalogs,
 )
 from voxprint_forge.lora.project import SCHEMA, Project  # noqa: E402
 from voxprint_forge.lora.review import save_state, transition  # noqa: E402
+
+
+def _saturation(color: QtGui.QColor) -> float:
+    """How far the colour is from grey, from 0 to 1."""
+    hi = max(color.red(), color.green(), color.blue())
+    lo = min(color.red(), color.green(), color.blue())
+    if hi == 0:
+        return 0.0
+    return (hi - lo) / hi
+
+
+def _has_light_pixel(widget: QtWidgets.QWidget) -> bool:
+    """True when the widget paints a light pixel, so the text is visible on the theme."""
+    image = widget.grab().toImage()
+    for y in range(0, image.height(), 2):
+        for x in range(0, image.width(), 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 180 and color.green() > 180 and color.blue() > 170:
+                return True
+    return False
 
 
 @pytest.fixture
@@ -76,7 +98,7 @@ def test_the_sample_switch_adds_review_rounds_and_off_keeps_a_straight_train(mak
     flagged = app._train_args()
     assert flagged[flagged.index("--review-rounds") + 1] == "3"
     assert flagged[flagged.index("--samples-per-round") + 1] == "8"
-    assert flagged[flagged.index("--first-round-steps") + 1] == "200"
+    assert flagged[flagged.index("--first-round-steps") + 1] == "120"
     assert flagged[flagged.index("--first-round-samples") + 1] == "6"
     assert flagged[flagged.index("--sample-steps") + 1] == "28"
     app.draft.set_source("photos")
@@ -139,6 +161,239 @@ def test_the_sample_switch_hint_describes_pictures_during_training() -> None:
     set_language("en")
 
 
+def _assert_review_fits(app, qapp) -> None:
+    """At 1280×800 the heading sits fully in the scroll and the continue row sits in the window."""
+    app.window.setFixedSize(1280, 800)
+    qapp.processEvents()
+    heading = app.window.findChild(QtWidgets.QLabel, "forge.review.heading")
+    assert heading is not None
+    assert heading.height() >= heading.fontMetrics().height()
+    area = heading.parentWidget()
+    while area is not None and not isinstance(area, QtWidgets.QScrollArea):
+        area = area.parentWidget()
+    assert isinstance(area, QtWidgets.QScrollArea)
+    area.verticalScrollBar().setValue(0)
+    qapp.processEvents()
+    viewport = area.viewport()
+    top = heading.mapTo(viewport, QtCore.QPoint(0, 0))
+    assert top.y() >= 8
+    assert top.y() + heading.height() <= viewport.height()
+    host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
+    assert host.width() >= host.sizeHint().width()
+    origin = host.mapTo(app.window, QtCore.QPoint(0, 0))
+    assert origin.x() >= 0 and origin.y() >= 0
+    assert origin.x() + host.width() <= app.window.width()
+    assert origin.y() + host.height() <= app.window.height()
+    view_bottom = viewport.mapTo(app.window, QtCore.QPoint(0, viewport.height())).y()
+    assert origin.y() >= view_bottom - 1
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    note_at = note.mapTo(app.window, QtCore.QPoint(0, note.height()))
+    assert note_at.y() <= app.window.height()
+
+
+def _assert_menu_anchored_to_button(
+    menu: QtWidgets.QMenu, button: QtWidgets.QAbstractButton, window: QtWidgets.QWidget,
+) -> None:
+    """The menu's right edge meets the button's, and it touches the button from below or from above."""
+    origin = window.mapFromGlobal(menu.pos())
+    top_left = button.mapTo(window, QtCore.QPoint(0, 0))
+    bottom_right = button.mapTo(window, QtCore.QPoint(button.width(), button.height()))
+    menu_right = origin.x() + menu.width()
+    menu_bottom = origin.y() + menu.height()
+    assert abs(menu_right - bottom_right.x()) <= 2
+    gap_below = origin.y() - bottom_right.y()
+    gap_above = top_left.y() - menu_bottom
+    if bottom_right.y() + menu.height() <= window.height():
+        assert 0 <= gap_below <= 2
+    else:
+        assert 0 <= gap_above <= 2
+
+
+def test_the_finish_menu_hangs_off_the_finish_button(make_app, tmp_path, qapp) -> None:
+    """At 1280×800 the menu's top meets the button's bottom and their right edges line up."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Завершить"
+    menu = finish.menu()
+    assert menu is not None
+    QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert menu.isVisible()
+    _assert_menu_anchored_to_button(menu, finish, app.window)
+    image = menu.grab().toImage()
+    edge = image.pixelColor(0, image.height() // 2)
+    fill = image.pixelColor(12, image.height() // 2)
+    assert edge.lightness() > fill.lightness() + 40
+    discard = next(item for item in menu.actions() if item.objectName() == "forge.review.finish.discard")
+    assert _has_danger_text(image, menu.actionGeometry(discard))
+    assert not _has_danger_text(image, menu.actionGeometry(menu.actions()[0]))
+
+
+def test_the_finish_menu_flips_above_the_button_when_nothing_fits_below(qapp) -> None:
+    """A button on the bottom edge opens the menu upward, still sharing its right edge."""
+    window = QtWidgets.QWidget()
+    window.setFixedSize(1280, 220)
+    window.show()
+    button = QtWidgets.QPushButton("Завершить", window)
+    button.setGeometry(1080, 176, 140, 32)
+    menu = QtWidgets.QMenu(button)
+    menu.setObjectName("forgeReviewMenu")
+    save = menu.addAction("Сохранить")
+    save.setObjectName("forge.review.finish.save")
+    discard = menu.addAction("Принудительно, без сохранения")
+    discard.setObjectName("forge.review.finish.discard")
+    button.setMenu(menu)
+    button.show()
+    qapp.processEvents()
+    popup_menu(button)
+    qapp.processEvents()
+    assert menu.isVisible()
+    _assert_menu_anchored_to_button(menu, button, window)
+    origin = window.mapFromGlobal(menu.pos())
+    top = button.mapTo(window, QtCore.QPoint(0, 0)).y()
+    assert 0 <= top - (origin.y() + menu.height()) <= 2
+    menu.close()
+    window.close()
+
+
+def _assert_review_tooltips(window: QtWidgets.QWidget) -> None:
+    """The main button, ▾, Finish, and every finish-menu item explain themselves."""
+    cont = window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    finish = window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert cont is not None and chevron is not None and finish is not None
+    assert cont.toolTip().strip()
+    assert chevron.toolTip().strip()
+    assert finish.toolTip().strip()
+    menu = finish.menu()
+    assert menu is not None and menu.toolTipsVisible()
+    actions = [item for item in menu.actions() if not item.isSeparator()]
+    assert actions
+    assert all(item.toolTip().strip() for item in actions)
+
+
+def _tooltip_label() -> QtWidgets.QWidget | None:
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        if widget.isVisible() and "Tip" in widget.metaObject().className():
+            return widget
+    return None
+
+
+def test_the_review_tooltip_opens_under_the_button(make_app, tmp_path, qapp) -> None:
+    """The tip is a dark wrapped panel under the main button, not a yellow bubble on top of it."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "tip", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    assert button is not None and button.toolTip().strip()
+    local = QtCore.QPoint(button.width() // 2, button.height() // 2)
+    qapp.sendEvent(button, QtGui.QHelpEvent(QtCore.QEvent.Type.ToolTip, local, button.mapToGlobal(local)))
+    qapp.processEvents()
+    tip = _tooltip_label()
+    assert isinstance(tip, QtWidgets.QLabel)
+    assert tip.text() == button.toolTip()
+    assert tip.width() <= 420 + 8 * 2 + 2
+    origin = app.window.mapToGlobal(QtCore.QPoint(0, 0))
+    button_top = button.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    button_bottom = button.mapToGlobal(QtCore.QPoint(0, button.height())).y()
+    tip_top = tip.mapToGlobal(QtCore.QPoint(0, 0)).y()
+    tip_bottom = tip.mapToGlobal(QtCore.QPoint(0, tip.height())).y()
+    assert tip_bottom <= origin.y() + app.window.height()
+    assert tip_top >= origin.y()
+    if button_bottom + tip.height() + 2 <= origin.y() + app.window.height():
+        assert 0 <= tip_top - button_bottom <= 4
+    else:
+        assert 0 <= button_top - tip_bottom <= 4
+    assert tip_top >= button_bottom or tip_bottom <= button_top
+    image = tip.grab().toImage()
+    fill = image.pixelColor(12, image.height() // 2)
+    assert fill.red() < 80 and fill.green() < 80 and fill.blue() < 100
+    edge = image.pixelColor(image.width() // 2, 0)
+    assert edge.alpha() == 0 or edge.lightness() > fill.lightness() + 40
+    text_rows = []
+    for y in range(image.height()):
+        light = 0
+        for x in range(8, image.width() - 8, 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 220 and color.green() > 200 and color.blue() > 180:
+                light += 1
+        if light > 6:
+            text_rows.append(y)
+    assert text_rows
+    bands = 1
+    for earlier, later in zip(text_rows, text_rows[1:], strict=False):
+        if later > earlier + 3:
+            bands += 1
+    assert bands >= 2
+    assert text_rows[-1] <= image.height() - 4
+    QtWidgets.QToolTip.hideText()
+
+
+def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app, tmp_path, qapp) -> None:
+    """One muted line names the current mode, and the long explanations live on the controls."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert note is not None and cont is not None and chevron is not None and finish is not None
+    assert note.property("muted") == "true"
+    assert note.text() == "Следующий раунд и снова проверка"
+    assert "\n" not in note.text()
+    assert cont.toolTip() == tr("forge.app.review.continue.tip")
+    assert chevron.toolTip() == tr("forge.app.review.unattended.tip")
+    assert finish.toolTip() == tr("forge.app.review.finish.tip")
+    _assert_review_tooltips(app.window)
+    QtTest.QTest.mouseClick(chevron, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert note.text() == "Дообучить без проверок"
+    assert cont.toolTip() == tr("forge.app.review.unattended.tip")
+    assert chevron.toolTip() == tr("forge.app.review.continue.tip")
+    _assert_review_tooltips(app.window)
+    app.window.close()
+    english = make_app("en")
+    _seed_review(english.project, photos)
+    english.layout.sections._index = STEPS.index("train")
+    english.repaint()
+    qapp.processEvents()
+    en_note = english.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    en_chevron = english.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    assert en_note is not None and en_chevron is not None
+    assert en_note.text() == "Next round, then another review"
+    assert "\n" not in en_note.text()
+    _assert_review_tooltips(english.window)
+    QtTest.QTest.mouseClick(en_chevron, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert en_note.text() == "Train on without reviews"
+    _assert_review_tooltips(english.window)
+
+
+def _has_danger_text(image: QtGui.QImage, rect: QtCore.QRect) -> bool:
+    """True when ``rect`` paints the danger text colour, a light red."""
+    inset = rect.adjusted(8, 4, -8, -4)
+    for y in range(inset.top(), inset.bottom(), 2):
+        for x in range(inset.left(), inset.right(), 2):
+            color = image.pixelColor(x, y)
+            if color.red() > 210 and color.red() > color.green() + 20 and color.blue() > 170:
+                return True
+    return False
+
+
 def _card(button: QtWidgets.QPushButton) -> QtWidgets.QFrame:
     card = button.parentWidget()
     assert isinstance(card, QtWidgets.QFrame)
@@ -167,15 +422,52 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert not back.isVisible() and not nxt.isVisible()
     assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Завершить"
-    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
-    assert cont is not None and cont.text() == "Продолжить с подкреплением" and cont.isEnabled()
-    unattended = next(item for item in cont.menu().actions() if item.objectName() == "forge.review.unattended")
-    assert unattended.text() == "Просто продолжить"
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Завершить"
+    save_action = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save")
+    discard_action = next(
+        item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
+    )
+    assert save_action.text() == "Сохранить"
+    assert discard_action.text() == "Принудительно, без сохранения"
+    menu = finish.menu()
+    assert menu is not None
+    QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert menu.isVisible()
+    assert abs(menu.pos().x() - menu_popup_point(finish).x()) <= 2
+    window_origin = app.window.mapToGlobal(QtCore.QPoint(0, 0))
+    menu_right = menu.pos().x() + menu.width()
+    button_right = finish.mapToGlobal(QtCore.QPoint(finish.width(), 0)).x()
+    assert menu.pos().x() >= window_origin.x()
+    assert menu_right <= window_origin.x() + app.window.width()
+    assert menu_right <= button_right + 2
+    menu_pixel = menu.grab().toImage().pixelColor(6, 6)
+    assert menu_pixel.red() < 90 and menu_pixel.green() < 90 and menu_pixel.blue() < 110
+    menu.close()
+    qapp.processEvents()
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    host = cont.parentWidget()
+    assert cont is not None and chevron is not None and host is not None
+    assert cont.text() == "Продолжить с подкреплением" and cont.isEnabled() and cont.menu() is None
+    text_width = host.fontMetrics().horizontalAdvance(cont.text())
+    plain_width = host.fontMetrics().horizontalAdvance("Просто продолжить")
+    assert host.sizeHint().width() >= text_width
+    assert host.sizeHint().width() >= plain_width
+    assert host.width() >= host.sizeHint().width()
+    assert host.minimumSizeHint().width() == host.sizeHint().width()
+    assert finish.x() > host.x() and finish.width() < host.width() and finish.height() <= host.height()
+    face_image = host.grab().toImage()
+    face = face_image.pixelColor(12, host.height() // 2)
+    assert face.red() > 200 and face.green() > 180 and face.blue() < 160
+    corner = face_image.pixelColor(0, 0)
+    assert 10 < corner.red() < 80 and corner.green() < 80 and corner.blue() < 90
+    _assert_review_fits(app, qapp)
     note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
     assert note is not None and note.property("muted") == "true"
-    assert note.text() == tr("forge.app.review.note")
-    assert note.text().count("\n") == 2
+    assert note.text() == tr("forge.app.review.note.reinforced")
+    assert "\n" not in note.text()
     counts = app.window.findChild(QtWidgets.QLabel, "forge.review.counts")
     assert counts.text() == tr("forge.app.review.counts", liked=1, disliked=1, unmarked=1)
     assert len(app.window.findChildren(QtWidgets.QLabel, "forge.review.original")) == 2
@@ -219,14 +511,18 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
 
     def accept_finish() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.objectName() == "forge.review.finish.confirm"
         assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
-        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish"))
+        background = box.grab().toImage().pixelColor(8, box.height() - 8)
+        assert background.red() < 80 and background.green() < 80 and background.blue() < 100
+        label = box.findChild(QtWidgets.QLabel, "qt_msgbox_label")
+        assert label is not None and _has_light_pixel(label)
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish.save"))
         button.click()
 
     QtCore.QTimer.singleShot(0, accept_finish)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
+    save_action.trigger()
     qapp.processEvents()
     assert app.runner.calls[-1][:3] == ["--json", "lora", "finish"]
 
@@ -253,14 +549,18 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
     app.repaint()
     qapp.processEvents()
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Round 1 of 3"
-    assert app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").text() == "Finish"
-    cont = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert finish is not None and finish.text() == "Finish"
+    assert next(
+        item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save"
+    ).text() == "Save"
+    cont = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
     assert cont is not None and cont.text() == "Continue with reinforcement"
     seen: list[str] = []
 
     def click() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.review.unmarked")
         seen.append(box.text())
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
@@ -347,6 +647,8 @@ def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, q
     stop = next(button for button in buttons if button.text() == tr("forge.app.train.stop"))
     assert not start.isEnabled() and not estimate.isEnabled()
     assert pause.isEnabled() and stop.isEnabled()
+    muted = estimate.grab().toImage().pixelColor(8, estimate.height() // 2)
+    assert muted.red() < 80 and muted.green() < 80
 
 
 def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
@@ -362,7 +664,7 @@ def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
 
     def cancel() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.train.stop.ask")
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.train.stop.cancel"))
         button.click()
@@ -425,12 +727,41 @@ def test_just_continue_sends_unattended(make_app, tmp_path, qapp) -> None:
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
-    button = app.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
-    action = next(item for item in button.menu().actions() if item.objectName() == "forge.review.unattended")
-    assert action.text() == "Just continue"
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    host = button.parentWidget()
+    assert button.text() == "Continue with reinforcement"
+    assert host._anim.duration() == 150
+    gold = host.grab().toImage().pixelColor(12, host.height() // 2)
+    chevron.setFocus()
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Right)
+    qapp.processEvents()
+    assert button.text() == "Just continue"
+    saved = json.loads((app.project / "project.json").read_text(encoding="utf-8"))
+    assert saved["continue_mode"] == "plain"
+    QtTest.QTest.qWait(200)
+    qapp.processEvents()
+    plain = host.grab().toImage().pixelColor(12, host.height() // 2)
+    assert _saturation(plain) < _saturation(gold)
+    assert plain.red() > 140 and plain.green() > 120
+    app.repaint()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+    assert button.text() == "Just continue"
+    chevron.setFocus()
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Left)
+    qapp.processEvents()
+    assert button.text() == "Continue with reinforcement"
+    QtTest.QTest.keyClick(chevron, QtCore.Qt.Key.Key_Down)
+    qapp.processEvents()
+    assert button.text() == "Just continue"
     app.window.findChild(QtWidgets.QPushButton, "forge.review.like_all").click()
     qapp.processEvents()
-    action.trigger()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue")
+    assert button.text() == "Just continue"
+    button.setFocus()
+    QtTest.QTest.keyClick(button, QtCore.Qt.Key.Key_Return)
     qapp.processEvents()
     assert app.runner.calls[-1][:4] == ["--json", "lora", "continue", str(app.project)]
     assert app.runner.calls[-1][-1] == "--unattended"
@@ -446,19 +777,21 @@ def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
 
     def cancel() -> None:
         box = QtWidgets.QApplication.activeModalWidget()
-        assert isinstance(box, QtWidgets.QMessageBox)
+        assert isinstance(box, QtWidgets.QDialog)
         assert box.text() == tr("forge.app.review.finish.confirm", done=1, planned=1)
         button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
         button.click()
 
     QtCore.QTimer.singleShot(0, cancel)
-    app.window.findChild(QtWidgets.QPushButton, "forge.review.finish").click()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    save = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save")
+    save.trigger()
     qapp.processEvents()
     assert app.runner.calls == []
     assert json.loads((app.project / "review" / "state.json").read_text(encoding="utf-8"))["phase"] == "review"
 
 
-def test_the_result_names_the_steps_the_lora_got(make_app, qapp) -> None:
+def test_the_result_names_the_steps_the_lora_got(make_app, qapp, monkeypatch) -> None:
     app = make_app("ru")
     app.project.mkdir(parents=True, exist_ok=True)
     Project(app.project).write({
@@ -480,6 +813,17 @@ def test_the_result_names_the_steps_the_lora_got(make_app, qapp) -> None:
     label = app.window.findChild(QtWidgets.QLabel, "forge.result.steps")
     assert label is not None
     assert label.text() == "Завершено на 450 из 1500 шагов"
+    chosen = app.project / "shape.voxlora"
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(chosen), ""))
+    export = next(
+        button for button in app.window.findChildren(QtWidgets.QPushButton) if button.text() == "Экспорт LoRA"
+    )
+    assert export.objectName() == "primary"
+    export.click()
+    qapp.processEvents()
+    sent = app.runner.calls[-1]
+    assert sent[:4] == ["--json", "lora", "export", str(app.project)]
+    assert sent[sent.index("-o") + 1] == str(chosen)
 
 
 def test_review_rounds_live_under_details(make_app, qapp) -> None:
@@ -525,7 +869,7 @@ def test_first_round_steps_live_under_details(make_app, qapp) -> None:
     qapp.processEvents()
     spin = app.window.findChild(QtWidgets.QSpinBox, "forge.train.first_round_steps")
     assert spin is not None
-    assert spin.minimum() == 100 and spin.maximum() == 500 and spin.value() == 200
+    assert spin.minimum() == 100 and spin.maximum() == 500 and spin.value() == 120
     assert spin.toolTip() == tr("forge.app.train.first_round_steps.tip")
     spin.setValue(250)
     args = app._train_args()
@@ -559,3 +903,119 @@ def test_round_one_shows_the_first_pictures_line_and_a_grey_start_button(make_ap
     image = start.grab().toImage()
     color = image.pixelColor(6, image.height() // 2)
     assert color.red() < 160 and color.green() < 160
+
+
+def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> None:
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.repaint()
+    qapp.processEvents()
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    discard = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard")
+
+    def cancel() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QDialog)
+        assert box.text() == tr("forge.app.review.finish.discard.confirm")
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.unmarked.cancel"))
+        button.click()
+
+    QtCore.QTimer.singleShot(0, cancel)
+    discard.trigger()
+    qapp.processEvents()
+    assert app.runner.calls == []
+
+    def confirm() -> None:
+        box = QtWidgets.QApplication.activeModalWidget()
+        assert isinstance(box, QtWidgets.QDialog)
+        assert box.windowTitle()
+        title = box.findChild(QtWidgets.QLabel, "forgeDialogTitle")
+        assert title is not None and title.text() == box.windowTitle()
+        card = box.findChild(QtWidgets.QFrame, "forgeDialogCard")
+        assert card is not None
+        edge = card.grab().toImage().pixelColor(0, card.height() // 2)
+        fill = card.grab().toImage().pixelColor(card.width() // 2, card.height() // 2)
+        assert edge.lightness() > fill.lightness() + 40
+        shadow_at = card.mapTo(box, QtCore.QPoint(card.width() // 2, card.height() + 6))
+        shadow = box.grab().toImage().pixelColor(shadow_at)
+        assert shadow.alpha() > 40
+        button = next(item for item in box.buttons() if item.text() == tr("forge.app.review.finish.discard"))
+        assert button.property("danger") == "true"
+        face = button.grab().toImage().pixelColor(10, button.height() // 2)
+        assert face.red() > face.green() + 20 and face.red() > face.blue()
+        button.click()
+
+    QtCore.QTimer.singleShot(0, confirm)
+    discard.trigger()
+    qapp.processEvents()
+    assert app.runner.calls[-1] == ["--json", "lora", "finish", str(app.project), "--discard", "--yes"]
+
+
+def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qapp) -> None:
+    """The list is dark, aligned with the continue row, and saved for the next round."""
+    app = make_app("ru")
+    photos = make_photos(tmp_path / "src", 2)
+    _seed_review(app.project, photos)
+    app.layout.sections._index = STEPS.index("train")
+    app.window.setFixedSize(1280, 800)
+    app.repaint()
+    qapp.processEvents()
+    label = app.window.findChild(QtWidgets.QLabel, "forge.review.attire.label")
+    combo = app.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
+    host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
+    assert label is not None and combo is not None and host is not None
+    assert label.text() == "Пробные картинки:"
+    assert [combo.itemText(index) for index in range(combo.count())] == ["как на фото", "в одежде", "без одежды"]
+    assert combo.currentText() == "как на фото"
+    assert combo.itemData(0) == "auto"
+    assert "следующего раунда" in combo.toolTip()
+    assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
+    longest = max(
+        (combo.itemText(index) for index in range(combo.count())),
+        key=lambda text: combo.fontMetrics().horizontalAdvance(text),
+    )
+    assert combo.width() >= combo.fontMetrics().horizontalAdvance(longest)
+    assert combo.width() >= combo.fontMetrics().horizontalAdvance(longest) + 22
+    note = app.window.findChild(QtWidgets.QLabel, "forge.review.note")
+    finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+    assert note is not None and finish is not None
+    label_box = label.mapTo(app.window, QtCore.QPoint(0, 0))
+    combo_box = combo.mapTo(app.window, QtCore.QPoint(0, 0))
+    host_box = host.mapTo(app.window, QtCore.QPoint(0, 0))
+    note_box = note.mapTo(app.window, QtCore.QPoint(0, 0))
+    finish_box = finish.mapTo(app.window, QtCore.QPoint(0, 0))
+    assert abs((combo_box.y() + combo.height() // 2) - (host_box.y() + host.height() // 2)) <= 6
+    assert combo_box.x() >= note_box.x() + note.width() - 2
+    assert combo_box.x() + combo.width() <= finish_box.x()
+    assert combo_box.x() >= label_box.x() + label.width() - 2
+    assert combo_box.x() + combo.width() <= app.window.width()
+    assert note.width() >= note.fontMetrics().horizontalAdvance(note.text())
+    face = combo.grab().toImage()
+    background = face.pixelColor(6, face.height() // 2)
+    assert background.lightness() < 80
+    assert _has_light_pixel(combo)
+    assert _has_light_pixel(label)
+    arrow = face.copy(face.width() - 18, 4, 14, max(1, face.height() - 8))
+    assert any(
+        arrow.pixelColor(x, y).lightness() > 140
+        for y in range(arrow.height())
+        for x in range(arrow.width())
+    )
+    names = sorted(path.name for path in (app.project / "review").rglob("*.png"))
+    combo.setCurrentIndex(2)
+    qapp.processEvents()
+    assert Project(app.project).read()["sample_attire"] == "unclothed"
+    assert sorted(path.name for path in (app.project / "review").rglob("*.png")) == names
+    combo.showPopup()
+    qapp.processEvents()
+    popup = combo.view().window()
+    assert popup is not None and popup is not app.window
+    origin = combo.mapToGlobal(QtCore.QPoint(0, 0))
+    frame = QtCore.QRect(app.window.mapToGlobal(QtCore.QPoint(0, 0)), app.window.size())
+    assert abs(popup.x() - origin.x()) <= 2
+    assert abs(popup.y() - (origin.y() + combo.height())) <= 2
+    assert frame.contains(QtCore.QRect(popup.pos(), popup.size()))
+    fill = popup.grab().toImage().pixelColor(8, 8)
+    assert fill.lightness() < 80

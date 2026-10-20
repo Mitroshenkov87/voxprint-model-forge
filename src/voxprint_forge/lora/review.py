@@ -27,7 +27,7 @@ DEFAULT_ROUNDS = 3
 REVIEW_ROUNDS_MIN = 1
 REVIEW_ROUNDS_MAX = 6
 DEFAULT_SAMPLES = 8
-DEFAULT_FIRST_ROUND_STEPS = 200
+DEFAULT_FIRST_ROUND_STEPS = 120
 FIRST_ROUND_STEPS_MIN = 100
 FIRST_ROUND_STEPS_MAX = 500
 DEFAULT_FIRST_ROUND_SAMPLES = 6
@@ -59,6 +59,7 @@ def empty_state() -> dict[str, object]:
         "base": "",
         "checkpoint": "",
         "prompts": [],
+        "custom_prompts": False,
         "config": {},
         "samples": [],
         "history": [],
@@ -452,6 +453,7 @@ def _start(state: dict[str, object], payload: dict[str, object]) -> dict[str, ob
         "seed": int(payload.get("seed") or 0),
         "base": str(payload.get("base") or ""),
         "prompts": prompts,
+        "custom_prompts": bool(payload.get("custom_prompts")),
         "config": stored,
     }
 

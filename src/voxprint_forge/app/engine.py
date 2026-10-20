@@ -179,6 +179,11 @@ def train_args(
     return args
 
 
+def package_args(project: Path, out: Path) -> list[str]:
+    """``lora export PROJECT -o PATH``: the small ``.voxlora`` package."""
+    return ["--json", "lora", "export", str(project), "-o", str(out)]
+
+
 def export_args(
     draft: Draft, project: Path, out: Path | None, *, checkpoint: int | None = None, install: bool = False
 ) -> list[str]:

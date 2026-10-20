@@ -369,3 +369,22 @@ def test_vram_phases_is_a_noop_without_cuda(monkeypatch) -> None:
     phases = VramPhases()
     phases.mark("load", "encode")
     assert phases.peaks == {} and phases.phase == "encode"
+
+
+def test_zimage_16gb_uses_the_measured_step_time() -> None:
+    """16 GB Z-Image is 9.7 s/step at 1024. The 24 GB time stays the unmeasured 1.6 s."""
+    from voxprint_forge.lora.presets import measured, measured_peaks
+
+    laptop = measured("z-image", 16)
+    assert laptop is not None
+    assert laptop.s_per_step == pytest.approx(9.7)
+    assert laptop.peak_measured is False
+    assert measured("z-image", 24) is None
+    assert "z-image" not in measured_peaks()
+    zimage = bases.get_adapter("z-image")
+    balanced_16 = build_config("balanced", "balanced", 16)
+    quick_16 = build_config("quick", "balanced", 16)
+    balanced_24 = build_config("balanced", "balanced", 24)
+    assert zimage.seconds_per_step(balanced_16) == pytest.approx(9.7 * 2)
+    assert zimage.seconds_per_step(quick_16) == pytest.approx(9.7 * (768 / 1024) ** 2)
+    assert zimage.seconds_per_step(balanced_24) == pytest.approx(1.6 * 2)

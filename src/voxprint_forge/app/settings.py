@@ -130,7 +130,7 @@ def config_values(preset: str, likeness: str, vram: str) -> dict[str, object]:
 
 
 def preset_file(settings: Settings) -> PresetFile:
-    """The ``voxprint-presets/1`` document: Quick test, Balanced, Best quality."""
+    """The ``voxprint-presets/1`` document: Quick check, Balanced, Best quality."""
     from voxprint_forge.lora.presets import PRESETS
 
     options = []
