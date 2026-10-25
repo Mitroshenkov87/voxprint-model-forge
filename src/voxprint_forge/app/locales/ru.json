@@ -124,7 +124,7 @@
   "forge.app.photos.add": "Добавить",
   "forge.app.photos.add_files": "Добавить фото",
   "forge.app.photos.add_folder": "Добавить папку",
-  "forge.app.photos.add_folder.tip": "Добавить все фото JPG, PNG и WebP из папки.",
+  "forge.app.photos.add_folder.tip": "Добавить все фото JPG, PNG, WebP и AVIF из папки.",
   "forge.app.photos.empty_hint": "Берите чёткие фото с разных ракурсов, при разном свете и на разном фоне. Не добавляйте почти одинаковые кадры и групповые снимки. Обычно хватает 15–20 хороших фото.",
   "forge.app.photos.extend": "Дополнить набор по образцам",
   "forge.app.photos.extend.hint": "Во время обучения приложение покажет новые картинки — вы отметите удачные, и они войдут в набор.",
@@ -137,11 +137,16 @@
     "many": "{count} образцов из 1–10"
   },
   "forge.app.photos.drop": "Перетащите сюда фото или папку",
-  "forge.app.photos.filter": "Фотографии (*.jpg *.jpeg *.png *.webp)",
+  "forge.app.photos.filter": "Фотографии (*.jpg *.jpeg *.png *.webp *.avif)",
   "forge.app.photos.list.tip": "Фото, которые будут использованы. Выберите фото и нажмите кнопку убрать, чтобы не использовать их.",
   "forge.app.photos.remove": "Убрать",
   "forge.app.photos.remove_selected": "Убрать выбранные",
   "forge.app.photos.remove_selected.tip": "Убрать выбранные фото из обучения. Сами файлы на диске останутся.",
+  "forge.app.prepare.collage": {
+    "one": "{count} фото отложено: это коллаж или сетка из нескольких снимков. В каждом файле должно быть одно фото.",
+    "few": "{count} фото отложены: каждое — коллаж или сетка из нескольких снимков. В каждом файле должно быть одно фото.",
+    "many": "{count} фото отложены: каждое — коллаж или сетка из нескольких снимков. В каждом файле должно быть одно фото."
+  },
   "forge.app.prepare.crop": "Кадрирование",
   "forge.app.prepare.crop.subject": "По объекту",
   "forge.app.prepare.crop.whole": "Фото целиком",

@@ -467,15 +467,16 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
 options:
   -h, --help            show this help message and exit
   --project PROJECT     Project folder.
-  --photos PHOTOS       Folder of JPG, PNG or WebP photos.
+  --photos PHOTOS       Folder of JPG, PNG, WebP or AVIF photos.
   --photo PHOTO         One photo. Repeat as needed.
   --exclude EXCLUDE     Leave this photo out.
   --kind {person,object,style}
                         What the photos show.
   --name NAME           Name of the subject.
   --stage-name STAGE_NAME
-                        Optional alias; becomes the trigger word.
-  --trigger TRIGGER     Word that calls the model in a prompt.
+                        Optional alias. It does not become the trigger word.
+  --trigger TRIGGER     Word that calls the model in a prompt. Default: a rare
+                        vxp token, not the name.
   --consent-obtained    Person: consent was obtained.
   --subject-adult       Person: the subject is 18 or older.
   --subject-age SUBJECT_AGE
@@ -737,8 +738,9 @@ options:
                         What the photos show.
   --name NAME           Name of the subject.
   --stage-name STAGE_NAME
-                        Optional alias; becomes the trigger word.
-  --trigger TRIGGER     Word that calls the model in a prompt.
+                        Optional alias. It does not become the trigger word.
+  --trigger TRIGGER     Word that calls the model in a prompt. Default: a rare
+                        vxp token, not the name.
   --consent-obtained    Person: consent was obtained.
   --subject-adult       Person: the subject is 18 or older.
   --subject-age SUBJECT_AGE

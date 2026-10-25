@@ -632,3 +632,41 @@ def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
         problems += _scroll_problems(app, step)
     assert app.window.size() == QtCore.QSize(1024, 768)
     assert problems == []
+
+
+def test_a_dictionary_trigger_warns_in_the_footer_and_next_stays_on(make_app, tmp_path) -> None:
+    app = make_app()
+    _subject_step(app, tmp_path)
+    _box(app, "consent").click()
+    _box(app, "adult").click()
+    _box(app, "verbal").click()
+    app.draft.trigger = "synthetic"
+    app.draft.trigger_edited = True
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    assert _next(app).isEnabled()
+    assert _status(app) == tr("lora.warn.trigger_word")
+    label = app._status_label
+    assert label.wordWrap()
+    assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1))
+
+
+def test_collage_drops_show_a_wrapping_notice(make_app, tmp_path) -> None:
+    from voxprint_forge.app.draft import Prepared
+
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos))
+    _walk_to(app, "prepare", photos)
+    app.draft.prepared = Prepared(
+        [{"id": str(index), "file": str(photos[index]), "short": "a woman"} for index in range(10)],
+        [{"name": "grid.png", "file": "grid.png", "reason": "lora.drop.collage"}] * 8,
+    )
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    notice = app.window.findChild(QtWidgets.QLabel, "forgePrepareCollage")
+    assert notice is not None and notice.isVisibleTo(app.window)
+    assert notice.wordWrap() and notice.text() == tr("forge.app.prepare.collage", count=8)
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(page) == []
+    assert "forgePrepareCollage" in app.window.styleSheet()
+    assert "#2a2a33" in app.window.styleSheet() and "#f4f1ea" in app.window.styleSheet()

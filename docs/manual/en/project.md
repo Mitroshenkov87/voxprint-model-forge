@@ -7,7 +7,7 @@ Start with **More → New model**. A project keeps your photos, their descriptio
 ![Step 1, Photos](../img/en-simple-1-photos.png)
 
 1. Choose what the photos show: **Person** (one specific person), **Object** (one specific thing or product) or **Style** (the shared look: lighting, colours, rendering, mood). The line above follows that choice.
-2. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG or WebP), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.
+2. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG, WebP or AVIF), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.
 3. Leave **Extend the set from samples** off to train on these photos. Turn it on and, during training, the app shows new pictures. You mark the ones that work, and they join the set. The count line switches to a range of 1 to 10 photos (see below). Training pauses after each stage for those marks (see [Training](training.md)).
 
 Good photos make a good model:
@@ -21,7 +21,7 @@ Good photos make a good model:
 
 ![Step 2, Subject and consent](../img/en-simple-2-subject.png)
 
-- **Name** or **Stage name**: enter one of them; one is enough. The **Trigger word** is the word you will later type in Canvas to call the model; the app suggests one. If you enter a stage name, it becomes the trigger word; you can change it.
+- **Name** or **Stage name**: enter one of them; one is enough. The **Trigger word** is the word you will later type in Canvas to call the model. The app suggests a rare token (`vxp` and consonants), not a word from the name. A stage name is only an alias. You can change the trigger word. An ordinary word can make the model draw that word as text.
 - **Consent obtained** (for a person): tick it when the person agreed to this use. Then either tick **Verbal**, right next to it, if consent was given in words, or press **Attach model release** to add a release file. With **Verbal** no file is needed.
 - **Release file** (optional): an attached release stays in your project folder. Only a note that it exists and its fingerprint go into the model file.
 - **Subject is 18+**: tick it to confirm that the person is an adult. A person project cannot continue without it.

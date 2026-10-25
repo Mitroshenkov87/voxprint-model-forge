@@ -93,6 +93,10 @@ try {
     $forgeWheel = Resolve-OneWheel $Wheels "voxprint_forge" "voxprint_forge-$Version-*.whl"
     $commonVersion = Get-PinnedCommonVersion $forgeWheel
     $commonWheel = Resolve-OneWheel $Wheels "voxprint_common" "voxprint_common-${commonVersion}-*.whl"
+    # AVIF photos (Canvas). Install the bundled wheel first so the forge install does not fetch another build.
+    $avifReq = Join-Path $App "requirements-avif.txt"
+    Invoke-Uv @("pip", "install", "--python", $Py, "--no-deps", "--require-hashes", "--no-index",
+        "--find-links", $Wheels, "-r", $avifReq)
     Invoke-Uv @("pip", "install", "--python", $Py, "--constraint", $pins, "$commonWheel", "$forgeWheel[gui,compare]")
     # te-quant extra: the bundled PyPI win_amd64 wheel, hash-checked. No extra index.
     $teReq = Join-Path $App "requirements-te-quant.txt"
@@ -116,7 +120,7 @@ try {
     Invoke-Uv @("pip", "install", "--python", $MPy, "--no-deps", "--no-build-isolation",
         "mivolo @ https://github.com/WildChlamydia/MiVOLO/archive/37475e3f8818b5f22448003feec3e64b01bfb188.zip")
 
-    & $Py -c "import voxprint_forge, torch, bitsandbytes; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"
+    & $Py -c "import voxprint_forge, torch, bitsandbytes, pillow_avif; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app environment does not import" }
     & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
     if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }

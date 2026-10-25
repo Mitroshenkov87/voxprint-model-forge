@@ -24,6 +24,8 @@ dependencies = [
   # protobuf 4.25.9 (what llama.cpp asks for, <5) crashes on Python 3.14 (synth4 L1/L2);
   # 5.29.6 from PyPI imports and reads the sentencepiece model there.
   "protobuf==5.29.6",
+  # Canvas writes AVIF. Pillow 13 may already decode it; this plugin covers builds that do not.
+  "pillow-avif-plugin==1.6.0",
   # Not on PyPI. CI, the VM scripts and the installer install the official
   # v0.4.1 release asset vendor/voxprint_common-0.4.1-py3-none-any.whl
   # (0ea02df5a446e23a7c55ee9187ca96556ee96e01;
@@ -108,7 +110,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/licences/*.txt", "app/locales/*.json", "app/guide/*.html", "app/guide/img/*.png", "app/review-chevron.svg", "vendored/**/LICENSE", "vendored/**/VENDOR.md"]
+voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/words.txt.gz", "lora/licences/*.txt", "app/locales/*.json", "app/guide/*.html", "app/guide/img/*.png", "app/review-chevron.svg", "vendored/**/LICENSE", "vendored/**/VENDOR.md"]
 
 [tool.ruff]
 line-length = 120

@@ -122,6 +122,9 @@ QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
 QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; padding: 0; min-height: 28px; }
 QLabel[muted="true"] { color: #9a9aa8; }
+QLabel#warn { color: #f4f1ea; background: transparent; }
+QLabel#forgePrepareCollage {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
@@ -495,6 +498,7 @@ class ForgeApp:
         label.setObjectName("warn" if (warning or not result.ok) else "ok")
         label.style().unpolish(label)
         label.style().polish(label)
+        _fit_wrapped_label(label)
 
     def _tips(self) -> None:
         parts = self.widget._parts()
@@ -1327,6 +1331,13 @@ class ForgeApp:
         dropped = QtWidgets.QLabel(tr("forge.app.prepare.dropped", count=len(prepared.drops)))
         dropped.setObjectName("settingGroup")
         column.addWidget(dropped)
+        collage_count = sum(1 for item in prepared.drops if str(item.get("reason") or "") == "lora.drop.collage")
+        if collage_count:
+            notice = QtWidgets.QLabel(tr("forge.app.prepare.collage", count=collage_count))
+            notice.setObjectName("forgePrepareCollage")
+            notice.setWordWrap(True)
+            notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+            column.addWidget(notice)
         drops = QtWidgets.QListWidget()
         drops.setObjectName("forge.prepare.dropped")
         drops.setToolTip(tr("lora.prepare.dropped.tip"))
@@ -1943,6 +1954,7 @@ class ForgeApp:
             label.setObjectName("ok")
             label.style().unpolish(label)
             label.style().polish(label)
+            _fit_wrapped_label(label)
         except RuntimeError:
             pass
 
@@ -2656,8 +2668,10 @@ class ForgeApp:
         self.draft.kind = str(data.get("kind") or subject.get("kind") or "")
         self.draft.name = str(subject.get("name") or "")
         self.draft.stage_name = str(subject.get("stage_name") or "")
-        self.draft.trigger = str(subject.get("trigger") or "")
-        self.draft.trigger_edited = bool(self.draft.trigger)
+        stored_trigger = str(subject.get("trigger") or "").strip()
+        if stored_trigger:
+            self.draft.trigger = stored_trigger
+            self.draft.trigger_edited = True
         photos = folder / "photos"
         if photos.is_dir():
             self.draft.add_photos([photos])
@@ -2726,6 +2740,19 @@ def _button_row(back: QtWidgets.QPushButton | None) -> QtWidgets.QLayout | None:
         if nested is not None and nested.indexOf(back) >= 0:
             return nested
     return None
+
+
+def _fit_wrapped_label(label: QtWidgets.QLabel) -> None:
+    """Raise a wrapping label so its full text stays visible at the current width."""
+    width = label.width()
+    parent = label.parentWidget()
+    if width < 80 and parent is not None:
+        width = parent.width()
+    if width < 80:
+        return
+    needed = label.heightForWidth(width)
+    if needed > label.height() + 1:
+        label.setMinimumHeight(needed)
 
 
 def _file_drop(event: QtGui.QDragEnterEvent | QtGui.QDragMoveEvent | QtGui.QDropEvent) -> list[Path]:
