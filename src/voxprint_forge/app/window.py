@@ -655,6 +655,7 @@ class ForgeApp:
             if item is not None and item.spacerItem() is not None:
                 layout.removeItem(item)  # type: ignore[attr-defined]
         layout.insertWidget(0, outer, 1)  # type: ignore[attr-defined]
+        _refit_wrapping_labels(page)
         self._expert_extra(step)
 
     def _expert_extra(self, step: str) -> None:
@@ -909,16 +910,14 @@ class ForgeApp:
     ) -> None:
         """One wrapping notice in the page column, then Expert when it would accept the set.
 
-        Nested layouts give a wrapping label its width and then keep a one-line height.
-        A single label in the step column is what the collage notice already uses.
+        A nested frame keeps that label at one line after the text wraps. The notice is a
+        single label in the step column, and it grows to the width the column actually gives it.
         """
         lines = [tr(report.summary_key(), **report.params())]
         if per_photo:
             lines += [f"{note.name}: {tr(note.reason)}" for note in report.notes]
         lines += [tr(key, **report.params()) for key in report.fixes()]
-        notice = _wrap_label("\n".join(lines), name)
-        column.addWidget(notice)
-        _fit_wrapped_label(notice)
+        column.addWidget(_wrap_label("\n".join(lines), name))
         if report.show_expert():
             button = QtWidgets.QPushButton(tr("forge.app.refuse.expert"))
             button.setObjectName(button_name)
@@ -1427,7 +1426,6 @@ class ForgeApp:
             drops = _wrap_label("\n".join(drop_lines), "forgePrepareReason")
             drops.setToolTip(tr("lora.prepare.dropped.tip"))
             column.addWidget(drops)
-            _fit_wrapped_label(drops)
         if not prepared.blocked and not self.draft.expert:
             report = report_from_drops(prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops))
             if report.fixes() or report.show_expert():
@@ -2836,14 +2834,73 @@ def _button_row(back: QtWidgets.QPushButton | None) -> QtWidgets.QLayout | None:
     return None
 
 
-def _wrap_label(text: str, name: str) -> QtWidgets.QLabel:
+class _WrappingLabel(QtWidgets.QLabel):
+    """Word-wrapped text whose height follows the width it is actually given.
+
+    Measuring at creation time uses the wide size hint. A wider Windows font then wraps
+    inside the step column, and a minimum taken from that hint stays one line short.
+    """
+
+    def __init__(self, text: str, name: str) -> None:
+        super().__init__(text)
+        self.setObjectName(name)
+        self.setWordWrap(True)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        policy = QtWidgets.QSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self._fitting = False
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API
+        return True
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self.fit_to_width()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self.fit_to_width()
+
+    def fit_to_width(self) -> bool:
+        """Raise the floor to the wrapped height at the current width."""
+        width = self.width()
+        if width < 80 or self._fitting:
+            return False
+        needed = self.heightForWidth(width)
+        if needed <= 0 or needed <= self.minimumHeight() + 1:
+            return False
+        self._fitting = True
+        try:
+            self.setMinimumHeight(needed)
+            self.updateGeometry()
+        finally:
+            self._fitting = False
+        return True
+
+
+def _wrap_label(text: str, name: str) -> _WrappingLabel:
     """A dark-panel line that wraps instead of clipping."""
-    label = QtWidgets.QLabel(text)
-    label.setObjectName(name)
-    label.setWordWrap(True)
-    label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
-    label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum)
-    return label
+    return _WrappingLabel(text, name)
+
+
+def _refit_wrapping_labels(page: QtWidgets.QWidget) -> None:
+    """Apply the column width once the step page is in the scroll area."""
+    layout = page.layout()
+    if layout is None:
+        return
+    for _ in range(4):
+        layout.activate()
+        grew = False
+        for label in page.findChildren(_WrappingLabel):
+            grew = label.fit_to_width() or grew
+        if not grew:
+            break
+    layout.activate()
+    page.updateGeometry()
 
 
 def _fit_wrapped_label(label: QtWidgets.QLabel) -> None:

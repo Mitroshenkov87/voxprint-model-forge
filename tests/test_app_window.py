@@ -13,6 +13,7 @@ from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_pr
 from voxprint_forge.app.draft import STEPS, Prepared  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
+from voxprint_forge.app.window import _WrappingLabel  # noqa: E402
 from voxprint_forge.mdl_app import missing_id_text  # noqa: E402
 
 CONTROLS = (
@@ -651,6 +652,30 @@ def test_a_dictionary_trigger_warns_in_the_footer_and_next_stays_on(make_app, tm
     assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1))
 
 
+def test_wrapping_label_grows_after_a_wide_measure(qapp) -> None:
+    """A floor taken at a wide size hint must not keep the label short once the column narrows."""
+    text = "\n".join(
+        [
+            "3 of 9 photos were set aside. 6 can be used.",
+            "grid-00.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "grid-01.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "grid-02.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "Use one photo per file.",
+        ]
+    )
+    label = _WrappingLabel(text, "forgePhotoRefusal")
+    label.setMinimumHeight(label.heightForWidth(1600))
+    host = QtWidgets.QWidget()
+    column = QtWidgets.QVBoxLayout(host)
+    column.addWidget(label)
+    column.addStretch(1)
+    host.resize(420, 700)
+    host.show()
+    qapp.processEvents()
+    assert label.width() < 500
+    assert label.height() + 1 >= label.heightForWidth(label.width())
+
+
 def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(make_app, tmp_path) -> None:
     from tests.test_lora_refusal import _collage, _plain
 
@@ -668,6 +693,10 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     assert tr("lora.refuse.fix.collage") in frame.text()
     button = app.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert")
     assert button is not None and button.text() == tr("forge.app.refuse.expert")
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(page) == []
+    app.window.resize(640, 720)
+    QtWidgets.QApplication.processEvents()
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
     assert _labels_fit(page) == []
     assert "forgePhotoRefusal" in app.window.styleSheet()
