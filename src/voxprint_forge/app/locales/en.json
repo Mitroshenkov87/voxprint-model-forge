@@ -74,6 +74,8 @@
   "forge.app.expert.train_text_encoder.tip": "Also adjusts how prompts are read. Slower and uses more memory; usually off.",
   "forge.app.expert.warmup": "Warm-up steps",
   "forge.app.expert.warmup.tip": "Steps at the start with a lower learning rate. Helps a stable start.",
+  "forge.app.refuse.expert": "Switch to Expert mode",
+  "forge.app.refuse.expert.tip": "Expert mode can train on the photos that can be used. Nothing already entered is lost.",
   "forge.app.folder": "Open project folder",
   "forge.app.folder.tip": "Open the project folder with your photos, versions and previews.",
   "forge.app.help.button": "?",

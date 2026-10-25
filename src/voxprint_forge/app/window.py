@@ -32,7 +32,7 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
-from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
+from voxprint_forge.app.draft import EXPERT_FLOOR, KINDS, SIMPLE_MIN, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
@@ -43,6 +43,7 @@ from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.refusal import Report, outside_simple, report_from_drops, scan_files, visible_on_photos_step
 from voxprint_forge.lora.sample_prompts import read_attire, store_attire
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
@@ -125,6 +126,10 @@ QLabel[muted="true"] { color: #9a9aa8; }
 QLabel#warn { color: #f4f1ea; background: transparent; }
 QLabel#forgePrepareCollage {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
+QFrame#forgePhotoRefusal, QFrame#forgePrepareWayOut {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
+QFrame#forgePhotoRefusal QLabel, QFrame#forgePrepareWayOut QLabel {
+    color: #f4f1ea; background: transparent; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
@@ -494,6 +499,10 @@ class ForgeApp:
             key, params, warning = result.key, result.params, result.warning
         else:
             key, params, warning = "forge.app.ok", {}, False
+        if step.step_id == "photos" and self.status is None:
+            report = self._visible_photo_report()
+            if report is not None:
+                key, params, warning = report.summary_key(), report.params(), True
         label.setText(tr(key, **params))
         label.setObjectName("warn" if (warning or not result.ok) else "ok")
         label.style().unpolish(label)
@@ -852,6 +861,83 @@ class ForgeApp:
         hint.setProperty("muted", "true")
         hint.setWordWrap(True)
         column.addWidget(hint)
+        self._photo_refusal(column)
+
+    def _visible_photo_report(self) -> Report | None:
+        """The simple-mode count refusal, or nothing when this step should stay quiet."""
+        offered = len(self.draft.photos)
+        if self.draft.expert or self.draft.source != "photos" or not outside_simple(offered):
+            return None
+        report = self._cached_photo_report()
+        if not visible_on_photos_step(report, offered, expert=False):
+            return None
+        return report
+
+    def _photo_refusal(self, column: QtWidgets.QVBoxLayout) -> None:
+        """Name each photo simple mode is refusing, and the way to continue."""
+        report = self._visible_photo_report()
+        if report is None:
+            return
+        self._refusal_frame(column, report, "forgePhotoRefusal", "forgePhotoExpert", per_photo=True)
+
+    def _cached_photo_report(self) -> Report:
+        files = tuple(self.draft.photos)
+        stamp = []
+        for path in files:
+            try:
+                stat = path.stat()
+                stamp.append((str(path), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                stamp.append((str(path), 0, 0))
+        key = tuple(stamp)
+        cache = getattr(self, "_refusal_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._refusal_cache = cache
+        found = cache.get(key)
+        if found is None:
+            found = scan_files(files)
+            cache[key] = found
+        return found
+
+    def _refusal_frame(
+        self,
+        column: QtWidgets.QVBoxLayout,
+        report: Report,
+        name: str,
+        button_name: str,
+        *,
+        per_photo: bool,
+    ) -> None:
+        """Dark panel: summary, each photo's reason, what to fix, and Expert when it would accept."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName(name)
+        frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+        layout.addWidget(_wrap_label(tr(report.summary_key(), **report.params()), f"{name}Summary"))
+        if per_photo:
+            for note in report.notes:
+                layout.addWidget(_wrap_label(f"{note.name}: {tr(note.reason)}", "forgePrepareReason"))
+        for key in report.fixes():
+            layout.addWidget(_wrap_label(tr(key, **report.params()), "forgeRefuseFix"))
+        if report.show_expert():
+            button = QtWidgets.QPushButton(tr("forge.app.refuse.expert"))
+            button.setObjectName(button_name)
+            button.setToolTip(tr("forge.app.refuse.expert.tip"))
+            button.setProperty("textButton", "true")
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setAutoDefault(False)
+            button.clicked.connect(self._offer_expert)
+            layout.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        column.addWidget(frame)
+        for label in frame.findChildren(QtWidgets.QLabel):
+            _fit_wrapped_label(label)
+
+    def _offer_expert(self) -> None:
+        """The refusal panel's way into Expert mode. Expert uses the same photos and the same gate."""
+        self.command("view.toggle_expert_mode")
 
     def _add_button(self) -> QtWidgets.QPushButton:
         """One button whose menu adds photo files or every photo in a folder."""
@@ -1338,15 +1424,21 @@ class ForgeApp:
             notice.setWordWrap(True)
             notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
             column.addWidget(notice)
-        drops = QtWidgets.QListWidget()
+        drops = QtWidgets.QWidget()
         drops.setObjectName("forge.prepare.dropped")
         drops.setToolTip(tr("lora.prepare.dropped.tip"))
-        drops.setMaximumHeight(120)
+        drop_lines = QtWidgets.QVBoxLayout(drops)
+        drop_lines.setContentsMargins(0, 0, 0, 0)
+        drop_lines.setSpacing(4)
         for item in prepared.drops:
             name = str(item.get("name") or Path(str(item.get("file", ""))).name)
             reason = str(item.get("reason") or "")
-            drops.addItem(f"{name}: {tr(reason)}" if reason else name)
+            drop_lines.addWidget(_wrap_label(f"{name}: {tr(reason)}" if reason else name, "forgePrepareReason"))
         column.addWidget(drops)
+        if not prepared.blocked and not self.draft.expert:
+            report = report_from_drops(prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops))
+            if report.fixes() or report.show_expert():
+                self._refusal_frame(column, report, "forgePrepareWayOut", "forgePrepareExpert", per_photo=False)
         final = QtWidgets.QLabel(tr("forge.app.prepare.safety_final"))
         final.setObjectName("simpleNote")
         final.setWordWrap(True)
@@ -2435,6 +2527,15 @@ class ForgeApp:
                 self.progress_percent = None
             elif outcome.error_code == "lora.err.blocked":
                 self.draft.prepared = Prepared([], engine.prepared_from(self.project)[1], True)
+            elif outcome.error_code in ("lora.err.too_few", "lora.err.too_many"):
+                kept, drops = engine.prepared_from(self.project)
+                if kept or drops:
+                    self.draft.prepared = Prepared(kept, drops, False)
+                    need = EXPERT_FLOOR if self.draft.expert else SIMPLE_MIN
+                    if outcome.error_code == "lora.err.too_few" and len(kept) < need:
+                        self.status = ("lora.err.too_few", {"need": need - len(kept)}, True)
+                else:
+                    self.draft.prepared = None
             else:
                 self.draft.prepared = None
 
@@ -2740,6 +2841,16 @@ def _button_row(back: QtWidgets.QPushButton | None) -> QtWidgets.QLayout | None:
         if nested is not None and nested.indexOf(back) >= 0:
             return nested
     return None
+
+
+def _wrap_label(text: str, name: str) -> QtWidgets.QLabel:
+    """A dark-panel line that wraps instead of clipping."""
+    label = QtWidgets.QLabel(text)
+    label.setObjectName(name)
+    label.setWordWrap(True)
+    label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+    label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum)
+    return label
 
 
 def _fit_wrapped_label(label: QtWidgets.QLabel) -> None:

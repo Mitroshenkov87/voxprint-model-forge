@@ -26,6 +26,7 @@ from voxprint_forge.lora.photos import (
     photo_id,
 )
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.refusal import announce, outside_simple, report_from_drops, scan_files
 from voxprint_forge.lora.train import MIN_PHOTOS
 from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.mdl_app import missing_id_text
@@ -49,6 +50,11 @@ def prepare(
 ) -> dict[str, object]:
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
+    if mode == "simple" and files and outside_simple(len(files)):
+        announce(
+            progress,
+            scan_files(files, min_side=min_side, blur_threshold=blur_threshold, dup_threshold=dup_threshold),
+        )
     warning = check_count(len(files), mode)
     if warning:
         progress.emit("prepare.count", warning, {"count": len(files)})
@@ -221,6 +227,8 @@ def prepare(
         "set_aside": len(drops),
         "round": round_no,
     }
+    if mode == "simple":
+        announce(progress, report_from_drops(drops, len(items), len(files)))
     if len(items) < floor:
         raise LoraUsageError("lora.err.too_few", need=floor - len(items))
     progress.emit("prepare.done", "lora.progress.done", state="done")

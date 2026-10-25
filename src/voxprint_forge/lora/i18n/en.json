@@ -99,6 +99,27 @@
  "lora.prepare.crop.tip": "How photos are cropped: centred on the subject, or kept whole.",
  "lora.prepare.dropped.tip": "Photos set aside, with the reason. Some photos can't be used, and this cannot be overridden.",
  "lora.prepare.review.tip": "Check each crop and description. Click a description to edit it.",
+ "lora.refuse.expert": {
+  "by": "kept",
+  "one": "Expert mode can train on this {kept} photo.",
+  "other": "Expert mode can train on these {kept} photos."
+ },
+ "lora.refuse.fix.blurry": "Use a sharper photo.",
+ "lora.refuse.fix.collage": "Use one photo per file.",
+ "lora.refuse.fix.duplicate": "Use a photo that is not almost the same as another.",
+ "lora.refuse.fix.small": "Use a photo at least {min_side} px on the shorter side.",
+ "lora.refuse.fix.unreadable": "Use a JPG, PNG, WebP or AVIF file that opens as a picture.",
+ "lora.refuse.hint": "{hint}",
+ "lora.refuse.line": {
+  "by": "dropped",
+  "one": "{dropped} of {total} photos was set aside. {kept} can be used.",
+  "other": "{dropped} of {total} photos were set aside. {kept} can be used."
+ },
+ "lora.refuse.short": {
+  "by": "kept",
+  "one": "Simple mode needs {rec_low}–{rec_high} photos. {kept} photo can be used.",
+  "other": "Simple mode needs {rec_low}–{rec_high} photos. {kept} photos can be used."
+ },
  "lora.preset": "`--preset quick\\",
  "lora.preset.balanced": "Balanced",
  "lora.preset.balanced.tip": "Good quality in reasonable time. Recommended.",
