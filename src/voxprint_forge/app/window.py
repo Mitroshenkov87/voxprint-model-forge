@@ -126,10 +126,8 @@ QLabel[muted="true"] { color: #9a9aa8; }
 QLabel#warn { color: #f4f1ea; background: transparent; }
 QLabel#forgePrepareCollage {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
-QFrame#forgePhotoRefusal, QFrame#forgePrepareWayOut {
+QLabel#forgePhotoRefusal, QLabel#forgePrepareWayOut, QLabel#forgePrepareReason {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
-QFrame#forgePhotoRefusal QLabel, QFrame#forgePrepareWayOut QLabel {
-    color: #f4f1ea; background: transparent; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
@@ -909,19 +907,18 @@ class ForgeApp:
         *,
         per_photo: bool,
     ) -> None:
-        """Dark panel: summary, each photo's reason, what to fix, and Expert when it would accept."""
-        frame = QtWidgets.QFrame()
-        frame.setObjectName(name)
-        frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        layout = QtWidgets.QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
-        layout.addWidget(_wrap_label(tr(report.summary_key(), **report.params()), f"{name}Summary"))
+        """One wrapping notice in the page column, then Expert when it would accept the set.
+
+        Nested layouts give a wrapping label its width and then keep a one-line height.
+        A single label in the step column is what the collage notice already uses.
+        """
+        lines = [tr(report.summary_key(), **report.params())]
         if per_photo:
-            for note in report.notes:
-                layout.addWidget(_wrap_label(f"{note.name}: {tr(note.reason)}", "forgePrepareReason"))
-        for key in report.fixes():
-            layout.addWidget(_wrap_label(tr(key, **report.params()), "forgeRefuseFix"))
+            lines += [f"{note.name}: {tr(note.reason)}" for note in report.notes]
+        lines += [tr(key, **report.params()) for key in report.fixes()]
+        notice = _wrap_label("\n".join(lines), name)
+        column.addWidget(notice)
+        _fit_wrapped_label(notice)
         if report.show_expert():
             button = QtWidgets.QPushButton(tr("forge.app.refuse.expert"))
             button.setObjectName(button_name)
@@ -930,10 +927,7 @@ class ForgeApp:
             button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             button.setAutoDefault(False)
             button.clicked.connect(self._offer_expert)
-            layout.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
-        column.addWidget(frame)
-        for label in frame.findChildren(QtWidgets.QLabel):
-            _fit_wrapped_label(label)
+            column.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
     def _offer_expert(self) -> None:
         """The refusal panel's way into Expert mode. Expert uses the same photos and the same gate."""
@@ -1424,17 +1418,16 @@ class ForgeApp:
             notice.setWordWrap(True)
             notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
             column.addWidget(notice)
-        drops = QtWidgets.QWidget()
-        drops.setObjectName("forge.prepare.dropped")
-        drops.setToolTip(tr("lora.prepare.dropped.tip"))
-        drop_lines = QtWidgets.QVBoxLayout(drops)
-        drop_lines.setContentsMargins(0, 0, 0, 0)
-        drop_lines.setSpacing(4)
+        drop_lines = []
         for item in prepared.drops:
             name = str(item.get("name") or Path(str(item.get("file", ""))).name)
             reason = str(item.get("reason") or "")
-            drop_lines.addWidget(_wrap_label(f"{name}: {tr(reason)}" if reason else name, "forgePrepareReason"))
-        column.addWidget(drops)
+            drop_lines.append(f"{name}: {tr(reason)}" if reason else name)
+        if drop_lines:
+            drops = _wrap_label("\n".join(drop_lines), "forgePrepareReason")
+            drops.setToolTip(tr("lora.prepare.dropped.tip"))
+            column.addWidget(drops)
+            _fit_wrapped_label(drops)
         if not prepared.blocked and not self.draft.expert:
             report = report_from_drops(prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops))
             if report.fixes() or report.show_expert():

@@ -660,13 +660,12 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     app.draft.kind = "object"
     app.repaint()
     QtWidgets.QApplication.processEvents()
-    frame = app.window.findChild(QtWidgets.QFrame, "forgePhotoRefusal")
+    frame = app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
     assert frame is not None and frame.isVisibleTo(app.window)
     assert _status(app) == tr("lora.refuse.line", dropped=3, total=9, kept=6)
     assert not _next(app).isEnabled()
-    lines = [label.text() for label in frame.findChildren(QtWidgets.QLabel)]
-    assert any(tr("lora.drop.collage") in line for line in lines)
-    assert any(tr("lora.refuse.fix.collage") == line for line in lines)
+    assert tr("lora.drop.collage") in frame.text()
+    assert tr("lora.refuse.fix.collage") in frame.text()
     button = app.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert")
     assert button is not None and button.text() == tr("forge.app.refuse.expert")
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
@@ -676,7 +675,7 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     button.click()
     QtWidgets.QApplication.processEvents()
     assert app.draft.expert
-    assert app.window.findChild(QtWidgets.QFrame, "forgePhotoRefusal") is None
+    assert app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal") is None
     app.expert.set_enabled(False)
 
     grids = make_app()
@@ -684,12 +683,11 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     grids.draft.add_photos([_plain(tmp_path / "grids", 0)])
     grids.repaint()
     QtWidgets.QApplication.processEvents()
-    named = grids.window.findChild(QtWidgets.QFrame, "forgePhotoRefusal")
+    named = grids.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
     assert named is not None
     assert grids.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert") is None
-    grid_lines = " ".join(label.text() for label in named.findChildren(QtWidgets.QLabel))
-    assert tr("lora.drop.collage") in grid_lines and tr("lora.refuse.fix.collage") in grid_lines
-    assert "Expert" not in grid_lines
+    assert tr("lora.drop.collage") in named.text() and tr("lora.refuse.fix.collage") in named.text()
+    assert "Expert" not in named.text()
 
     prepared = make_app()
     kept_photos = [_plain(tmp_path / "prep", index) for index in range(12)]
@@ -701,10 +699,10 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     )
     prepared.repaint()
     QtWidgets.QApplication.processEvents()
-    way = prepared.window.findChild(QtWidgets.QFrame, "forgePrepareWayOut")
+    way = prepared.window.findChild(QtWidgets.QLabel, "forgePrepareWayOut")
     assert way is not None and prepared.window.findChild(QtWidgets.QPushButton, "forgePrepareExpert") is not None
-    reasons = [label.text() for label in prepared.window.findChildren(QtWidgets.QLabel, "forgePrepareReason")]
-    assert reasons and all(tr("lora.drop.collage") in line for line in reasons)
+    reason = prepared.window.findChild(QtWidgets.QLabel, "forgePrepareReason")
+    assert reason is not None and tr("lora.drop.collage") in reason.text()
     prepare_page = prepared.window.findChild(QtWidgets.QWidget, "forgeStepPage")
     assert _labels_fit(prepare_page) == []
 
@@ -720,7 +718,7 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     blocked.repaint()
     QtWidgets.QApplication.processEvents()
     assert blocked.window.findChild(QtWidgets.QPushButton, "forgePrepareExpert") is None
-    assert blocked.window.findChild(QtWidgets.QFrame, "forgePrepareWayOut") is None
+    assert blocked.window.findChild(QtWidgets.QLabel, "forgePrepareWayOut") is None
     assert _status(blocked) == tr("lora.err.blocked")
 
 
