@@ -10,9 +10,10 @@ from PySide6 import QtCore, QtWidgets  # noqa: E402
 from voxprint_common.i18n import set_language  # noqa: E402
 
 from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_prepared  # noqa: E402
-from voxprint_forge.app.draft import STEPS  # noqa: E402
+from voxprint_forge.app.draft import STEPS, Prepared  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
+from voxprint_forge.app.window import _WrappingLabel  # noqa: E402
 from voxprint_forge.mdl_app import missing_id_text  # noqa: E402
 
 CONTROLS = (
@@ -632,3 +633,140 @@ def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
         problems += _scroll_problems(app, step)
     assert app.window.size() == QtCore.QSize(1024, 768)
     assert problems == []
+
+
+def test_a_dictionary_trigger_warns_in_the_footer_and_next_stays_on(make_app, tmp_path) -> None:
+    app = make_app()
+    _subject_step(app, tmp_path)
+    _box(app, "consent").click()
+    _box(app, "adult").click()
+    _box(app, "verbal").click()
+    app.draft.trigger = "synthetic"
+    app.draft.trigger_edited = True
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    assert _next(app).isEnabled()
+    assert _status(app) == tr("lora.warn.trigger_word")
+    label = app._status_label
+    assert label.wordWrap()
+    assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1))
+
+
+def test_wrapping_label_grows_after_a_wide_measure(qapp) -> None:
+    """A floor taken at a wide size hint must not keep the label short once the column narrows."""
+    text = "\n".join(
+        [
+            "3 of 9 photos were set aside. 6 can be used.",
+            "grid-00.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "grid-01.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "grid-02.png: This file is a collage or a grid of several pictures. Use one photo per file.",
+            "Use one photo per file.",
+        ]
+    )
+    label = _WrappingLabel(text, "forgePhotoRefusal")
+    label.setMinimumHeight(label.heightForWidth(1600))
+    host = QtWidgets.QWidget()
+    column = QtWidgets.QVBoxLayout(host)
+    column.addWidget(label)
+    column.addStretch(1)
+    host.resize(420, 700)
+    host.show()
+    qapp.processEvents()
+    assert label.width() < 500
+    assert label.height() + 1 >= label.heightForWidth(label.width())
+
+
+def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(make_app, tmp_path) -> None:
+    from tests.test_lora_refusal import _collage, _plain
+
+    app = make_app()
+    app.draft.add_photos([_plain(tmp_path / "ok", index) for index in range(6)])
+    app.draft.add_photos([_collage(tmp_path / "ok", index) for index in range(3)])
+    app.draft.kind = "object"
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    frame = app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
+    assert frame is not None and frame.isVisibleTo(app.window)
+    assert _status(app) == tr("lora.refuse.line", dropped=3, total=9, kept=6)
+    assert not _next(app).isEnabled()
+    assert tr("lora.drop.collage") in frame.text()
+    assert tr("lora.refuse.fix.collage") in frame.text()
+    button = app.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert")
+    assert button is not None and button.text() == tr("forge.app.refuse.expert")
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(page) == []
+    app.window.resize(640, 720)
+    QtWidgets.QApplication.processEvents()
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(page) == []
+    assert "forgePhotoRefusal" in app.window.styleSheet()
+    assert "#2a2a33" in app.window.styleSheet() and "#f4f1ea" in app.window.styleSheet()
+    button.click()
+    QtWidgets.QApplication.processEvents()
+    assert app.draft.expert
+    assert app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal") is None
+    app.expert.set_enabled(False)
+
+    grids = make_app()
+    grids.draft.add_photos([_collage(tmp_path / "grids", index) for index in range(8)])
+    grids.draft.add_photos([_plain(tmp_path / "grids", 0)])
+    grids.repaint()
+    QtWidgets.QApplication.processEvents()
+    named = grids.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
+    assert named is not None
+    assert grids.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert") is None
+    assert tr("lora.drop.collage") in named.text() and tr("lora.refuse.fix.collage") in named.text()
+    assert "Expert" not in named.text()
+
+    prepared = make_app()
+    kept_photos = [_plain(tmp_path / "prep", index) for index in range(12)]
+    _walk_to(prepared, "prepare", kept_photos)
+    prepared.draft.prepared = Prepared(
+        [{"id": str(index), "file": str(kept_photos[index]), "short": "a mug"} for index in range(6)],
+        [{"name": f"grid-{index}.png", "reason": "lora.drop.collage"} for index in range(3)],
+        False,
+    )
+    prepared.repaint()
+    QtWidgets.QApplication.processEvents()
+    way = prepared.window.findChild(QtWidgets.QLabel, "forgePrepareWayOut")
+    assert way is not None and prepared.window.findChild(QtWidgets.QPushButton, "forgePrepareExpert") is not None
+    reason = prepared.window.findChild(QtWidgets.QLabel, "forgePrepareReason")
+    assert reason is not None and tr("lora.drop.collage") in reason.text()
+    prepare_page = prepared.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(prepare_page) == []
+
+    blocked = make_app()
+    blocked.draft.prepared = Prepared(
+        [],
+        [{"name": "a.png", "reason": "lora.drop.safety"}],
+        True,
+    )
+    blocked.draft.expert = False
+    _walk_to(blocked, "prepare", [_plain(tmp_path / "safe", index) for index in range(10)])
+    blocked.draft.prepared = Prepared([], [{"name": "a.png", "reason": "lora.drop.safety"}], True)
+    blocked.repaint()
+    QtWidgets.QApplication.processEvents()
+    assert blocked.window.findChild(QtWidgets.QPushButton, "forgePrepareExpert") is None
+    assert blocked.window.findChild(QtWidgets.QLabel, "forgePrepareWayOut") is None
+    assert _status(blocked) == tr("lora.err.blocked")
+
+
+def test_collage_drops_show_a_wrapping_notice(make_app, tmp_path) -> None:
+    from voxprint_forge.app.draft import Prepared
+
+    photos = make_photos(tmp_path / "p", 12)
+    app = make_app(_runner(photos))
+    _walk_to(app, "prepare", photos)
+    app.draft.prepared = Prepared(
+        [{"id": str(index), "file": str(photos[index]), "short": "a woman"} for index in range(10)],
+        [{"name": "grid.png", "file": "grid.png", "reason": "lora.drop.collage"}] * 8,
+    )
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    notice = app.window.findChild(QtWidgets.QLabel, "forgePrepareCollage")
+    assert notice is not None and notice.isVisibleTo(app.window)
+    assert notice.wordWrap() and notice.text() == tr("forge.app.prepare.collage", count=8)
+    page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
+    assert _labels_fit(page) == []
+    assert "forgePrepareCollage" in app.window.styleSheet()
+    assert "#2a2a33" in app.window.styleSheet() and "#f4f1ea" in app.window.styleSheet()

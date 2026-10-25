@@ -23,11 +23,11 @@ from safetensors.torch import load_file, save_file
 
 from voxprint_forge import __version__
 from voxprint_forge.lora.bases import get_adapter
-from voxprint_forge.lora.consent import default_trigger
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.review import load_state, passes_output_check
+from voxprint_forge.lora.trigger import token_slug
 
 SCHEMA = "voxprint-model/1"
 MIN_SCHEMA = 1
@@ -138,7 +138,7 @@ def tensors_digest(tensors: dict[str, torch.Tensor]) -> str:
 def model_id(data: dict[str, object], tensors_digest: str) -> str:
     """``<trigger slug>-<8 hex>``; the hex is from the LoRA tensors, so the same LoRA keeps its id."""
     subject = dict(data.get("subject") or {})  # type: ignore[call-overload]
-    slug = default_trigger(str(subject.get("trigger") or subject.get("name") or ""), "")
+    slug = token_slug(str(subject.get("trigger") or subject.get("name") or ""))
     slug = re.sub(r"[^a-z0-9_]", "", slug.encode("ascii", "ignore").decode()) or "lora"
     return f"{slug[:40]}-{tensors_digest[:8]}"
 

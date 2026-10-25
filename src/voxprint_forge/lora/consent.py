@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from voxprint_forge.lora.attr import accepted
 from voxprint_forge.lora.errors import LoraUsageError
+from voxprint_forge.lora.trigger import rare_trigger
 
 KINDS = ("person", "object", "style")
 CONSENT_METHODS = ("verbal", "file")
@@ -35,9 +35,10 @@ class Subject:
         return asdict(self)
 
 
-def default_trigger(name: str, stage_name: str) -> str:
-    source = stage_name or name
-    return re.sub(r"[^\w]+", "_", source.strip().lower(), flags=re.UNICODE).strip("_")
+def default_trigger(name: str = "", stage_name: str = "") -> str:
+    """A rare ``vxp`` token. ``name`` and ``stage_name`` are not used."""
+    del name, stage_name
+    return rare_trigger()
 
 
 def check_subject(

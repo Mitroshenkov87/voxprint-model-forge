@@ -78,7 +78,7 @@ def test_gui_and_cli_render_the_same_form(count) -> None:
                 continue
             by = value.get("by", "count")
             params = {"count": 0, "round": 1, "low": 1, "high": 0, "minutes": 3, "need": 0, "extra": 0, "shown": 0,
-                      "steps": 0, "done": 0, "planned": 0, by: count}
+                      "steps": 0, "done": 0, "planned": 0, "total": 9, "kept": 0, "dropped": 0, by: count}
             want = value[EXPECTED[count]].format(**{**limits.text_params(), **params})
             assert tr(key, **params) == want, key
             if key.startswith("lora."):

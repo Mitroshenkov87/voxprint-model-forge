@@ -26,6 +26,7 @@ from voxprint_forge.lora.review import (
     FIRST_ROUND_STEPS_MIN,
 )
 from voxprint_forge.lora.sample_prompts import store_attire
+from voxprint_forge.lora.trigger import looks_like_words, prepend_trigger
 from voxprint_forge.mdl_app import fetch, missing_ids
 
 _REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
@@ -104,8 +105,10 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
 def _subject_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--kind", choices=KINDS, default=None, help="What the photos show.")
     command.add_argument("--name", default="", help="Name of the subject.")
-    command.add_argument("--stage-name", default="", help="Optional alias; becomes the trigger word.")
-    command.add_argument("--trigger", default="", help="Word that calls the model in a prompt.")
+    command.add_argument("--stage-name", default="", help="Optional alias. It does not become the trigger word.")
+    command.add_argument(
+        "--trigger", default="", help="Word that calls the model in a prompt. Default: a rare vxp token, not the name."
+    )
     command.add_argument("--consent-obtained", action="store_true", help="Person: consent was obtained.")
     command.add_argument("--subject-adult", action="store_true", help="Person: the subject is 18 or older.")
     command.add_argument(
@@ -161,7 +164,7 @@ def _fetch_missing() -> None:
 
 def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--project", type=Path, required=True, help="Project folder.")
-    command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG or WebP photos.")
+    command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG, WebP or AVIF photos.")
     command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
     command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
     _subject_flags(command)
@@ -391,16 +394,28 @@ def _apply_captions(project: Project, path: Path) -> None:
         if line.strip():
             row = json.loads(line)
             edits[str(row["id"])] = row
-    items = [
-        Item(
-            i.id, i.file, str(edits[i.id].get("long", i.long)), str(edits[i.id].get("short", i.short)),
-            i.round, i.unclothed,
+    subject = project.read().get("subject")
+    trigger = str(subject.get("trigger") or "") if isinstance(subject, dict) else ""
+    items = []
+    for item in project.items():
+        long, short = item.long, item.short
+        if item.id in edits:
+            long = str(edits[item.id].get("long", item.long))
+            short = str(edits[item.id].get("short", item.short))
+        items.append(
+            Item(
+                item.id, item.file, prepend_trigger(trigger, long), prepend_trigger(trigger, short),
+                item.round, item.unclothed,
+            )
         )
-        if i.id in edits
-        else i
-        for i in project.items()
-    ]
     project.write_items(items)
+
+
+def _warn_typed_trigger(args: argparse.Namespace, progress: Progress) -> None:
+    """Warn when a typed trigger is an ordinary word. A blank flag becomes a rare token and is not warned."""
+    typed = str(getattr(args, "trigger", "") or "").strip()
+    if typed and looks_like_words(typed):
+        progress.emit("prepare.trigger", "lora.warn.trigger_word")
 
 
 def _device() -> str:
@@ -443,6 +458,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.prepare import prepare
 
     project = Project(args.project)
+    progress = Progress(printer(args.json))
+    _warn_typed_trigger(args, progress)
     stored = project.read() if project.file.is_file() else {}
     if args.kind is None and isinstance(stored.get("subject"), dict):
         subject = Subject(**stored["subject"])  # type: ignore[arg-type]
@@ -458,7 +475,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         subject,
         gate=_load_gate(),
         load_captioner=_load_captioner,
-        progress=Progress(printer(args.json)),
+        progress=progress,
         mode=mode,
         crop_mode=args.crop,
         caption_model=args.caption_model,
@@ -618,6 +635,7 @@ def _refset(args: argparse.Namespace) -> dict[str, object]:
     if args.refset_command == "finish":
         return refset.finish(project, progress, mode=args.mode, base=args.base)
     settings = refset.check_settings(args.candidates, args.strength, args.steps, args.seed)
+    _warn_typed_trigger(args, progress)
     subject = subject_from(args)
     device = _device()
     return refset.run_round(

@@ -19,6 +19,7 @@ from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict, deci
 from voxprint_forge.lora.photos import check_count, collect
 from voxprint_forge.lora.prepare import prepare
 from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.trigger import is_rare_trigger
 
 CLEAN = Verdict("no", "no", None, 0.9, "no_person", False, {k: "absent" for k in INDICATORS})
 ADULT_FACE = Verdict("yes", "yes", 34.0, 0.9, "clearly_adult", False, {k: "absent" for k in INDICATORS})
@@ -121,7 +122,8 @@ def test_consent_per_kind() -> None:
             check_subject(kind, name="X")
         assert rights.value.code == "lora.err.no_rights"
     person = check_subject("person", stage_name="Nova Lee", consent_obtained=True, subject_adult=True)
-    assert person.trigger == "nova_lee" and person.adult_confirmed and not person.rights_confirmed
+    assert is_rare_trigger(person.trigger) and "nova" not in person.trigger
+    assert person.adult_confirmed and not person.rights_confirmed
 
 
 def test_consent_method_verbal_or_file(tmp_path) -> None:
@@ -246,7 +248,8 @@ def test_prepare_filters_crops_captions_and_unloads(tmp_path) -> None:
     assert data["gate_passed"] is True and data["kind"] == "object"
     items = project.items()
     assert all(Image.open(project.root / i.file).size == (1024, 1024) for i in items)
-    assert items[0].short == "textured square"
+    trigger = str(data["subject"]["trigger"])  # type: ignore[index]
+    assert is_rare_trigger(trigger) and items[0].short == f"{trigger}, textured square"
     assert judge.unloaded and captioner.unloaded
 
 

@@ -58,18 +58,18 @@ def test_prompts_rotate_framings_from_the_seed_and_round() -> None:
     again = build_sample_prompts("tcube", count=3, seed=0, round_no=1, mode="auto", captions=captions)
     assert first == again
     assert first == [
-        "tcube, waist-up, wearing near-skin-tone underwear",
-        "tcube, full body, wearing near-skin-tone underwear",
-        "tcube, close-up portrait, wearing near-skin-tone underwear",
+        "tcube, a person, waist-up, wearing near-skin-tone underwear",
+        "tcube, a person, full body, wearing near-skin-tone underwear",
+        "tcube, a person, close-up portrait, wearing near-skin-tone underwear",
     ]
     shifted = build_sample_prompts("tcube", count=3, seed=2, round_no=1, mode="clothed", captions=_caps(True))
-    assert shifted[0] == "tcube, close-up portrait, wearing near-skin-tone underwear"
+    assert shifted[0] == "tcube, a person, close-up portrait, wearing near-skin-tone underwear"
     nxt = build_sample_prompts("tcube", count=4, seed=0, round_no=2, mode="auto", captions=captions)
-    assert [part.split(", ")[1] for part in nxt] == [
+    assert [part.split(", ")[2] for part in nxt] == [
         "full body", "close-up portrait", "waist-up", "full body",
     ]
     bare = build_sample_prompts("", count=1, seed=2, round_no=1, mode="unclothed", captions=captions)
-    assert bare == ["close-up portrait, unclothed"]
+    assert bare == ["a person, close-up portrait, unclothed"]
     assert set(FRAMINGS) == {"close-up portrait", "waist-up", "full body"}
 
 
@@ -81,7 +81,7 @@ def test_as_photos_does_not_add_clothing_and_clothed_does() -> None:
     assert all("underwear" not in prompt for prompt in as_photos)
     assert all(prompt.endswith(", wearing near-skin-tone underwear") for prompt in forced)
     auto = build_sample_prompts("mira", count=1, seed=2, round_no=1, mode="auto", captions=mixed)
-    assert auto == ["mira, close-up portrait, unclothed"]
+    assert auto == ["mira, a person, close-up portrait, unclothed"]
 
 
 def test_sample_attire_is_stored_on_the_project(tmp_path: Path) -> None:

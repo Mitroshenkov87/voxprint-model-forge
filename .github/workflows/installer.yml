@@ -101,6 +101,7 @@ jobs:
           Copy-Item installer\requirements-mivolo.txt "$stage\requirements-mivolo.txt"
           Copy-Item installer\windows\install.ps1 "$stage\install.ps1"
           Copy-Item installer\windows\requirements-te-quant.txt "$stage\requirements-te-quant.txt"
+          Copy-Item installer\windows\requirements-avif.txt "$stage\requirements-avif.txt"
           $teReq = Get-Content -Raw "$stage\requirements-te-quant.txt"
           if ($teReq -notmatch '(?m)^bitsandbytes==0\.50\.2\b') { throw "requirements-te-quant.txt does not pin bitsandbytes==0.50.2" }
           if ($teReq -notmatch '--hash=sha256:([0-9a-f]{64})') { throw "requirements-te-quant.txt has no sha256 pin" }
@@ -113,6 +114,18 @@ jobs:
           $bnb = Join-Path "$stage\wheels" $bnbName
           curl.exe -fsSL --retry 5 -o $bnb $published[0].url
           if ((Get-FileHash $bnb -Algorithm SHA256).Hash.ToLower() -ne $bnbHash) { throw "bitsandbytes sha256 mismatch" }
+          $avifReq = Get-Content -Raw "$stage\requirements-avif.txt"
+          if ($avifReq -notmatch '(?m)^pillow-avif-plugin==1\.6\.0\b') { throw "requirements-avif.txt does not pin pillow-avif-plugin==1.6.0" }
+          if ($avifReq -notmatch '--hash=sha256:([0-9a-f]{64})') { throw "requirements-avif.txt has no sha256 pin" }
+          $avifHash = $Matches[1].ToLower()
+          if ($avifReq -match 'extra-index-url|git\+|cp314t') { throw "requirements-avif.txt must use the cp314 win_amd64 wheel from PyPI" }
+          $avifName = "pillow_avif_plugin-1.6.0-cp314-cp314-win_amd64.whl"
+          $avifMeta = Invoke-RestMethod -Uri "https://pypi.org/pypi/pillow-avif-plugin/1.6.0/json"
+          $avifPublished = @($avifMeta.urls | Where-Object { $_.filename -eq $avifName })
+          if ($avifPublished.Count -ne 1) { throw "PyPI has no single $avifName" }
+          $avif = Join-Path "$stage\wheels" $avifName
+          curl.exe -fsSL --retry 5 -o $avif $avifPublished[0].url
+          if ((Get-FileHash $avif -Algorithm SHA256).Hash.ToLower() -ne $avifHash) { throw "pillow-avif-plugin sha256 mismatch" }
           $zip = Join-Path $env:RUNNER_TEMP "uv.zip"
           curl.exe -fsSL --retry 5 -o $zip "https://github.com/astral-sh/uv/releases/download/0.13.0/uv-x86_64-pc-windows-msvc.zip"
           if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne "088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c") { throw "uv sha256 mismatch" }

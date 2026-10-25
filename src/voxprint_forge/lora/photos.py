@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
+from PIL import Image, ImageOps
+
+try:
+    import pillow_avif  # registers AVIF when Pillow itself has none
+except ImportError:
+    pillow_avif = None
 
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE  # noqa: F401 - re-export
 
-if TYPE_CHECKING:
-    from PIL import Image
-
-EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".avif")
+_COLLAGE_WORD = re.compile(r"\b(?:grids?|collages?)\b", re.IGNORECASE)
 BLUR_THRESHOLD = 60.0
 DUP_THRESHOLD = 6
 PREPARED_SIDE = 1024
@@ -60,10 +64,15 @@ def photo_id(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
 
 
+def avif_ready() -> bool:
+    """True when Pillow itself, or pillow-avif-plugin, can decode AVIF."""
+    if pillow_avif is not None:
+        return True
+    return ".avif" in {key.lower() for key in Image.registered_extensions()}
+
+
 def open_photo(path: Path) -> Image.Image | None:
     """Decoded RGB image with EXIF rotation applied, or ``None`` when it is not a picture."""
-    from PIL import Image, ImageOps
-
     try:
         with Image.open(path) as image:
             return ImageOps.exif_transpose(image).convert("RGB")
@@ -102,6 +111,8 @@ def filter_reason(
         return "lora.drop.unreadable"
     if min(image.size) < min_side:
         return "lora.drop.small"
+    if looks_like_collage(image):
+        return "lora.drop.collage"
     if sharpness(image) < blur_threshold:
         return "lora.drop.blurry"
     value = dhash(image)
@@ -109,6 +120,47 @@ def filter_reason(
         return "lora.drop.duplicate"
     seen.append(value)
     return None
+
+
+def looks_like_collage(image: Image.Image) -> bool:
+    """True when straight interior seams divide the picture into a grid of panels.
+
+    A seam is a narrow spike in the row or column gradient, well above the
+    typical edge. Plain noise and a smooth gradient have no such spike. A
+    caption that says grid or collage is a separate check.
+    """
+    small = image.convert("L").resize((90, 90), Image.Resampling.BOX)
+    grey = np.asarray(small, dtype=np.float32)
+    vertical = _seam_count(np.abs(np.diff(grey, axis=1)).mean(axis=0))
+    horizontal = _seam_count(np.abs(np.diff(grey, axis=0)).mean(axis=1))
+    return 1 <= vertical <= 4 and 1 <= horizontal <= 4
+
+
+def caption_marks_collage(*parts: str) -> bool:
+    """True when a caption calls the picture a grid or a collage."""
+    return any(_COLLAGE_WORD.search(part) for part in parts)
+
+
+def _seam_count(score: np.ndarray) -> int:
+    length = int(score.shape[0])
+    margin = max(2, length // 10)
+    if length <= margin * 2 + 2:
+        return 0
+    baseline = float(np.median(score))
+    limit = max(baseline + 18.0, baseline * 2.2, 22.0)
+    hits = 0
+    index = margin
+    while index < length - margin:
+        value = float(score[index])
+        if value >= limit:
+            left = float(score[max(0, index - 2)])
+            right = float(score[min(length - 1, index + 2)])
+            if value >= left + 10.0 and value >= right + 10.0:
+                hits += 1
+                index += 5
+                continue
+        index += 1
+    return hits
 
 
 def crop(image: Image.Image, mode: str, side: int = PREPARED_SIDE) -> Image.Image:

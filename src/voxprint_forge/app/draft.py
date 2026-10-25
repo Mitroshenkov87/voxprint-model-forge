@@ -10,13 +10,13 @@ The safety result comes from the engine and cannot be changed here.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.lora.attr import accepted
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, RECOMMENDED_RANGE
 from voxprint_forge.lora.refset import REF_RANGE
+from voxprint_forge.lora.trigger import looks_like_words, rare_trigger
 
 SIMPLE_MIN, SIMPLE_MAX = RECOMMENDED_RANGE
 PHOTO_SUFFIXES = EXTENSIONS
@@ -73,6 +73,11 @@ class Draft:
     source: str = "photos"
     approved: list[Path] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        """Fill an empty trigger once. Later name edits do not replace it."""
+        if not self.trigger.strip():
+            self.trigger = rare_trigger()
+
     def add_photos(self, paths: list[Path]) -> int:
         """Add image files (folders are expanded). Returns how many were new."""
         seen = {path.resolve() for path in self.photos}
@@ -116,10 +121,8 @@ class Draft:
         return list(self.approved) if self.source == "refs" else list(self.photos)
 
     def set_names(self, name: str, stage_name: str) -> None:
-        """Store the names and pre-fill the trigger word unless the user edited it."""
+        """Store the names. The trigger stays the rare token unless the user edited it."""
         self.name, self.stage_name = name.strip(), stage_name.strip()
-        if not self.trigger_edited:
-            self.trigger = suggest_trigger(self.stage_name or self.name)
 
     def set_verbal(self, verbal: bool) -> None:
         """Verbal consent needs no file, so ticking it detaches the release."""
@@ -188,6 +191,8 @@ class Draft:
             return Check(False, "lora.err.adult_content")
         if self.kind in ("object", "style") and not self.rights:
             return Check(False, "lora.err.no_rights")
+        if looks_like_words(self.trigger):
+            return Check(True, "lora.warn.trigger_word", warning=True)
         return Check(True)
 
     def check_refset(self) -> Check:
@@ -232,7 +237,7 @@ class Draft:
 
 
 
-def suggest_trigger(name: str) -> str:
-    """A lower-case one-word trigger from a name: ``"Mira Stone"`` -> ``"mira_stone"``."""
-    word = re.sub(r"[^\w]+", "_", name.strip().lower(), flags=re.UNICODE).strip("_")
-    return word[:40]
+def suggest_trigger(name: str = "") -> str:
+    """A rare ``vxp`` token. ``name`` is not used."""
+    del name
+    return rare_trigger()

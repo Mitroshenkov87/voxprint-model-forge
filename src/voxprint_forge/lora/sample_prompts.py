@@ -1,18 +1,32 @@
-"""Review-sample prompts: trigger, a framing, and one attire word.
+"""Review-sample prompts: trigger, the subject, a framing, and one attire word.
 
-Framings rotate ``close-up portrait``, ``waist-up``, ``full body``. The start
-index is ``(seed + round number) % 3``. ``auto`` resolves to ``unclothed`` when
-any caption sets ``unclothed``, and to ``as_photos`` otherwise. ``as_photos``
-with clothed captions and ``clothed`` both use near-skin-tone underwear.
+The subject is the leading phrase of the short captions (``a woman`` from
+``A woman models various stylish outfits``). Framings rotate ``close-up
+portrait``, ``waist-up``, ``full body``. The start index is
+``(seed + round number) % 3``. ``auto`` resolves to ``unclothed`` when any
+caption sets ``unclothed``, and to ``as_photos`` otherwise. ``as_photos`` with
+clothed captions and ``clothed`` both use near-skin-tone underwear. The project
+name is never used.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Literal, Never
 
 from voxprint_forge.lora.captioner import text_marks_unclothed
 from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.trigger import strip_trigger
+
+# Words that end the subject and start the action or the clothing.
+_STOP = frozenset({
+    "against", "and", "are", "dressed", "has", "have", "holding", "holds",
+    "in", "is", "looking", "looks", "modeling", "modelling", "models", "of",
+    "on", "poses", "posing", "showing", "shows", "sitting", "sits", "standing",
+    "stands", "walking", "walks", "was", "wearing", "wears", "were", "with", "wore",
+})
+_WORDS = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 ATTIRE_MODES = ("auto", "as_photos", "clothed", "unclothed")
 FRAMINGS = ("close-up portrait", "waist-up", "full body")
@@ -77,6 +91,7 @@ def build_sample_prompts(
 ) -> list[str]:
     """``count`` prompts for one round. The same seed and round repeat the list."""
     word = attire_word(resolve_attire(mode, captions), captions)
+    subject = subject_phrase(captions, trigger)
     total = max(0, int(count))
     if total == 0:
         return []
@@ -84,8 +99,32 @@ def build_sample_prompts(
     prompts = []
     for index in range(total):
         framing = FRAMINGS[(start + index) % len(FRAMINGS)]
-        prompts.append(_compose(trigger, framing, word))
+        prompts.append(_compose(trigger, subject, framing, word))
     return prompts
+
+
+def subject_phrase(captions: Sequence[Mapping[str, object]], trigger: str = "") -> str:
+    """The subject shared by the short captions, such as ``a woman``.
+
+    The short text is used first. A short line that is only an action falls
+    back to the long text. The most common phrase wins.
+    """
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for caption in captions:
+        phrase = _phrase_from_row(caption, trigger)
+        if not phrase:
+            continue
+        if phrase not in counts:
+            order.append(phrase)
+        counts[phrase] = counts.get(phrase, 0) + 1
+    if not order:
+        return ""
+    best = max(counts.values())
+    for phrase in order:
+        if counts[phrase] == best:
+            return phrase
+    return ""
 
 
 def read_attire(data: Mapping[str, object]) -> str:
@@ -116,9 +155,32 @@ def caption_rows(project: Project) -> list[dict[str, object]]:
     return rows
 
 
-def _compose(trigger: str, framing: str, word: str) -> str:
-    parts = [part.strip() for part in (trigger, framing, word) if part and part.strip()]
+def _compose(trigger: str, subject: str, framing: str, word: str) -> str:
+    parts = [part.strip() for part in (trigger, subject, framing, word) if part and part.strip()]
     return ", ".join(parts)
+
+
+def _phrase_from_row(caption: Mapping[str, object], trigger: str) -> str:
+    short = strip_trigger(trigger, str(caption.get("short") or ""))
+    phrase = _leading_subject(short)
+    if phrase:
+        return phrase
+    long = strip_trigger(trigger, str(caption.get("long") or ""))
+    return _leading_subject(long)
+
+
+def _leading_subject(text: str) -> str:
+    kept: list[str] = []
+    for word in _WORDS.findall(text):
+        low = word.lower()
+        if low in _STOP:
+            if kept:
+                break
+            continue
+        kept.append(low)
+        if len(kept) >= 4:
+            break
+    return " ".join(kept)
 
 
 def _mode(mode: str) -> AttireMode:

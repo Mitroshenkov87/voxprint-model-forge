@@ -17,6 +17,7 @@ from voxprint_forge.lora.photos import (
     DUP_THRESHOLD,
     MIN_SIDE,
     Drop,
+    caption_marks_collage,
     check_count,
     crop,
     dhash,
@@ -25,7 +26,9 @@ from voxprint_forge.lora.photos import (
     photo_id,
 )
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.refusal import announce, outside_simple, report_from_drops, scan_files
 from voxprint_forge.lora.train import MIN_PHOTOS
+from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.mdl_app import missing_id_text
 
 
@@ -47,6 +50,11 @@ def prepare(
 ) -> dict[str, object]:
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
+    if mode == "simple" and files and outside_simple(len(files)):
+        announce(
+            progress,
+            scan_files(files, min_side=min_side, blur_threshold=blur_threshold, dup_threshold=dup_threshold),
+        )
     warning = check_count(len(files), mode)
     if warning:
         progress.emit("prepare.count", warning, {"count": len(files)})
@@ -145,6 +153,7 @@ def prepare(
         )
         crop(image, crop_mode).save(project.prepared / f"{pid}.png")
     new_items: list[Item] = []
+    caption_drops: list[Drop] = []
     if safe:
         progress.emit("prepare.load_captioner", "lora.progress.load_captioner", reason_key="lora.reason.load_captioner")
         captioner = load_captioner(caption_model)
@@ -161,13 +170,21 @@ def prepare(
                     total=len(safe),
                 )
                 text = captioner.caption(crop(image, crop_mode))
+                long = str(text.get("long", ""))
+                short = str(text.get("short", ""))
+                if caption_marks_collage(long, short):
+                    prepared = project.prepared / f"{pid}.png"
+                    if prepared.is_file():
+                        prepared.unlink()
+                    caption_drops.append(Drop(pid, names.get(pid, pid), "lora.drop.collage"))
+                    continue
                 flag = text.get("unclothed")
                 new_items.append(
                     Item(
                         pid,
                         f"prepared/{pid}.png",
-                        str(text.get("long", "")),
-                        str(text.get("short", "")),
+                        prepend_trigger(subject.trigger, long),
+                        prepend_trigger(subject.trigger, short),
                         round_no,
                         flag if isinstance(flag, bool) else None,
                     )
@@ -180,7 +197,10 @@ def prepare(
         caption_name = captioner.name
     else:
         caption_name = ""
-    items = existing + new_items
+    if caption_drops:
+        drops.extend(caption_drops)
+        _write_drops(project, caption_drops)
+    items = [_with_trigger(subject.trigger, item) for item in existing + new_items]
     project.write_items(items)
     if release is not None:
         (project.root / "release").mkdir(parents=True, exist_ok=True)
@@ -207,10 +227,20 @@ def prepare(
         "set_aside": len(drops),
         "round": round_no,
     }
+    if mode == "simple":
+        announce(progress, report_from_drops(drops, len(items), len(files)))
     if len(items) < floor:
         raise LoraUsageError("lora.err.too_few", need=floor - len(items))
     progress.emit("prepare.done", "lora.progress.done", state="done")
     return summary
+
+
+def _with_trigger(trigger: str, item: Item) -> Item:
+    long = prepend_trigger(trigger, item.long)
+    short = prepend_trigger(trigger, item.short)
+    if long == item.long and short == item.short:
+        return item
+    return Item(item.id, item.file, long, short, item.round, item.unclothed)
 
 
 def _base(project: Project) -> dict[str, object]:

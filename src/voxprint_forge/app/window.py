@@ -32,7 +32,7 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
-from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared
+from voxprint_forge.app.draft import EXPERT_FLOOR, KINDS, SIMPLE_MIN, STEPS, Draft, Prepared
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
@@ -43,6 +43,7 @@ from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import expert_range_differs
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.refusal import Report, outside_simple, report_from_drops, scan_files, visible_on_photos_step
 from voxprint_forge.lora.sample_prompts import read_attire, store_attire
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
 
@@ -122,6 +123,11 @@ QLabel[similar="true"] { color: #fbbf24; }
 QWidget#sourceDrop { background: #16161c; border: 2px dashed #6e6e80; border-radius: 12px; }
 QLabel[emptyTitle="true"] { font-size: 16px; font-weight: 600; padding: 0; min-height: 28px; }
 QLabel[muted="true"] { color: #9a9aa8; }
+QLabel#warn { color: #f4f1ea; background: transparent; }
+QLabel#forgePrepareCollage {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
+QLabel#forgePhotoRefusal, QLabel#forgePrepareWayOut, QLabel#forgePrepareReason {
+    background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
@@ -491,10 +497,15 @@ class ForgeApp:
             key, params, warning = result.key, result.params, result.warning
         else:
             key, params, warning = "forge.app.ok", {}, False
+        if step.step_id == "photos" and self.status is None:
+            report = self._visible_photo_report()
+            if report is not None:
+                key, params, warning = report.summary_key(), report.params(), True
         label.setText(tr(key, **params))
         label.setObjectName("warn" if (warning or not result.ok) else "ok")
         label.style().unpolish(label)
         label.style().polish(label)
+        _fit_wrapped_label(label)
 
     def _tips(self) -> None:
         parts = self.widget._parts()
@@ -644,6 +655,7 @@ class ForgeApp:
             if item is not None and item.spacerItem() is not None:
                 layout.removeItem(item)  # type: ignore[attr-defined]
         layout.insertWidget(0, outer, 1)  # type: ignore[attr-defined]
+        _refit_wrapping_labels(page)
         self._expert_extra(step)
 
     def _expert_extra(self, step: str) -> None:
@@ -848,6 +860,77 @@ class ForgeApp:
         hint.setProperty("muted", "true")
         hint.setWordWrap(True)
         column.addWidget(hint)
+        self._photo_refusal(column)
+
+    def _visible_photo_report(self) -> Report | None:
+        """The simple-mode count refusal, or nothing when this step should stay quiet."""
+        offered = len(self.draft.photos)
+        if self.draft.expert or self.draft.source != "photos" or not outside_simple(offered):
+            return None
+        report = self._cached_photo_report()
+        if not visible_on_photos_step(report, offered, expert=False):
+            return None
+        return report
+
+    def _photo_refusal(self, column: QtWidgets.QVBoxLayout) -> None:
+        """Name each photo simple mode is refusing, and the way to continue."""
+        report = self._visible_photo_report()
+        if report is None:
+            return
+        self._refusal_frame(column, report, "forgePhotoRefusal", "forgePhotoExpert", per_photo=True)
+
+    def _cached_photo_report(self) -> Report:
+        files = tuple(self.draft.photos)
+        stamp = []
+        for path in files:
+            try:
+                stat = path.stat()
+                stamp.append((str(path), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                stamp.append((str(path), 0, 0))
+        key = tuple(stamp)
+        cache = getattr(self, "_refusal_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._refusal_cache = cache
+        found = cache.get(key)
+        if found is None:
+            found = scan_files(files)
+            cache[key] = found
+        return found
+
+    def _refusal_frame(
+        self,
+        column: QtWidgets.QVBoxLayout,
+        report: Report,
+        name: str,
+        button_name: str,
+        *,
+        per_photo: bool,
+    ) -> None:
+        """One wrapping notice in the page column, then Expert when it would accept the set.
+
+        A nested frame keeps that label at one line after the text wraps. The notice is a
+        single label in the step column, and it grows to the width the column actually gives it.
+        """
+        lines = [tr(report.summary_key(), **report.params())]
+        if per_photo:
+            lines += [f"{note.name}: {tr(note.reason)}" for note in report.notes]
+        lines += [tr(key, **report.params()) for key in report.fixes()]
+        column.addWidget(_wrap_label("\n".join(lines), name))
+        if report.show_expert():
+            button = QtWidgets.QPushButton(tr("forge.app.refuse.expert"))
+            button.setObjectName(button_name)
+            button.setToolTip(tr("forge.app.refuse.expert.tip"))
+            button.setProperty("textButton", "true")
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setAutoDefault(False)
+            button.clicked.connect(self._offer_expert)
+            column.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+
+    def _offer_expert(self) -> None:
+        """The refusal panel's way into Expert mode. Expert uses the same photos and the same gate."""
+        self.command("view.toggle_expert_mode")
 
     def _add_button(self) -> QtWidgets.QPushButton:
         """One button whose menu adds photo files or every photo in a folder."""
@@ -1327,15 +1410,26 @@ class ForgeApp:
         dropped = QtWidgets.QLabel(tr("forge.app.prepare.dropped", count=len(prepared.drops)))
         dropped.setObjectName("settingGroup")
         column.addWidget(dropped)
-        drops = QtWidgets.QListWidget()
-        drops.setObjectName("forge.prepare.dropped")
-        drops.setToolTip(tr("lora.prepare.dropped.tip"))
-        drops.setMaximumHeight(120)
+        collage_count = sum(1 for item in prepared.drops if str(item.get("reason") or "") == "lora.drop.collage")
+        if collage_count:
+            notice = QtWidgets.QLabel(tr("forge.app.prepare.collage", count=collage_count))
+            notice.setObjectName("forgePrepareCollage")
+            notice.setWordWrap(True)
+            notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+            column.addWidget(notice)
+        drop_lines = []
         for item in prepared.drops:
             name = str(item.get("name") or Path(str(item.get("file", ""))).name)
             reason = str(item.get("reason") or "")
-            drops.addItem(f"{name}: {tr(reason)}" if reason else name)
-        column.addWidget(drops)
+            drop_lines.append(f"{name}: {tr(reason)}" if reason else name)
+        if drop_lines:
+            drops = _wrap_label("\n".join(drop_lines), "forgePrepareReason")
+            drops.setToolTip(tr("lora.prepare.dropped.tip"))
+            column.addWidget(drops)
+        if not prepared.blocked and not self.draft.expert:
+            report = report_from_drops(prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops))
+            if report.fixes() or report.show_expert():
+                self._refusal_frame(column, report, "forgePrepareWayOut", "forgePrepareExpert", per_photo=False)
         final = QtWidgets.QLabel(tr("forge.app.prepare.safety_final"))
         final.setObjectName("simpleNote")
         final.setWordWrap(True)
@@ -1943,6 +2037,7 @@ class ForgeApp:
             label.setObjectName("ok")
             label.style().unpolish(label)
             label.style().polish(label)
+            _fit_wrapped_label(label)
         except RuntimeError:
             pass
 
@@ -2423,6 +2518,15 @@ class ForgeApp:
                 self.progress_percent = None
             elif outcome.error_code == "lora.err.blocked":
                 self.draft.prepared = Prepared([], engine.prepared_from(self.project)[1], True)
+            elif outcome.error_code in ("lora.err.too_few", "lora.err.too_many"):
+                kept, drops = engine.prepared_from(self.project)
+                if kept or drops:
+                    self.draft.prepared = Prepared(kept, drops, False)
+                    need = EXPERT_FLOOR if self.draft.expert else SIMPLE_MIN
+                    if outcome.error_code == "lora.err.too_few" and len(kept) < need:
+                        self.status = ("lora.err.too_few", {"need": need - len(kept)}, True)
+                else:
+                    self.draft.prepared = None
             else:
                 self.draft.prepared = None
 
@@ -2656,8 +2760,10 @@ class ForgeApp:
         self.draft.kind = str(data.get("kind") or subject.get("kind") or "")
         self.draft.name = str(subject.get("name") or "")
         self.draft.stage_name = str(subject.get("stage_name") or "")
-        self.draft.trigger = str(subject.get("trigger") or "")
-        self.draft.trigger_edited = bool(self.draft.trigger)
+        stored_trigger = str(subject.get("trigger") or "").strip()
+        if stored_trigger:
+            self.draft.trigger = stored_trigger
+            self.draft.trigger_edited = True
         photos = folder / "photos"
         if photos.is_dir():
             self.draft.add_photos([photos])
@@ -2726,6 +2832,88 @@ def _button_row(back: QtWidgets.QPushButton | None) -> QtWidgets.QLayout | None:
         if nested is not None and nested.indexOf(back) >= 0:
             return nested
     return None
+
+
+class _WrappingLabel(QtWidgets.QLabel):
+    """Word-wrapped text whose height follows the width it is actually given.
+
+    Measuring at creation time uses the wide size hint. A wider Windows font then wraps
+    inside the step column, and a minimum taken from that hint stays one line short.
+    """
+
+    def __init__(self, text: str, name: str) -> None:
+        super().__init__(text)
+        self.setObjectName(name)
+        self.setWordWrap(True)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        policy = QtWidgets.QSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self._fitting = False
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API
+        return True
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self.fit_to_width()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self.fit_to_width()
+
+    def fit_to_width(self) -> bool:
+        """Raise the floor to the wrapped height at the current width."""
+        width = self.width()
+        if width < 80 or self._fitting:
+            return False
+        needed = self.heightForWidth(width)
+        if needed <= 0 or needed <= self.minimumHeight() + 1:
+            return False
+        self._fitting = True
+        try:
+            self.setMinimumHeight(needed)
+            self.updateGeometry()
+        finally:
+            self._fitting = False
+        return True
+
+
+def _wrap_label(text: str, name: str) -> _WrappingLabel:
+    """A dark-panel line that wraps instead of clipping."""
+    return _WrappingLabel(text, name)
+
+
+def _refit_wrapping_labels(page: QtWidgets.QWidget) -> None:
+    """Apply the column width once the step page is in the scroll area."""
+    layout = page.layout()
+    if layout is None:
+        return
+    for _ in range(4):
+        layout.activate()
+        grew = False
+        for label in page.findChildren(_WrappingLabel):
+            grew = label.fit_to_width() or grew
+        if not grew:
+            break
+    layout.activate()
+    page.updateGeometry()
+
+
+def _fit_wrapped_label(label: QtWidgets.QLabel) -> None:
+    """Raise a wrapping label so its full text stays visible at the current width."""
+    width = label.width()
+    parent = label.parentWidget()
+    if width < 80 and parent is not None:
+        width = parent.width()
+    if width < 80:
+        return
+    needed = label.heightForWidth(width)
+    if needed > label.height() + 1:
+        label.setMinimumHeight(needed)
 
 
 def _file_drop(event: QtGui.QDragEnterEvent | QtGui.QDragMoveEvent | QtGui.QDropEvent) -> list[Path]:

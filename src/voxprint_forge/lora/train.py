@@ -51,6 +51,7 @@ from voxprint_forge.lora.review import (
     transition,
 )
 from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
+from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.mdl_app import missing_id_text
 
 MIN_PHOTOS = {"simple": 10, "expert": 5}
@@ -354,6 +355,8 @@ def train(
         if review_state.get("no_more_reviews") and stage < 1:
             return _seal_finished(project, review_state, adapter, progress)
         config = replace(config, steps=max(1, stage) if stage > 0 else 0)
+    if config.previews and _explicit_prompts(preview_prompts, data) is None:
+        preview_prompts = _sample_prompt_list(project, data, config.seed, 1, 1, sample_attire)
     rng = random.Random(config.seed)
     torch.manual_seed(config.seed)
     negatives: list[Item] = []
@@ -422,7 +425,10 @@ def _train(
     _report(writer, stage="load", step=0, total=config.steps, loss=None, eta=None, extra=clock.extra(config.steps))
     base = base_dir or weights_dir(adapter.info.mdl_id)
     bundle = list(chosen) + list(negatives)
-    captions = [{"long": i.long, "short": i.short} for i in bundle]
+    trigger = _subject_trigger(data)
+    captions = [
+        {"long": prepend_trigger(trigger, i.long), "short": prepend_trigger(trigger, i.short)} for i in bundle
+    ]
     if getattr(adapter, "encodes_before_load", False):
         # Encoders first, then free the text encoder, then read the DiT: keeps RAM to one big model.
         adapter.load_encoders(base, config, device)

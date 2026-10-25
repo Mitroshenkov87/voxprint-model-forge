@@ -10,6 +10,7 @@ import pytest
 
 from voxprint_forge.app import engine
 from voxprint_forge.app.draft import EXPERT_CAP, Draft, Prepared, suggest_trigger
+from voxprint_forge.lora.trigger import is_rare_trigger, looks_like_words
 
 LOCALES = Path(__file__).resolve().parents[1] / "src" / "voxprint_forge" / "app" / "locales"
 
@@ -93,7 +94,7 @@ def test_consent_per_kind(tmp_path: Path, kind: str, fields: dict[str, bool], mi
     draft.add_photos(_photos(tmp_path, 12))
     assert draft.check("subject").key == "lora.err.no_name"
     draft.set_names("", "Demo Shape")
-    assert draft.trigger == "demo_shape"
+    assert is_rare_trigger(draft.trigger) and "demo" not in draft.trigger
     for name, value in fields.items():
         setattr(draft, name, value)
     assert draft.check("subject").key == missing
@@ -137,8 +138,22 @@ def test_a_safety_block_is_final(tmp_path: Path) -> None:
 
 
 def test_trigger_suggestion() -> None:
-    assert suggest_trigger(" Mira  Stone ") == "mira_stone"
-    assert suggest_trigger("Мира") == "мира"
+    token = suggest_trigger(" Mira  Stone ")
+    other = suggest_trigger("Мира")
+    assert is_rare_trigger(token) and is_rare_trigger(other)
+    assert "mira" not in token and "stone" not in token and "мира" not in other
+    assert token != other
+
+
+def test_a_dictionary_trigger_warns_without_blocking(tmp_path: Path) -> None:
+    draft = _ready_draft(tmp_path)
+    assert draft.check("subject").ok and not draft.check("subject").warning
+    draft.trigger = "pg_synthetic_a"
+    draft.trigger_edited = True
+    result = draft.check("subject")
+    assert result.ok and result.warning and result.key == "lora.warn.trigger_word"
+    assert looks_like_words("pg_synthetic_a") and looks_like_words("synthetic")
+    assert not looks_like_words(suggest_trigger("PG Synthetic A"))
 
 
 def _ready_draft(tmp_path: Path) -> Draft:
@@ -155,7 +170,8 @@ def test_prepare_args_follow_the_flag_table(tmp_path: Path) -> None:
     assert args.count("--photo") == 10
     for flag in ("--json", "--consent-obtained", "--subject-adult", "--release", "--provenance-note"):
         assert flag in args
-    assert args[args.index("--trigger") + 1] == "mira"
+    trigger = args[args.index("--trigger") + 1]
+    assert is_rare_trigger(trigger) and "mira" not in trigger
     assert args[args.index("--mode") + 1] == "simple"
     assert "--rights-confirmed" not in args and "--allow-count-outside-range" not in args
 
