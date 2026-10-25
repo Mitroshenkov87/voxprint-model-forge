@@ -289,7 +289,7 @@ voxprint-forge-cli models verify --gui
 <ul>
 <li>Both tiers train one picture at a time with gradient checkpointing on. Balanced and Best quality add two pictures up before each step; Quick check does one.</li>
 <li><strong>Z-Image</strong>, 16 GB tier: the base model is stored in a compact 8-bit form to fit the card. 24 GB tier: full precision.</li>
-<li><strong>MOSS-Image Base</strong>: the picture model stays in full precision on both tiers. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see <a href="#page-compression">Compression tests</a>).</li>
+<li><strong>MOSS-Image Base</strong>: on the 16 GB tier the picture model is stored as FP8 e4m3 weights (bf16 compute) so it fits the card. On the 24 GB tier it stays in full precision. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see <a href="#page-compression">Compression tests</a>).</li>
 </ul>
 <h2 id="measured-figures">Measured figures</h2>
 <p>These come from a calibration run of the Balanced preset (1024 px, rank 32, one picture and two accumulations per step) on an RTX 4090, with its memory limited to 16 GB or 22.5 GB to stand in for each card.</p>
@@ -405,7 +405,7 @@ voxprint-forge-cli lora export --project &lt;project folder&gt; [--checkpoint &l
 <h1 id="compression-tests">Compression tests</h1>
 <p>Some model parts can run in a compressed (quantized) form that needs less video memory. Model Forge uses a compressed part only after it has been tested against the original, and the results are published here.</p>
 <h2 id="moss-image-base-text-encoder">MOSS-Image Base text encoder</h2>
-<p>The text encoder turns your prompt and descriptions into numbers for the picture model. On the 16 GB tier it runs on the graphics card in 8-bit form (int8); on the 24 GB tier it runs in full precision (bf16). The picture model itself is never compressed.</p>
+<p>The text encoder turns your prompt and descriptions into numbers for the picture model. On the 16 GB tier it runs on the graphics card in 8-bit form (int8); on the 24 GB tier it runs in full precision (bf16). On the 16 GB tier the picture model (the DiT) is stored as FP8 e4m3 weights and computed in bf16. On the 24 GB tier the picture model stays in full precision. The table below is the text encoder only.</p>
 <p>Test: 8 prompts, each drawn with the full-precision encoder and with each compressed one, same seed; then the pictures were scored for how well they match the prompt (CLIP score, higher is better) and how much they differ from the full-precision picture (LPIPS, lower is closer).</p>
 <table>
 <thead>
