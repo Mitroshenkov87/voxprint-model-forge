@@ -1606,16 +1606,15 @@ class ForgeApp:
         row.setSpacing(12)
         cont = self._continue_control(busy)
         finish = self._finish_menu(busy)
-        note = _ElidedLabel()
+        note = QtWidgets.QLabel()
         note.setObjectName("forge.review.note")
         note.setProperty("muted", "true")
         note.setWordWrap(False)
-        note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
+        note.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
         self._review_note = note
         self._show_review_note(cont.mode())
         cont.toggled.connect(self._show_review_note)
         row.addWidget(cont, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(note, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
         row.addStretch(1)
         row.addWidget(self._review_attire(busy), 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(finish, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
@@ -1625,6 +1624,7 @@ class ForgeApp:
         pinned.setContentsMargins(0, 8, 0, 0)
         pinned.setSpacing(0)
         pinned.addLayout(row)
+        pinned.addWidget(note, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         self._review_actions = bar
         self._review_continue = cont
 
@@ -1696,7 +1696,6 @@ class ForgeApp:
             return
         key = "forge.app.review.note.plain" if mode == "plain" else "forge.app.review.note.reinforced"
         note.setText(tr(key))
-        note.setToolTip(tr(key))
 
     def _continue_control(self, busy: bool) -> "_ContinueToggle":
         """Large primary button. ▾ swaps reinforcement and plain continue."""
@@ -3365,41 +3364,6 @@ QAbstractItemView {
 def _attire_combo_style() -> str:
     """Dark combo face. The ▾ is the down-arrow image."""
     return _ATTIRE_COMBO_STYLE.replace("@@ARROW@@", _ATTIRE_ARROW.as_posix())
-
-
-class _ElidedLabel(QtWidgets.QLabel):
-    """A one-line label that gives way to its neighbours and ends with an ellipsis when short of room."""
-
-    def __init__(self, text: str = "") -> None:
-        super().__init__()
-        self._full = ""
-        self.setMinimumWidth(0)
-        self.setText(text)
-
-    def setText(self, text: str) -> None:  # noqa: N802 - Qt API
-        self._full = text
-        self._refit()
-
-    def text(self) -> str:
-        return self._full
-
-    def shown_text(self) -> str:
-        return super().text()
-
-    def sizeHint(self) -> QtCore.QSize:
-        hint = super().sizeHint()
-        return QtCore.QSize(self.fontMetrics().horizontalAdvance(self._full) + 2, hint.height())
-
-    def minimumSizeHint(self) -> QtCore.QSize:
-        return QtCore.QSize(0, super().minimumSizeHint().height())
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self._refit()
-
-    def _refit(self) -> None:
-        shown = self.fontMetrics().elidedText(self._full, QtCore.Qt.TextElideMode.ElideRight, max(0, self.width()))
-        super().setText(shown)
 
 
 class _FullWidthLabel(QtWidgets.QLabel):
