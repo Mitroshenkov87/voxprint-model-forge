@@ -32,7 +32,7 @@ Steps and pass rules:
   2a te-quant  the app venv imports bitsandbytes and its version is 0.50.2.
   3 preflight  voxprint-forge-cli --json preflight --refset prints a report; diffusers, img2img and the
                MiVOLO env pass. Missing models are listed, not failed (a fresh install has none).
-  4 lora       a 12-picture stub project; lora train --dry-run --base z-image --vram 24 returns state dry-run.
+  4 lora       a 12-picture stub project; lora train --dry-run --preset quick --base z-image --vram 24 returns state dry-run and 150 steps.
   4a migration the setup moved %LOCALAPPDATA%\Voxprint to %LOCALAPPDATA%\VOXPrint AI Suite before any Python ran:
                the old folder is gone, the dummy sits under paths.models_dir() with the same sha256
                (checked right after the setup: on disk first, then through voxprint_common), and a second silent install
@@ -523,11 +523,13 @@ project.write({"kind": "object", "mode": "simple", "gate_passed": True,
         & $Py $stub $project
         if ($LASTEXITCODE -ne 0) { throw "the stub project was not written" }
         $r = Invoke-Cli @("--json", "lora", "train", "--project", $project, "--dry-run", "--base", "z-image",
-            "--vram", "24", "--steps", "4", "--no-previews")
+            "--preset", "quick", "--vram", "24")
         if ($r.code -ne 0) { throw "lora train --dry-run exited $($r.code)" }
         $res = ($r.out.Substring($r.out.IndexOf("{")) | ConvertFrom-Json).result
-        if ($res.state -ne "dry-run" -or $res.photos -ne 12) { throw "unexpected result: state=$($res.state) photos=$($res.photos)" }
-        "state dry-run, 12 photos, 4 steps, eta $($res.eta_seconds) s, vram need $($res.vram_need_gb) GB"
+        if ($res.state -ne "dry-run" -or $res.photos -ne 12 -or $res.steps -ne 150) {
+            throw "unexpected result: state=$($res.state) photos=$($res.photos) steps=$($res.steps)"
+        }
+        "state dry-run, 12 photos, 150 steps, eta $($res.eta_seconds) s, vram need $($res.vram_need_gb) GB"
     })
 }
 

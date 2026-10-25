@@ -10,14 +10,12 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from voxprint_forge.app.text import tr
-from voxprint_forge.lora.presets import MEASURED, VRAM_TIERS
+from voxprint_forge.lora.presets import VRAM_TIERS, measured_peaks
 
-# Peak training memory in GB per base and tier: the peak reserved memory of the measured runs in
-# ``presets.MEASURED`` (MOSS-Image Base: moss-memprobe v2 train16 13.6, train24 18.5). A base with no
-# measurement (Z-Image so far) shows the preset tier ("16 GB+"), never a guessed figure.
-MEASURED_PEAK_GB: dict[str, dict[int, float]] = {
-    mdl_id: {tier: run.peak_reserved_gb for tier, run in tiers.items()} for mdl_id, tiers in MEASURED.items()
-}
+# Peak training memory in GB per base and tier, only where the peak itself was measured
+# (MOSS-Image Base: moss-memprobe v2 train16 13.6, train24 18.5). A timing-only run, such as
+# Z-Image at 9.7 s/step, does not fill this map: the card line stays the preset tier ("16 GB+").
+MEASURED_PEAK_GB: dict[str, dict[int, float]] = measured_peaks()
 
 DETAIL_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 MIN_WIDTH = 220  # px, the closed picker

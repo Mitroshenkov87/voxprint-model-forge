@@ -96,7 +96,7 @@ workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 | te-quant | `import bitsandbytes` in the app venv reports version 0.50.2 |
 | version | the installed `voxprint-forge-cli --version`, with the checkout off `PATH` and without `GITHUB_RUN_NUMBER`, prints the build number recorded in the installed wheel |
 | preflight | `preflight --refset` reports diffusers, img2img and the MiVOLO env OK (and CUDA with `-RequireGpu`); missing models are listed only |
-| lora-dry-run | `lora train --dry-run --base z-image --vram 24` on a 12-picture stub project returns `dry-run` |
+| lora-dry-run | `lora train --dry-run --preset quick --base z-image --vram 24` on a 12-picture stub project returns `dry-run` and 150 steps |
 | home-migration | the setup moved `%LOCALAPPDATA%\Voxprint` to `%LOCALAPPDATA%\VOXPrint AI Suite` before any Python ran: the old folder is gone and the dummy is under `paths.models_dir()` with the same sha256 |
 | reinstall-noop | with `-MigrationTest`: a second silent install exits 0, logs `no-op` and leaves the data home unchanged |
 | uninstall | the program folder, shortcut and uninstall entry are gone; `%LOCALAPPDATA%\VOXPrint AI Suite` stays |

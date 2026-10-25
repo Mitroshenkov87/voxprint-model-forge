@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,7 @@ class Item:
     long: str
     short: str
     round: int = 0
+    unclothed: bool | None = None
 
 
 PAUSE_FILE = "PAUSE"
@@ -94,23 +96,42 @@ class Project:
         for line in self.captions.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 row = json.loads(line)
-                item = Item(row["id"], row["file"], row.get("long", ""), row.get("short", ""), int(row.get("round", 0)))
+                flag = row.get("unclothed", None)
+                item = Item(
+                    row["id"],
+                    row["file"],
+                    row.get("long", ""),
+                    row.get("short", ""),
+                    int(row.get("round", 0)),
+                    flag if isinstance(flag, bool) else None,
+                )
                 if (self.root / item.file).is_file():
                     found.append(item)
         return found
 
     def write_items(self, items: list[Item]) -> None:
         """Replace ``captions.jsonl``."""
-        lines = [
-            json.dumps(
-                {"id": i.id, "file": i.file, "long": i.long, "short": i.short, "round": i.round},
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-            for i in items
-        ]
+        lines = [json.dumps(_item_row(i), ensure_ascii=False, sort_keys=True) for i in items]
         self.root.mkdir(parents=True, exist_ok=True)
         _atomic(self.captions, "".join(line + "\n" for line in lines))
+
+
+def _item_row(item: Item) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": item.id, "file": item.file, "long": item.long, "short": item.short, "round": item.round,
+    }
+    if isinstance(item.unclothed, bool):
+        row["unclothed"] = item.unclothed
+    return row
+
+
+def package_stem(data: dict[str, object]) -> str:
+    """``.voxlora`` file stem: the stage name, or the name when the stage name is empty."""
+    subject = data.get("subject")
+    fields = subject if isinstance(subject, dict) else {}
+    raw = str(fields.get("stage_name") or "").strip() or str(fields.get("name") or "").strip() or "lora"
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", raw).strip().rstrip(".")
+    return cleaned or "lora"
 
 
 def _atomic(path: Path, content: str) -> None:

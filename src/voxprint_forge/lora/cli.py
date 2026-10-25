@@ -20,6 +20,12 @@ from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
 from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.review import (
+    DEFAULT_FIRST_ROUND_STEPS,
+    FIRST_ROUND_STEPS_MAX,
+    FIRST_ROUND_STEPS_MIN,
+)
+from voxprint_forge.lora.sample_prompts import store_attire
 from voxprint_forge.mdl_app import fetch, missing_ids
 
 _REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
@@ -33,11 +39,24 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     )
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
     _prepare_flags(lora_sub.add_parser("prepare", help="Check, crop and describe photos into a project."))
-    export = lora_sub.add_parser("export", help="Save the LoRA as one .safetensors file with voxprint-model.json.")
-    export.add_argument("--project", type=Path, required=True, help="Project folder.")
+    export = lora_sub.add_parser(
+        "export",
+        help="Save a .voxlora package, or a .safetensors file with voxprint-model.json.",
+    )
+    export.add_argument(
+        "project_pos", nargs="?", type=Path, metavar="PROJECT",
+        help="Project folder for a .voxlora package.",
+    )
+    export.add_argument("--project", type=Path, default=None, help="Project folder for a .safetensors file.")
     export.add_argument("--checkpoint", type=int, default=None, help="Step of the version to save. Default: last.")
-    export.add_argument("--out", type=Path, default=None, help="Target .safetensors. Default: <project>/export/.")
-    export.add_argument("--install-to-mdl", action="store_true", help="Also add it to your models for Canvas.")
+    export.add_argument(
+        "-o", "--out", type=Path, default=None,
+        help="Target file. Default: <project>/export/.",
+    )
+    export.add_argument(
+        "--install-to-mdl", action="store_true",
+        help="Also add the .safetensors file to your models for Canvas.",
+    )
     export.add_argument("--tag", action="append", default=[], help="Plain-word tag for Canvas. Repeat as needed.")
     train = lora_sub.add_parser("train", help="Train a LoRA on the prepared photos of a project.")
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
@@ -206,8 +225,11 @@ def _review_flags(train: argparse.ArgumentParser) -> None:
         help="How many review pauses. From 1 to 6. Default: 3. 0 trains straight through.",
     )
     train.add_argument(
-        "--first-round-steps", type=int, default=200,
-        help="Steps before the first review. From 100 to 500. Default: 200.",
+        "--first-round-steps", type=int, default=DEFAULT_FIRST_ROUND_STEPS,
+        help=(
+            "Steps before the first review. From "
+            f"{FIRST_ROUND_STEPS_MIN} to {FIRST_ROUND_STEPS_MAX}. Default: {DEFAULT_FIRST_ROUND_STEPS}."
+        ),
     )
     train.add_argument(
         "--first-round-samples", type=int, default=6,
@@ -220,6 +242,12 @@ def _review_flags(train: argparse.ArgumentParser) -> None:
     train.add_argument(
         "--sample-steps", type=int, default=28,
         help="Inference steps for each review picture. Default: 28.",
+    )
+    train.add_argument(
+        "--sample-attire",
+        choices=("auto", "as_photos", "clothed", "unclothed"),
+        default=None,
+        help="Attire word for review samples. Default: auto. Stored on the project.",
     )
 
 
@@ -239,9 +267,18 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
         help="Keep the liked pictures and train every remaining step with no more pauses.",
     )
     finish = lora_sub.add_parser(
-        "finish", help="Save the current LoRA, draw a final preview, and record the steps it got.",
+        "finish",
+        help="Save the current LoRA, draw a final preview, and record the steps it got.",
     )
     finish.add_argument("project", type=Path, help="Project folder.")
+    finish.add_argument(
+        "--discard", action="store_true",
+        help="Stop and remove temporary versions and samples. Photos stay. Nothing is saved.",
+    )
+    finish.add_argument(
+        "--yes", action="store_true",
+        help="Confirm --discard without a prompt. Required when the terminal is not interactive.",
+    )
     status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
     status.add_argument("project", type=Path, help="Project folder.")
 
@@ -255,16 +292,7 @@ _CONFIG_FLAGS = (
 def execute(args: argparse.Namespace) -> dict[str, object]:
     """Run one ``lora`` subcommand and return its result."""
     if args.lora_command == "export":
-        from voxprint_forge.lora.export import export
-
-        return export(
-            Project(args.project),
-            Progress(printer(args.json)),
-            checkpoint=args.checkpoint,
-            out=args.out,
-            install_to_mdl=args.install_to_mdl,
-            tags=tuple(args.tag),
-        )
+        return _export(args)
     if args.lora_command == "prepare":
         return _prepare(args)
     if args.lora_command in ("train", "extend"):
@@ -315,6 +343,9 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
     adapter = get_adapter(base_id, training=True)
     if args.dry_run:
         return estimate(project, config, adapter)
+    attire = getattr(args, "sample_attire", None)
+    if isinstance(attire, str) and attire:
+        store_attire(project, attire)
     prompts = _prompts(args.preview_prompts, data)
     stop = threading.Event()
     previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -331,9 +362,10 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             # ``extend`` has no review flags. A missing value trains straight through.
             review_rounds=getattr(args, "review_rounds", 0),
             samples_per_round=getattr(args, "samples_per_round", 8),
-            first_round_steps=getattr(args, "first_round_steps", 200),
+            first_round_steps=getattr(args, "first_round_steps", DEFAULT_FIRST_ROUND_STEPS),
             first_round_samples=getattr(args, "first_round_samples", 6),
             sample_steps=getattr(args, "sample_steps", 28),
+            sample_attire=attire if isinstance(attire, str) else None,
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -360,7 +392,10 @@ def _apply_captions(project: Project, path: Path) -> None:
             row = json.loads(line)
             edits[str(row["id"])] = row
     items = [
-        Item(i.id, i.file, str(edits[i.id].get("long", i.long)), str(edits[i.id].get("short", i.short)), i.round)
+        Item(
+            i.id, i.file, str(edits[i.id].get("long", i.long)), str(edits[i.id].get("short", i.short)),
+            i.round, i.unclothed,
+        )
         if i.id in edits
         else i
         for i in project.items()
@@ -495,16 +530,63 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
         signal.signal(signal.SIGINT, previous)
 
 
+def _export(args: argparse.Namespace) -> dict[str, object]:
+    """``.voxlora`` from a positional project, or ``.safetensors`` from ``--project``."""
+    positional = getattr(args, "project_pos", None)
+    flagged = getattr(args, "project", None)
+    if positional is not None and flagged is not None:
+        raise LoraUsageError("lora.err.export_project")
+    progress = Progress(printer(args.json))
+    if positional is not None:
+        from voxprint_forge.lora.export import export_package
+
+        return export_package(Project(positional), progress, checkpoint=args.checkpoint, out=args.out)
+    if flagged is not None:
+        from voxprint_forge.lora.export import export
+
+        return export(
+            Project(flagged),
+            progress,
+            checkpoint=args.checkpoint,
+            out=args.out,
+            install_to_mdl=args.install_to_mdl,
+            tags=tuple(args.tag),
+        )
+    raise LoraUsageError("lora.err.export_project")
+
+
 def _finish_review(args: argparse.Namespace) -> dict[str, object]:
-    """Save the current LoRA, draw a final preview, and record the steps it got."""
+    """Save the current LoRA, or discard temporary files when ``--discard`` is set."""
+    project = Project(args.project)
+    if getattr(args, "discard", False):
+        project.read()
+        if not _discard_confirmed(args):
+            raise LoraUsageError("lora.err.discard_confirm")
+        from voxprint_forge.lora.train import discard_run
+
+        return discard_run(project)
     from voxprint_forge.lora.bases import get_adapter
     from voxprint_forge.lora.review import load_state
     from voxprint_forge.lora.train import finish_review
 
-    project = Project(args.project)
     state = load_state(project)
     adapter = get_adapter(str(state.get("base") or ""))
     return finish_review(project, adapter, Progress(printer(args.json)))
+
+
+def _discard_confirmed(args: argparse.Namespace) -> bool:
+    """True for ``--yes``, or when an interactive terminal answers yes."""
+    if getattr(args, "yes", False):
+        return True
+    if not sys.stdin.isatty():
+        return False
+    from voxprint_forge.lora.i18n import text
+
+    try:
+        answer = input(text("lora.discard.ask", current_lang()) + " ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes", "д", "да"}
 
 
 def _status(args: argparse.Namespace) -> dict[str, object]:

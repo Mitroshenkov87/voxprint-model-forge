@@ -133,12 +133,12 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
     """1280 px grabs: the photos switch on (ru) and a review with mixed marks (en and ru)."""
     import json
 
-    from PySide6 import QtCore, QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtTest, QtWidgets
     from tests.forge_app_stub import ALL_COMMANDS, StubRunner
     from voxprint_common.i18n import set_language
 
     from voxprint_forge.app.draft import STEPS
-    from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.app.window import ForgeApp, popup_menu
     from voxprint_forge.lora.project import Project
     from voxprint_forge.lora.review import save_state, transition
 
@@ -191,13 +191,45 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             state, "pause", checkpoint="checkpoints/step-000001.safetensors", samples=samples,
         ))
 
+    def tooltip_widget() -> QtWidgets.QWidget | None:
+        for widget in QtWidgets.QApplication.topLevelWidgets():
+            if not widget.isVisible():
+                continue
+            if widget.windowType() == QtCore.Qt.WindowType.ToolTip or "Tip" in widget.metaObject().className():
+                return widget
+        return None
+
+    def _save_button_tooltip(
+        window: QtWidgets.QWidget, button: QtWidgets.QWidget | None, path: Path, application: QtWidgets.QApplication,
+    ) -> None:
+        """Composite the real tooltip where the app opens it, under the main button."""
+        if button is None or not button.toolTip().strip():
+            raise SystemExit("review main button has no tooltip")
+        local = QtCore.QPoint(button.width() // 2, button.height() // 2)
+        event = QtGui.QHelpEvent(QtCore.QEvent.Type.ToolTip, local, button.mapToGlobal(local))
+        application.sendEvent(button, event)
+        application.processEvents()
+        tip = tooltip_widget()
+        if tip is None:
+            raise SystemExit("tooltip did not appear")
+        image = window.grab()
+        if image.width() != 1280 or image.height() != 800:
+            raise SystemExit(f"tooltip grab is {image.width()}x{image.height()}, want 1280x800")
+        point = window.mapFromGlobal(tip.mapToGlobal(QtCore.QPoint(0, 0)))
+        painter = QtGui.QPainter(image)
+        painter.drawPixmap(point, tip.grab())
+        painter.end()
+        image.save(str(path))
+        QtWidgets.QToolTip.hideText()
+        application.processEvents()
+
     for lang in ("ru", "en"):
         set_language(lang)
         forge = ForgeApp(
             runner=StubRunner(), home=home / f"review-{lang}", commands=ALL_COMMANDS,
             open_path=lambda _p: None, launch=lambda _a: None,
         )
-        forge.window.resize(1280, 960)
+        forge.window.setFixedSize(1280, 800)
         forge.window.show()
         app.processEvents()
         if lang == "ru":
@@ -211,33 +243,78 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
         app.processEvents()
-        button = forge.window.findChild(QtWidgets.QToolButton, "forge.review.continue")
-        note = forge.window.findChild(QtWidgets.QLabel, "forge.review.note")
-        anchor = note if note is not None else button
-        area = anchor.parentWidget() if anchor is not None else None
+        heading = forge.window.findChild(QtWidgets.QLabel, "forge.review.heading")
+        area = heading.parentWidget() if heading is not None else None
         while area is not None and not isinstance(area, QtWidgets.QScrollArea):
             area = area.parentWidget()
-        if area is not None and anchor is not None:
-            area.ensureWidgetVisible(anchor, 0, 120)
+        if area is not None:
+            area.verticalScrollBar().setValue(0)
+            if heading is not None:
+                area.ensureWidgetVisible(heading, 0, 16)
             app.processEvents()
-        if lang == "ru" and button is not None and button.menu() is not None:
-            menu = button.menu()
-            menu.popup(button.mapToGlobal(QtCore.QPoint(0, button.height())))
+        finish = forge.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
+        if lang == "ru" and finish is not None and finish.menu() is not None:
+            image = forge.window.grab()
+            if image.width() != 1280 or image.height() != 800:
+                raise SystemExit(f"review grab is {image.width()}x{image.height()}, want 1280x800")
+            image.save(str(out / "ru-simple-5-review.png"))
+            combo = forge.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
+            if combo is None:
+                raise SystemExit("review attire combo is missing")
+            combo.showPopup()
+            app.processEvents()
+            popup = combo.view().window()
+            if popup is None or not popup.isVisible():
+                raise SystemExit("attire popup did not open")
+            listed = forge.window.grab()
+            if listed.width() != 1280 or listed.height() != 800:
+                raise SystemExit(f"attire grab is {listed.width()}x{listed.height()}, want 1280x800")
+            point = forge.window.mapFromGlobal(popup.mapToGlobal(QtCore.QPoint(0, 0)))
+            painter = QtGui.QPainter(listed)
+            painter.drawPixmap(point, popup.grab())
+            painter.end()
+            listed.save(str(out / "ru-simple-5-review-attire.png"))
+            combo.hidePopup()
+            app.processEvents()
+            _save_button_tooltip(
+                forge.window,
+                forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue"),
+                out / "ru-simple-5-review-tip.png",
+                app,
+            )
+            menu = finish.menu()
+            popup_menu(finish)
             app.processEvents()
             image = forge.window.grab()
             popup = menu.grab()
-            point = button.mapTo(forge.window, QtCore.QPoint(0, button.height()))
+            # A popup is its own window, so paint it where it sits on this one.
+            point = forge.window.mapFromGlobal(menu.mapToGlobal(QtCore.QPoint(0, 0)))
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()
-            image.save(str(out / "ru-simple-5-review.png"))
+            image.save(str(out / "ru-simple-5-finish-menu.png"))
             menu.close()
             app.processEvents()
+            chevron = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
+            if chevron is not None:
+                chevron.click()
+                QtTest.QTest.qWait(220)
+                app.processEvents()
+                forge.window.repaint()
+                app.processEvents()
+            plain = forge.window.grab()
+            if plain.width() != 1280 or plain.height() != 800:
+                raise SystemExit(f"plain grab is {plain.width()}x{plain.height()}, want 1280x800")
+            plain.save(str(out / "ru-simple-5-review-plain.png"))
+            if chevron is not None:
+                chevron.click()
+                QtTest.QTest.qWait(200)
+                app.processEvents()
 
-            def grab_confirm() -> None:
+            def grab_dialog(path: str) -> None:
                 box = QtWidgets.QApplication.activeModalWidget()
-                if not isinstance(box, QtWidgets.QMessageBox):
-                    QtCore.QTimer.singleShot(0, grab_confirm)
+                if not isinstance(box, QtWidgets.QDialog):
+                    QtCore.QTimer.singleShot(0, lambda: grab_dialog(path))
                     return
                 base = forge.window.grab()
                 dialog = box.grab()
@@ -246,14 +323,23 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
                 y = max(0, (base.height() - dialog.height()) // 2)
                 painter.drawPixmap(x, y, dialog)
                 painter.end()
-                base.save(str(out / "ru-simple-5-finish-confirm.png"))
+                base.save(path)
                 box.reject()
 
-            QtCore.QTimer.singleShot(0, grab_confirm)
+            discard = next(
+                item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
+            )
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-discard.png")))
+            discard.trigger()
+            app.processEvents()
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-confirm.png")))
             forge.finish_review()
             app.processEvents()
         else:
-            forge.window.grab().save(str(out / f"{lang}-simple-5-review.png"))
+            image = forge.window.grab()
+            if image.width() != 1280 or image.height() != 800:
+                raise SystemExit(f"{lang} review grab is {image.width()}x{image.height()}, want 1280x800")
+            image.save(str(out / f"{lang}-simple-5-review.png"))
         forge.window.close()
     shot_train_live(out, home)
     set_language("en")
@@ -292,7 +378,7 @@ def shot_train_live(out: Path, home: Path) -> None:
     )
     forge.project.mkdir(parents=True, exist_ok=True)
     save_state(Project(forge.project), transition(
-        {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, first_round_samples=6,
+        {}, "start", rounds=3, samples_per_round=8, first_round_steps=120, first_round_samples=6,
         sample_steps=28, total_steps=1500, prompts=["a soft shape"], seed=1,
         base="draw-test", config={"steps": 1500},
     ))
@@ -302,20 +388,65 @@ def shot_train_live(out: Path, home: Path) -> None:
         "loss": 0.21,
         "stage": "step",
         "step": 40,
-        "total": 200,
+        "total": 120,
         "round": 1,
         "first_pictures_seconds": 480,
         "seconds_per_sample": 18,
         "sample_seconds_estimated": False,
         "seconds_per_step": 2.2,
     }), encoding="utf-8")
-    forge.window.resize(1280, 960)
+    forge.window.setFixedSize(1280, 800)
     forge.window.show()
     forge.layout.sections._index = STEPS.index("train")
     forge.repaint()
     app.processEvents()
     forge.window.grab().save(str(out / "ru-simple-5-train-live.png"))
     forge.window.close()
+    shot_result_export(out, home)
+
+
+def shot_result_export(out: Path, home: Path) -> None:
+    """1280 px: the result step with Export LoRA and the steps done out of the plan."""
+    from PySide6 import QtGui, QtWidgets
+    from tests.forge_app_stub import ALL_COMMANDS, StubRunner
+    from voxprint_common.i18n import set_language
+
+    from voxprint_forge.app.draft import STEPS
+    from voxprint_forge.app.window import ForgeApp
+    from voxprint_forge.lora.project import Project
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    set_language("ru")
+    forge = ForgeApp(
+        runner=StubRunner(), home=home / "result-export", commands=ALL_COMMANDS,
+        open_path=lambda _p: None, launch=lambda _a: None,
+    )
+    forge.project.mkdir(parents=True, exist_ok=True)
+    previews = forge.project / "previews"
+    previews.mkdir()
+    image = QtGui.QImage(256, 256, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.qRgb(90, 140, 180))
+    image.save(str(previews / "final.png"))
+    Project(forge.project).write({
+        "kind": "object",
+        "gate_passed": True,
+        "subject": {
+            "name": "Soft shape", "stage_name": "Soft shape", "trigger": "soft_shape", "kind": "object",
+        },
+        "train": {
+            "state": "done", "step": 450, "steps_planned": 1500,
+            "checkpoint": "checkpoints/step-000450.safetensors",
+        },
+    })
+    forge.draft.trained = True
+    forge.window.setFixedSize(1280, 800)
+    forge.window.show()
+    forge.layout.sections._index = STEPS.index("result")
+    forge.repaint()
+    app.processEvents()
+    forge.window.grab().save(str(out / "ru-simple-6-result.png"))
+    forge.window.close()
+    set_language("en")
 
 
 def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:
