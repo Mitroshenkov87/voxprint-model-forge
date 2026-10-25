@@ -1,48 +1,29 @@
-"""Check and repair installed models: hash, missing, corrupt, and the progress window."""
+"""Check and repair delegates to voxprint-common 0.5.0 names, which tests mock.
+
+The vendored pin is 0.4.1, so ``run_verify_repair`` and ``model_park.stage``
+are not importable here. The progress window stays in that release.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import json
-import threading
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("PySide6")
-
-from PySide6 import QtCore, QtWidgets  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
-from voxprint_common.i18n import set_language  # noqa: E402
-from voxprint_common.mdl.descriptor import parse_descriptor_text  # noqa: E402
-from voxprint_common.mdl.status import Status  # noqa: E402
-
-from voxprint_forge.cli import main  # noqa: E402
-from voxprint_forge.mdl_progress import WindowResult, open_verify_window, run_verify_window  # noqa: E402
-from voxprint_forge.model_verify import (  # noqa: E402
-    FileReport,
-    ModelReport,
-    VerifyCancelled,
-    discover,
-    download_file,
-    hash_file,
-    repair_models,
-    snapshot,
-    source_urls,
-    verify_models,
+from voxprint_forge.cli import main
+from voxprint_forge.mdl_adapter import (
+    MdlAdapterError,
+    execute_verify,
+    installed_model_ids,
+    run_verify_repair,
+    stage,
 )
 
-KEEP = b"0123456789abcdefXYZ"
-GONE = b"gone-file-bytes!!"
-GOOD = b"0123456789abcdef"
-BAD_VIEW = b"ffffffffffffffff"
-PLUGIN = b"plugin-weights!!"
 USER_LORA = b"do-not-touch-lora"
 PROJECT_NOTE = b"project-note"
-
-
-def _sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _plugin_document(model_id: str, filename: str, payload: bytes, url: str) -> dict[str, object]:
@@ -53,7 +34,7 @@ def _plugin_document(model_id: str, filename: str, payload: bytes, url: str) -> 
         "app_ids": ["canvas"],
         "task": "text-to-image",
         "license": "mit",
-        "files": [{"path": filename, "size": len(payload), "sha256": _sha(payload)}],
+        "files": [{"path": filename, "size": len(payload), "sha256": "ab" * 32}],
         "mirrors": [{"kind": "url", "ref": url, "revision": ""}],
         "tier": {"min_vram_gib": 8, "recommended_vram_gib": 16, "gpu_min_cc": 8},
         "runtime": {"engine": "diffusers", "version_req": ">=0.37.1,<0.38"},
@@ -71,323 +52,226 @@ def _write_plugin(folder: Path, model_id: str, filename: str, payload: bytes, ur
     (folder / "voxprint-model.json").write_text(json.dumps(document), encoding="utf-8")
 
 
-def _app_row(name: str, payload: bytes, url: str) -> dict[str, object]:
-    return {"path": name, "size": len(payload), "sha256": _sha(payload), "mirrors": [url]}
-
-
-def _install_broken(root: Path) -> tuple[Path, Path, Path, Path]:
-    """One installed model with an OK file, a deleted file, and a same-size corrupt view."""
-    model = root / "model-forge" / "toy"
-    model.mkdir(parents=True)
-    (model / "keep.bin").write_bytes(KEEP)
-    (model / "bad.bin").write_bytes(BAD_VIEW)
-    blob = root / "blobs" / _sha(GOOD)
+def _install(root: Path) -> tuple[Path, Path, Path]:
+    """An installed view, a blob-only model, a plug-in, and user data that must stay put."""
+    toy = root / "model-forge" / "toy"
+    toy.mkdir(parents=True)
+    (toy / "keep.bin").write_bytes(b"0123456789abcdef")
+    digest = "cd" * 32
+    blob = root / "blobs" / digest
     blob.parent.mkdir(parents=True)
-    blob.write_bytes(GOOD)
-    partial = root / "blobs" / (_sha(GONE) + ".partial")
-    partial.write_bytes(b"resume")
+    blob.write_bytes(b"blob-only-weights")
     manifest = root.parent / "mdl.json"
     document = {
         "models": [
             {
                 "id": "toy",
                 "display_name": "Toy",
-                "files": [
-                    _app_row("keep.bin", KEEP, "https://example.com/keep.bin"),
-                    _app_row("gone.bin", GONE, "https://example.com/gone.bin"),
-                    _app_row("bad.bin", GOOD, "https://example.com/bad.bin"),
-                ],
+                "files": [{"path": "keep.bin", "size": 16, "sha256": "aa" * 32}],
+            },
+            {
+                "id": "blob-only",
+                "display_name": "Blob",
+                "files": [{"path": "weights.bin", "size": 17, "sha256": digest}],
             },
             {
                 "id": "never-installed",
                 "display_name": "Absent",
-                "files": [_app_row("absent.bin", b"absent", "https://example.com/absent.bin")],
+                "files": [{"path": "absent.bin", "size": 4, "sha256": "ee" * 32}],
             },
         ]
     }
     manifest.write_text(json.dumps(document), encoding="utf-8")
-    _write_plugin(root / "plugins" / "plug-toy", "plug-toy", "weights.bin", PLUGIN, "https://example.com/models/toy/")
+    _write_plugin(
+        root / "plugins" / "plug-toy", "plug-toy", "weights.bin", b"plugin", "https://example.com/models/toy/"
+    )
     user = root / "user-models" / "my-lora"
     _write_plugin(user, "secret-lora", "weights.safetensors", b"official-lora", "https://example.com/lora/")
-    (user / "weights.safetensors").write_bytes(USER_LORA)
+    weights = user / "weights.safetensors"
+    weights.write_bytes(USER_LORA)
     project = root / "projects" / "demo"
     project.mkdir(parents=True)
-    (project / "note.txt").write_bytes(PROJECT_NOTE)
-    return manifest, partial, user / "weights.safetensors", project / "note.txt"
+    note = project / "note.txt"
+    note.write_bytes(PROJECT_NOTE)
+    return manifest, weights, note
 
 
-def test_hash_is_chunked_and_cancellable(tmp_path: Path) -> None:
-    path = tmp_path / "weights.bin"
-    path.write_bytes(b"0123456789abcdef")
-    seen: list[int] = []
-    cancel = threading.Event()
-
-    def on_chunk(done: int) -> None:
-        seen.append(done)
-        if done >= 8:
-            cancel.set()
-
-    with pytest.raises(VerifyCancelled):
-        hash_file(path, chunk=8, cancel=cancel, on_chunk=on_chunk)
-    assert seen == [8]
-
-    seen.clear()
-    digest = hash_file(path, chunk=8, on_chunk=seen.append)
-    assert seen == [8, 16]
-    assert digest == _sha(path.read_bytes())
-
-
-def test_verify_reports_ok_missing_and_corrupt_and_skips_user_data(tmp_path: Path) -> None:
-    root = tmp_path / "models"
-    manifest, _partial, lora, note = _install_broken(root)
-    progress: list[int] = []
-
-    def on_progress(reports: list[ModelReport], phase: str) -> None:
-        assert phase == "verify"
-        progress.append(reports[0].bytes_hashed)
-
-    found = discover(manifest, root=root)
-    assert [item.id for item in found] == ["toy", "plug-toy"]
-    reports = verify_models(found, chunk=8, on_progress=on_progress)
-    by_id = {item.id: item for item in reports}
-    assert by_id["toy"].status == "corrupt"
-    files = {item.path: item.status for item in by_id["toy"].files}
-    assert files == {"keep.bin": "ok", "gone.bin": "missing", "bad.bin": "corrupt"}
-    assert by_id["plug-toy"].status == "missing"
-    assert "secret-lora" not in by_id
-    assert "never-installed" not in by_id
-    assert any(0 < hashed < len(KEEP) for hashed in progress)
-    assert lora.read_bytes() == USER_LORA
+def test_installed_ids_skip_user_data_and_absent_catalog_rows(tmp_path: Path) -> None:
+    manifest, weights, note = _install(tmp_path)
+    assert installed_model_ids(manifest, root=tmp_path) == ["toy", "blob-only", "plug-toy"]
+    assert weights.read_bytes() == USER_LORA
     assert note.read_bytes() == PROJECT_NOTE
 
 
-def test_repair_downloads_missing_files_and_relinks_a_good_blob(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_gui_calls_run_verify_repair_even_when_every_model_is_ok(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = tmp_path / "models"
-    manifest, partial, lora, note = _install_broken(root)
-    bodies = {_sha(GONE): GONE, _sha(PLUGIN): PLUGIN}
-    calls: list[tuple[Path, tuple[str, ...], str]] = []
-
-    def fake_download(
-        destination: Path,
-        urls: tuple[str, ...] | list[str],
-        *,
-        sha256: str,
-        size: int,
-        cancel: threading.Event | None = None,
-        on_bytes: object = None,
-    ) -> None:
-        del cancel, size
-        partial_now = destination.with_name(destination.name + ".partial")
-        if destination.name == _sha(GONE):
-            assert partial_now.read_bytes() == b"resume"
-        calls.append((destination, tuple(urls), sha256))
-        destination.write_bytes(bodies[sha256])
-        if callable(on_bytes):
-            on_bytes(len(bodies[sha256]), len(bodies[sha256]))
-
-    monkeypatch.setattr("voxprint_forge.model_verify.download_file", fake_download)
-    models = discover(manifest, root=root)
-    before = verify_models(models, chunk=8)
-    repaired = repair_models(models, before, chunk=8)
-    downloaded = {item[2] for item in calls}
-    assert _sha(GOOD) not in downloaded
-    assert _sha(GONE) in downloaded
-    assert _sha(PLUGIN) in downloaded
-    plugin_call = next(item for item in calls if item[2] == _sha(PLUGIN))
-    assert plugin_call[1] == ("https://example.com/models/toy/weights.bin",)
-    assert partial.is_file()
-    assert (root / "model-forge" / "toy" / "bad.bin").read_bytes() == GOOD
-    assert (root / "model-forge" / "toy" / "gone.bin").read_bytes() == GONE
-    assert (root / "model-forge" / "toy" / "keep.bin").read_bytes() == KEEP
-    assert (root / "plugins" / "plug-toy" / "weights.bin").read_bytes() == PLUGIN
-    assert {item.status for item in repaired} == {"ok"}
-    assert lora.read_bytes() == USER_LORA
-    assert note.read_bytes() == PROJECT_NOTE
-    text = (root / "plugins" / "plug-toy" / "voxprint-model.json").read_text(encoding="utf-8")
-    assert source_urls(parse_descriptor_text(text), "weights.bin") == ("https://example.com/models/toy/weights.bin",)
-
-
-def test_download_file_pins_the_checksum_and_keeps_a_partial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    destination = tmp_path / "blobs" / _sha(GONE)
-    destination.parent.mkdir()
-    partial = destination.with_name(destination.name + ".partial")
-    partial.write_bytes(b"resume")
-    seen: dict[str, object] = {}
-
-    def fake_fetch(dest: Path, urls: list[str], **kwargs: object) -> Path:
-        assert partial.read_bytes() == b"resume"
-        seen["dest"] = dest
-        seen["urls"] = urls
-        seen["kwargs"] = kwargs
-        dest.write_bytes(GONE)
-        return dest
-
-    monkeypatch.setattr("voxprint_forge.model_verify.fetch_file", fake_fetch)
-    download_file(destination, ["https://example.com/gone.bin"], sha256=_sha(GONE), size=len(GONE))
-    kwargs = seen["kwargs"]
-    assert isinstance(kwargs, dict)
-    assert kwargs["sha256"] == _sha(GONE)
-    assert kwargs["size"] == len(GONE)
-    assert kwargs["probe_bytes"] == 0
-    assert kwargs["mirror_policy"] == "strict-priority"
-    assert partial.read_bytes() == b"resume"
-    assert destination.read_bytes() == GONE
-
-
-def test_cli_prints_a_table_and_repair_exits_zero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = tmp_path / "home" / "models"
-    manifest, _partial, _lora, _note = _install_broken(root)
-    bodies = {_sha(GONE): GONE, _sha(PLUGIN): PLUGIN}
-
-    def fake_download(
-        destination: Path,
-        urls: tuple[str, ...] | list[str],
-        *,
-        sha256: str,
-        size: int,
-        cancel: threading.Event | None = None,
-        on_bytes: object = None,
-    ) -> None:
-        del urls, size, cancel
-        destination.write_bytes(bodies[sha256])
-        if callable(on_bytes):
-            on_bytes(len(bodies[sha256]), len(bodies[sha256]))
-
-    monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(root))
+    manifest, _, _ = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
-    monkeypatch.setattr("voxprint_forge.model_verify.download_file", fake_download)
-    assert main(["models", "verify"]) == 4
-    broken = capsys.readouterr().out
-    assert "missing" in broken
-    assert "corrupt" in broken
-    assert "never-installed" not in broken
-    assert main(["models", "verify", "--repair"]) == 0
-    fixed = capsys.readouterr().out
-    assert "OK" in fixed
-    assert "missing" not in fixed
-    assert "corrupt" not in fixed
-
-
-def test_gui_opens_when_every_installed_model_is_ok(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = tmp_path / "home" / "models"
-    model = root / "model-forge" / "toy"
-    model.mkdir(parents=True)
-    (model / "keep.bin").write_bytes(KEEP)
-    manifest = tmp_path / "mdl.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "models": [
-                    {
-                        "id": "toy",
-                        "display_name": "Toy",
-                        "files": [_app_row("keep.bin", KEEP, "https://example.com/keep.bin")],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
     seen: dict[str, object] = {}
 
-    def fake_window(job: object, *, repair: bool = False, on_settled: object = None) -> int:
-        del on_settled
+    def fake(model_ids: list[str], repair: bool = False) -> int:
+        seen["ids"] = list(model_ids)
         seen["repair"] = repair
-        result = job(threading.Event(), lambda _status: None, repair)  # type: ignore[operator]
-        seen["code"] = result.code
-        return int(result.code)
+        return 0
 
-    monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(root))
-    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
-    monkeypatch.setattr("voxprint_forge.model_verify.run_verify_window", fake_window)
-    assert main(["models", "verify", "--gui"]) == 0
-    assert seen["repair"] is False
-    assert seen["code"] == 0
+    monkeypatch.setattr("voxprint_common.mdl.run_verify_repair", fake, raising=False)
+
+    def fail_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the progress window is run_verify_repair, not a voxprint-mdl subprocess")
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail_run)
+    code = main(["models", "verify", "--gui"])
+    assert code == 0
+    assert seen == {"ids": ["toy", "blob-only", "plug-toy"], "repair": False}
     assert capsys.readouterr().out == ""
 
 
-def _layout_status() -> Status:
-    long_name = "YuNet face detector " + ("with a very long display name " * 6)
-    reports = [
-        ModelReport(
-            "yunet", long_name, "ok", 100, 100, "huggingface.co", files=[FileReport("yunet.onnx", "ok", 100, 100)]
-        ),
-        ModelReport(
-            "gone", "Gone model", "missing", 0, 50, "example.com", files=[FileReport("weights.bin", "missing", 50, 0)]
-        ),
-        ModelReport(
-            "bad", "Bad model", "corrupt", 16, 16, "example.com", files=[FileReport("bad.bin", "corrupt", 16, 16)]
-        ),
-    ]
-    return snapshot(reports, phase="verify", done=True)
+def test_gui_repair_forwards_repair_and_a_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    manifest, _, _ = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+    seen: dict[str, object] = {}
 
+    def fake(model_ids: list[str], repair: bool = False) -> dict[str, object]:
+        seen["ids"] = list(model_ids)
+        seen["repair"] = repair
+        return {
+            "exit_code": 0,
+            "text": "toy OK\n",
+            "models": [{"id": "toy", "status": "ok"}, {"id": "plug-toy", "status": "ok"}],
+        }
 
-def test_verify_window_fits_at_1280(qapp: QtWidgets.QApplication) -> None:
-    set_language("en")
-    window = open_verify_window(_layout_status())
-    window.resize(1280, 720)
-    qapp.processEvents()
-    assert window.width() == 1280
-    table = window.findChild(QtWidgets.QTableWidget, "mdlVerifyTable")
-    header = table.horizontalHeader()
-    assert header.length() <= table.viewport().width()
-    words = [table.item(row, 2).text() for row in range(table.rowCount())]
-    assert words == ["OK", "missing", "corrupt"]
-    for name in ("repair", "cancel"):
-        button = window.findChild(QtWidgets.QPushButton, name)
-        assert button.isVisible()
-        origin = button.mapTo(window, QtCore.QPoint(0, 0))
-        assert origin.x() >= 0
-        assert origin.y() >= 0
-        assert origin.x() + button.width() <= window.width()
-        assert origin.y() + button.height() <= window.height()
-    window.close()
-
-
-def test_repair_button_reruns_and_close_returns_zero(qapp: QtWidgets.QApplication) -> None:
-    calls: list[bool] = []
-
-    def job(
-        cancel: threading.Event,
-        on_status: object,
-        do_repair: bool,
-    ) -> WindowResult:
-        del cancel
-        calls.append(do_repair)
-        if do_repair:
-            report = ModelReport("toy", "Toy", "ok", 4, 4, "example.com", files=[FileReport("a.bin", "ok", 4, 4)])
-            code = 0
-        else:
-            report = ModelReport(
-                "toy", "Toy", "missing", 0, 4, "example.com", files=[FileReport("a.bin", "missing", 4, 0)]
-            )
-            code = 4
-        done = snapshot([report], phase="verify", done=True)
-        on_status(done)  # type: ignore[operator]
-        return WindowResult(code, done)
-
-    abort = QtCore.QTimer()
-    abort.setSingleShot(True)
-    abort.timeout.connect(lambda: QApplication.instance().exit(99))
-    abort.start(5000)
-
-    def settled(window: object) -> None:
-        qapp.processEvents()
-        name = "repair" if len(calls) == 1 else "cancel"
-        button = window.findChild(QtWidgets.QPushButton, name)  # type: ignore[attr-defined]
-        button.click()
-
-    try:
-        code = run_verify_window(job, repair=False, on_settled=settled)
-    finally:
-        abort.stop()
-    assert calls == [False, True]
+    monkeypatch.setattr("voxprint_common.mdl.run_verify_repair", fake, raising=False)
+    code = main(["models", "verify", "--gui", "--repair"])
     assert code == 0
+    assert seen["repair"] is True
+    assert seen["ids"] == ["toy", "blob-only", "plug-toy"]
+
+
+def test_summary_without_a_code_exits_when_a_model_is_corrupt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    manifest, _, _ = _install(tmp_path)
+
+    def fake(model_ids: list[str], repair: bool = False) -> dict[str, object]:
+        assert repair is False
+        assert "secret-lora" not in model_ids
+        return {"models": [{"id": "toy", "status": "corrupt"}, {"id": "plug-toy", "status": "OK"}]}
+
+    monkeypatch.setattr("voxprint_common.mdl.run_verify_repair", fake, raising=False)
+    result = execute_verify(manifest=manifest, repair=False, gui=True, root=tmp_path)
+    assert result["ok"] is False
+    assert result["exit_code"] == 4
+    assert result["models"] == [{"id": "toy", "status": "corrupt"}, {"id": "plug-toy", "status": "OK"}]
+
+
+def test_cli_prints_the_mdl_table_and_exits_when_broken(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest, weights, note = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], check: bool, capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        assert capture_output is True
+        assert text is True
+        calls.append(list(command))
+        return subprocess.CompletedProcess(
+            command, 4, stdout="toy  missing\nplug-toy  corrupt\n", stderr="hashing toy\n"
+        )
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
+    code = main(["models", "verify"])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert "missing" in captured.out
+    assert "corrupt" in captured.out
+    assert captured.err == "hashing toy\n"
+    command = calls[0]
+    assert command[command.index("verify") + 1 : command.index("verify") + 3] == ["--app", "model-forge"]
+    assert "--repair" not in command
+    assert "--gui" not in command
+    assert "toy" in command
+    assert "blob-only" in command
+    assert "plug-toy" in command
+    assert "secret-lora" not in command
+    assert "never-installed" not in command
+    assert str(manifest) in command
+    assert weights.read_bytes() == USER_LORA
+    assert note.read_bytes() == PROJECT_NOTE
+
+
+def test_cli_repair_passes_repair_to_voxprint_mdl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest, _, _ = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], check: bool, capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="toy OK\nplug-toy OK\n", stderr="")
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
+    code = main(["models", "verify", "--repair"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert calls[0][-1] == "--repair"
+    assert "verify" in calls[0]
+    assert "missing" not in captured.out
+    assert "corrupt" not in captured.out
+    assert "OK" in captured.out
+
+
+def test_cli_with_nothing_installed_is_ok_and_does_not_plan_the_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = tmp_path / "mdl.json"
+    manifest.write_text(json.dumps({"models": [{"id": "absent", "files": []}]}), encoding="utf-8")
+    root = tmp_path / "models"
+    root.mkdir()
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(root))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+
+    def fail_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("an empty install must not ask voxprint-mdl to plan the catalog")
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail_run)
+    code = main(["models", "verify"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "(none)" in captured.out
+    assert "OK" in captured.out
+
+
+def test_stage_forwards_to_model_park(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(*args: object, **kwargs: object) -> str:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return "hot"
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter._model_park", SimpleNamespace(stage=fake))
+    assert stage("z-image", role="main") == "hot"
+    assert seen == {"args": ("z-image",), "kwargs": {"role": "main"}}
+
+
+def test_missing_names_are_an_error_and_not_the_download_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr("voxprint_common.mdl.run_verify_repair", raising=False)
+    with pytest.raises(MdlAdapterError, match="run_verify_repair"):
+        run_verify_repair(["toy"], repair=True)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter._model_park", None)
+    with pytest.raises(MdlAdapterError, match=r"model_park\.stage"):
+        stage("toy")
+    adapter = Path(__file__).resolve().parents[1] / "src" / "voxprint_forge" / "mdl_adapter.py"
+    source = adapter.read_text(encoding="utf-8")
+    assert "voxprint_common.mdl.progress_ui" not in source
+    assert "run_window" not in source
+    assert "run_verify_window" not in source
+    root = Path(__file__).resolve().parents[1] / "src" / "voxprint_forge"
+    assert not (root / "mdl_progress.py").exists()
+    assert not (root / "model_verify.py").exists()

@@ -22,7 +22,7 @@ from voxprint_common.paths import models_dir
 from voxprint_forge.app_models import load as load_app_models
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.lora.backends import LEGACY_IDS
-from voxprint_forge.model_verify import execute_verify
+from voxprint_forge.mdl_adapter import execute_verify
 from voxprint_forge.model_views import APP_DIR, MARKER, ensure_view
 from voxprint_forge.model_views import manifest_path as packaged_manifest
 
