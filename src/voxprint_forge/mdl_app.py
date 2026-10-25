@@ -22,6 +22,7 @@ from voxprint_common.paths import models_dir
 from voxprint_forge.app_models import load as load_app_models
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.lora.backends import LEGACY_IDS
+from voxprint_forge.model_verify import execute_verify
 from voxprint_forge.model_views import APP_DIR, MARKER, ensure_view
 from voxprint_forge.model_views import manifest_path as packaged_manifest
 
@@ -123,6 +124,23 @@ def manage_argv() -> list[str]:
     return [*mdl_executable(), "--gui", "--app", APP_ID, "--manifest", str(manifest_path())]
 
 
+def verify_argv() -> list[str]:
+    """``voxprint-forge-cli models verify --gui``."""
+    return [*_cli_executable(), "models", "verify", "--gui"]
+
+
+def _cli_executable() -> list[str]:
+    """``voxprint-forge-cli`` beside this interpreter, else on ``PATH``, else ``python -m``."""
+    suffix = ".exe" if os.name == "nt" else ""
+    bundled = Path(sys.executable).with_name("voxprint-forge-cli" + suffix)
+    if bundled.is_file():
+        return [str(bundled)]
+    found = shutil.which("voxprint-forge-cli")
+    if found:
+        return [found]
+    return [sys.executable, "-m", "voxprint_forge.cli"]
+
+
 def download_argv(
     ids: Sequence[str] = (),
     *,
@@ -182,13 +200,19 @@ def status_report(ids: Sequence[str] = (), *, required: bool = False) -> dict[st
 
 
 def execute(args: object) -> dict[str, object]:
-    """Run ``models status`` or ``models fetch``."""
+    """Run ``models status``, ``models fetch``, or ``models verify``."""
     command = str(getattr(args, "models_command", "") or "")
     ids = tuple(getattr(args, "model", None) or ())
     required = bool(getattr(args, "required", False))
     gui = bool(getattr(args, "gui", False))
     if command == "status":
         return status_report(ids, required=required)
+    if command == "verify":
+        return execute_verify(
+            manifest=manifest_path(),
+            repair=bool(getattr(args, "repair", False)),
+            gui=gui,
+        )
     if command == "fetch":
         selected = list(required_ids()) if required or not ids else []
         for mdl_id in ids:

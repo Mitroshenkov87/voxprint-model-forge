@@ -45,7 +45,7 @@ from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, outside_simple, report_from_drops, scan_files, visible_on_photos_step
 from voxprint_forge.lora.sample_prompts import read_attire, store_attire
-from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids
+from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids, verify_argv
 
 APP_ID = "model-forge"
 CARD_PICTURE = 136  # px, a review-grid picture
@@ -579,6 +579,10 @@ class ForgeApp:
     def manage_models(self) -> None:
         """Start Manage models (``voxprint-mdl --gui --app model-forge --manifest <mdl.json>``)."""
         self._launch(manage_argv())
+
+    def check_and_repair_models(self) -> None:
+        """Open the check window (``voxprint-forge-cli models verify --gui``)."""
+        self._launch(verify_argv())
 
     def _open_required_models(self) -> None:
         """Open the MDL progress window for missing required ids before any job."""
@@ -2297,11 +2301,14 @@ class ForgeApp:
         self._check_lines.setObjectName("panel")
         self._check_lines.setWordWrap(True)
         column.addWidget(self._check_lines)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(_button("forge.app.check.run", "forge.app.check.run.tip", self.run_check, primary=True))
-        row.addWidget(_button("forge.app.check.models", "forge.app.check.models.tip", self.manage_models))
-        row.addStretch(1)
-        column.addLayout(row)
+        column.addWidget(
+            _flow_row(
+                "forgeCheckActions",
+                _button("forge.app.check.run", "forge.app.check.run.tip", self.run_check, primary=True),
+                _button("forge.app.check.models", "forge.app.check.models.tip", self.manage_models),
+                _button("forge.app.check.repair", "forge.app.check.repair.tip", self.check_and_repair_models),
+            )
+        )
         layout.insertWidget(1, box)  # type: ignore[attr-defined]
         self._check_built = True
         self.run_check()

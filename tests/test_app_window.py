@@ -294,6 +294,26 @@ def test_manage_models_passes_the_manifest(make_app) -> None:
     assert "download" not in argv
 
 
+@pytest.mark.parametrize(
+    ("lang", "label"),
+    [
+        ("en", "Check and repair models"),
+        ("ru", "Проверить и восстановить модели"),
+    ],
+)
+def test_check_and_repair_opens_the_verify_window(make_app, qapp, lang, label) -> None:
+    app = make_app(lang=lang)
+    launched: list[list[str]] = []
+    app._launch = launched.append
+    app.layout.sections.select("check")
+    app.widget.refresh()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.app.check.repair")
+    assert button.text() == label
+    button.click()
+    assert launched[0][-3:] == ["models", "verify", "--gui"]
+
+
 def test_gate_missing_blocks_with_a_plain_sentence(make_app, tmp_path) -> None:
     photos = make_photos(tmp_path / "p", 12)
     runner = StubRunner({"prepare": ([], Outcome(False, None, "lora.err.gate_missing", "missing", 6))})

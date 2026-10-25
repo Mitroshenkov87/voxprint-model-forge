@@ -43,6 +43,7 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Open project | project folder | overflow: Open project | mapped |
 | User guide | docs/manual (rendered by `scripts/build_guide.py` into `app/guide/`) | overflow: Open guide, offline, in the app language | mapped |
 | Manage models | `voxprint-mdl --gui --app model-forge --manifest {app}\\mdl.json` | overflow: Manage models; Check this computer | mapped |
+| Check and repair models | `voxprint-forge-cli models verify [--gui] [--repair]` | Check this computer | mapped |
 | Graphics card, memory, disk, models | `preflight`, `disk`, MDL `ready` | Check this computer | mapped |
 
 ## Operator window (`forge-gui`, retired from the user app)

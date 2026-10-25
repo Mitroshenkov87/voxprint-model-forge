@@ -164,6 +164,13 @@
 <li><strong>Disk.</strong> Models go to the shared VOXPrint models folder, by default <code>%LOCALAPPDATA%\VOXPrint AI Suite\models</code>. Other VOXPrint apps use the same folder, so a model is downloaded only once.</li>
 <li><strong>Background and resume.</strong> Downloads continue in the background if you close the downloader window, and they resume after an interruption. <strong>Pause</strong> and <strong>Cancel</strong> are at the bottom of the window.</li>
 </ul>
+<h2 id="check-and-repair">Check and repair</h2>
+<p><strong>Check this computer</strong> has <strong>Check and repair models</strong>. The progress window opens every time, including when every file is already in place. Each installed model is checked file by file: the file must be present and its checksum must match. The model is then <strong>OK</strong>, <strong>missing</strong>, or <strong>corrupt</strong>. <strong>Repair</strong> downloads only the missing or damaged files from the official source, checks the pinned checksum, and continues a partial download when the source allows it. LoRAs and projects stay as they are. A plug-in model from an official source is repaired from that source address in the same way.</p>
+<pre><code class="language-text">voxprint-forge-cli models verify
+voxprint-forge-cli models verify --repair
+voxprint-forge-cli models verify --gui
+</code></pre>
+<p><code>models verify</code> prints a table and exits with an error when anything is still broken. <code>--repair</code> fixes the files without asking. <code>--gui</code> opens the progress window.</p>
 <p>To remove a model you no longer need, open <strong>Manage models</strong> again: it lists installed models with their size and licence.</p>
 <p><a id="page-project"></a></p>
 <h1 id="creating-a-lora-project">Creating a LoRA project</h1>
