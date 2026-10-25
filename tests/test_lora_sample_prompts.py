@@ -169,6 +169,6 @@ def test_the_cli_flag_parses_and_the_next_round_uses_the_saved_mode(tmp_path: Pa
     second = train(project, _config(steps=3), DrawingAdapter(), Progress(), review_continue=True)
     assert second["state"] == "review"
     state = load_state(project)
-    assert all(str(prompt).endswith(", clothed") for prompt in state["prompts"])
+    assert all(str(prompt).endswith(", wearing near-skin-tone underwear") for prompt in state["prompts"])
     assert sorted(path.name for path in (project.root / "review" / "round-0001").glob("*.png")) == before
     assert json.loads((project.root / "project.json").read_text(encoding="utf-8"))["sample_attire"] == "clothed"
