@@ -967,7 +967,7 @@ def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qap
     host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
     assert label is not None and combo is not None and host is not None
     assert label.text() == "Пробные картинки:"
-    assert [combo.itemText(index) for index in range(combo.count())] == ["как на фото", "в одежде", "без одежды"]
+    assert [combo.itemText(index) for index in range(combo.count())] == ["как на фото", "в белье", "без одежды"]
     assert combo.currentText() == "как на фото"
     assert combo.itemData(0) == "auto"
     assert "следующего раунда" in combo.toolTip()

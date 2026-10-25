@@ -2,7 +2,8 @@
 
 Framings rotate ``close-up portrait``, ``waist-up``, ``full body``. The start
 index is ``(seed + round number) % 3``. ``auto`` resolves to ``unclothed`` when
-any caption sets ``unclothed``, and to ``as_photos`` otherwise.
+any caption sets ``unclothed``, and to ``as_photos`` otherwise. ``as_photos``
+with clothed captions and ``clothed`` both use near-skin-tone underwear.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from voxprint_forge.lora.project import Project
 
 ATTIRE_MODES = ("auto", "as_photos", "clothed", "unclothed")
 FRAMINGS = ("close-up portrait", "waist-up", "full body")
-CLOTHED = "clothed"
+CLOTHED = "wearing near-skin-tone underwear"
 UNCLOTHED = "unclothed"
 SAMPLE_ATTIRE = "sample_attire"
 
@@ -53,7 +54,7 @@ def resolve_attire(mode: str, captions: Sequence[Mapping[str, object]]) -> Resol
 
 
 def attire_word(resolved: ResolvedAttire, captions: Sequence[Mapping[str, object]]) -> str:
-    """One attire word. ``as_photos`` does not add clothing the captions do not have."""
+    """One attire phrase: unclothed, or near-skin-tone underwear."""
     match resolved:
         case "unclothed":
             return UNCLOTHED
