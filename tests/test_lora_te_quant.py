@@ -69,8 +69,9 @@ def test_missing_library_is_a_localized_stage_error(monkeypatch) -> None:
     monkeypatch.setattr(te_quant, "cuda_available", lambda: True)
     with pytest.raises(LoraStageError):
         te_quant.plan("nf4", "gpu", 16)
-    fallback = te_quant.plan("auto", "gpu", 16)
-    assert (fallback.quant, fallback.device) == ("none", "cpu")
+    with pytest.raises(LoraStageError) as tight:
+        te_quant.plan("auto", "gpu", 16)
+    assert tight.value.key == "lora.err.te_quant_missing"
 
 
 def test_plan_by_tier_and_overrides(monkeypatch) -> None:
@@ -81,9 +82,15 @@ def test_plan_by_tier_and_overrides(monkeypatch) -> None:
     assert te_quant.plan("auto", None, 24) == te_quant.TePlan("none", "cuda")
     assert te_quant.plan(None, None, 16) == te_quant.TePlan("int8", "cuda")
     assert te_quant.plan("nf4", "gpu", 24) == te_quant.TePlan("nf4", "cuda")
-    assert te_quant.plan("int8", "cpu", 16).device == "cpu"
+    with pytest.raises(LoraStageError) as tight:
+        te_quant.plan("int8", "cpu", 16)
+    assert tight.value.key == "lora.err.cpu_fallback"
+    assert te_quant.plan("none", "cpu", 24).device == "cpu"
     monkeypatch.setattr(te_quant, "cuda_available", lambda: False)
     assert te_quant.plan("auto", "gpu", 24).device == "cpu"
+    with pytest.raises(LoraStageError) as no_card:
+        te_quant.plan("auto", "gpu", 16)
+    assert no_card.value.key == "lora.err.cpu_fallback"
 
 
 def test_staged_order_frees_encoder_before_dit(monkeypatch, tmp_path) -> None:

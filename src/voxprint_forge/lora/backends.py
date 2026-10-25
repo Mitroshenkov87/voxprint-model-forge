@@ -7,7 +7,18 @@ import re
 from pathlib import Path
 from typing import Any
 
+from voxprint_forge.lora.errors import LoraStageError
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
+from voxprint_forge.lora.presets import detect_vram_gb
+from voxprint_forge.lora.te_quant import check_available, quant_config
+from voxprint_forge.lora.vram_stage import (
+    TIER_GB,
+    assert_stage_clear,
+    hold_heavy,
+    release_heavy,
+    require_quantized,
+)
+from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
 JUDGE_ID = "qwen3-vl-4b-instruct"
@@ -114,23 +125,69 @@ def parse_verdict(raw: str) -> Verdict:
     )
 
 
+def _qwen_key(folder: Path, mode: str) -> str:
+    return f"qwen3-vl:{Path(folder).resolve()}:{mode}"
+
+
+def _load_qwen(folder: Path, device: str, mode: str) -> dict[str, object]:
+    """Read Qwen3-VL once. The caller parks the result for the rest of the session."""
+    # Imported here so ``voxprint-forge --version`` does not pull torch or transformers.
+    import torch
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(str(folder))
+    kwargs: dict[str, object] = {"torch_dtype": torch.bfloat16}
+    if mode in ("int8", "nf4"):
+        kwargs["quantization_config"] = quant_config(mode)
+        if str(device).startswith("cuda"):
+            kwargs["device_map"] = {"": 0}
+    model = AutoModelForImageTextToText.from_pretrained(str(folder), **kwargs)
+    if mode == "none":
+        model = model.to(device)
+    model.eval()
+    return {"processor": processor, "model": model, "quant": mode}
+
+
 class VlmJudge:
-    """Qwen3-VL-4B-Instruct (Apache-2.0) as the age-cue judge."""
+    """Qwen3-VL-4B-Instruct (Apache-2.0) as the age-cue judge.
+
+    The judge and the captioner share one parked copy, keyed by folder and quant.
+    ``unload`` drops the graphics copy and leaves the RAM copy in the park.
+    On a 16 GB card the weights load int8; bf16 and a CPU device raise.
+    """
 
     name = JUDGE_ID
     max_new_tokens = 320
 
-    def __init__(self, folder: Path, device: str = "cuda") -> None:
-        self.last_stats: dict[str, object] = {}
-        import torch
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-
-        self.processor = AutoProcessor.from_pretrained(str(folder))
-        self.model = AutoModelForImageTextToText.from_pretrained(str(folder), torch_dtype=torch.bfloat16).to(device)
-        self.model.eval()
+    def __init__(self, folder: Path, device: str = "cuda", quant: str | None = None) -> None:
+        tier = detect_vram_gb()
+        mode = quant if quant is not None else ("int8" if tier == TIER_GB else "none")
+        if tier == TIER_GB and mode == "none":
+            require_quantized(tier, False, JUDGE_ID)
+        if tier == TIER_GB and not str(device).startswith("cuda"):
+            raise LoraStageError("lora.err.cpu_fallback", tier=TIER_GB, reason="no CUDA device")
+        if mode in ("int8", "nf4"):
+            check_available(mode)
+        key = _qwen_key(folder, mode)
+        hold_heavy("qwen", tier=tier)
+        try:
+            payload = park(key, lambda: _load_qwen(folder, device, mode), stage_name="caption")
+        except Exception:
+            release_heavy("qwen")
+            raise
+        self.__dict__.update(payload)
+        self._park_key = key
+        self._tier = tier
+        self.last_stats = {}
+        if mode == "none":
+            stage(self.model, device, key=key, stage_name="caption")
+        else:
+            # bitsandbytes already placed the quantized copy. Log the stage without moving it.
+            stage(self.processor, device, key=key, stage_name="caption")
 
     def ask(self, image: Any, system: str, user: str, max_new_tokens: int) -> str:
         """One greedy answer for ``image``."""
+        # Imported here so ``voxprint-forge --version`` does not pull torch.
         import torch
 
         image = _limit(image)
@@ -159,12 +216,12 @@ class VlmJudge:
         return parse_verdict(self.ask(image, SYSTEM, USER, self.max_new_tokens))
 
     def unload(self) -> None:
-        """Free graphics memory."""
-        import torch
-
-        del self.model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        """Drop the graphics copy. The parked weights stay in RAM for the next stage."""
+        model = getattr(self, "model", None)
+        if model is not None:
+            drop_vram(model, key=getattr(self, "_park_key", JUDGE_ID), stage_name="caption")
+        release_heavy("qwen")
+        assert_stage_clear("caption", tier=getattr(self, "_tier", 24))
 
 
 def mivolo_python() -> str:
@@ -257,6 +314,8 @@ def load_gate(device: str = "cuda") -> Gate:
         folder = installed_dir(JUDGE_ID)
         if folder is not None:
             judge = VlmJudge(folder, device)
+    except LoraStageError:
+        raise
     except Exception as exc:  # noqa: BLE001
         _report("judge", exc)
         judge = None

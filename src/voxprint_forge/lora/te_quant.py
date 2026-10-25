@@ -3,9 +3,10 @@
 ``te_quant``: ``auto`` (default) picks by memory tier: bf16 on the 24 GB tier, bitsandbytes
 LLM.int8 on the 16 GB tier. ``none`` (bf16), ``int8`` and ``nf4`` (bitsandbytes 4-bit) override it.
 ``te_device``: ``gpu`` (default) or ``cpu``. The encoder runs on the card while the DiT waits in RAM,
-and is freed before the DiT moves to the card. CPU encode is a fallback only: ``--te-device cpu``,
-no CUDA, or ``auto`` with bitsandbytes missing (a warning is logged). The DiT is never quantized.
-bitsandbytes is the optional ``te-quant`` extra.
+and is freed before the DiT moves to the card. On the 24 GB tier, CPU encode is a fallback:
+``--te-device cpu``, no CUDA, or ``auto`` with bitsandbytes missing (a warning is logged).
+On the 16 GB tier those paths raise instead of moving the encoder to the CPU. The DiT is not
+quantized here. bitsandbytes is the optional ``te-quant`` extra.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
+from voxprint_forge.lora.vram_stage import TIER_GB
 
 MODES = ("auto", "none", "int8", "nf4")
 DEVICES = ("gpu", "cpu")
@@ -73,11 +75,17 @@ def plan(quant: str | None, device: str | None, tier: int) -> TePlan:
     """Pick quantization and device for one run on memory tier ``tier`` (16 or 24)."""
     mode = resolve(quant)
     where = resolve_device(device)
+    tight = int(tier) == TIER_GB
     if where == "cpu" or not cuda_available():
-        return TePlan("none", "cpu", "cpu requested" if where == "cpu" else "no CUDA card")
+        reason = "cpu requested" if where == "cpu" else "no CUDA card"
+        if tight:
+            raise LoraStageError("lora.err.cpu_fallback", tier=TIER_GB, reason=reason)
+        return TePlan("none", "cpu", reason)
     if mode == "auto":
         mode = TIER_DEFAULT.get(int(tier), "int8")
         if mode != "none" and not available():
+            if tight:
+                raise LoraStageError("lora.err.te_quant_missing", mode=mode)
             log.warning("bitsandbytes is missing: the text encoder falls back to bf16 on the CPU (slower).")
             return TePlan("none", "cpu", "bitsandbytes missing")
     check_available(mode)
