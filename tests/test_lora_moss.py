@@ -245,7 +245,13 @@ def test_memory_plan_matches_the_measured_4090_run(monkeypatch) -> None:
     assert adapter.vram_need_gb(build_config("balanced", "balanced", 24)) == pytest.approx(18.5)
     peak = adapter.memory_plan(build_config("balanced", "balanced", 24)).peak_gb
     assert peak == pytest.approx(11.8, abs=0.05)
-    assert adapter.memory_plan(build_config("balanced", "balanced", 16)).peak_gb == pytest.approx(peak, abs=0.01)
+    plan16 = adapter.memory_plan(build_config("balanced", "balanced", 16))
+    plan24 = adapter.memory_plan(build_config("balanced", "balanced", 24))
+    assert plan16.transformer_gb < 5.5
+    assert plan16.transformer_gb < plan24.transformer_gb / 2 + 0.3
+    assert plan16.peak_gb < 14
+    assert plan16.peak_gb < peak
+    assert plan16.encoders_gb > 7
     assert adapter.vram_need_gb(build_config("quick", "balanced", 16)) < 16
     assert adapter.vram_need_gb(build_config("best", "balanced", 24)) < 24
     assert adapter.memory_plan(build_config("balanced", "balanced", 24, grad_checkpointing=False)).peak_gb > 24

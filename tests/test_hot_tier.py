@@ -182,12 +182,30 @@ def test_preview_on_16_gb_does_not_bring_the_text_encoder_back() -> None:
     assert moved == []
 
 
-def test_moss_16_errors_before_the_dit_is_read(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(moss, "load_pipeline", lambda *args, **kwargs: pytest.fail("read the DiT"))
+def test_moss_16_loads_fp8_and_does_not_read_the_bf16_dit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(moss, "load_pipeline", lambda *args, **kwargs: pytest.fail("read the bf16 DiT"))
+    calls: list[bool] = []
+
+    class Tiny(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.ModuleList()
+            self.anchor = nn.Linear(2, 2)
+
+    def fake_load(root: Path, **kwargs: object) -> SimpleNamespace:
+        calls.append(bool(kwargs["with_text_encoder"]))
+        return SimpleNamespace(transformer=Tiny(), vae=nn.Linear(1, 1), text_encoder=None)
+
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.load_training_pipe", fake_load)
     adapter = bases.get_adapter("moss-image-base")
-    with pytest.raises(LoraStageError) as caught:
-        adapter.load(tmp_path, build_config("quick", "balanced", 16), "cpu")
-    assert caught.value.key == "lora.err.vram_quant"
+    monkeypatch.setattr(adapter, "_check", lambda _weights, _config: SimpleNamespace(quant="int8", device="cuda"))
+    config = build_config("quick", "balanced", 16)
+    first = adapter.load(tmp_path, config, "cpu")
+    adapter._staged = True
+    second = adapter.load(tmp_path, config, "cpu")
+    assert first is second
+    assert calls == [True]
+    assert "hit" in [row["action"] for row in events()]
 
 
 def test_qwen_stays_resident_after_unload(monkeypatch, tmp_path: Path) -> None:

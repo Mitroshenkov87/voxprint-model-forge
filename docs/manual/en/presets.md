@@ -28,7 +28,7 @@ Likeness changes the number of steps and how often a description is left out dur
 
 - Both tiers train one picture at a time with gradient checkpointing on. Balanced and Best quality add two pictures up before each step; Quick check does one.
 - **Z-Image**, 16 GB tier: the base model is stored in a compact 8-bit form to fit the card. 24 GB tier: full precision.
-- **MOSS-Image Base**: the picture model stays in full precision on both tiers. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see [Compression tests](compression.md)).
+- **MOSS-Image Base**: on the 16 GB tier the picture model is stored as FP8 e4m3 weights (bf16 compute) so it fits the card. On the 24 GB tier it stays in full precision. Its text encoder runs on the graphics card, compressed to 8 bits on the 16 GB tier and in full precision on the 24 GB tier (see [Compression tests](compression.md)).
 
 ## Measured figures
 

@@ -28,11 +28,11 @@ It needs diffusers>=0.38 and transformers>=5.3. The app venv has diffusers 0.41 
 
 ## LoRA
 
-`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The DiT stays bf16 and the LoRA stays fp32. 4-bit and FP8 storage break the MOSS forward (it casts activations to `weight.dtype`), so both memory presets keep the bf16 weights. The text encoder runs on the card while the DiT waits in RAM; after the VAE latents and prompt embeddings are cached the encoder is freed and only then is the DiT read and moved onto the card, so the two large models are never in RAM together.
+`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The LoRA stays fp32. The 24 GB tier keeps the bf16 DiT. The 16 GB tier stores the DiT as FP8 e4m3 weights (torchao 0.18.0 weight-only, per-row scales, bf16 compute). torchao's `Float8Tensor.dtype` stays bf16, which is what the MOSS block reads before it casts activations. Raw float8 or 4-bit storage is not used for the DiT. The text encoder runs on the card while the DiT waits in RAM; after the VAE latents and prompt embeddings are cached the encoder is freed and only then is the DiT read and moved onto the card, so the two large models are never in RAM together. The FP8 DiT is quantized once, saved under `model-forge/moss-image-{base,sft}-fp8/dit-fp8.safetensors`, and loaded from that file until the source revision, a source sha256, the torchao version or the quant config changes.
 
 Text encoder options (`lora train` and `python -m voxprint_forge.diffusion.moss`):
 
-- `--te-quant auto|none|int8|nf4` (env `VOXPRINT_FORGE_TE_QUANT`, default `auto`): `auto` is bf16 on the 24 GB tier and bitsandbytes LLM.int8 on the 16 GB tier. `nf4` is bitsandbytes 4-bit. The DiT is never quantized.
+- `--te-quant auto|none|int8|nf4` (env `VOXPRINT_FORGE_TE_QUANT`, default `auto`): `auto` is bf16 on the 24 GB tier and bitsandbytes LLM.int8 on the 16 GB tier. `nf4` is bitsandbytes 4-bit. This flag is the text encoder. The 16 GB DiT is the FP8 file below, not this flag.
 - `--te-device gpu|cpu` (env `VOXPRINT_FORGE_TE_DEVICE`, default `gpu`). CPU encode is a slower fallback; `auto` also falls back to it, with a warning, when bitsandbytes is missing. An explicit `int8`/`nf4` without bitsandbytes stops with `lora.err.te_quant_missing`.
 - bitsandbytes is the optional `te-quant` extra (`pip install "voxprint-forge[te-quant]"`); its win_amd64 wheel ships CUDA 13 binaries. The Windows installer ships bitsandbytes==0.50.2 (sha256 `c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d`).
 
@@ -44,6 +44,10 @@ python -m voxprint_forge.diffusion.moss --snapshot SNAPSHOT --prompt "a red cube
 
 `load_pipeline(..., lora_path=..., lora_scale=1.0)`, `generate(...)` and `diffusion.generate.generate_moss(...)` take the same arguments.
 
+## FP8 mirror
+
+The 16 GB DiT (Base and SFT) is an Apache-2.0 derivative aimed at `Mitroshenkov87/voxprint-mirror-moss-image-base-fp8` and `Mitroshenkov87/voxprint-mirror-moss-image-sft-fp8`. The manifest's primary source is that mirror at a pinned revision and sha256. The mirror revision is still `unpublished`, so loading and `models verify --repair` quantize the pinned bf16 snapshot locally (Base `1ceede80badddd6a7812069619edaa5633587192`, SFT `fc5de0d56fc910cbca6f6625a70f5f582b26deb1`) and fall back to that quantize if a later download fails. `scripts/publish_moss_fp8.py` writes the model card, LICENSE, NOTICE and `voxprint-model.json` and prints the upload steps. It does not upload. The upload waits until the picture-quality check passes; then the commit and the weight sha256 are pinned in code.
+
 ## Fit job (synth4)
 
 `plans/moss-synth4.toml` and `scripts/vm_run_moss_fit.sh` run the SFT model at 1024², 50 steps, CFG 3, with memory caps of 16 and 24 GB:
@@ -51,7 +55,7 @@ python -m voxprint_forge.diffusion.moss --snapshot SNAPSHOT --prompt "a red cube
 | Arm | Role | Notes |
 |---|---|---|
 | `bf16-te-offload` | candidate | 16 GB: text encoder on CPU. 24 GB: diffusers model CPU offload. |
-| `c-dq` | candidate | FP8 storage, BF16 compute. Skipped until `FORGE_MOSS_FP8_DIR` points at built weights. |
+| `c-dq` | candidate | FP8 storage, BF16 compute. The generation fit still waits on `FORGE_MOSS_FP8_DIR`. LoRA on 16 GB uses the torchao weight-only DiT instead. |
 | `comfy-int8` | reference | ComfyUI `a639f187` (#17095 + #17099), comfy-kitchen 0.2.38, files sha256-pinned. |
 
 The caps are emulated: `set_per_process_memory_fraction` for diffusers, `--reserve-vram` for ComfyUI. A real 16/24 GB card check follows separately.
