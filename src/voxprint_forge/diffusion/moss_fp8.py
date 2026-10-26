@@ -22,8 +22,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -631,31 +633,12 @@ def empty_transformer(source: Path) -> object:
         return mod.MOSSImageTransformer(**kwargs)
 
 
-def load_training_pipe(
-    root: Path,
-    *,
-    with_text_encoder: bool = True,
-    te_quant: str = "none",
-    te_device: str = "cpu",
-) -> object:
-    """MOSS pipeline whose DiT is the FP8 file. Quantizes the bf16 snapshot when that file is absent.
+def load_fp8_transformer(root: Path) -> object:
+    """The quantized DiT. ``ModelPark.get`` keeps this module, not the pipeline.
 
-    The quantized module stays the object ``materialize`` returns, so the session park holds
-    it and a later stage does not quantize again. ``with_text_encoder=False`` is the path
-    after captions are cached.
+    A later load attaches or omits the text encoder without reading the DiT again.
+    The park boxes the module, so its tensor copy does not rewrite FP8 ``qdata``.
     """
-    # diffusers and transformers match moss.load_pipeline: imported on use, not at startup.
-    import os
-
-    import torch
-    from diffusers import AutoencoderKLFlux2
-    from transformers import AutoTokenizer
-
-    from voxprint_forge.diffusion import moss as runtime
-
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    runtime.check_snapshot(root)
     pin = pin_for_source(root)
     folder = fp8_dir(root, pin)
 
@@ -669,28 +652,71 @@ def load_training_pipe(
     bind_device_move(transformer)
     transformer.eval()  # type: ignore[attr-defined]
     transformer.requires_grad_(False)  # type: ignore[attr-defined]
-    common = {"local_files_only": True}
-    if with_text_encoder:
-        tokenizer, text_encoder = runtime.load_text_encoder(
-            root, dtype=torch.bfloat16, te_quant=te_quant, device=te_device
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(root / "tokenizer", trust_remote_code=False, **common)
-        text_encoder = None
-    vae = AutoencoderKLFlux2.from_pretrained(
-        root / "vae", torch_dtype=torch.float32, use_safetensors=True, **common
-    ).eval()
-    mod = runtime.import_vendored()
-    scheduler = mod.MOSSImageScheduler.from_pretrained(root / "scheduler", **common)
-    return mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
+    return transformer
+
+
+def assemble_pipe(
+    root: Path,
+    transformer: object,
+    *,
+    with_text_encoder: bool = True,
+    te_quant: str = "none",
+    te_device: str = "cpu",
+) -> object:
+    """Pipeline around an already quantized DiT. Does not read the DiT weights."""
+    # diffusers and transformers match moss.load_pipeline: imported on use, not at startup.
+    import torch
+    from diffusers import AutoencoderKLFlux2
+    from transformers import AutoTokenizer
+
+    from voxprint_forge.diffusion import moss as runtime
+
+    with _hub_offline():
+        runtime.check_snapshot(root)
+        common = {"local_files_only": True}
+        if with_text_encoder:
+            tokenizer, text_encoder = runtime.load_text_encoder(
+                root, dtype=torch.bfloat16, te_quant=te_quant, device=te_device
+            )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(root / "tokenizer", trust_remote_code=False, **common)
+            text_encoder = None
+        vae = AutoencoderKLFlux2.from_pretrained(
+            root / "vae", torch_dtype=torch.float32, use_safetensors=True, **common
+        ).eval()
+        mod = runtime.import_vendored()
+        scheduler = mod.MOSSImageScheduler.from_pretrained(root / "scheduler", **common)
+        return mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
+
+
+def load_training_pipe(
+    root: Path,
+    *,
+    with_text_encoder: bool = True,
+    te_quant: str = "none",
+    te_device: str = "cpu",
+) -> object:
+    """MOSS pipeline whose DiT is the FP8 file. Quantizes the bf16 snapshot when that file is absent.
+
+    Training parks :func:`load_fp8_transformer` and calls :func:`assemble_pipe` on each
+    load, so the text encoder follows that load instead of the first one.
+    """
+    transformer = load_fp8_transformer(root)
+    return assemble_pipe(
+        root,
+        transformer,
+        with_text_encoder=with_text_encoder,
+        te_quant=te_quant,
+        te_device=te_device,
+    )
 
 
 def cover(root: Path, *, repair: bool) -> list[dict[str, object]]:
-    """Verify installed FP8 DiTs. With ``repair``, rebuild a bad file from the bf16 snapshot.
+    """Verify an FP8 DiT that is already on disk. With ``repair``, rebuild a bad file.
 
-    Nothing is reported when neither the FP8 folder nor the bf16 source is installed,
-    so a verify of other models keeps its existing output. Repair does not invent
-    weights when the pinned source shards are absent or do not match.
+    A bf16 snapshot alone is not a missing derivative: the 24 GB path never writes
+    this file, and a plain verify must not fail until something creates the directory.
+    Repair does not invent weights when the pinned source shards are absent or do not match.
     """
     app = root / "model-forge"
     if not app.is_dir():
@@ -699,7 +725,7 @@ def cover(root: Path, *, repair: bool) -> list[dict[str, object]]:
     for pin in PINS:
         folder = app / pin.mdl_id
         source = app / pin.source_mdl
-        if not folder.exists() and not source.is_dir():
+        if not folder.exists():
             continue
         state = status(folder, pin)
         if repair and state != "ok":
@@ -740,22 +766,40 @@ def _require_torchao() -> None:
 
 
 def _load_bf16_transformer(source: Path) -> object:
-    import os
-
     import torch
 
     from voxprint_forge.diffusion.moss import import_vendored
 
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     mod = import_vendored()
-    return mod.MOSSImageTransformer.from_pretrained(
-        source / "transformer",
-        torch_dtype=torch.bfloat16,
-        use_safetensors=True,
-        low_cpu_mem_usage=True,
-        local_files_only=True,
-    ).eval()
+    with _hub_offline():
+        return mod.MOSSImageTransformer.from_pretrained(
+            source / "transformer",
+            torch_dtype=torch.bfloat16,
+            use_safetensors=True,
+            low_cpu_mem_usage=True,
+            local_files_only=True,
+        ).eval()
+
+
+@contextmanager
+def _hub_offline() -> Iterator[None]:
+    """Read the local snapshot, then restore the process Hub flags.
+
+    ``from_pretrained`` follows these variables. Leaving them set stops a later
+    ``models verify --repair`` from downloading any other model.
+    """
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    previous = {key: os.environ.get(key) for key in keys}
+    try:
+        for key in keys:
+            os.environ[key] = "1"
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _copy_license(folder: Path) -> Path:

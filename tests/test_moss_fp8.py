@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -23,6 +24,7 @@ from voxprint_forge.diffusion.moss_fp8 import (
     ZERO_SHA,
     Fp8Pin,
     SourceFile,
+    _load_bf16_transformer,
     bind_device_move,
     cover,
     fetch_mirror,
@@ -353,10 +355,48 @@ def test_repair_skips_a_source_that_does_not_match(monkeypatch: pytest.MonkeyPat
     source = root / "moss-image-base" / "transformer"
     source.mkdir(parents=True)
     (source / "config.json").write_bytes(b"not-the-pinned-config")
+    (root / "moss-image-base-fp8").mkdir()
     rows = cover(tmp_path / "models", repair=True)
     assert rows == [{"id": "moss-image-base-fp8", "status": "corrupt", "detail": "source mismatch"}]
     absent = tmp_path / "empty"
     (absent / "model-forge" / "moss-image-sft").mkdir(parents=True)
+    (absent / "model-forge" / "moss-image-sft-fp8").mkdir()
     missing = cover(absent, repair=True)
     assert missing == [{"id": "moss-image-sft-fp8", "status": "missing", "detail": "source missing"}]
     assert cover(tmp_path / "nowhere", repair=True) == []
+
+
+def test_a_bf16_snapshot_is_not_a_missing_fp8_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "voxprint_forge.diffusion.moss_fp8.quantize_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("quantized a bf16-only install"),
+    )
+    root = tmp_path / "model-forge" / "moss-image-base"
+    root.mkdir(parents=True)
+    (root / "transformer").mkdir()
+    assert cover(tmp_path, repair=False) == []
+    assert cover(tmp_path, repair=True) == []
+
+
+def test_bf16_load_does_not_leave_the_hub_offline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    seen: dict[str, str | None] = {}
+
+    class Transformer:
+        @classmethod
+        def from_pretrained(cls, *args: object, **kwargs: object) -> SimpleNamespace:
+            del args, kwargs
+            seen["hub"] = os.environ.get("HF_HUB_OFFLINE")
+            module = SimpleNamespace()
+            module.eval = lambda: module
+            return module
+
+    monkeypatch.setattr(
+        "voxprint_forge.diffusion.moss.import_vendored",
+        lambda: SimpleNamespace(MOSSImageTransformer=Transformer),
+    )
+    _load_bf16_transformer(tmp_path)
+    assert seen["hub"] == "1"
+    assert "HF_HUB_OFFLINE" not in os.environ
+    assert "TRANSFORMERS_OFFLINE" not in os.environ

@@ -738,11 +738,11 @@ class MossImageAdapter(BaseAdapter):
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
         """Load the transformer and return it, parked on the CPU. Encoders stay frozen.
 
-        The 24 GB tier reads the bf16 DiT. The 16 GB tier reads the FP8 weight-only DiT
-        and does not cast those weights back to bf16. The park key for that file ignores
-        the staged bit, so encode and the later unstaged preview share one quantized DiT.
-        After :meth:`load_encoders` and :meth:`free_text_encoder` the pipeline is built
-        without a text encoder. Called on its own it reads the encoders too.
+        The 24 GB tier reads the bf16 DiT. The 16 GB tier parks the FP8 DiT with
+        ``ModelPark.get`` and does not cast those weights back to bf16. That key
+        ignores the staged bit, so every load shares one quantized module. The
+        pipeline around it is built for this call, with a text encoder only when
+        captions are not already cached. Called on its own it reads the encoders too.
         """
         self.device = device
         self._vram = config.vram
@@ -755,17 +755,22 @@ class MossImageAdapter(BaseAdapter):
         self._staged = False
         prior = self.pipe
         if fp8:
-            key = f"{self.info.mdl_id}:dit-fp8:{weights_dir}"
-            self.pipe = park(
-                key,
-                lambda: moss_fp8.load_training_pipe(
-                    Path(weights_dir),
-                    with_text_encoder=not staged,
-                    te_quant=choice.quant,
-                    te_device=choice.device,
-                ),
+            root = Path(weights_dir)
+            # ModelPark.get, via park(). The resident is the DiT. The text encoder
+            # is attached below for this load, so a staged load cannot pin an
+            # encoder-less pipeline for a later one.
+            transformer = park(
+                f"{self.info.mdl_id}:dit-fp8:{weights_dir}",
+                lambda: moss_fp8.load_fp8_transformer(root),
                 stage_name="load",
                 replay_rng=True,
+            )
+            self.pipe = moss_fp8.assemble_pipe(
+                root,
+                transformer,
+                with_text_encoder=not staged,
+                te_quant=choice.quant,
+                te_device=choice.device,
             )
         else:
             key = f"{self.info.mdl_id}:dit:{weights_dir}:{id(self)}:{int(staged)}"
