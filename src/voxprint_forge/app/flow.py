@@ -49,15 +49,16 @@ class FlowLayout(QtWidgets.QLayout):
 
     def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt API
         """Qt hook: everything on one line."""
-        width = sum(item.sizeHint().width() for item in self._visible()) + self._gap * max(0, len(self._visible()) - 1)
-        height = max((item.sizeHint().height() for item in self._visible()), default=0)
+        sizes = [_size(item) for item in self._visible()]
+        width = sum(size.width() for size in sizes) + self._gap * max(0, len(sizes) - 1)
+        height = max((size.height() for size in sizes), default=0)
         return QtCore.QSize(width, height)
 
     def minimumSize(self) -> QtCore.QSize:  # noqa: N802 - Qt API
         """Qt hook: the widest single item, so no label is ever cut."""
         size = QtCore.QSize()
         for item in self._visible():
-            size = size.expandedTo(item.minimumSize()).expandedTo(item.sizeHint())
+            size = size.expandedTo(item.minimumSize()).expandedTo(_size(item))
         return size
 
     def _visible(self) -> list[QtWidgets.QLayoutItem]:
@@ -66,7 +67,7 @@ class FlowLayout(QtWidgets.QLayout):
     def _place(self, rect: QtCore.QRect, *, move: bool) -> int:
         x, y, line = rect.x(), rect.y(), 0
         for item in self._visible():
-            hint = item.sizeHint()
+            hint = _size(item)
             if x > rect.x() and x + hint.width() > rect.right() + 1:
                 x, y, line = rect.x(), y + line + self._gap // 2, 0
             if move:
@@ -74,6 +75,18 @@ class FlowLayout(QtWidgets.QLayout):
             x += hint.width() + self._gap
             line = max(line, hint.height())
         return y + line - rect.y()
+
+
+def _size(item: QtWidgets.QLayoutItem) -> QtCore.QSize:
+    """The hinted size, made tall enough for wrapped text at the hinted width.
+
+    A word-wrapped label hints a height for a width of its own choosing, so a tile placed at its
+    plain hint can be a line short; how short depends on the platform's font metrics.
+    """
+    hint = item.sizeHint()
+    if item.hasHeightForWidth():
+        hint.setHeight(max(hint.height(), item.heightForWidth(hint.width())))
+    return hint
 
 
 class FlowRow(QtWidgets.QWidget):
