@@ -23,7 +23,7 @@ from voxprint_common.paths import models_dir
 from voxprint_forge.app_models import load as load_app_models
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.lora.backends import LEGACY_IDS
-from voxprint_forge.mdl_adapter import execute_verify, verify_window_argv
+from voxprint_forge.mdl_adapter import execute_verify, verify_command
 from voxprint_forge.model_views import APP_DIR, MARKER, ensure_view
 from voxprint_forge.model_views import manifest_path as packaged_manifest
 
@@ -125,9 +125,13 @@ def manage_argv() -> list[str]:
     return [*mdl_executable(), "--gui", "--app", APP_ID, "--manifest", str(manifest_path())]
 
 
-def verify_argv() -> list[str]:
-    """``voxprint-mdl verify --app model-forge --gui --repair``."""
-    return verify_window_argv(repair=True, manifest=manifest_path())
+def verify_argv() -> list[str] | None:
+    """``voxprint-mdl verify --app model-forge --gui --repair``, or None.
+
+    None means no installed catalog model would be passed with ``--model``.
+    Launching then would plan the whole tier, and ``--repair`` would download it.
+    """
+    return verify_command(repair=True, manifest=manifest_path())
 
 
 def download_argv(

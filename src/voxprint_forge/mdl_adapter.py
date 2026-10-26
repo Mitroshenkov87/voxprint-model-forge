@@ -98,6 +98,26 @@ def mdl_script() -> list[str] | None:
     return None
 
 
+def verify_command(
+    *,
+    repair: bool,
+    manifest: Path,
+    root: Path | None = None,
+    executable: Sequence[str] | None = None,
+) -> list[str] | None:
+    """The check-and-repair command, or None when nothing installed would be named.
+
+    Omitting ``--model`` makes 0.5.2 plan the whole tier. With ``--repair`` that
+    downloads every Model Forge model. An empty install stays local.
+
+    Raises:
+        MdlAdapterError: Installed models need ``voxprint-mdl`` and it is missing.
+    """
+    if not _check_ids(manifest, root):
+        return None
+    return verify_window_argv(repair=repair, manifest=manifest, root=root, executable=executable)
+
+
 def verify_window_argv(
     *,
     repair: bool,
@@ -169,9 +189,10 @@ def execute_verify(
 ) -> dict[str, object]:
     """Check installed models and return ``ok``, ``exit_code``, ``models``, and ``text``.
 
-    ``gui`` launches :func:`verify_window_argv` and waits for that window,
-    including when every installed model is already OK. Without ``gui``,
-    :func:`verify_repair` checks the same ids and ``text`` is
+    ``gui`` launches :func:`verify_command` and waits for that window,
+    including when every installed model is already OK. An empty install does
+    not launch: the command would omit ``--model`` and plan the whole catalog.
+    Without ``gui``, :func:`verify_repair` checks the same ids and ``text`` is
     ``N models: X OK, Y damaged, Z missing``. An empty install without ``gui``
     is success and does not ask MDL to plan the whole catalog.
 
@@ -182,11 +203,12 @@ def execute_verify(
     base = root if root is not None else models_dir()
     fp8_rows = [dict(row) for row in moss_fp8.cover(base, repair=repair)]
     if gui:
+        command = verify_command(repair=repair, manifest=manifest, root=root, executable=executable)
+        if command is None:
+            merged = _with_fp8({"ok": True, "exit_code": 0, "models": [], "text": ""}, fp8_rows)
+            return _with_summary(merged, counts=None, fp8_rows=fp8_rows)
         try:
-            code = spawn(
-                verify_window_argv(repair=repair, manifest=manifest, root=root, executable=executable),
-                wait=True,
-            )
+            code = spawn(command, wait=True)
         except OSError as exc:
             raise MdlAdapterError(MISSING_MDL) from exc
         return _with_fp8(

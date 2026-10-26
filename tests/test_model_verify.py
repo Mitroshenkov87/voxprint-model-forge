@@ -189,6 +189,26 @@ def test_gui_repair_launches_verify_with_repair(monkeypatch: pytest.MonkeyPatch,
     assert kwargs["creationflags"] == 0
 
 
+def test_gui_with_nothing_installed_does_not_plan_the_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = tmp_path / "mdl.json"
+    manifest.write_text(json.dumps({"models": [{"id": "absent", "files": []}]}), encoding="utf-8")
+    root = tmp_path / "models"
+    root.mkdir()
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(root))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("an empty install must not launch voxprint-mdl")
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.Popen", fail)
+    code = main(["models", "verify", "--gui", "--repair"])
+    assert code == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_spawn_passes_create_no_window_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("voxprint_forge.mdl_adapter._is_windows", lambda: True)
     seen: dict[str, object] = {}
