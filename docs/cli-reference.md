@@ -33,7 +33,7 @@ positional arguments:
     kl                  Perplexity and KL of GGUF quants against an F16 base.
     lora                Train a LoRA from your photos: prepare, train, extend, export,
                         review, continue, finish, status.
-    models              List or fetch model-forge model ids.
+    models              List, fetch, or check model-forge models.
     index               Build or push the model index, or backfill voxprint-model.json.
 
 options:
@@ -845,15 +845,17 @@ options:
 ## `forge models`
 
 ```text
-usage: forge models [-h] {status,fetch} ...
+usage: forge models [-h] {status,fetch,verify} ...
 
 positional arguments:
-  {status,fetch}
-    status        List model ids.
-    fetch         Fetch model ids and build folders.
+  {status,fetch,verify}
+    status              List model ids.
+    fetch               Fetch model ids and build folders.
+    verify              Check installed models and repair missing or corrupt
+                        files.
 
 options:
-  -h, --help      show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## `forge models status`
@@ -878,6 +880,17 @@ options:
   --required     Required model ids.
   --model MODEL  Model id. Repeat as needed.
   --gui          Show the progress window.
+```
+
+## `forge models verify`
+
+```text
+usage: forge models verify [-h] [--gui] [--repair]
+
+options:
+  -h, --help  show this help message and exit
+  --gui       Show the progress window.
+  --repair    Re-download missing or corrupt files without asking.
 ```
 
 ## `forge index`

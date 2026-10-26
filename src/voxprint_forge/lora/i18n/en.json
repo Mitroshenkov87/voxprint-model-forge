@@ -253,5 +253,10 @@
  "lora.err.sample_steps": "The number of steps used to draw a picture must be at least 1.",
  "lora.err.review_sample": "That picture is not in this review.",
  "lora.err.te_quant_mode": "Unknown text encoder quantization \"{mode}\"; use one of: {modes}.",
- "lora.err.te_quant_missing": "Text encoder quantization \"{mode}\" needs the bitsandbytes package. Install the te-quant extra or use none."
+ "lora.err.te_quant_missing": "Text encoder quantization \"{mode}\" needs the bitsandbytes package. Install the te-quant extra or use none.",
+ "lora.err.cpu_fallback": "A 16 GB card cannot run this model on the CPU ({reason}).",
+ "lora.err.vram_quant": "On a 16 GB card, {model} has to load in FP8 or another quantized form.",
+ "lora.err.vram_one": "Only one heavy model can be on the card. {stage} is already there, so {model} stayed off.",
+ "lora.err.vram_peak": "Stage {stage} used {gb} GB of graphics memory. The limit on a 16 GB card is {limit} GB.",
+ "lora.err.vram_held": "Stage {stage} finished with {gb} GB still on the graphics card."
 }

@@ -230,14 +230,21 @@ class _Help(argparse.HelpFormatter):
 
 
 def _add_models_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """``models status|fetch``. The implementation is imported when the command runs."""
-    models = sub.add_parser("models", help="List or fetch model-forge model ids.")
+    """``models status|fetch|verify``. The implementation is imported when the command runs."""
+    models = sub.add_parser("models", help="List, fetch, or check model-forge models.")
     commands = models.add_subparsers(dest="models_command", required=True)
     for name, help_text in (("status", "List model ids."), ("fetch", "Fetch model ids and build folders.")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--required", action="store_true", help="Required model ids.")
         command.add_argument("--model", action="append", default=[], help="Model id. Repeat as needed.")
         command.add_argument("--gui", action="store_true", help="Show the progress window.")
+    verify = commands.add_parser("verify", help="Check installed models and repair missing or corrupt files.")
+    verify.add_argument("--gui", action="store_true", help="Show the progress window.")
+    verify.add_argument(
+        "--repair",
+        action="store_true",
+        help="Re-download missing or corrupt files without asking.",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -261,6 +268,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if not args.json and args.command == "preflight" and getattr(args, "vm", False) and isinstance(result, dict):
             print(result["text"])
+            return _exit_code(args.command, result)
+        if (
+            not args.json
+            and args.command == "models"
+            and getattr(args, "models_command", "") == "verify"
+            and isinstance(result, dict)
+            and isinstance(result.get("text"), str)
+        ):
+            if not getattr(args, "gui", False):
+                print(result["text"], end="")
             return _exit_code(args.command, result)
         code = _exit_code(args.command, result)
         emit(args.command, result, ok=code == 0, exit_code=code, json_mode=args.json)
@@ -333,6 +350,8 @@ def _exit_code(command: str, result: object) -> int:
         return int(result.get("exit_code", 2))
     if command == "status":
         return int(result.get("exit_code", 4))
+    if command == "models" and isinstance(result.get("text"), str) and isinstance(result.get("exit_code"), int):
+        return int(result["exit_code"])
     if result.get("ok") is False:
         return EXIT_STAGE
     return 0

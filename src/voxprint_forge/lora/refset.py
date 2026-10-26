@@ -38,8 +38,18 @@ from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageErr
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import RULE_VERSION, Gate
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE, open_photo, photo_id
+from voxprint_forge.lora.presets import detect_vram_gb
 from voxprint_forge.lora.project import Project
+from voxprint_forge.lora.vram_stage import (
+    TIER_GB,
+    assert_stage_clear,
+    fail_peak,
+    hold_heavy,
+    release_heavy,
+    require_quantized,
+)
 from voxprint_forge.mdl_app import missing_id_text
+from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
 SCHEMA = "voxprint-refset/1"
@@ -237,7 +247,7 @@ def reset(project: Project | Path) -> None:
 
 
 def restart(project: Project | Path) -> bool:
-    """"Start over" with the same references. A blocked loop stays blocked: returns False and keeps it."""
+    """ "Start over" with the same references. A blocked loop stays blocked: returns False and keeps it."""
     if load_state(project).get("blocked"):
         return False
     reset(project)
@@ -248,6 +258,8 @@ def restart(project: Project | Path) -> bool:
 def release_stage() -> None:
     """Free graphics memory between stages (diffusion/stage_free.py on CUDA, a GC pass elsewhere)."""
     gc.collect()
+    # Imported here so ``voxprint-forge --version`` does not pull torch. stage_free pulls the
+    # diffusion runtime, which this module does not need on the CPU path the tests use.
     try:
         import torch
     except ImportError:
@@ -311,8 +323,7 @@ def check_refs(
     gate = load_gate()
     if not gate.available:
         _unload_gate(gate)
-        progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
-                      state="blocked")
+        progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check", state="blocked")
         ids = missing_id_text()
         if not ids:
             raise LoraBlocked("lora.err.not_prepared")
@@ -320,16 +331,27 @@ def check_refs(
     prompts = load_prompts(project)
     try:
         for index, (rid, image) in enumerate(images, 1):
-            progress.emit("refset.refs", "lora.progress.refset_refs", {"n": index, "total": len(images)},
-                          "lora.reason.refset_check", done=index, total=len(images))
+            progress.emit(
+                "refset.refs",
+                "lora.progress.refset_refs",
+                {"n": index, "total": len(images)},
+                "lora.reason.refset_check",
+                done=index,
+                total=len(images),
+            )
             if not gate.check(image, attested=_attested(subject)).keep:
                 state["refs"] = [{"id": i} for i, _ in images]
                 raise _block(project, state, progress)
         for index, (rid, image) in enumerate(images, 1):
             if prompts.get(rid):
                 continue
-            progress.emit("refset.prompt", "lora.progress.refset_prompt", {"n": index, "total": len(images)},
-                          done=index, total=len(images))
+            progress.emit(
+                "refset.prompt",
+                "lora.progress.refset_prompt",
+                {"n": index, "total": len(images)},
+                done=index,
+                total=len(images),
+            )
             prompts[rid] = _describe(gate, image, describe)
     finally:
         _unload_gate(gate)
@@ -338,13 +360,15 @@ def check_refs(
     for rid, image in images:
         image.save(refs_dir / f"{rid}.png")
     save_prompts(project, prompts)
-    state.update({
-        "refs": [{"id": rid, "file": f"refs/{rid}.png"} for rid, _ in images],
-        "refs_checked": True,
-        "blocked": False,
-        "subject_kind": subject.kind,
-        "gate_rule": RULE_VERSION,
-    })
+    state.update(
+        {
+            "refs": [{"id": rid, "file": f"refs/{rid}.png"} for rid, _ in images],
+            "refs_checked": True,
+            "blocked": False,
+            "subject_kind": subject.kind,
+            "gate_rule": RULE_VERSION,
+        }
+    )
     save_state(project, state)
     return state
 
@@ -372,17 +396,19 @@ def plan_round(state: dict[str, Any], settings: Settings, prompts: dict[str, str
     for index in range(settings.count):
         source = sources[index % len(sources)]
         prompt = prompts.get(source["ref"], "")
-        jobs.append({
-            "index": index,
-            "parent": source["id"],
-            "parent_file": source["file"],
-            "ref": source["ref"],
-            "seed": int(base + index),
-            "strength": settings.strength,
-            "steps": settings.steps,
-            "prompt": prompt,
-            "prompt_id": prompt_id(prompt),
-        })
+        jobs.append(
+            {
+                "index": index,
+                "parent": source["id"],
+                "parent_file": source["file"],
+                "ref": source["ref"],
+                "seed": int(base + index),
+                "strength": settings.strength,
+                "steps": settings.steps,
+                "prompt": prompt,
+                "prompt_id": prompt_id(prompt),
+            }
+        )
     return jobs
 
 
@@ -423,14 +449,20 @@ def run_round(
     made: list[tuple[dict[str, Any], Path]] = []
     try:
         for job in jobs:
-            progress.emit("refset.generate", "lora.progress.refset_generate",
-                          {"n": job["index"] + 1, "total": len(jobs)}, "lora.reason.refset_generate",
-                          done=job["index"] + 1, total=len(jobs))
+            progress.emit(
+                "refset.generate",
+                "lora.progress.refset_generate",
+                {"n": job["index"] + 1, "total": len(jobs)},
+                "lora.reason.refset_generate",
+                done=job["index"] + 1,
+                total=len(jobs),
+            )
             source = open_photo(root / job["parent_file"])
             if source is None:
                 continue
-            image = generator.generate(source, job["prompt"], seed=job["seed"], strength=job["strength"],
-                                       steps=job["steps"])
+            image = generator.generate(
+                source, job["prompt"], seed=job["seed"], strength=job["strength"], steps=job["steps"]
+            )
             path = pending / f"{job['index']:03d}.png"
             image.convert("RGB").save(path)
             made.append((job, path))
@@ -444,20 +476,28 @@ def run_round(
     )
     shutil.rmtree(pending, ignore_errors=True)
     _near_duplicates(project, state, shown, load_embedder=load_embedder, progress=progress)
-    state.setdefault("rounds", []).append({
-        "round": round_no,
-        "count": settings.count,
-        "strength": settings.strength,
-        "steps": settings.steps,
-        "seed_base": jobs[0]["seed"] if jobs else None,
-        "candidates": shown,
-    })
+    state.setdefault("rounds", []).append(
+        {
+            "round": round_no,
+            "count": settings.count,
+            "strength": settings.strength,
+            "steps": settings.steps,
+            "seed_base": jobs[0]["seed"] if jobs else None,
+            "candidates": shown,
+        }
+    )
     state["finished"] = False
     save_state(project, state)
-    progress.emit("refset.done", "lora.progress.refset_done",
-                  {"round": round_no + 1, "shown": len(shown)}, state="done")
-    return {"state": "done", "round": round_no, "shown": len(shown), "kept_so_far": len(kept(state)),
-            "approved": approved_count(state)}
+    progress.emit(
+        "refset.done", "lora.progress.refset_done", {"round": round_no + 1, "shown": len(shown)}, state="done"
+    )
+    return {
+        "state": "done",
+        "round": round_no,
+        "shown": len(shown),
+        "kept_so_far": len(kept(state)),
+        "approved": approved_count(state),
+    }
 
 
 def _gate_candidates(
@@ -478,8 +518,7 @@ def _gate_candidates(
         _unload_gate(gate)
         for _job, path in made:
             path.unlink(missing_ok=True)
-        progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check",
-                      state="blocked")
+        progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check", state="blocked")
         ids = missing_id_text()
         if not ids:
             raise LoraBlocked("lora.err.not_prepared")
@@ -488,8 +527,14 @@ def _gate_candidates(
     minor = False
     try:
         for index, (job, path) in enumerate(made, 1):
-            progress.emit("refset.check", "lora.progress.refset_check", {"n": index, "total": len(made)},
-                          "lora.reason.refset_check", done=index, total=len(made))
+            progress.emit(
+                "refset.check",
+                "lora.progress.refset_check",
+                {"n": index, "total": len(made)},
+                "lora.reason.refset_check",
+                done=index,
+                total=len(made),
+            )
             image = open_photo(path)
             decision = gate.check(image, attested=attested) if image is not None else None
             if decision is None or not decision.keep:
@@ -502,18 +547,20 @@ def _gate_candidates(
                 continue
             target = out_dir / f"{cid}.png"
             path.replace(target)
-            shown.append({
-                "id": cid,
-                "file": f"round-{round_no}/{cid}.png",
-                "round": round_no,
-                "parent": job["parent"],
-                "ref": job["ref"],
-                "seed": job["seed"],
-                "strength": job["strength"],
-                "steps": job["steps"],
-                "prompt_id": job["prompt_id"],
-                "verdict": "pending",
-            })
+            shown.append(
+                {
+                    "id": cid,
+                    "file": f"round-{round_no}/{cid}.png",
+                    "round": round_no,
+                    "parent": job["parent"],
+                    "ref": job["ref"],
+                    "seed": job["seed"],
+                    "strength": job["strength"],
+                    "steps": job["steps"],
+                    "prompt_id": job["prompt_id"],
+                    "verdict": "pending",
+                }
+            )
     finally:
         _unload_gate(gate)
     if minor:
@@ -573,8 +620,12 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 def near_duplicates(state: dict[str, Any], ids: Sequence[str] | None = None) -> int:
     """How many candidates (of ``ids``, default the kept ones) are marked as near-duplicates."""
     chosen = set(ids) if ids is not None else {c["id"] for c in kept(state)}
-    return sum(1 for r in state.get("rounds") or [] for c in r.get("candidates") or []
-               if c["id"] in chosen and c.get("near_duplicate_of"))
+    return sum(
+        1
+        for r in state.get("rounds") or []
+        for c in r.get("candidates") or []
+        if c["id"] in chosen and c.get("near_duplicate_of")
+    )
 
 
 def finish(
@@ -584,7 +635,7 @@ def finish(
     mode: str = "simple",
     base: str = "z-image",
 ) -> dict[str, Any]:
-    """"This is it": copy the references and kept candidates into ``refset/approved`` and record how."""
+    """ "This is it": copy the references and kept candidates into ``refset/approved`` and record how."""
     state = load_state(project)
     if state.get("blocked"):
         raise LoraBlocked("lora.err.refset_blocked")
@@ -594,7 +645,7 @@ def finish(
     if not chosen:
         raise LoraUsageError("lora.err.refset_none_kept")
     total = approved_count(state)
-    low, high = (RECOMMENDED_RANGE if mode == "simple" else (EXPERT_FLOOR, EXPERT_CAP))
+    low, high = RECOMMENDED_RANGE if mode == "simple" else (EXPERT_FLOOR, EXPERT_CAP)
     if total < low:
         raise LoraUsageError("lora.err.too_few", need=low - total)
     if total > high:
@@ -610,8 +661,10 @@ def finish(
         rows.append({"id": ref["id"], "origin": "reference"})
     for item in chosen:
         shutil.copy2(root / item["file"], approved / f"{item['id']}.png")
-        rows.append({key: item[key] for key in ("id", "round", "parent", "seed", "strength", "steps", "prompt_id")}
-                    | {"origin": "candidate"})
+        rows.append(
+            {key: item[key] for key in ("id", "round", "parent", "seed", "strength", "steps", "prompt_id")}
+            | {"origin": "candidate"}
+        )
     metadata = {
         "schema": "voxprint-refset-metadata/1",
         "base": base,
@@ -619,8 +672,10 @@ def finish(
         "gate_rule": RULE_VERSION,
         "rounds": [
             {key: r.get(key) for key in ("round", "count", "strength", "steps", "seed_base")}
-            | {"seeds": [c["seed"] for c in r.get("candidates") or []],
-               "kept": sum(1 for c in r.get("candidates") or [] if c.get("verdict") == "keep")}
+            | {
+                "seeds": [c["seed"] for c in r.get("candidates") or []],
+                "kept": sum(1 for c in r.get("candidates") or [] if c.get("verdict") == "keep"),
+            }
             for r in state.get("rounds") or []
         ],
         "approved": rows,
@@ -632,8 +687,13 @@ def finish(
         data = proj.read()
     except LoraUsageError:
         data = {}
-    proj.write({**data, "refset": {key: metadata[key] for key in ("base", "teacher", "gate_rule", "rounds")}
-                | {"approved": len(rows)}})
+    proj.write(
+        {
+            **data,
+            "refset": {key: metadata[key] for key in ("base", "teacher", "gate_rule", "rounds")}
+            | {"approved": len(rows)},
+        }
+    )
     state["finished"] = True
     save_state(project, state)
     progress.emit("refset.done", "lora.progress.done", state="done")
@@ -651,6 +711,7 @@ def teacher_info() -> dict[str, str]:
         "pipeline": TEACHER_PIPELINE,
         "precision": "bf16",
         "offload": "model-cpu-offload",
+        "vram_16gb": "fp8",
     }
 
 
@@ -666,45 +727,108 @@ def approved_files(project: Project | Path) -> list[Path]:
 
 # ----- real backends (GPU path; CI uses stubs) ----------------------------------------------------
 class TurboImg2Img:
-    """Z-Image-Turbo img2img (diffusers ``ZImageImg2ImgPipeline``), BF16 with the text encoder offloaded.
+    """Z-Image-Turbo img2img (diffusers ``ZImageImg2ImgPipeline``).
 
-    ``enable_model_cpu_offload`` keeps each component on the CPU until it runs, so the text encoder
-    is never on the GPU next to the transformer. ``guidance_scale`` is 0 (Turbo is distilled);
-    diffusers runs ``int(steps * strength)`` denoising steps.
+    The pipeline is read once per process and kept in RAM. A 24 GB card still uses
+    ``enable_model_cpu_offload``, so the text encoder is never on the GPU next to the
+    transformer. A 16 GB card loads FP8 storage and refuses the run when the transformer
+    cannot cast; it does not fall back to BF16 on the CPU. ``guidance_scale`` is 0
+    (Turbo is distilled); diffusers runs ``int(steps * strength)`` denoising steps.
     """
 
     name = TEACHER_ID
 
     def __init__(self, weights: Path, device: str = "cuda") -> None:
+        # Imported here so ``voxprint-forge --version`` does not pull torch or diffusers.
         import torch
         from diffusers import ZImageImg2ImgPipeline
 
-        self.pipe = ZImageImg2ImgPipeline.from_pretrained(str(weights), torch_dtype=torch.bfloat16)
-        if device == "cuda":
-            self.pipe.enable_model_cpu_offload()
-        else:
-            self.pipe.to(device)
+        self.device = device
+        self._vram = detect_vram_gb()
+        if self._vram == TIER_GB and not str(device).startswith("cuda"):
+            raise LoraStageError("lora.err.cpu_fallback", tier=TIER_GB, reason="no CUDA device")
+        key = f"{TEACHER_ID}:{Path(weights).resolve()}"
+
+        def load() -> object:
+            pipe = ZImageImg2ImgPipeline.from_pretrained(str(weights), torch_dtype=torch.bfloat16)
+            if self._vram == TIER_GB:
+                transformer = pipe.transformer
+                cast = getattr(transformer, "enable_layerwise_casting", None)
+                if not callable(cast):
+                    require_quantized(self._vram, False, TEACHER_ID)
+                    return pipe
+                cast(storage_dtype=torch.float8_e4m3fn, compute_dtype=torch.bfloat16)
+            return pipe
+
+        self.pipe = park(key, load, stage_name="preview")
+        if self._vram != TIER_GB:
+            if device == "cuda" and not getattr(self.pipe, "_voxprint_offload", False):
+                self.pipe.enable_model_cpu_offload()
+                self.pipe._voxprint_offload = True
+            elif device != "cuda":
+                self.pipe.to(device)
         self.pipe.set_progress_bar_config(disable=True)
 
     def generate(self, image: Any, prompt: str, *, seed: int, strength: float, steps: int) -> Any:
         """One candidate at the reference's aspect, long side 1024."""
+        # Imported here so ``voxprint-forge --version`` does not pull torch.
         import torch
 
         width, height = target_size(image.size)
         source = image.convert("RGB").resize((width, height))
         generator = torch.Generator("cpu").manual_seed(int(seed))
-        out = self.pipe(prompt=prompt, image=source, strength=float(strength), num_inference_steps=int(steps),
-                        guidance_scale=0.0, width=width, height=height, generator=generator)
-        return out.images[0]
+        tight = self._vram == TIER_GB
+        if tight:
+            hold_heavy("preview", tier=self._vram)
+            stage(self.pipe.transformer, self.device, key=f"{TEACHER_ID}:transformer", stage_name="preview")
+            vae = getattr(self.pipe, "vae", None)
+            if vae is not None:
+                stage(vae, self.device, key=f"{TEACHER_ID}:vae", stage_name="preview")
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+        try:
+            out = self.pipe(
+                prompt=prompt,
+                image=source,
+                strength=float(strength),
+                num_inference_steps=int(steps),
+                guidance_scale=0.0,
+                width=width,
+                height=height,
+                generator=generator,
+            )
+            if tight and torch.cuda.is_available():
+                fail_peak("preview", torch.cuda.max_memory_allocated() / 2**30, tier=self._vram)
+            return out.images[0]
+        finally:
+            if tight:
+                vae = getattr(self.pipe, "vae", None)
+                if vae is not None:
+                    drop_vram(vae, key=f"{TEACHER_ID}:vae", stage_name="preview")
+                transformer = getattr(self.pipe, "transformer", None)
+                if transformer is not None:
+                    drop_vram(transformer, key=f"{TEACHER_ID}:transformer", stage_name="preview")
+                release_heavy("preview")
+                assert_stage_clear("preview", tier=self._vram)
 
     def unload(self) -> None:
-        """Drop the offload hooks and the pipeline."""
+        """Drop the graphics copy. The parked pipeline stays in RAM."""
         pipe = getattr(self, "pipe", None)
-        if pipe is not None:
-            remove = getattr(pipe, "remove_all_hooks", None)
-            if callable(remove):
-                remove()
-        self.pipe = None
+        if pipe is None:
+            return
+        if self._vram == TIER_GB:
+            transformer = getattr(pipe, "transformer", None)
+            if transformer is not None:
+                drop_vram(transformer, key=f"{TEACHER_ID}:transformer", stage_name="preview")
+            vae = getattr(pipe, "vae", None)
+            if vae is not None:
+                drop_vram(vae, key=f"{TEACHER_ID}:vae", stage_name="preview")
+            release_heavy("preview")
+            assert_stage_clear("preview", tier=self._vram)
+            return
+        remove = getattr(pipe, "remove_all_hooks", None)
+        if callable(remove):
+            remove()
 
 
 class DinoEmbedder:
@@ -713,6 +837,7 @@ class DinoEmbedder:
     name = EMBEDDER_ID
 
     def __init__(self, source: Path | str, device: str = "cuda", revision: str | None = None) -> None:
+        # Imported here so ``voxprint-forge --version`` does not pull torch or transformers.
         import torch
         from transformers import AutoImageProcessor, AutoModel
 
@@ -728,7 +853,7 @@ class DinoEmbedder:
         torch = self._torch
         out: list[list[float]] = []
         for start in range(0, len(images), 8):
-            batch = [image.convert("RGB") for image in images[start:start + 8]]
+            batch = [image.convert("RGB") for image in images[start : start + 8]]
             inputs = self.processor(images=batch, return_tensors="pt").to(self.device)
             with torch.no_grad():
                 hidden = self.model(**inputs).last_hidden_state[:, 0]

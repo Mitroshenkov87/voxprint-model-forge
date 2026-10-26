@@ -11,6 +11,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from voxprint_forge.lora.backends import VlmJudge, installed_dir
+from voxprint_forge.lora.errors import LoraStageError
+from voxprint_forge.lora.presets import detect_vram_gb
+from voxprint_forge.lora.vram_stage import TIER_GB, require_quantized
+
 DEFAULT = "qwen3-vl-4b-instruct"
 FALLBACK = "florence2-large"
 LICENCES = {DEFAULT: "Apache-2.0", FALLBACK: "MIT"}
@@ -50,8 +55,6 @@ class QwenCaptioner:
     name = DEFAULT
 
     def __init__(self, folder: Path, device: str = "cuda") -> None:
-        from voxprint_forge.lora.backends import VlmJudge
-
         self.vlm = VlmJudge(folder, device)
 
     def caption(self, image: Any) -> dict[str, str | bool]:
@@ -74,6 +77,9 @@ class FlorenceCaptioner:
     name = FALLBACK
 
     def __init__(self, folder: Path, device: str = "cuda") -> None:
+        if detect_vram_gb() == TIER_GB:
+            require_quantized(TIER_GB, False, FALLBACK)
+        # Imported here so ``voxprint-forge --version`` does not pull torch or transformers.
         import torch
         from transformers import AutoModelForCausalLM, AutoProcessor
 
@@ -83,6 +89,7 @@ class FlorenceCaptioner:
         ).to(device)
 
     def _run(self, image: Any, task: str) -> str:
+        # Imported here so ``voxprint-forge --version`` does not pull torch.
         import torch
 
         inputs = self.processor(text=task, images=image.convert("RGB"), return_tensors="pt").to(
@@ -103,6 +110,7 @@ class FlorenceCaptioner:
 
     def unload(self) -> None:
         """Free graphics memory."""
+        # Imported here so ``voxprint-forge --version`` does not pull torch.
         import torch
 
         del self.model
@@ -114,16 +122,29 @@ _LOADERS: dict[str, Callable[[Path], Captioner]] = {DEFAULT: QwenCaptioner, FALL
 
 
 def load_captioner(choice: str = DEFAULT) -> Captioner | None:
-    """The chosen captioner, else the other one, else ``None`` (``lora.err.captioner_missing``)."""
-    from voxprint_forge.lora.backends import installed_dir
+    """The chosen captioner, else the other one, else ``None`` (``lora.err.captioner_missing``).
 
-    order = [choice] + [name for name in (DEFAULT, FALLBACK) if name != choice]
+    A 16 GB card does not substitute Florence for Qwen, and a stage error from the
+    quantizer is not swallowed.
+    """
+    tight = detect_vram_gb() == TIER_GB
+    order = [choice]
+    if not tight:
+        order += [name for name in (DEFAULT, FALLBACK) if name != choice]
+    seen: set[str] = set()
     for name in order:
+        if name in seen:
+            continue
+        seen.add(name)
         folder = installed_dir(name)
         if folder is None:
             continue
         try:
             return _LOADERS[name](folder)
-        except Exception:  # noqa: BLE001 - try the fallback
+        except LoraStageError:
+            raise
+        except Exception:
+            if tight:
+                raise
             continue
     return None

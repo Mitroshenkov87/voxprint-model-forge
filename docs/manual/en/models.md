@@ -20,4 +20,16 @@ Model Forge needs some models before it can train. They are not inside the setup
 - **Disk.** Models go to the shared VOXPrint models folder, by default `%LOCALAPPDATA%\VOXPrint AI Suite\models`. Other VOXPrint apps use the same folder, so a model is downloaded only once.
 - **Background and resume.** Downloads continue in the background if you close the downloader window, and they resume after an interruption. **Pause** and **Cancel** are at the bottom of the window.
 
+## Check and repair
+
+**Check this computer** has **Check and repair models**. The progress window opens every time, including when every file is already in place. Each installed model is checked file by file: the file must be present and its checksum must match. The model is then **OK**, **missing**, or **corrupt**. **Repair** downloads only the missing or damaged files from the official source, checks the pinned checksum, and continues a partial download when the source allows it. LoRAs and projects stay as they are. A plug-in model from an official source is repaired from that source address in the same way.
+
+```text
+voxprint-forge-cli models verify
+voxprint-forge-cli models verify --repair
+voxprint-forge-cli models verify --gui
+```
+
+`models verify` runs `voxprint-mdl verify`, prints that table, and exits with an error when anything is still broken. `--repair` is `voxprint-mdl verify --repair` and fixes the files without asking. `--gui` opens the shared progress window.
+
 To remove a model you no longer need, open **Manage models** again: it lists installed models with their size and licence.

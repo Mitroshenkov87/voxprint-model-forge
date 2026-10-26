@@ -30,7 +30,10 @@ from voxprint_forge.lora import (
     te_quant,
 )
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
+from voxprint_forge.lora.layers import LoRALinear
 from voxprint_forge.lora.presets import TrainConfig, measured
+from voxprint_forge.lora.vram_stage import assert_stage_clear, hold_heavy, release_heavy, require_quantized
+from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
 PERMISSIVE = frozenset({"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"})
@@ -92,7 +95,12 @@ class BaseAdapter(ABC):
         """Encode the test prompts while the encoders are still loaded. Optional."""
 
     def preview(
-        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+        self,
+        model: nn.Module,
+        prompt: str,
+        seed: int,
+        config: TrainConfig,
+        steps: int | None = None,
     ) -> Any | None:
         """A test picture (PIL image) or ``None`` when the adapter cannot draw one.
 
@@ -182,6 +190,19 @@ def _dtype(config: TrainConfig) -> torch.dtype:
     return torch.bfloat16 if config.precision == "bf16" else torch.float16
 
 
+def _unwrap_lora(module: nn.Module) -> None:
+    """Restore base linears on a parked module so a later ``train()`` can inject again.
+
+    The parked object is the RAM copy. A resume in this process reuses it instead of
+    reading the files again, and the previous run's wrappers would hide the linears.
+    """
+    wrapped = [name for name, child in module.named_modules() if isinstance(child, LoRALinear)]
+    for name in wrapped:
+        parent_name, _, attr = name.rpartition(".")
+        parent = module.get_submodule(parent_name) if parent_name else module
+        setattr(parent, attr, getattr(parent, attr).base)
+
+
 # Z-Image at the pinned revision (Tongyi-MAI/Z-Image@04cc4abb): read from the weights when present.
 _Z_DIM, _Z_LAYERS, _Z_REFINERS = 3840, 30, 2
 _Z_TRANSFORMER_BYTES = 12_309_817_472  # transformer/diffusion_pytorch_model.safetensors.index.json, BF16
@@ -255,6 +276,7 @@ class ZImageAdapter(BaseAdapter):
         self._prompts: dict[str, Any] = {}
         self._plan: memory.MemoryPlan | None = None
         self._samples_bytes = 0
+        self._vram = 24
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
         """Load the pipeline; return its transformer, optionally FP8 storage and gradient checkpointing.
@@ -269,7 +291,27 @@ class ZImageAdapter(BaseAdapter):
         from diffusers import ZImagePipeline
 
         self.device = device
-        self.pipe = ZImagePipeline.from_pretrained(str(weights_dir), torch_dtype=_dtype(config))
+        self._vram = config.vram
+        if self.pipe is not None and getattr(self.pipe, "transformer", None) is not None:
+            drop_vram(self.pipe.transformer, key=f"{self.info.mdl_id}:transformer", stage_name="train")
+        release_heavy("transformer")
+        release_heavy("text_encoder")
+        require_quantized(config.vram, config.base_fp8, self.info.mdl_id)
+        key = f"{self.info.mdl_id}:{weights_dir}:{id(self)}"
+
+        def read() -> object:
+            pipe = ZImagePipeline.from_pretrained(str(weights_dir), torch_dtype=_dtype(config))
+            if config.base_fp8:
+                transformer = pipe.transformer
+                cast = getattr(transformer, "enable_layerwise_casting", None)
+                if not callable(cast):
+                    require_quantized(config.vram, False, self.info.mdl_id)
+                    return pipe
+                cast(storage_dtype=torch.float8_e4m3fn, compute_dtype=_dtype(config))
+                transformer._voxprint_fp8 = True
+            return pipe
+
+        self.pipe = park(key, read, stage_name="load", replay_rng=True)
         # The encoders only ever run forward. Frozen, no output can carry an autograd graph that
         # pins their card copies (CALIB-R2/R3: 7.5 GiB of weights plus 8.8 GiB of activations).
         for part in (self.pipe.text_encoder, self.pipe.vae):
@@ -277,10 +319,14 @@ class ZImageAdapter(BaseAdapter):
             part.eval()
         self._plan = self.memory_plan(config, 0, weights_dir)
         transformer = self.pipe.transformer
-        if config.base_fp8 and hasattr(transformer, "enable_layerwise_casting"):
-            transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=_dtype(config))
-        if config.grad_checkpointing and hasattr(transformer, "enable_gradient_checkpointing"):
+        _unwrap_lora(transformer)
+        if (
+            config.grad_checkpointing
+            and hasattr(transformer, "enable_gradient_checkpointing")
+            and not getattr(transformer, "_voxprint_checkpointed", False)
+        ):
             transformer.enable_gradient_checkpointing()
+            transformer._voxprint_checkpointed = True
         return transformer
 
     @torch.no_grad()
@@ -289,8 +335,9 @@ class ZImageAdapter(BaseAdapter):
         import numpy as np
 
         pipe = self.pipe
-        pipe.vae.to(self.device)
-        pipe.text_encoder.to(self.device)
+        hold_heavy("text_encoder", tier=self._vram)
+        stage(pipe.text_encoder, self.device, key=f"{self.info.mdl_id}:text_encoder", stage_name="encode")
+        stage(pipe.vae, self.device, key=f"{self.info.mdl_id}:vae", stage_name="encode")
         vae_cfg = pipe.vae.config
         samples: list[Sample] = []
         self._empty = self._embed("")
@@ -328,17 +375,18 @@ class ZImageAdapter(BaseAdapter):
         transformer moves, whatever is still allocated must be those caches: anything more means an
         encoder is pinned, and the run stops here (``lora.err.encoders_stuck``) instead of OOMing.
         """
-        import gc
-
-        self.pipe.vae.to("cpu")
-        self.pipe.text_encoder.to("cpu")
+        drop_vram(self.pipe.vae, key=f"{self.info.mdl_id}:vae", stage_name="encode")
+        drop_vram(self.pipe.text_encoder, key=f"{self.info.mdl_id}:text_encoder", stage_name="encode")
+        release_heavy("text_encoder")
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             residual = torch.cuda.memory_allocated() / memory.GIB
             budget = memory.budget_gb(memory.vram_cap_gb(), memory.card_gb())
             memory.check_residual(residual, self._samples_bytes / memory.GIB, self._plan, budget)
-        self.pipe.transformer.to(self.device)
+            assert_stage_clear("encode", tier=self._vram, samples_gb=self._samples_bytes / memory.GIB)
+        hold_heavy("transformer", tier=self._vram)
+        stage(self.pipe.transformer, self.device, key=f"{self.info.mdl_id}:transformer", stage_name="train")
 
     def loss(
         self, model: nn.Module, batch: Sequence[Sample], caption_keys: Sequence[str], rng: random.Random
@@ -355,10 +403,17 @@ class ZImageAdapter(BaseAdapter):
 
     @torch.no_grad()
     def preview(
-        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+        self,
+        model: nn.Module,
+        prompt: str,
+        seed: int,
+        config: TrainConfig,
+        steps: int | None = None,
     ) -> Any | None:
         """Draw one test picture with the current LoRA. Only the VAE joins the transformer on the card."""
         if prompt not in self._prompts:
+            if self._vram == 16:
+                raise LoraStageError("lora.err.vram_one", stage="transformer", model="text_encoder")
             self.pipe.text_encoder.to(self.device)
             try:
                 self.prepare_previews([prompt])
@@ -366,7 +421,7 @@ class ZImageAdapter(BaseAdapter):
                 self.pipe.text_encoder.to("cpu")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        self.pipe.vae.to(self.device)
+        stage(self.pipe.vae, self.device, key=f"{self.info.mdl_id}:vae", stage_name="preview")
         # Tiled decode: a full 1024 px decode is the largest single buffer of a preview.
         if hasattr(self.pipe.vae, "enable_tiling"):
             self.pipe.vae.enable_tiling()
@@ -388,9 +443,7 @@ class ZImageAdapter(BaseAdapter):
                     **_inference_steps(steps),
                 ).images[0]
         finally:
-            self.pipe.vae.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            drop_vram(self.pipe.vae, key=f"{self.info.mdl_id}:vae", stage_name="preview")
 
     def seconds_per_step(self, config: TrainConfig) -> float:
         """Seconds for one optimizer step, scaled from 1024 px.
@@ -408,9 +461,7 @@ class ZImageAdapter(BaseAdapter):
         assert plan is not None
         return round(plan.peak_gb + memory.HEADROOM_GB, 1)
 
-    def memory_plan(
-        self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None
-    ) -> memory.MemoryPlan:
+    def memory_plan(self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None) -> memory.MemoryPlan:
         """Projected GiB per phase from the base's shapes and stored sizes (no GPU, no weights loaded).
 
         Encode: text encoder and VAE (BF16) plus the measured forward buffers. Train: the
@@ -585,11 +636,12 @@ class MossImageAdapter(BaseAdapter):
     """MOSS-Image Base (OpenMOSS-Team/MOSS-Image-Base, Apache-2.0).
 
     The DiT trains in bf16 with the LoRA in fp32. 4-bit and FP8 storage break the
-    MOSS forward (it reads ``weight.dtype`` and casts activations to it), so both
-    memory tiers keep the bf16 weights. The text encoder encodes on the card (bf16 on 24 GB, int8
-    on 16 GB) and is freed before the DiT is read; CPU encode is a fallback. The
-    transformer stays on the CPU until :meth:`release_encoders`, the same parking
-    the Z-Image adapter uses. Flow matching follows the reference: predict
+    MOSS forward (it reads ``weight.dtype`` and casts activations to it). A 24 GB
+    card keeps the bf16 weights. A 16 GB card has no quantized DiT, so :meth:`load`
+    raises ``lora.err.vram_quant`` before the DiT is read. The text encoder encodes
+    on the card (bf16 on 24 GB, int8 on 16 GB). On 24 GB, CPU encode is a fallback;
+    on 16 GB it raises ``lora.err.cpu_fallback``. The transformer stays on the CPU
+    until :meth:`release_encoders`. Flow matching follows the reference: predict
     ``noise - x0`` at timestep ``sigma * 1000``.
     """
 
@@ -619,6 +671,7 @@ class MossImageAdapter(BaseAdapter):
         self._prompts: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self._plan: memory.MemoryPlan | None = None
         self._samples_bytes = 0
+        self._vram = 24
 
     encodes_before_load = True
 
@@ -631,6 +684,8 @@ class MossImageAdapter(BaseAdapter):
         if problems:
             raise LoraStageError("lora.err.base_runtime", need="; ".join(problems))
         if not str(self.device).startswith("cuda"):
+            if config.vram == 16:
+                raise LoraStageError("lora.err.cpu_fallback", tier=16, reason="no CUDA device")
             return te_quant.TePlan("none", "cpu", "no CUDA device")
         return te_quant.plan(getattr(config, "te_quant", None), getattr(config, "te_device", None), config.vram)
 
@@ -639,22 +694,42 @@ class MossImageAdapter(BaseAdapter):
         :meth:`free_text_encoder`, so the bf16 encoder and the DiT are never in RAM together.
 
         The encoder runs on the card (bf16 on the 24 GB tier, int8 on 16 GB; see
-        :func:`voxprint_forge.lora.te_quant.plan`). CPU encode is the fallback.
+        :func:`voxprint_forge.lora.te_quant.plan`). A 16 GB tier does not fall back to the CPU.
         """
         self.device = device
+        self._vram = config.vram
+        if self.pipe is not None and getattr(self.pipe, "transformer", None) is not None:
+            drop_vram(self.pipe.transformer, key=f"{self.info.mdl_id}:transformer", stage_name="train")
+        release_heavy("transformer")
         choice = self._check(weights_dir, config)
         self._dtype = torch.bfloat16
         self._te = choice
-        self.pipe = moss_runtime.load_encoder_parts(Path(weights_dir), te_quant=choice.quant, te_device=choice.device)
+        key = f"{self.info.mdl_id}:encoders:{weights_dir}:{id(self)}"
+        self.pipe = park(
+            key,
+            lambda: moss_runtime.load_encoder_parts(Path(weights_dir), te_quant=choice.quant, te_device=choice.device),
+            stage_name="load",
+            replay_rng=True,
+        )
+        # free_text_encoder drops the working pointer so the DiT load does not keep a second
+        # reference. The module itself stays on the adapter, and a later train() puts it back
+        # without reading the files again.
+        resident = getattr(self, "_resident_te", None)
+        if getattr(self.pipe, "text_encoder", None) is None and resident is not None:
+            self.pipe.text_encoder = resident
         self._staged = True
 
     def free_text_encoder(self) -> None:
         """Drop the text encoder (CPU bf16 or quantized on the card). Cached embeddings stay."""
         if self.pipe is not None and getattr(self.pipe, "text_encoder", None) is not None:
+            drop_vram(self.pipe.text_encoder, key=f"{self.info.mdl_id}:text_encoder", stage_name="encode")
+            self._resident_te = self.pipe.text_encoder
             self.pipe.text_encoder = None
+        release_heavy("text_encoder")
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            assert_stage_clear("encode", tier=getattr(self, "_vram", 24))
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
         """Load the bf16 transformer and return it, parked on the CPU. Encoders stay frozen.
@@ -663,22 +738,31 @@ class MossImageAdapter(BaseAdapter):
         text encoder. Called on its own it reads the whole pipeline, as before.
         """
         self.device = device
+        self._vram = config.vram
+        require_quantized(config.vram, False, self.info.mdl_id)
         choice = self._check(weights_dir, config)
         self._te = choice
         self._dtype = torch.bfloat16
         staged = getattr(self, "_staged", False)
         self._staged = False
         prior = self.pipe
-        self.pipe = moss_runtime.load_pipeline(
-            Path(weights_dir),
-            dtype=torch.bfloat16,
-            with_text_encoder=not staged,
-            te_quant=choice.quant,
-            te_device=choice.device,
+        key = f"{self.info.mdl_id}:dit:{weights_dir}:{id(self)}:{int(staged)}"
+        self.pipe = park(
+            key,
+            lambda: moss_runtime.load_pipeline(
+                Path(weights_dir),
+                dtype=torch.bfloat16,
+                with_text_encoder=not staged,
+                te_quant=choice.quant,
+                te_device=choice.device,
+            ),
+            stage_name="load",
+            replay_rng=True,
         )
         if staged and prior.vae is not None:
             self.pipe.vae = prior.vae
         transformer = self.pipe.transformer
+        _unwrap_lora(transformer)
         transformer.to(dtype=torch.bfloat16)
         transformer.to("cpu")
         for part in (self.pipe.text_encoder, self.pipe.vae):
@@ -687,15 +771,17 @@ class MossImageAdapter(BaseAdapter):
             part.requires_grad_(False)
             part.eval()
         self._plan = self.memory_plan(config, 0, Path(weights_dir))
-        if config.grad_checkpointing:
+        if config.grad_checkpointing and not getattr(transformer, "_voxprint_checkpointed", False):
             _checkpoint_blocks(transformer.layers)
+            transformer._voxprint_checkpointed = True
         return transformer
 
     @torch.no_grad()
     def encode(self, images: Sequence[Any], captions: Sequence[dict[str, str]], config: TrainConfig) -> list[Sample]:
         """Cached packed VAE latents plus one ``encode_prompt`` embedding and mask per caption."""
+        hold_heavy("text_encoder", tier=self._vram)
         pipe = self.pipe
-        pipe.vae.to(self.device)
+        stage(pipe.vae, self.device, key=f"{self.info.mdl_id}:vae", stage_name="encode")
         self._empty = self._on_device(self._encode_prompt(""))
         samples: list[Sample] = []
         for image, caption in zip(images, captions, strict=True):
@@ -737,16 +823,20 @@ class MossImageAdapter(BaseAdapter):
         The text encoder was never on the card. The residual check is the same one Z-Image uses:
         anything still allocated beyond the cached samples means an encoder is pinned.
         """
-        self.pipe.vae.to("cpu")
+        drop_vram(self.pipe.vae, key=f"{self.info.mdl_id}:vae", stage_name="encode")
         if self.pipe.text_encoder is not None:
+            drop_vram(self.pipe.text_encoder, key=f"{self.info.mdl_id}:text_encoder", stage_name="encode")
             self.pipe.text_encoder = None
+        release_heavy("text_encoder")
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             residual = torch.cuda.memory_allocated() / memory.GIB
             budget = memory.budget_gb(memory.vram_cap_gb(), memory.card_gb())
             memory.check_residual(residual, self._samples_bytes / memory.GIB, self._plan, budget)
-        self.pipe.transformer.to(self.device)
+            assert_stage_clear("encode", tier=self._vram, samples_gb=self._samples_bytes / memory.GIB)
+        hold_heavy("transformer", tier=self._vram)
+        stage(self.pipe.transformer, self.device, key=f"{self.info.mdl_id}:transformer", stage_name="train")
 
     def loss(
         self, model: nn.Module, batch: Sequence[Sample], caption_keys: Sequence[str], rng: random.Random
@@ -770,14 +860,21 @@ class MossImageAdapter(BaseAdapter):
 
     @torch.no_grad()
     def preview(
-        self, model: nn.Module, prompt: str, seed: int, config: TrainConfig, steps: int | None = None,
+        self,
+        model: nn.Module,
+        prompt: str,
+        seed: int,
+        config: TrainConfig,
+        steps: int | None = None,
     ) -> Any | None:
         """Draw one test picture. The text encoder stays parked; noise comes from a CPU generator."""
         if prompt not in self._prompts or "" not in self._prompts:
+            if self._vram == 16 and getattr(self.pipe, "text_encoder", None) is not None:
+                raise LoraStageError("lora.err.vram_one", stage="transformer", model="text_encoder")
             self.prepare_previews([prompt])
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        self.pipe.vae.to(self.device)
+        stage(self.pipe.vae, self.device, key=f"{self.info.mdl_id}:vae", stage_name="preview")
         try:
             positive = self._prompts[prompt]
             negative = self._prompts[""]
@@ -795,9 +892,7 @@ class MossImageAdapter(BaseAdapter):
                     **_inference_steps(steps),
                 ).images[0]
         finally:
-            self.pipe.vae.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            drop_vram(self.pipe.vae, key=f"{self.info.mdl_id}:vae", stage_name="preview")
 
     def seconds_per_step(self, config: TrainConfig) -> float:
         """Measured time per micro-batch on the chosen tier (:data:`presets.MEASURED`), scaled to ``config``.
@@ -816,9 +911,7 @@ class MossImageAdapter(BaseAdapter):
         run = measured(self.info.mdl_id, config.vram)
         return max(need, run.peak_reserved_gb) if run is not None else need
 
-    def memory_plan(
-        self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None
-    ) -> memory.MemoryPlan:
+    def memory_plan(self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None) -> memory.MemoryPlan:
         """Projected GiB. Both tiers keep the bf16 DiT: FP8 and 4-bit break the MOSS forward.
 
         Encode is the VAE only (the text encoder stays on the CPU). Train is the DiT, the fp32

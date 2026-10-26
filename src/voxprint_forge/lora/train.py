@@ -52,7 +52,9 @@ from voxprint_forge.lora.review import (
 )
 from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
 from voxprint_forge.lora.trigger import prepend_trigger
+from voxprint_forge.lora.vram_stage import fail_peak
 from voxprint_forge.mdl_app import missing_id_text
+from voxprint_forge.model_park import events
 
 MIN_PHOTOS = {"simple": 10, "expert": 5}
 STATE_FILE = "state.pt"
@@ -191,10 +193,11 @@ class VramPhases:
     phase and a passing run shows which phase sets the overall peak. No-op without CUDA.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tier: int | None = None) -> None:
         self.peaks: dict[str, dict[str, float]] = {}
         self.plan: dict[str, float] | None = None
         self.phase = "load"
+        self.tier = tier
         self.on = torch.cuda.is_available()
         if self.on:
             torch.cuda.reset_peak_memory_stats()
@@ -209,6 +212,8 @@ class VramPhases:
                 "reserved_gb": max(reserved, old["reserved_gb"]),
             }
             torch.cuda.reset_peak_memory_stats()
+            if self.tier is not None:
+                fail_peak(done, self.peaks[done]["alloc_gb"], tier=self.tier)
         self.phase = next_phase
 
 
@@ -374,7 +379,7 @@ def train(
     plan = adapter.memory_plan(config, len(chosen), base_dir)
     device = _device(adapter, config, plan)
 
-    phases = VramPhases()
+    phases = VramPhases(tier=config.vram)
     phases.plan = plan.to_dict() if plan is not None else None
     try:
         return _train(
@@ -983,4 +988,7 @@ def _finish(
         cap = vram_cap_gb()
         if cap is not None:
             result["vram_cap_gb"] = cap
+    parked = events()
+    if parked:
+        result["park"] = parked
     return result

@@ -147,8 +147,8 @@ ensure_forge_python() {
     "huggingface_hub>=0.26" \
     "gguf" \
     "jinja2>=3.1"
-  if [[ -f "$ROOT/vendor/voxprint_common-0.4.1-py3-none-any.whl" ]]; then
-    uv pip install --python "$VENV_FORGE" "$ROOT/vendor/voxprint_common-0.4.1-py3-none-any.whl"
+  if [[ -f "$ROOT/vendor/voxprint_common-0.5.0-py3-none-any.whl" ]]; then
+    uv pip install --python "$VENV_FORGE" "$ROOT/vendor/voxprint_common-0.5.0-py3-none-any.whl"
   fi
   uv pip install --python "$VENV_FORGE" -e "$ROOT" --extra-index-url "$index"
   export FORGE_PYTHON="$VENV_FORGE/bin/python"

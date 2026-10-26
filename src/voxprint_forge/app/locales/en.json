@@ -20,6 +20,8 @@
   "forge.app.check.models_ready": "Models: installed",
   "forge.app.check.note": "Model Forge checks your graphics card, memory, disk space and models before training.",
   "forge.app.check.ram": "Computer memory: {free} of {total} GB free",
+  "forge.app.check.repair": "Check and repair models",
+  "forge.app.check.repair.tip": "Check each installed model and download again any file that is missing or damaged. LoRAs and projects stay as they are.",
   "forge.app.check.run": "Check again",
   "forge.app.check.run.tip": "Read the graphics card, memory and disk again.",
   "forge.app.check.teacher_missing": "Build a set: the picture model Z-Image-Turbo is not installed (Manage models).",

@@ -414,11 +414,12 @@ def generate(
     The prompt is encoded on the card first and the text encoder freed before the DiT is read (see
     :func:`encode_staged`). ``te_quant`` (``auto``, ``none``, ``int8``, ``nf4``) and ``te_device``
     (``gpu``, ``cpu``) follow :func:`voxprint_forge.lora.te_quant.plan` for the detected tier.
+    With no CUDA card, ``auto`` keeps the 24 GB CPU path: there is no 16 GB card to refuse.
     """
     from voxprint_forge.lora import te_quant as quant
     from voxprint_forge.lora.presets import detect_vram_gb
 
-    tier = detect_vram_gb() if quant.resolve(te_quant) == "auto" else 24
+    tier = detect_vram_gb() if quant.resolve(te_quant) == "auto" and torch.cuda.is_available() else 24
     choice = quant.plan(te_quant, te_device, tier)
     embeds = encode_staged(snapshot, [prompt], te_quant=choice.quant, te_device=choice.device)
     pipe = load_pipeline(snapshot, lora_path=lora_path, lora_scale=lora_scale, with_text_encoder=False)
