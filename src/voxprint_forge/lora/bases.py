@@ -24,6 +24,7 @@ import torch.utils.checkpoint as checkpoint
 from torch import nn
 
 from voxprint_forge.diffusion import moss as moss_runtime
+from voxprint_forge.diffusion import moss_fp8
 from voxprint_forge.lora import (
     DEFAULT_BASE,  # noqa: F401 - re-export for callers that read bases.DEFAULT_BASE
     memory,
@@ -32,7 +33,7 @@ from voxprint_forge.lora import (
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.layers import LoRALinear
 from voxprint_forge.lora.presets import TrainConfig, measured
-from voxprint_forge.lora.vram_stage import assert_stage_clear, hold_heavy, release_heavy, require_quantized
+from voxprint_forge.lora.vram_stage import TIER_GB, assert_stage_clear, hold_heavy, release_heavy, require_quantized
 from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
@@ -540,6 +541,8 @@ _M_TEXT_DIM = 4096
 _M_CAPTION_TOKENS = 128
 _M_TRANSFORMER_BYTES = int(10.17 * 10**9)
 _M_VAE_BYTES = int(0.25 * 10**9)
+# Qwen3.5-9B shards in the pinned snapshot (mdl.json). The 16 GB plan uses half of this for int8.
+_M_TEXT_ENCODER_BYTES = 4_973_910_744 + 4_988_364_288 + 4_954_202_112 + 1_869_001_848
 # Checkpointed activations, in units of one bf16 [tokens, dim] buffer. 1.3 of those, at rank 32,
 # 1024 px and batch 1, is the amount that puts the plan on the measured 11.8 GiB peak (RTX 4090,
 # bf16 DiT, fp32 LoRA, manual per-block checkpointing).
@@ -635,13 +638,14 @@ def _pixels(image: Any) -> torch.Tensor:
 class MossImageAdapter(BaseAdapter):
     """MOSS-Image Base (OpenMOSS-Team/MOSS-Image-Base, Apache-2.0).
 
-    The DiT trains in bf16 with the LoRA in fp32. 4-bit and FP8 storage break the
-    MOSS forward (it reads ``weight.dtype`` and casts activations to it). A 24 GB
-    card keeps the bf16 weights. A 16 GB card has no quantized DiT, so :meth:`load`
-    raises ``lora.err.vram_quant`` before the DiT is read. The text encoder encodes
-    on the card (bf16 on 24 GB, int8 on 16 GB). On 24 GB, CPU encode is a fallback;
-    on 16 GB it raises ``lora.err.cpu_fallback``. The transformer stays on the CPU
-    until :meth:`release_encoders`. Flow matching follows the reference: predict
+    The LoRA stays fp32. A 24 GB card keeps the bf16 DiT. A 16 GB card stores the DiT
+    as torchao FP8 e4m3 weights (bf16 compute): ``Float8Tensor.dtype`` is still bf16,
+    so the MOSS forward can cast activations to ``weight.dtype``. Raw float8 or 4-bit
+    storage is not used. The FP8 file is quantized once from the pinned bf16 snapshot
+    and then loaded from disk. The text encoder encodes on the card (bf16 on 24 GB,
+    int8 on 16 GB). On 24 GB, CPU encode is a fallback; on 16 GB it raises
+    ``lora.err.cpu_fallback``. The transformer stays on the CPU until
+    :meth:`release_encoders`. Flow matching follows the reference: predict
     ``noise - x0`` at timestep ``sigma * 1000``.
     """
 
@@ -691,7 +695,7 @@ class MossImageAdapter(BaseAdapter):
 
     def load_encoders(self, weights_dir: Path, config: TrainConfig, device: str) -> None:
         """Read the tokenizer, text encoder and VAE only. The DiT is read by :meth:`load` after
-        :meth:`free_text_encoder`, so the bf16 encoder and the DiT are never in RAM together.
+        :meth:`free_text_encoder`, so the text encoder and the DiT are never in RAM together.
 
         The encoder runs on the card (bf16 on the 24 GB tier, int8 on 16 GB; see
         :func:`voxprint_forge.lora.te_quant.plan`). A 16 GB tier does not fall back to the CPU.
@@ -732,38 +736,72 @@ class MossImageAdapter(BaseAdapter):
             assert_stage_clear("encode", tier=getattr(self, "_vram", 24))
 
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
-        """Load the bf16 transformer and return it, parked on the CPU. Encoders stay frozen.
+        """Load the transformer and return it, parked on the CPU. Encoders stay frozen.
 
-        After :meth:`load_encoders` and :meth:`free_text_encoder` the pipeline is built without a
-        text encoder. Called on its own it reads the whole pipeline, as before.
+        The 24 GB tier reads the bf16 DiT. The 16 GB tier parks the FP8 DiT with
+        ``ModelPark.get`` and does not cast those weights back to bf16. That key
+        ignores the staged bit, so every load shares one quantized module. The
+        pipeline around it is built for this call, with a text encoder only when
+        captions are not already cached. Called on its own it reads the encoders too.
         """
         self.device = device
         self._vram = config.vram
-        require_quantized(config.vram, False, self.info.mdl_id)
+        fp8 = config.vram == TIER_GB
+        require_quantized(config.vram, fp8, self.info.mdl_id)
         choice = self._check(weights_dir, config)
         self._te = choice
         self._dtype = torch.bfloat16
         staged = getattr(self, "_staged", False)
         self._staged = False
         prior = self.pipe
-        key = f"{self.info.mdl_id}:dit:{weights_dir}:{id(self)}:{int(staged)}"
-        self.pipe = park(
-            key,
-            lambda: moss_runtime.load_pipeline(
-                Path(weights_dir),
-                dtype=torch.bfloat16,
-                with_text_encoder=not staged,
+        if fp8:
+            root = Path(weights_dir)
+            # ModelPark.get, via park(). The resident is the DiT. Each load builds
+            # the pipeline around that module.
+            transformer = park(
+                f"{self.info.mdl_id}:dit-fp8:{weights_dir}",
+                lambda: moss_fp8.load_fp8_transformer(root),
+                stage_name="load",
+                replay_rng=True,
+            )
+            moss_fp8.bind_device_move(transformer)
+            # release_encoders leaves this module on the card. Move it off before
+            # a text encoder is loaded, so the 16 GB card never holds both.
+            if not staged:
+                transformer.to("cpu")
+            resident = getattr(self, "_resident_te", None)
+            reuse_encoder = not staged and resident is not None
+            self.pipe = moss_fp8.assemble_pipe(
+                root,
+                transformer,
+                with_text_encoder=not staged and not reuse_encoder,
                 te_quant=choice.quant,
                 te_device=choice.device,
-            ),
-            stage_name="load",
-            replay_rng=True,
-        )
+            )
+            if reuse_encoder:
+                self.pipe.text_encoder = resident
+        else:
+            key = f"{self.info.mdl_id}:dit:{weights_dir}:{id(self)}:{int(staged)}"
+            self.pipe = park(
+                key,
+                lambda: moss_runtime.load_pipeline(
+                    Path(weights_dir),
+                    dtype=torch.bfloat16,
+                    with_text_encoder=not staged,
+                    te_quant=choice.quant,
+                    te_device=choice.device,
+                ),
+                stage_name="load",
+                replay_rng=True,
+            )
         if staged and prior.vae is not None:
             self.pipe.vae = prior.vae
         transformer = self.pipe.transformer
         _unwrap_lora(transformer)
-        transformer.to(dtype=torch.bfloat16)
+        if fp8:
+            moss_fp8.bind_device_move(transformer)
+        else:
+            transformer.to(dtype=torch.bfloat16)
         transformer.to("cpu")
         for part in (self.pipe.text_encoder, self.pipe.vae):
             if part is None:
@@ -912,11 +950,13 @@ class MossImageAdapter(BaseAdapter):
         return max(need, run.peak_reserved_gb) if run is not None else need
 
     def memory_plan(self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None) -> memory.MemoryPlan:
-        """Projected GiB. Both tiers keep the bf16 DiT: FP8 and 4-bit break the MOSS forward.
+        """Projected GiB. The 24 GB tier keeps the bf16 DiT. The 16 GB tier stores it as FP8.
 
-        Encode is the VAE only (the text encoder stays on the CPU). Train is the DiT, the fp32
-        LoRA with its gradients and AdamW moments, one micro-batch of activations and the cache.
-        At rank 32, 1024 px and batch 1 the peak is the measured 11.8 GiB.
+        On 24 GB, encode is the VAE only in this plan (the measured peak is the train phase).
+        On 16 GB, encode includes the int8 text encoder, and the DiT is about half the bf16
+        bytes plus a scale. Keyed off ``config.vram == 16`` so an old project file with
+        ``base_fp8`` left false still plans the FP8 DiT. At rank 32, 1024 px and batch 1 the
+        24 GB peak stays the measured 11.8 GiB.
         """
         dim, ffn, layers, t_bytes, vae_bytes = _moss_shapes(
             weights_dir if weights_dir is not None else _moss_weights_dir()
@@ -932,10 +972,14 @@ class MossImageAdapter(BaseAdapter):
             act = layers * _M_BLOCK_UNITS * unit
         sample = _M_LATENT_CHANNELS * side * side * 2 + 3 * (_M_CAPTION_TOKENS * _M_TEXT_DIM * 2 + _M_CAPTION_TOKENS)
         scale = (config.resolution / 1024) ** 2
+        fp8 = config.vram == TIER_GB
+        # Same shape as the Z-Image FP8 plan: half the bf16 bytes, plus the scale.
+        weights = t_bytes / 2 + 0.1 * memory.GIB if fp8 else float(t_bytes)
+        encoders = vae_bytes + (_M_TEXT_ENCODER_BYTES / 2 if fp8 else 0)
         return memory.MemoryPlan(
-            encoders_gb=vae_bytes / memory.GIB,
+            encoders_gb=encoders / memory.GIB,
             encode_activations_gb=max(scale, 0.25),
-            transformer_gb=t_bytes / memory.GIB,
+            transformer_gb=weights / memory.GIB,
             lora_gb=memory.lora_bytes(adapter, 4) / memory.GIB,
             activations_gb=act,
             samples_gb=max(samples, 30) * sample / memory.GIB,

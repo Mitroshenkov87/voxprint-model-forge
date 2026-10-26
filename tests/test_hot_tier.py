@@ -13,7 +13,7 @@ from voxprint_common.model_park import RamTier, for_process
 
 import voxprint_forge.lora.vram_stage as vram_stage
 import voxprint_forge.model_park as model_park
-from voxprint_forge.diffusion import moss
+from voxprint_forge.diffusion import moss, moss_fp8
 from voxprint_forge.lora import backends, bases, captioner, refset
 from voxprint_forge.lora.bases import ZImageAdapter
 from voxprint_forge.lora.errors import LoraStageError
@@ -206,12 +206,109 @@ def test_preview_on_16_gb_does_not_bring_the_text_encoder_back() -> None:
     assert moved == []
 
 
-def test_moss_16_errors_before_the_dit_is_read(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(moss, "load_pipeline", lambda *args, **kwargs: pytest.fail("read the DiT"))
+def test_moss_16_parks_the_fp8_dit_and_attaches_the_encoder_per_load(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(moss, "load_pipeline", lambda *args, **kwargs: pytest.fail("read the bf16 DiT"))
+    built: list[nn.Module] = []
+
+    class Tiny(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.ModuleList()
+            self.anchor = nn.Linear(2, 2)
+
+    def fake_transformer(root: Path) -> nn.Module:
+        module = Tiny()
+        built.append(module)
+        return module
+
+    assemblies: list[bool] = []
+
+    def fake_assemble(
+        root: Path,
+        transformer: nn.Module,
+        *,
+        with_text_encoder: bool,
+        te_quant: str,
+        te_device: str,
+    ) -> SimpleNamespace:
+        del root, te_quant, te_device
+        assemblies.append(with_text_encoder)
+        encoder = nn.Linear(1, 1) if with_text_encoder else None
+        return SimpleNamespace(transformer=transformer, vae=nn.Linear(1, 1), text_encoder=encoder)
+
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.load_fp8_transformer", fake_transformer)
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.assemble_pipe", fake_assemble)
     adapter = bases.get_adapter("moss-image-base")
-    with pytest.raises(LoraStageError) as caught:
-        adapter.load(tmp_path, build_config("quick", "balanced", 16), "cpu")
-    assert caught.value.key == "lora.err.vram_quant"
+    monkeypatch.setattr(adapter, "_check", lambda _weights, _config: SimpleNamespace(quant="int8", device="cuda"))
+    config = build_config("quick", "balanced", 16)
+    first = adapter.load(tmp_path, config, "cpu")
+    assert adapter.pipe.text_encoder is not None
+    adapter._staged = True
+    second = adapter.load(tmp_path, config, "cpu")
+    assert first is second
+    assert adapter.pipe.text_encoder is None
+    third = adapter.load(tmp_path, config, "cpu")
+    assert third is first
+    assert adapter.pipe.text_encoder is not None
+    assert len(built) == 1
+    assert assemblies == [True, False, True]
+    assert "hit" in [row["action"] for row in events()]
+
+
+def test_unstaged_fp8_load_reuses_the_encoder_after_the_dit_leaves_the_card(monkeypatch, tmp_path: Path) -> None:
+    order: list[tuple[str, object]] = []
+
+    class Tiny(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.ModuleList()
+            self.anchor = nn.Linear(2, 2)
+
+    module = Tiny()
+
+    def fake_transformer(root: Path) -> nn.Module:
+        del root
+        return module
+
+    real_bind = moss_fp8.bind_device_move
+
+    def tracking_bind(transformer: nn.Module) -> nn.Module:
+        real_bind(transformer)
+        original = transformer.to
+
+        def wrapped(*args: object, **kwargs: object) -> nn.Module:
+            order.append(("to", args[0] if args else kwargs.get("device")))
+            return original(*args, **kwargs)
+
+        transformer.to = wrapped  # type: ignore[method-assign]
+        return transformer
+
+    def fake_assemble(
+        root: Path,
+        transformer: nn.Module,
+        *,
+        with_text_encoder: bool,
+        te_quant: str,
+        te_device: str,
+    ) -> SimpleNamespace:
+        del root, transformer, te_quant, te_device
+        order.append(("assemble", with_text_encoder))
+        encoder = nn.Linear(1, 1) if with_text_encoder else None
+        return SimpleNamespace(transformer=module, vae=nn.Linear(1, 1), text_encoder=encoder)
+
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.load_fp8_transformer", fake_transformer)
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.bind_device_move", tracking_bind)
+    monkeypatch.setattr("voxprint_forge.diffusion.moss_fp8.assemble_pipe", fake_assemble)
+    adapter = bases.get_adapter("moss-image-base")
+    monkeypatch.setattr(adapter, "_check", lambda _weights, _config: SimpleNamespace(quant="int8", device="cuda"))
+    resident = nn.Linear(1, 1)
+    adapter._resident_te = resident
+    returned = adapter.load(tmp_path, build_config("quick", "balanced", 16), "cpu")
+    assert returned is module
+    assert ("to", "cpu") in order
+    assert order.index(("to", "cpu")) < order.index(("assemble", False))
+    assert ("assemble", True) not in order
+    assert adapter.pipe.text_encoder is resident
 
 
 def test_qwen_stays_resident_after_unload(monkeypatch, tmp_path: Path) -> None:

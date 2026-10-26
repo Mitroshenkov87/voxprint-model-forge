@@ -12,6 +12,9 @@ dependencies = [
   "huggingface_hub>=0.26",
   "jinja2>=3.1",
   "torch>=2.5",
+  # MOSS 16 GB DiT: FP8 e4m3 weight-only. Pinned so a newer torchao cannot
+  # change Float8Tensor.dtype or the saved quant config without a manifest miss.
+  "torchao==0.18.0",
   # MOSS-Image (Qwen3.5 text encoder) needs transformers>=5.3.
   "transformers>=5.3",
   "safetensors>=0.4",
