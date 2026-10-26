@@ -98,8 +98,9 @@ def _control_width(button: QtWidgets.QAbstractButton) -> int:
     return advance + (density.chip_pad_px + density.border_px) * 2 + 4
 
 
-# The shell's action bar (Open folder) gets the wizard card's 16 px inset, so it lines up with Back.
-ACTION_BAR_MARGINS = (16, 0, 16, 16)
+# The shell's action bar (Open folder, outside the wizard) keeps a small left inset, so the text lines up
+# with the card's content column.
+ACTION_BAR_MARGINS = (2, 0, 16, 16)
 FORGE_STYLE = """
 QPushButton#wizardNext:disabled, QPushButton#wizardBack:disabled {
     background: #22222b; color: #6e6e7e; border-color: #33333f; }
@@ -192,13 +193,37 @@ QPushButton:disabled, QPushButton:disabled:hover {
 QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
     background: #2a2a33; color: #6e6e7e; border: 1px solid #3a3a46; }
 QPushButton[keepMark="true"][down="true"]:checked { background: #3a3a46; color: #e8e6e3; border-color: #6e6e80; }
+QPushButton#wizardNext:enabled { background: #f5d76e; color: #1c1604; border: 1px solid #fbe8a6; }
+QPushButton#wizardNext:enabled:hover { background: #f9e291; }
+QLabel#settingGroup { qproperty-indent: 0; margin: 0; }
+QCheckBox::indicator:unchecked { border: 1px solid #8a8a9c; background: #22222b; }
+QCheckBox::indicator:unchecked:hover { border-color: #f5d76e; }
+QCheckBox::indicator:disabled { border-color: #3a3a46; background: #22222b; }
+QWidget#forgeStep QLineEdit, QWidget#forgeStep QComboBox { max-width: 640px; }
+QComboBox::drop-down {
+    subcontrol-origin: padding; subcontrol-position: center right; width: 22px; border: none; }
+QComboBox::down-arrow { image: url(@@DOWN@@); width: 10px; height: 7px; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+    subcontrol-origin: border; width: 18px; border: none; background: transparent; }
+QAbstractSpinBox::up-button { subcontrol-position: top right; }
+QAbstractSpinBox::down-button { subcontrol-position: bottom right; }
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover { background: #3a3a46; }
+QAbstractSpinBox::up-arrow { image: url(@@UP@@); width: 9px; height: 6px; }
+QAbstractSpinBox::down-arrow { image: url(@@DOWN@@); width: 9px; height: 6px; }
+QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::down-arrow:disabled { image: none; }
 QToolTip {
     background-color: #2b2d36; color: #f4f1ea; border: 1px solid #c8c8d4;
     border-radius: 4px; padding: 6px 8px; margin: 0px; max-width: 420px;
     qproperty-margin: 0;
 }
 """
-FORGE_STYLE = FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS)).replace("@@MARK@@", str(REVIEW_MARK))
+_CHEVRONS = Path(__file__).resolve().parent
+FORGE_STYLE = (
+    FORGE_STYLE.replace("@@RADIUS@@", str(_BUTTON_RADIUS))
+    .replace("@@MARK@@", str(REVIEW_MARK))
+    .replace("@@DOWN@@", (_CHEVRONS / "review-chevron.svg").as_posix())
+    .replace("@@UP@@", (_CHEVRONS / "chevron-up.svg").as_posix())
+)
 _DIALOG_STYLE = """
 QDialog { background: transparent; }
 QFrame#forgeDialogCard { background: #1c1c24; border: 2px solid #c8c8d4; border-radius: 12px; }
@@ -1383,6 +1408,7 @@ class ForgeApp:
         notes = QtWidgets.QFormLayout()
         notes.addRow(tr("forge.app.subject.note"), note)
         column.addLayout(notes)
+        _align_forms(form, notes, *([attr_form] if kind == "person" else []))
 
     def _box(
         self, label: str, tip: str, field: str, on_toggle: Callable[[bool], None] | None = None
@@ -3156,6 +3182,28 @@ class _WrappingLabel(QtWidgets.QLabel):
         return True
 
 
+def _align_forms(*forms: QtWidgets.QFormLayout) -> None:
+    """Give the label column of separate forms on one page the same width, so their fields line up.
+
+    Measured once the page is in the window: a label's font comes from the window style sheet.
+    """
+    labels: list[QtWidgets.QLabel] = []
+    for form in forms:
+        for row in range(form.rowCount()):
+            item = form.itemAt(row, QtWidgets.QFormLayout.ItemRole.LabelRole)
+            if item is not None and isinstance(item.widget(), QtWidgets.QLabel):
+                labels.append(item.widget())
+    if not labels:
+        return
+
+    def align() -> None:
+        width = max(label.sizeHint().width() for label in labels)
+        for label in labels:
+            label.setMinimumWidth(width)
+
+    QtCore.QTimer.singleShot(0, labels[0], align)
+
+
 def _wrap_label(text: str, name: str) -> _WrappingLabel:
     """A dark-panel line that wraps instead of clipping."""
     return _WrappingLabel(text, name)
@@ -3479,8 +3527,13 @@ class _Switch(QtWidgets.QCheckBox):
         track = QtCore.QRectF(1, top, self._TRACK_W, self._TRACK_H)
         on = self.isChecked()
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(QtGui.QColor("#f5d76e" if on else "#2a2a35"))
-        painter.drawRoundedRect(track, 10, 10)
+        if on:
+            painter.setBrush(QtGui.QColor("#f5d76e"))
+        else:  # the off track needs an outline to read against the dark card
+            painter.setPen(QtGui.QPen(QtGui.QColor("#8a8a9c"), 1.0))
+            painter.setBrush(QtGui.QColor("#22222b"))
+        painter.drawRoundedRect(track.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
         knob = 14.0
         left = self._TRACK_W - 3 - knob if on else 4
         painter.setBrush(QtGui.QColor("#1c1604" if on else "#e8e6e3"))
