@@ -1,10 +1,11 @@
 """Session residency for base, caption, and preview weights.
 
 voxprint-common 0.5.0 keeps those weights in :class:`voxprint_common.model_park.ModelPark`.
-:meth:`ModelPark.get` reads a key from disk once. This module does not keep a
-second copy of the weights. The reference returned by ``get`` stays open so a
-``ram32`` budget, which drops unreferenced models, still holds the object for
-the process.
+:meth:`ModelPark.get` reads a key from disk once and raises ``entry.refs``.
+:class:`~voxprint_common.model_park.Parked` has no destructor, so dropping that
+handle does not drop the ref. ``ram32`` evicts only entries with ``refs <= 0``.
+``size_bytes`` is the pin budget. These values are live modules with no
+``pin_memory``, and ``get`` does not refuse a load that does not fit.
 
 :func:`stage` and :func:`drop_vram` move that live module. :meth:`ModelPark.stage`
 copies state-dict tensors and is what :func:`voxprint_forge.mdl_adapter.stage`
@@ -80,7 +81,7 @@ def park(key: str, loader: Callable[[], T], *, stage_name: str, replay_rng: bool
         return {"value": _Hold(loader())}
 
     parked = upstream.get(key, load, size_bytes=1, role="main")
-    # Leave the get() reference open. Releasing it lets ram32 drop the model.
+    # Do not call release(). The ref lives on the entry, not on this handle.
     held = parked.to("cpu")["value"]
     if not isinstance(held, _Hold):
         raise RuntimeError(f"model park returned an unexpected value for {key}")

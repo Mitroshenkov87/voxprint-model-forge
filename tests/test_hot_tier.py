@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 from torch import nn
-from voxprint_common.model_park import for_process
+from voxprint_common.model_park import RamTier, for_process
 
 import voxprint_forge.lora.vram_stage as vram_stage
 import voxprint_forge.model_park as model_park
@@ -64,6 +65,25 @@ def test_park_reads_each_key_once() -> None:
     assert rows[0]["stage"] == "load" and rows[1]["stage"] == "encode"
     assert rows[0]["seconds"] >= 0
     assert "ram_gb" in rows[0] and "vram_gb" in rows[0]
+
+
+def test_ram32_keeps_a_model_after_the_parked_handle_is_collected() -> None:
+    for_process(RamTier.RAM32, app="model-forge")
+    calls: list[int] = []
+
+    def loader() -> dict[str, int]:
+        calls.append(1)
+        return {"weights": 1}
+
+    held = park("kept", loader, stage_name="load")
+    del held
+    gc.collect()
+    again = park("kept", loader, stage_name="encode")
+    stats = for_process().stats()
+    assert for_process().tier is RamTier.RAM32
+    assert calls == [1]
+    assert again["weights"] == 1
+    assert stats.disk_reads["kept"] == 1
 
 
 def test_peak_fails_only_above_14_on_a_16_gb_tier() -> None:
