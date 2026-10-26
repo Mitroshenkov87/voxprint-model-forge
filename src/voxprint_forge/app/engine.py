@@ -1,7 +1,7 @@
 """Thin adapter between the GUI and ``voxprint-forge-cli lora ... --json``.
 
-The GUI never trains, filters or gates photos itself. It builds the argument
-list from the plan §3 flag table, runs the CLI as a child process and reads
+The dataset check runs in the window. Training, cropping and the safety gate stay in the CLI.
+This module builds the argument list from the plan §3 flag table, runs the CLI as a child process and reads
 one ``{"event": {...}}`` line per progress event, then the closing JSON
 envelope (``{"ok": ..., "result": ..., "error": {"code", "message"}}``).
 :func:`commands` reports which ``lora`` subcommands the installed CLI has, so
@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.app.draft import Draft
+from voxprint_forge.lora.limits import RECOMMENDED_RANGE
 from voxprint_forge.lora.project import Project
 
 # Expert values that map one-to-one onto CLI flags (plan §3).
@@ -110,7 +111,8 @@ def prepare_args(draft: Draft, project: Path) -> list[str]:
     """``lora prepare`` for the photos, the kind and the subject (steps 1-3)."""
     args = ["--json", "lora", "prepare", "--project", str(project), "--mode", "expert" if draft.expert else "simple"]
     photos = draft.training_photos()
-    if draft.expert and not 10 <= len(photos) <= 30:
+    low, high = RECOMMENDED_RANGE
+    if draft.expert and not low <= len(photos) <= high:
         args.append("--allow-count-outside-range")
     for photo in photos:
         args += ["--photo", str(photo)]
@@ -122,7 +124,7 @@ def prepare_args(draft: Draft, project: Path) -> list[str]:
 def refset_round_args(draft: Draft, project: Path, *, count: int, strength: float, steps: int) -> list[str]:
     """``lora refset round``: the references, the subject and the round settings."""
     args = ["--json", "lora", "refset", "round", "--project", str(project)]
-    for ref in draft.photos:
+    for ref in draft.active_photos():
         args += ["--ref", str(ref)]
     args += ["--kind", draft.kind]
     args += _subject_args(draft)

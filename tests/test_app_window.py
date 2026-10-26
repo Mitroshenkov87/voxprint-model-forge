@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -78,12 +79,38 @@ def _status(app):
     return app._status_label.text()
 
 
+def _visible_steps(app):
+    if app.draft.source == "refs":
+        return list(STEPS)
+    return [step for step in STEPS if step != "refset"]
+
+
+def _pass_photo_check(app):
+    """Let wizard walks pass the image gate without classifying the tiny test pictures."""
+    from voxprint_forge.ui.check_gate import GateState, ItemResult
+
+    gate = app.photo_gate
+    gate._job = lambda item, _token: ItemResult(item.id, True)
+    if gate.state is GateState.PASSED:
+        return
+    gate.start()
+    for _ in range(400):
+        QtWidgets.QApplication.processEvents()
+        if gate.state is GateState.PASSED:
+            return
+        time.sleep(0.01)
+    raise AssertionError(gate.state)
+
+
 def _walk_to(app, step, photos):
     app.draft.add_photos(photos)
     app.draft.kind = "person"
     app.repaint()
-    order = list(STEPS)
+    order = _visible_steps(app)
     for name in order[: order.index(step)]:
+        if name == "photos":
+            _pass_photo_check(app)
+            app.repaint()
         if name == "subject":
             app.draft.set_names("Shape Demo", "")
             app.draft.consent = app.draft.adult = True
@@ -122,6 +149,26 @@ def test_review_wording(make_app, lang, count, reset) -> None:
         set_language("en")
 
 
+def test_adding_or_removing_does_not_load_the_checker(make_app, tmp_path) -> None:
+    from voxprint_forge.ui.check_gate import GateState
+
+    app = make_app()
+    calls: list[Path] = []
+    app.checker.classify = lambda path, token: calls.append(path) or (True, "")  # type: ignore[method-assign]
+    app.draft.add_photos(make_photos(tmp_path / "p", 2))
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    app._remove_paths([app.draft.photos[0]])
+    box = app.window.findChild(QtWidgets.QCheckBox, "forge.photos.include")
+    assert box is not None and box.toolTip()
+    box.click()
+    QtWidgets.QApplication.processEvents()
+    assert calls == []
+    assert not app.checker.loaded
+    assert app.photo_gate.state is GateState.DIRTY
+    assert not _next(app).isEnabled()
+
+
 def test_next_is_gated_with_a_plain_reason(make_app, tmp_path) -> None:
     app = make_app()
     assert not _next(app).isEnabled()
@@ -130,6 +177,10 @@ def test_next_is_gated_with_a_plain_reason(make_app, tmp_path) -> None:
     app.repaint()
     assert _status(app) == tr("forge.app.err.no_kind")
     app.window.findChild(QtWidgets.QPushButton, "forge.chip.object").click()
+    assert not _next(app).isEnabled()
+    assert _status(app) == tr("forge.app.photos.check.dirty")
+    _pass_photo_check(app)
+    app.repaint()
     assert _next(app).isEnabled()
     _next(app).click()
     assert _status(app) == tr("lora.err.no_name")
@@ -140,6 +191,8 @@ def test_next_is_gated_with_a_plain_reason(make_app, tmp_path) -> None:
 def _subject_step(app, tmp_path):
     app.draft.add_photos(make_photos(tmp_path / "p", 12))
     app.draft.kind = "person"
+    app.repaint()
+    _pass_photo_check(app)
     app.repaint()
     _next(app).click()
     app.draft.set_names("Shape Demo", "")
@@ -410,8 +463,9 @@ def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path,
     for step in STEPS:
         for key in (f"lora.step.{step}.title", f"lora.step.{step}.desc", f"lora.step.{step}.help"):
             assert tr(key) != key, key
+    for step in _visible_steps(app):
         if app.layout.sections.step.step_id != step:
-            if step == "refset":
+            if step in ("refset", "prepare") and not app.draft.name:
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)
@@ -420,6 +474,9 @@ def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path,
             if step == "result":
                 app.train()
             app.repaint()
+            if app.layout.sections.step.step_id == "photos":
+                _pass_photo_check(app)
+                app.repaint()
             _next(app).click()
         app.repaint()
         missing = []
@@ -607,9 +664,9 @@ def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_pa
     app.draft.add_photos(photos)
     app.draft.kind = "person"
     app.repaint()
-    for step in STEPS:
+    for step in _visible_steps(app):
         if app.layout.sections.step.step_id != step:
-            if step == "refset":
+            if step in ("refset", "prepare") and not app.draft.name:
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)
@@ -618,6 +675,9 @@ def test_every_step_starts_with_a_short_line_and_closed_details(make_app, tmp_pa
             if step == "result":
                 app.train()
             app.repaint()
+            if app.layout.sections.step.step_id == "photos":
+                _pass_photo_check(app)
+                app.repaint()
             _next(app).click()
         QtWidgets.QApplication.processEvents()
         intro = app.window.findChild(Details, f"forge.details.step.{step}")
@@ -685,9 +745,9 @@ def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
     app.draft.kind = "person"
     app.repaint()
     problems = []
-    for step in STEPS:
+    for step in _visible_steps(app):
         if app.layout.sections.step.step_id != step:
-            if step == "refset":
+            if step in ("refset", "prepare") and not app.draft.name:
                 app.draft.set_names("Shape Demo", "")
                 app.draft.consent = app.draft.adult = True
                 app.draft.set_verbal(True)
@@ -696,6 +756,9 @@ def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
             if step == "result":
                 app.train()
             app.repaint()
+            if app.layout.sections.step.step_id == "photos":
+                _pass_photo_check(app)
+                app.repaint()
             _next(app).click()
         QtWidgets.QApplication.processEvents()
         if step == "train":
@@ -753,8 +816,22 @@ def test_wrapping_label_grows_after_a_wide_measure(qapp) -> None:
     assert label.height() + 1 >= label.heightForWidth(label.width())
 
 
+def _run_photo_check(app) -> None:
+    from voxprint_forge.ui.check_gate import GateState
+
+    assert not app.checker.loaded
+    app.window.findChild(QtWidgets.QPushButton, "forge.photos.check").click()
+    for _ in range(400):
+        QtWidgets.QApplication.processEvents()
+        if app.photo_gate.state is not GateState.RUNNING:
+            break
+        time.sleep(0.02)
+    QtWidgets.QApplication.processEvents()
+
+
 def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(make_app, tmp_path) -> None:
     from tests.test_lora_refusal import _collage, _plain
+    from voxprint_forge.ui.check_gate import GateState
 
     app = make_app()
     app.draft.add_photos([_plain(tmp_path / "ok", index) for index in range(6)])
@@ -762,14 +839,23 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     app.draft.kind = "object"
     app.repaint()
     QtWidgets.QApplication.processEvents()
+    assert app.photo_gate.state is GateState.DIRTY
+    assert not app.checker.loaded
+    assert app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal") is None
+    assert not _next(app).isEnabled()
+    assert _status(app) == tr("forge.app.photos.check.dirty")
+    _run_photo_check(app)
+    assert app.photo_gate.state is GateState.PASSED
+    assert not app.checker.loaded
+    assert len(app.draft.active_photos()) == 6
+    reasons = [w.text() for w in app.window.findChildren(QtWidgets.QLabel, "forge.photos.reason")]
+    assert reasons.count(tr("lora.drop.collage")) == 3
     frame = app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
     assert frame is not None and frame.isVisibleTo(app.window)
-    assert _status(app) == tr("lora.refuse.line", dropped=3, total=9, kept=6)
-    assert not _next(app).isEnabled()
-    assert tr("lora.drop.collage") in frame.text()
-    assert tr("lora.refuse.fix.collage") in frame.text()
+    assert tr("lora.drop.collage") not in frame.text()
     button = app.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert")
     assert button is not None and button.text() == tr("forge.app.refuse.expert")
+    assert not _next(app).isEnabled()
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
     assert _labels_fit(page) == []
     app.window.resize(640, 720)
@@ -787,13 +873,14 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     grids = make_app()
     grids.draft.add_photos([_collage(tmp_path / "grids", index) for index in range(8)])
     grids.draft.add_photos([_plain(tmp_path / "grids", 0)])
+    grids.draft.kind = "object"
     grids.repaint()
-    QtWidgets.QApplication.processEvents()
-    named = grids.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal")
-    assert named is not None
+    _run_photo_check(grids)
+    assert grids.photo_gate.state is GateState.PASSED
+    assert len(grids.draft.active_photos()) == 1
     assert grids.window.findChild(QtWidgets.QPushButton, "forgePhotoExpert") is None
-    assert tr("lora.drop.collage") in named.text() and tr("lora.refuse.fix.collage") in named.text()
-    assert "Expert" not in named.text()
+    named = [w.text() for w in grids.window.findChildren(QtWidgets.QLabel, "forge.photos.reason")]
+    assert named.count(tr("lora.drop.collage")) == 8
 
     prepared = make_app()
     kept_photos = [_plain(tmp_path / "prep", index) for index in range(12)]

@@ -8,11 +8,12 @@ Start with **More → New model**. A project keeps your photos, their descriptio
 
 1. Choose what the photos show: **Person** (one specific person), **Object** (one specific thing or product) or **Style** (the shared look: lighting, colours, rendering, mood). The line above follows that choice.
 2. Press **Add** and choose **Add photos** or **Add a folder** (JPG, PNG, WebP or AVIF), or drop photos or a folder into the dashed area. Until the list has pictures, that area shows a short hint: sharp photos, different angles, light and backgrounds, no near-duplicates or group shots, and that 15 to 20 good photos are usually enough.
-3. Leave **Extend the set from samples** off to train on these photos. Turn it on and, during training, the app shows new pictures. You mark the ones that work, and they join the set. The count line switches to a range of 1 to 10 photos (see below). Training pauses after each stage for those marks (see [Training](training.md)).
+3. Leave **Extend the set from samples** off to train on these photos. Turn it on and, during training, the app shows new pictures. You mark the ones that work, and they join the set. The count line switches to a range of 1 to 10 photos (see below). Training pauses after each stage for those marks (see [Training](training.md)). **Build a set** is shown only while this switch is on. With it off, Next goes from Subject and consent straight to Check and prepare, and Back returns the same way.
+4. Press **Check images** once the photos are in. The mark stays red until that check has run, and Next stays off. The check runs in the background: unsuitable photos (a collage, a blur, a near-duplicate, a photo that is too small) are switched off and the reason is shown on the tile. Tick **Include** to put one back, then press **Check images** again. A green arrow means the check passed. Adding, removing or including a photo turns the mark red and does not start the check by itself. The photo count is a separate limit.
 
 Good photos make a good model:
 
-- 15 to 20 sharp photos are usually enough. Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.
+- 15 to 20 sharp photos are usually enough. Recommended: 10 to 50 photos. Allowed in Expert: 5 to 60 photos.
 - Vary the angle, light, background and clothing.
 - One subject per photo. Avoid group shots, heavy filters and near-duplicates.
 - For a style, use pictures that share the style but show different things.
@@ -32,11 +33,11 @@ Good photos make a good model:
 
 Every photo must show consenting adults, and you must have the right to use it. Some photos may be refused during preparation; replace them with other photos of the same subject.
 
-## Step 3: Build a set (optional)
+## Step 3: Build a set
 
 ![Step 3, Build a set](../img/en-simple-3-build.png)
 
-With your own photos this step only says so; press **Next**. Have only a few good pictures? Turn on **Extend the set from samples** on step 1, or press **Build from references instead** here, and use 1 to 10 photos of one person, one thing or one style. Then:
+This step is shown only when **Extend the set from samples** is on. With that switch off it is not in the step counter, and you never land on it going forward or back. Turn the switch on to use 1 to 10 photos of one person, one thing or one style. Then:
 
 1. Press **Make pictures**. The app draws a round of new pictures from your references with Z-Image-Turbo.
 2. Tick each picture that looks right (or click it). Unticked pictures are not used.

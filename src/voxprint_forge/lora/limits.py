@@ -7,7 +7,8 @@ allows; the UI names it ("Allowed in Expert") only when it really differs.
 
 from __future__ import annotations
 
-RECOMMENDED_RANGE = (10, 30)
+SIMPLE_CAP = 50
+RECOMMENDED_RANGE = (10, SIMPLE_CAP)
 EXPERT_FLOOR = 5
 EXPERT_CAP = 60
 EXPERT_RANGE = (EXPERT_FLOOR, EXPERT_CAP)
