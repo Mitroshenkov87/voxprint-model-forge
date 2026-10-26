@@ -44,7 +44,7 @@ from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, outside_simple, report_from_drops, scan_files, visible_on_photos_step
 from voxprint_forge.lora.sample_prompts import read_attire, store_attire
-from voxprint_forge.mdl_adapter import MdlAdapterError, spawn
+from voxprint_forge.mdl_adapter import MdlAdapterError, format_verify_counts, spawn
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids, verify_argv
 
 APP_ID = "model-forge"
@@ -586,7 +586,7 @@ class ForgeApp:
         self._launch(manage_argv())
 
     def check_and_repair_models(self) -> None:
-        """Open the check window (``voxprint-mdl-gui --app model-forge``)."""
+        """Open check and repair (``voxprint-mdl verify --app model-forge --gui --repair``)."""
         try:
             argv = verify_argv()
         except MdlAdapterError as exc:
@@ -594,7 +594,21 @@ class ForgeApp:
             if lines is not None:
                 lines.setText(str(exc))
             return
+        if not argv:
+            self._note_nothing_to_repair()
+            return
         self._launch(argv)
+
+    def _note_nothing_to_repair(self) -> None:
+        """Say that no installed model was named, without planning the catalog."""
+        lines = getattr(self, "_check_lines", None)
+        if lines is None:
+            return
+        summary = format_verify_counts(0, 0, 0).rstrip("\n")
+        current = lines.text()
+        if summary in current:
+            return
+        lines.setText(f"{current}\n{summary}" if current else summary)
 
     def _open_required_models(self) -> None:
         """Open the MDL progress window for missing required ids before any job."""
