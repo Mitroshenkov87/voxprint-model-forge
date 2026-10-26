@@ -720,6 +720,19 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
 
 
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_choice_buttons_measure_the_drawn_font(make_app, qapp, lang) -> None:
+    app = make_app(lang)
+    for step, names in (("train", ("balanced", "best", "close")), ("photos", ("person", "object", "style"))):
+        app.layout.sections._index = STEPS.index(step)
+        app.repaint()
+        qapp.processEvents()
+        for name in names:
+            button = app.window.findChild(QtWidgets.QPushButton, f"forge.chip.{name}")
+            assert button.width() >= _control_width(button)
+            assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+
+
 def test_just_continue_sends_unattended(make_app, tmp_path, qapp) -> None:
     app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)

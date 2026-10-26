@@ -98,6 +98,22 @@ def _control_width(button: QtWidgets.QAbstractButton) -> int:
     return advance + (density.chip_pad_px + density.border_px) * 2 + 4
 
 
+class _ChipButton(QtWidgets.QPushButton):
+    """A choice button whose width follows its label in the font it is finally drawn with.
+
+    Measuring once at construction would use the unparented default font, not the stylesheet's,
+    so the width is taken from the size hints, which the layout asks for after polish.
+    """
+
+    def sizeHint(self) -> QtCore.QSize:
+        hint = super().sizeHint()
+        return QtCore.QSize(_control_width(self), hint.height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        hint = super().minimumSizeHint()
+        return QtCore.QSize(_control_width(self), hint.height())
+
+
 # The shell's action bar (Open folder, outside the wizard) keeps a small left inset, so the text lines up
 # with the card's content column.
 ACTION_BAR_MARGINS = (2, 0, 16, 16)
@@ -1281,14 +1297,13 @@ class ForgeApp:
         group.setExclusive(True)
         ends = {"person": "left", "object": "mid", "style": "right"}
         for value in KINDS:
-            chip = QtWidgets.QPushButton(tr(f"lora.kind.{value}"))
+            chip = _ChipButton(tr(f"lora.kind.{value}"))
             chip.setObjectName(f"forge.chip.{value}")
             chip.setProperty("segment", "true")
             chip.setProperty("end", ends[value])
             chip.setCheckable(True)
             chip.setChecked(value == self.draft.kind)
             chip.setAutoDefault(False)
-            chip.setMinimumWidth(_control_width(chip))
             chip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
             chip.setToolTip(tr("lora.kind.tip"))
             chip.clicked.connect(lambda _checked=False, v=value: self._set_kind(v))
@@ -1321,12 +1336,12 @@ class ForgeApp:
         group = QtWidgets.QButtonGroup(row)
         group.setExclusive(True)
         for value in values:
-            chip = QtWidgets.QPushButton(tr(label.format(value)))
+            chip = _ChipButton(tr(label.format(value)))
             chip.setObjectName(f"forge.chip.{value}")
             chip.setProperty("chip", "true")
             chip.setCheckable(True)
             chip.setChecked(value == current)
-            chip.setFixedWidth(_control_width(chip))
+            chip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, chip.sizePolicy().verticalPolicy())
             chip.setEnabled(enabled)
             chip.setProperty("value", value)
             chip.setToolTip(tr(tips.format(value)) if tips else tr(tip))
