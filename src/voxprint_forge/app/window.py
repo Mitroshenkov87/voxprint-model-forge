@@ -16,7 +16,6 @@ changes them.
 from __future__ import annotations
 
 import json
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -45,6 +44,7 @@ from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, outside_simple, report_from_drops, scan_files, visible_on_photos_step
 from voxprint_forge.lora.sample_prompts import read_attire, store_attire
+from voxprint_forge.mdl_adapter import MdlAdapterError, spawn
 from voxprint_forge.mdl_app import download_argv, manage_argv, missing_id_text, missing_ids, verify_argv
 
 APP_ID = "model-forge"
@@ -376,6 +376,11 @@ class ForgeWidget(SimpleImageWidget):
             split.setSizes([total - self.EXPERT_WIDTH, self.EXPERT_WIDTH])
 
 
+def launch_detached(argv: list[str]) -> None:
+    """Start ``argv`` without a console window on Windows."""
+    spawn(argv)
+
+
 class ForgeApp:
     """Builds the window and runs the steps. ``runner`` runs CLI jobs (a stub in tests)."""
 
@@ -398,7 +403,7 @@ class ForgeApp:
         self.runner = runner if runner is not None else ProcessRunner()
         self.commands = engine.commands() if commands is None else commands
         self._open_path = open_path or _open_path
-        self._launch = launch or (lambda argv: subprocess.Popen(argv))  # noqa: S603 - fixed argv
+        self._launch = launch or launch_detached
         self.expert = ExpertMode()
         self.draft = Draft(expert=self.expert.enabled())
         self.simple: dict[str, str] = {"preset": "balanced", "likeness": "balanced", "vram": "auto"}
@@ -581,8 +586,15 @@ class ForgeApp:
         self._launch(manage_argv())
 
     def check_and_repair_models(self) -> None:
-        """Open the check window (``voxprint-forge-cli models verify --gui``)."""
-        self._launch(verify_argv())
+        """Open the check window (``voxprint-mdl-gui --app model-forge``)."""
+        try:
+            argv = verify_argv()
+        except MdlAdapterError as exc:
+            lines = getattr(self, "_check_lines", None)
+            if lines is not None:
+                lines.setText(str(exc))
+            return
+        self._launch(argv)
 
     def _open_required_models(self) -> None:
         """Open the MDL progress window for missing required ids before any job."""

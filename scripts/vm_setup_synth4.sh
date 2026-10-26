@@ -115,7 +115,7 @@ if ! install_torch 3.14; then
     install_torch 3.12
   fi
 fi
-uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.5.0-py3-none-any.whl"
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.5.1-py3-none-any.whl"
 # Step 2: everything else from PyPI only. Mixing the torch index in makes uv
 # resolve index-first and pick old packages (torchmetrics 1.0.3). The constraint
 # keeps the CUDA torch and torchvision from step 1.

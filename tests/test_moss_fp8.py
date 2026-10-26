@@ -328,18 +328,18 @@ def test_repair_regenerates_from_the_bf16_source_and_skips_the_downloader(
         encoding="utf-8",
     )
     assert pin.mdl_id in installed_model_ids(manifest, root=root)
-    seen: dict[str, object] = {}
+    calls: list[list[str]] = []
 
-    def fake_verify(model_ids: list[str], repair: bool = False, **_kwargs: object) -> int:
-        seen["ids"] = list(model_ids)
-        seen["repair"] = repair
-        return 0
+    def fake_run(command: list[str], check: bool = False, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr("voxprint_common.mdl.run_verify_repair", fake_verify, raising=False)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_gui_executable", lambda: ["voxprint-mdl-gui"])
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
     result = execute_verify(manifest=manifest, repair=True, gui=True, root=root)
-    assert seen["ids"] == ["gemma4-31b"]
-    assert pin.mdl_id not in seen["ids"]
-    assert seen["repair"] is True
+    assert calls == [["voxprint-mdl-gui", "--app", "model-forge"]]
+    assert pin.mdl_id not in calls[0]
     assert downloads == []
     assert produced == [source]
     assert {"id": pin.mdl_id, "status": "repaired"} in result["models"]

@@ -2,7 +2,7 @@
 
 The Start menu shortcut and this process share one AppUserModelID. The window
 icon is the same ``.ico`` the setup, the shortcut and the uninstall entry use.
-``voxprint_common`` 0.5.0 provides ``branding``; it is used when the import
+``voxprint_common`` 0.5.1 provides ``branding``; it is used when the import
 succeeds.
 """
 

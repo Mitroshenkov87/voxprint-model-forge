@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -14,6 +16,7 @@ from voxprint_forge.app.draft import STEPS, Prepared  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
 from voxprint_forge.app.window import _WrappingLabel  # noqa: E402
+from voxprint_forge.mdl_adapter import MdlAdapterError  # noqa: E402
 from voxprint_forge.mdl_app import missing_id_text  # noqa: E402
 
 CONTROLS = (
@@ -33,10 +36,15 @@ def make_app(qapp, tmp_path, monkeypatch):
 
     made = []
 
-    def build(runner=None, commands=ALL_COMMANDS, lang="en"):
+    def build(runner=None, commands=ALL_COMMANDS, lang="en", *, default_launch=False):
         set_language(lang)
-        app = ForgeApp(runner=runner or StubRunner(), home=tmp_path / "state", commands=commands,
-                       open_path=lambda _p: None, launch=lambda _a: None)
+        app = ForgeApp(
+            runner=runner or StubRunner(),
+            home=tmp_path / "state",
+            commands=commands,
+            open_path=lambda _p: None,
+            launch=None if default_launch else (lambda _a: None),
+        )
         app.window.show()
         qapp.processEvents()
         made.append(app)
@@ -311,7 +319,56 @@ def test_check_and_repair_opens_the_verify_window(make_app, qapp, lang, label) -
     button = app.window.findChild(QtWidgets.QPushButton, "forge.app.check.repair")
     assert button.text() == label
     button.click()
-    assert launched[0][-3:] == ["models", "verify", "--gui"]
+    argv = launched[0]
+    assert Path(argv[0]).name.lower().removesuffix(".exe") == "voxprint-mdl-gui"
+    assert argv[1:] == ["--app", "model-forge"]
+
+
+def test_check_button_spawns_the_window_without_waiting(make_app, qapp, monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_spawn(argv: list[str], *, wait: bool = False) -> int:
+        seen["argv"] = list(argv)
+        seen["wait"] = wait
+        return 0
+
+    monkeypatch.setattr("voxprint_forge.app.window.spawn", fake_spawn)
+    monkeypatch.setattr(
+        "voxprint_forge.mdl_adapter.mdl_gui_executable",
+        lambda: ["voxprint-mdl-gui"],
+    )
+    app = make_app(default_launch=True)
+    app.layout.sections.select("check")
+    app.widget.refresh()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.app.check.repair")
+    button.click()
+    assert seen == {"argv": ["voxprint-mdl-gui", "--app", "model-forge"], "wait": False}
+
+
+def test_check_and_repair_reports_a_missing_executable(make_app, qapp, monkeypatch) -> None:
+    app = make_app()
+
+    def fail(_argv: list[str]) -> None:
+        raise AssertionError("missing executable must not launch")
+
+    app._launch = fail
+    message = (
+        "voxprint-common 0.5.1 is required for models verify "
+        "(voxprint-mdl-gui). The installed package does not provide it."
+    )
+
+    def missing() -> list[str]:
+        raise MdlAdapterError(message)
+
+    monkeypatch.setattr("voxprint_forge.app.window.verify_argv", missing)
+    app.layout.sections.select("check")
+    app.widget.refresh()
+    qapp.processEvents()
+    button = app.window.findChild(QtWidgets.QPushButton, "forge.app.check.repair")
+    button.click()
+    qapp.processEvents()
+    assert app._check_lines.text() == message
 
 
 def test_gate_missing_blocks_with_a_plain_sentence(make_app, tmp_path) -> None:
