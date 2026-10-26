@@ -31,7 +31,7 @@ def ensure_cached(
     if (dest / ".complete").is_file():
         return dest
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "source.txt").write_text(_source_text(repo, revision, patterns), encoding="utf-8")
+    (dest / "source.txt").write_text(_source_text(repo, revision, patterns), encoding="utf-8", newline="\n")
     kwargs: dict[str, object] = {"repo_id": repo, "local_dir": str(dest)}
     if revision:
         kwargs["revision"] = revision
@@ -42,7 +42,7 @@ def ensure_cached(
     except Exception as exc:
         message = scrub(str(exc), active_secrets())
         raise CompareSetup(f"download failed for {repo}: {message}", code="compare_download") from exc
-    (dest / ".complete").write_text("ok\n", encoding="utf-8")
+    (dest / ".complete").write_text("ok\n", encoding="utf-8", newline="\n")
     return dest
 
 

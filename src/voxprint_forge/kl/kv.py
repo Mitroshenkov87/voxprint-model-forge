@@ -331,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         for step in kv_steps(plan, args.gguf, corpus, work, tool("llama-perplexity")):
             done = runner.run(step["argv"])
             log = done.stdout + done.stderr
-            (work / f"{step['arm']}-{step['ctx']}.log").write_text(log, encoding="utf-8")
+            (work / f"{step['arm']}-{step['ctx']}.log").write_text(log, encoding="utf-8", newline="\n")
             if step["role"] == "arm":
                 s = parse_kl(log)
                 rows.append({"ctx": step["ctx"], "arm": step["arm"], "ppl": s.ppl_quant, "ppl_base": s.ppl_base,
@@ -340,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
                              "verdict": verdict(plan, s.kl_mean, s.ppl_quant, s.ppl_base)})
         for logits in work.glob("base-*.kld"):
             logits.unlink()
-        (work / "kv.json").write_text(json.dumps({"model": args.kv_model, "rows": rows}, indent=2) + "\n")
+        (work / "kv.json").write_text(json.dumps({"model": args.kv_model, "rows": rows}, indent=2) + "\n", newline="\n")
         print(json.dumps(rows))
         return 0
     if args.bench_model:

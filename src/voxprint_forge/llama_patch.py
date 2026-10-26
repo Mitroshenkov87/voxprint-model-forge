@@ -67,7 +67,7 @@ def apply_t_lite(path: Path) -> str:
         return "present"
     if _KIMI not in text:
         raise SystemExit(f"{path} has no Kimi-K2 pre-tokenizer entry to anchor the T-lite hash")
-    path.write_text(text.replace(_KIMI, _KIMI + _T_LITE, 1), encoding="utf-8")
+    path.write_text(text.replace(_KIMI, _KIMI + _T_LITE, 1), encoding="utf-8", newline="\n")
     return "applied"
 
 

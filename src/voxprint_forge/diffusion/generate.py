@@ -173,6 +173,7 @@ def _cn_load(path: object) -> ZImageControlNetModel:
     (Path(folder) / "config.json").write_text(
         json.dumps(union_config(places_for_count(len(layers)))),
         encoding="utf-8",
+        newline="\n",
     )
     return ZImageControlNetModel.from_single_file(str(path), config=folder, torch_dtype=torch.bfloat16)
 
@@ -327,7 +328,7 @@ def _write_review(
         cands[index].save(directory / cand_name)
         rows.append((ref_name, prompts[index], seeds[index], "reference"))
         rows.append((cand_name, prompts[index], seeds[index], "candidate"))
-    (directory / "labels.md").write_text(review_document(rows), encoding="utf-8")
+    (directory / "labels.md").write_text(review_document(rows), encoding="utf-8", newline="\n")
 
 
 def _next_chunk(cases: list[_Case], done: int, *, decided: bool, minimum: int) -> list[_Case]:

@@ -318,7 +318,11 @@ def publish_private(
         model_dir.mkdir(parents=True)
         meta = model_metadata(owner, slug, title, description)
         assert_private_metadata(meta)
-        (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        (model_dir / "model-metadata.json").write_text(
+            json.dumps(meta, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         remote.kaggle_private_model(owner, slug, model_dir)
 
     records: list[dict[str, object]] = []
@@ -378,6 +382,7 @@ def publish_private(
         (folder / "model-instance-metadata.json").write_text(
             json.dumps(instance, indent=2) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
         bundled = [item for item in artifacts if item.name in names]
         page = kaggle_variation_url(owner, slug, variation)

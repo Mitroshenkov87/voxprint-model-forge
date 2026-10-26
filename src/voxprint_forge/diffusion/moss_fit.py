@@ -159,7 +159,7 @@ def matrix(plan: FitPlan, env: dict[str, str] | None = None) -> list[dict[str, o
 
 def _write(path: Path, doc: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 def _load_fp8_into(pipe: object, folder: Path) -> None:

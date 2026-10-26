@@ -20,7 +20,7 @@ def main(argv: list[str]) -> int:
     folder, detector, device = argv[1], argv[2], argv[3]
     # Replies go on a private copy of stdout; anything a library prints (Python or C level) goes to stderr,
     # so a stray line can never be read as, or shift, a reply.
-    reply = os.fdopen(os.dup(1), "w", buffering=1, encoding="utf-8")
+    reply = os.fdopen(os.dup(1), "w", buffering=1, encoding="utf-8", newline="\n")
     os.dup2(2, 1)
     sys.stdout = sys.stderr
     import cv2

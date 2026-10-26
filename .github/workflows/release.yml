@@ -10,6 +10,22 @@ on:
       - "v*"
 
 jobs:
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Publish installer, guides, and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_assets.py publish "$RUNNER_TEMP/release-assets"
   identity:
     runs-on: ubuntu-latest
     steps:

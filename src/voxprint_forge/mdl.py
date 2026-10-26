@@ -346,7 +346,7 @@ def retarget_mirrors(path: Path, mirrors: Sequence[Mapping[str, str]], *, card_u
     document["mirrors"] = chosen
     document["card_url"] = card_url_for(chosen) if card_url is None else card_url
     check_document(document)
-    path.write_text(_dump(document), encoding="utf-8")
+    path.write_text(_dump(document), encoding="utf-8", newline="\n")
 
 
 def infer_task(repo_id: str, paths: Sequence[str]) -> str:
@@ -556,7 +556,7 @@ def write_index(
         head = published_head if head is None else head
     document = index_document(rows, serial=serial, head=head, generated_at=generated_at)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    dest.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8", newline="\n")
     return rows
 
 

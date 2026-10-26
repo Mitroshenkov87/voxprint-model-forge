@@ -1,0 +1,38 @@
+{
+    "architectures": [
+      "MiVOLOForImageClassification"
+    ],
+    "auto_map": {
+      "AutoConfig": "configuration_mivolo.MiVOLOConfig",
+      "AutoModelForImageClassification": "modeling_mivolo.MiVOLOForImageClassification",
+      "AutoImageProcessor": "mivolo_image_processor.MiVOLOImageProcessor"
+    },
+
+    "gender_id2label": {
+      "0": "male",
+      "1": "female"
+    },
+
+    "model_name": "mivolo_d1_384",
+    "num_classes": 3,
+    "in_chans": 6,
+
+    "min_age": 0, 
+    "max_age": 122, 
+    "avg_age": 61.0, 
+    "with_persons_model": true, 
+    "disable_faces": false, 
+    "use_persons": true, 
+    "only_age": false, 
+    "num_classes_gender": 2, 
+    "input_size": 384, 
+    "use_person_crops": true,
+    "use_face_crops": true,
+
+    "init_device": "cpu",
+    "model_type": "mivolo",
+    "torch_dtype": "float16",
+    "transformers_version": "4.51.0",
+    "verbose": 0,
+    "initializer_range": 0.02
+  }

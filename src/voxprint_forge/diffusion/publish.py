@@ -127,7 +127,7 @@ def write_models_md(output: Path, files: list[LocalFile]) -> None:
         for item in files
         if item.name != "MODELS.md"
     ]
-    (output / "MODELS.md").write_text(render_models_md(rows), encoding="utf-8")
+    (output / "MODELS.md").write_text(render_models_md(rows), encoding="utf-8", newline="\n")
 
 
 def _shared_names(output: Path) -> list[str]:
@@ -340,7 +340,7 @@ def _publish_hub(
     meta = model_metadata(owner, kaggle_slug, title, description)
     meta["subtitle"] = "Voxprint AI Canvas private weights"
     assert_private_metadata(meta)
-    (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    (model_dir / "model-metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8", newline="\n")
     client.kaggle_private_model(owner, kaggle_slug, model_dir)
 
     by_name = {item.name: item for item in files}
@@ -355,6 +355,7 @@ def _publish_hub(
         (folder / "model-instance-metadata.json").write_text(
             json.dumps(instance, indent=2) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
         handle = _upload_variation(
             client,

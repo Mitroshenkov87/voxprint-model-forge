@@ -491,6 +491,7 @@ def _imatrix_corpus(layout: Layout, model_id: str) -> Path:
     combined.write_text(
         base.read_text(encoding="utf-8") + "\n" + extra.read_text(encoding="utf-8"),
         encoding="utf-8",
+        newline="\n",
     )
     return combined
 
@@ -963,7 +964,7 @@ def _card(
         stamped=host.stamped or None,
     )
     path = layout.model_dir(model.id) / "README.md"
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
     digest = sha256_file(path)
     write_sha256(path, digest)
     payload: dict[str, object] = {
@@ -1004,7 +1005,7 @@ def _publish_prep(model: ModelPlan, layout: Layout, card: dict[str, object]) -> 
         ],
     }
     path = layout.model_dir(model.id) / "registry-draft.json"
-    path.write_text(json.dumps(draft, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(draft, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     payload: dict[str, object] = {"path": str(path), "draft": draft, "tiers": tiers, "card": card}
     write_marker(marker, payload)
     return payload

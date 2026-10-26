@@ -173,7 +173,7 @@ def _card(ctx: Ctx, quality: dict[str, object]) -> dict[str, object]:
         ),
         stamped=today_stamp(),
     )
-    (ctx.output / "README.md").write_text(render_canvas_card(ctx.repo, card), encoding="utf-8")
+    (ctx.output / "README.md").write_text(render_canvas_card(ctx.repo, card), encoding="utf-8", newline="\n")
     return {"card": "README.md"}
 
 

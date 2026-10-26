@@ -183,6 +183,7 @@ def export(
             f"This LoRA was trained on {info.display_name} ({info.repo}), licensed under the Apache License 2.0.\n"
             f"Produced by {PRODUCER}.\n",
             encoding="utf-8",
+            newline="\n",
         )
     result: dict[str, object] = {"state": "done", "id": mid, "file": str(target), "sha256": sidecar["sha256"]}
     if install_to_mdl:
@@ -269,7 +270,11 @@ def _flag(value: object) -> str:
 
 
 def _write_json(path: Path, doc: dict[str, object]) -> None:
-    path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def package_kind(kind: str) -> str:

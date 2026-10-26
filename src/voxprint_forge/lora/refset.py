@@ -172,7 +172,11 @@ def save_state(project: Project | Path, state: dict[str, Any]) -> None:
     path = state_file(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     tmp.replace(path)
 
 
@@ -190,7 +194,11 @@ def save_prompts(project: Project | Path, prompts: dict[str, str]) -> None:
     """Write ``prompts.json`` (Expert caption edits use this too)."""
     path = prompts_file(project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(prompts, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(prompts, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def prompt_id(prompt: str) -> str:
@@ -681,7 +689,11 @@ def finish(
         "approved": rows,
         "near_duplicates": near_duplicates(state),
     }
-    (root / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (root / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     proj = project if isinstance(project, Project) else Project(Path(project))
     try:
         data = proj.read()

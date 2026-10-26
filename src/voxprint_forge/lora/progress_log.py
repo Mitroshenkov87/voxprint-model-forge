@@ -167,7 +167,7 @@ def _loss(value: float | None) -> float | None:
 
 def _atomic_fsync(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())

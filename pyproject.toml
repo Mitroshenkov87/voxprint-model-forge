@@ -118,7 +118,11 @@ voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", 
 [tool.ruff]
 line-length = 120
 # Vendored verbatim; see src/voxprint_forge/vendored/moss_image/VENDOR.md.
-extend-exclude = ["src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py"]
+extend-exclude = [
+  "src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py",
+  # Content-addressed laptop snapshot, including PG's rebuild.py. Do not reformat it.
+  "tests/fixtures/laptop_layout",
+]
 target-version = "py312"
 src = ["src", "tests"]
 

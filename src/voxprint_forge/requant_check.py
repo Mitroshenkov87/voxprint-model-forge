@@ -593,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
     out = getattr(args, "out", None)
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text + "\n", encoding="utf-8")
+        out.write_text(text + "\n", encoding="utf-8", newline="\n")
     print(text)
     if payload.get("verdict") == "INVALID":
         return HARNESS_INVALID_EXIT
@@ -622,7 +622,7 @@ def _write_plan(args: argparse.Namespace) -> int:
         print(f"kl-plan: {exc}", file=sys.stderr)
         return 1
     args.plan_out.parent.mkdir(parents=True, exist_ok=True)
-    args.plan_out.write_text(text, encoding="utf-8")
+    args.plan_out.write_text(text, encoding="utf-8", newline="\n")
     try:
         loaded = load_kl_plan(args.plan_out).job(args.job)
     except PlanError as exc:
