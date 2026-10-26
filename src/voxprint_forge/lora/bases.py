@@ -756,22 +756,30 @@ class MossImageAdapter(BaseAdapter):
         prior = self.pipe
         if fp8:
             root = Path(weights_dir)
-            # ModelPark.get, via park(). The resident is the DiT. The text encoder
-            # is attached below for this load, so a staged load cannot pin an
-            # encoder-less pipeline for a later one.
+            # ModelPark.get, via park(). The resident is the DiT. Each load builds
+            # the pipeline around that module.
             transformer = park(
                 f"{self.info.mdl_id}:dit-fp8:{weights_dir}",
                 lambda: moss_fp8.load_fp8_transformer(root),
                 stage_name="load",
                 replay_rng=True,
             )
+            moss_fp8.bind_device_move(transformer)
+            # release_encoders leaves this module on the card. Move it off before
+            # a text encoder is loaded, so the 16 GB card never holds both.
+            if not staged:
+                transformer.to("cpu")
+            resident = getattr(self, "_resident_te", None)
+            reuse_encoder = not staged and resident is not None
             self.pipe = moss_fp8.assemble_pipe(
                 root,
                 transformer,
-                with_text_encoder=not staged,
+                with_text_encoder=not staged and not reuse_encoder,
                 te_quant=choice.quant,
                 te_device=choice.device,
             )
+            if reuse_encoder:
+                self.pipe.text_encoder = resident
         else:
             key = f"{self.info.mdl_id}:dit:{weights_dir}:{id(self)}:{int(staged)}"
             self.pipe = park(
