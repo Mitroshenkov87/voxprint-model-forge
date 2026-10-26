@@ -338,6 +338,183 @@ def test_qwen_stays_resident_after_unload(monkeypatch, tmp_path: Path) -> None:
     assert "hit" in [row["action"] for row in events()]
 
 
+class _CudaBlob:
+    """One graphics allocation. ``to`` returns a new blob and leaves this one in place."""
+
+    def __init__(self, nbytes: int) -> None:
+        self.nbytes = nbytes
+        self.cuda = True
+
+    @property
+    def is_cuda(self) -> bool:
+        return self.cuda
+
+    @property
+    def data(self) -> _CudaBlob:
+        return self
+
+    @data.setter
+    def data(self, value: object) -> None:
+        cuda = getattr(value, "is_cuda", None)
+        if isinstance(cuda, bool):
+            self.cuda = cuda
+
+    def to(self, device: object, *args: object, **kwargs: object) -> _CudaBlob:
+        kind = device.split(":", 1)[0] if isinstance(device, str) else getattr(device, "type", "")
+        moved = _CudaBlob(self.nbytes)
+        moved.cuda = str(kind).startswith("cuda")
+        return moved
+
+
+class _Card:
+    """Allocated bytes are the blobs still marked CUDA. ``empty_cache`` does not clear them."""
+
+    def __init__(self) -> None:
+        self.blobs: list[_CudaBlob] = []
+
+    def tensor(self, nbytes: int) -> _CudaBlob:
+        blob = _CudaBlob(nbytes)
+        self.blobs.append(blob)
+        return blob
+
+    def allocated(self) -> int:
+        return sum(blob.nbytes for blob in self.blobs if blob.cuda)
+
+
+def test_caption_unload_drops_the_int8_buffer_and_keeps_the_baseline_guard(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """8-bit Qwen leaves the weights on ``state.CB`` after ``module.to``.
+
+    ``nn.Module.to`` moves parameters and does not visit that buffer, so unload
+    has to drop it, collect, and empty the cache. The guard then measures
+    ``memory_allocated`` against the pre-load baseline and still rejects
+    anything more than 0.25 GB above it, including a blob this unload cannot
+    see. Reserved memory is not the measurement.
+    """
+    gib = 2**30
+    allowance = int(vram_stage.NEAR_ZERO_GB * gib)
+    card = _Card()
+    # Resident before the captioner loads (CUDA context). Above 0.25 GB so an
+    # absolute check would fail even after the weights leave.
+    context = card.tensor(int(0.40 * gib))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda *args: card.allocated())
+    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda *args: 0)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(backends, "detect_vram_gb", lambda: 16)
+    monkeypatch.setattr(backends, "check_available", lambda mode: None)
+    calls: list[str] = []
+
+    class Root(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.block = nn.Linear(1, 1)
+            # After the first forward, Linear8bitLt keeps the int8 weights here.
+            # nn.Module.to moves parameters and never visits this attribute.
+            self.block.state = SimpleNamespace(CB=card.tensor(int(3.77 * gib)))
+
+        def to(self, *args: object, **kwargs: object) -> Root:
+            return self
+
+    class Processor:
+        def to(self, device: object) -> Processor:
+            return self
+
+    def load(folder: Path, device: str, mode: str) -> dict[str, object]:
+        calls.append(mode)
+        return {"processor": Processor(), "model": Root(), "quant": mode}
+
+    monkeypatch.setattr(backends, "_load_qwen", load)
+    folder = tmp_path / "qwen"
+    folder.mkdir()
+    judge = backends.VlmJudge(folder, "cuda", quant="int8")
+    model = judge.model
+    assert card.allocated() > context.nbytes
+    judge.unload()
+    assert card.allocated() == context.nbytes
+    assert judge.model is model
+    again = backends.VlmJudge(folder, "cuda", quant="int8")
+    assert calls == ["int8"]
+    assert again.model is model
+    assert card.allocated() == context.nbytes + int(3.77 * gib)
+    again.unload()
+    assert card.allocated() == context.nbytes
+
+    lingering = card.tensor(allowance + 1)
+    with pytest.raises(LoraStageError) as caught:
+        assert_stage_clear("caption", tier=16, baseline_gb=context.nbytes / gib)
+    assert caught.value.key == "lora.err.vram_held"
+    assert vram_stage.NEAR_ZERO_GB == 0.25
+    lingering.cuda = False
+    assert_stage_clear("caption", tier=16, baseline_gb=context.nbytes / gib)
+
+
+def test_int8_restage_keeps_one_copy_of_the_weight(monkeypatch) -> None:
+    """``module.to`` copies the parameter and leaves ``state.CB``. Retie drops the extra."""
+    gib = 2**30
+    card = _Card()
+
+    class _DType:
+        def is_floating_point(self) -> bool:
+            return False
+
+    class _Weight:
+        has_fp16_weights = False
+
+        def __init__(self, blob: _CudaBlob) -> None:
+            self._data = blob
+            self.SCB = None
+
+        @property
+        def data(self) -> _CudaBlob:
+            return self._data
+
+        @data.setter
+        def data(self, value: object) -> None:
+            if self._data is not value and isinstance(self._data, _CudaBlob):
+                self._data.cuda = False
+            if isinstance(value, _CudaBlob):
+                self._data = value
+
+    class Block(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            weight = card.tensor(int(3.77 * gib))
+            weight.dtype = _DType()
+            self.weight = _Weight(weight)
+            self.state = SimpleNamespace(CB=card.tensor(int(3.77 * gib)), has_fp16_weights=False)
+
+        def to(self, device: object) -> Block:
+            # Parameter copy, the way ``nn.Module._apply`` moves a weight. CB stays put.
+            kind = device.split(":", 1)[0] if isinstance(device, str) else getattr(device, "type", "")
+            self.weight.data.cuda = str(kind).startswith("cuda")
+            return self
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    block = Block()
+    assert card.allocated() == 2 * int(3.77 * gib)
+    model_park.drop_vram(block, key="int8-copy", stage_name="caption")
+    assert card.allocated() == 0
+    model_park.stage(block, "cuda", key="int8-copy", stage_name="caption")
+    assert card.allocated() == int(3.77 * gib)
+    assert block.weight.data is block.state.CB
+
+    class Refused(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.state = SimpleNamespace(CB=card.tensor(int(3.77 * gib)))
+
+        def to(self, device: object) -> Refused:
+            raise ValueError("`.to` is not supported for 4-bit or 8-bit bitsandbytes models")
+
+    refused = Refused()
+    assert card.allocated() == 2 * int(3.77 * gib)
+    model_park.drop_vram(refused, key="int8-refused", stage_name="caption")
+    assert card.allocated() == int(3.77 * gib)
+
+
 def test_qwen_16_refuses_bf16_and_cpu(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(backends, "detect_vram_gb", lambda: 16)
     monkeypatch.setattr(backends, "_load_qwen", lambda *args, **kwargs: pytest.fail("read qwen"))

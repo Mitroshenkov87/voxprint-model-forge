@@ -13,6 +13,7 @@ from voxprint_forge.lora.presets import detect_vram_gb
 from voxprint_forge.lora.te_quant import check_available, quant_config
 from voxprint_forge.lora.vram_stage import (
     TIER_GB,
+    allocated_gb,
     assert_stage_clear,
     hold_heavy,
     release_heavy,
@@ -168,6 +169,8 @@ class VlmJudge:
             raise LoraStageError("lora.err.cpu_fallback", tier=TIER_GB, reason="no CUDA device")
         if mode in ("int8", "nf4"):
             check_available(mode)
+        # Before the weights exist, so the guard can subtract the CUDA context.
+        baseline_gb = allocated_gb()
         key = _qwen_key(folder, mode)
         hold_heavy("qwen", tier=tier)
         try:
@@ -178,11 +181,12 @@ class VlmJudge:
         self.__dict__.update(payload)
         self._park_key = key
         self._tier = tier
+        self._baseline_gb = baseline_gb
         self.last_stats = {}
-        if mode == "none":
-            stage(self.model, device, key=key, stage_name="caption")
-        else:
-            # bitsandbytes already placed the quantized copy. Log the stage without moving it.
+        # The first int8 load is already on the card. A later stage has to move
+        # the parked CPU copy back, including state.CB which module.to skips.
+        stage(self.model, device, key=key, stage_name="caption")
+        if mode != "none":
             stage(self.processor, device, key=key, stage_name="caption")
 
     def ask(self, image: Any, system: str, user: str, max_new_tokens: int) -> str:
@@ -221,7 +225,11 @@ class VlmJudge:
         if model is not None:
             drop_vram(model, key=getattr(self, "_park_key", JUDGE_ID), stage_name="caption")
         release_heavy("qwen")
-        assert_stage_clear("caption", tier=getattr(self, "_tier", 24))
+        assert_stage_clear(
+            "caption",
+            tier=getattr(self, "_tier", 24),
+            baseline_gb=getattr(self, "_baseline_gb", 0.0),
+        )
 
 
 def mivolo_python() -> str:
