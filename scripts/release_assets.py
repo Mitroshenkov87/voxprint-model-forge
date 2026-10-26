@@ -4,7 +4,9 @@
 workflow on this commit, or starts it once when none appears, and writes
 ``SHA256SUMS.txt``. ``publish DEST`` does that and uploads the setup, both
 guide PDFs, and the sums file. A tag whose name contains ``-rc`` is a
-prerelease. An existing release is updated in place.
+prerelease. An existing release is updated in place. Lists of installer
+runs are polled with a sleep, including when a finished run is joined by
+one that is still in progress.
 """
 
 from __future__ import annotations
