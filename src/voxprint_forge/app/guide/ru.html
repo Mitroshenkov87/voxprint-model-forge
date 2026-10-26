@@ -170,7 +170,7 @@
 voxprint-forge-cli models verify --repair
 voxprint-forge-cli models verify --gui
 </code></pre>
-<p><code>models verify</code> запускает <code>voxprint-mdl verify</code>, печатает его таблицу и завершается с ошибкой, если что-то всё ещё сломано. В таблице состояния написаны по-английски: OK, missing, corrupt. <code>--repair</code> — это <code>voxprint-mdl verify --repair</code>; файлы исправляются без вопроса. <code>--gui</code> открывает общее окно командой <code>voxprint-mdl-gui --app model-forge</code>. Кнопка «Проверить и восстановить модели» запускает ту же команду.</p>
+<p><code>models verify</code> проверяет установленные модели и печатает <code>N models: X OK, Y damaged, Z missing</code>. Команда завершается с ошибкой, если что-то всё ещё повреждено или отсутствует. Слова в этой строке английские: OK, damaged, missing. <code>--repair</code> — та же проверка, и файлы исправляются без вопроса. <code>--gui</code> открывает окно проверки и восстановления командой <code>voxprint-mdl verify --app model-forge --gui</code> (и <code>--repair</code>, если указан этот флаг) и на Windows не показывает консоль. Кнопка «Проверить и восстановить модели» запускает <code>voxprint-mdl verify --app model-forge --gui --repair</code>. «Управление моделями» остаётся отдельным окном.</p>
 <p>Чтобы удалить ненужную модель, снова откройте «Управление моделями»: там видны установленные модели, их размер и лицензия.</p>
 <p><a id="page-project"></a></p>
 <h1 id="lora">Создание проекта LoRA</h1>

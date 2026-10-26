@@ -170,7 +170,7 @@
 voxprint-forge-cli models verify --repair
 voxprint-forge-cli models verify --gui
 </code></pre>
-<p><code>models verify</code> runs <code>voxprint-mdl verify</code>, prints that table, and exits with an error when anything is still broken. <code>--repair</code> is <code>voxprint-mdl verify --repair</code> and fixes the files without asking. <code>--gui</code> opens the shared window with <code>voxprint-mdl-gui --app model-forge</code>. The Check and repair models button launches that same command.</p>
+<p><code>models verify</code> checks the installed models and prints <code>N models: X OK, Y damaged, Z missing</code>. It exits with an error when any model is still damaged or missing. <code>--repair</code> is the same check and fixes those files without asking. <code>--gui</code> opens the check-and-repair window with <code>voxprint-mdl verify --app model-forge --gui</code> (plus <code>--repair</code> when that flag is set) and does not open a console on Windows. The Check and repair models button launches <code>voxprint-mdl verify --app model-forge --gui --repair</code>. Manage models stays a separate window.</p>
 <p>To remove a model you no longer need, open <strong>Manage models</strong> again: it lists installed models with their size and licence.</p>
 <p><a id="page-project"></a></p>
 <h1 id="creating-a-lora-project">Creating a LoRA project</h1>
