@@ -30,6 +30,7 @@ from voxprint_common.mdl.names import CLI_NAME
 from voxprint_common.model_park import for_process
 from voxprint_common.paths import models_dir
 
+from voxprint_forge.diffusion import moss_fp8
 from voxprint_forge.errors import EXIT_CHECKSUM, EXIT_TOOL, ForgeError
 from voxprint_forge.model_views import APP_DIR, BLOBS_DIR
 
@@ -142,31 +143,64 @@ def execute_verify(
     model is already OK. Without ``gui``, ``voxprint-mdl verify`` prints the
     table and its exit code is returned. An empty install is success and does
     not ask MDL to plan the whole catalog.
+
+    MOSS FP8 ids are left out of that call. They are hashed here, and ``repair``
+    rebuilds a missing or corrupt file from the pinned bf16 snapshot (or from
+    the mirror, once that revision is published).
     """
     ids = installed_model_ids(manifest, root=root)
+    base = root if root is not None else models_dir()
+    fp8_rows = [dict(row) for row in moss_fp8.cover(base, repair=repair)]
+    upstream = [model_id for model_id in ids if model_id not in moss_fp8.model_ids()]
     if gui:
-        outcome = run_verify_repair(ids, repair=repair, manifest=manifest)
-        return {
-            "ok": outcome.exit_code == 0,
-            "exit_code": outcome.exit_code,
-            "models": [dict(row) for row in outcome.models],
-            "text": outcome.text,
-        }
-    if not ids:
+        outcome = run_verify_repair(upstream, repair=repair, manifest=manifest)
+        return _with_fp8(
+            {
+                "ok": outcome.exit_code == 0,
+                "exit_code": outcome.exit_code,
+                "models": [dict(row) for row in outcome.models],
+                "text": outcome.text,
+            },
+            fp8_rows,
+        )
+    if not upstream and not fp8_rows:
         return {"ok": True, "exit_code": 0, "models": [], "text": _empty_table()}
-    command = verify_argv(repair=repair, model_ids=ids, manifest=manifest, executable=executable)
+    if not upstream:
+        return _with_fp8({"ok": True, "exit_code": 0, "models": [], "text": ""}, fp8_rows)
+    command = verify_argv(repair=repair, model_ids=upstream, manifest=manifest, executable=executable)
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.stderr:
         print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
     text = completed.stdout
     if text and not text.endswith("\n"):
         text += "\n"
-    return {
-        "ok": completed.returncode == 0,
-        "exit_code": completed.returncode,
-        "models": [],
-        "text": text,
-    }
+    return _with_fp8(
+        {
+            "ok": completed.returncode == 0,
+            "exit_code": completed.returncode,
+            "models": [],
+            "text": text,
+        },
+        fp8_rows,
+    )
+
+
+def _with_fp8(result: dict[str, object], rows: list[dict[str, object]]) -> dict[str, object]:
+    """Merge FP8 rows. A missing, corrupt or stale FP8 file fails a run the upstream call passed."""
+    if not rows:
+        return result
+    models = list(result["models"]) if isinstance(result["models"], list) else []
+    models.extend(rows)
+    text = result["text"] if isinstance(result["text"], str) else ""
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "".join(f"{row['id']}  {row['status']}\n" for row in rows)
+    code = result["exit_code"]
+    exit_code = code if isinstance(code, int) and not isinstance(code, bool) else EXIT_CHECKSUM
+    broken = {"missing", "corrupt", "stale"}
+    if exit_code == 0 and any(str(row.get("status", "")).lower() in broken for row in rows):
+        exit_code = EXIT_CHECKSUM
+    return {"ok": exit_code == 0, "exit_code": exit_code, "models": models, "text": text}
 
 
 def _normalize(value: object) -> VerifyRepairResult:

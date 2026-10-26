@@ -221,7 +221,8 @@ def write_manifest(directory: Path, document: Mapping[str, object]) -> Path:
     check_document(document)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / MANIFEST_NAME
-    path.write_text(_dump(document), encoding="utf-8")
+    # Keep LF. The default translates \n to \r\n on Windows and changes the file sha256.
+    path.write_text(_dump(document), encoding="utf-8", newline="\n")
     return path
 
 
