@@ -218,8 +218,9 @@ def write_summary(directory: Path, payload: Mapping[str, object], secrets: Seque
     (directory / SUMMARY_JSON).write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
-    (directory / SUMMARY_MD).write_text(text, encoding="utf-8")
+    (directory / SUMMARY_MD).write_text(text, encoding="utf-8", newline="\n")
 
 
 def _bar_lines(payload: Mapping[str, object]) -> list[str]:

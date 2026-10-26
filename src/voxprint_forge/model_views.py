@@ -111,7 +111,7 @@ def _marker_files(spec: dict[str, tuple[str, int]]) -> list[dict[str, str]]:
 
 def _write_marker(folder: Path, spec: dict[str, tuple[str, int]]) -> None:
     payload = {"files": _marker_files(spec)}
-    (folder / MARKER).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    (folder / MARKER).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 def _safe_target(folder: Path, rel: str) -> Path:

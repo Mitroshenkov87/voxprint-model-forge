@@ -56,7 +56,7 @@ def fetch_weights(
         wan = str(fetch_wan(dest, token))
     paths = {"FORGE_WAN_CKPT": wan}
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "paths.json").write_text(json.dumps(paths, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (dest / "paths.json").write_text(json.dumps(paths, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     lines = [f"export {key}={shlex.quote(value)}" for key, value in paths.items()]
-    (dest / "exports.sh").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (dest / "exports.sh").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return paths

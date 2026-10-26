@@ -73,7 +73,7 @@ def _write_manifest(forge_out: Path, plan: CanvasPlan, parts: list[dict[str, obj
         "parts": parts,
     }
     json_path = directory / f"{day}-canvas-zimage.json"
-    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     lines = [
         "# Canvas MODELS",
         "",
@@ -95,7 +95,7 @@ def _write_manifest(forge_out: Path, plan: CanvasPlan, parts: list[dict[str, obj
                     )
             lines.append("")
     md_path = directory / f"{day}-canvas-zimage.MODELS.md"
-    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8", newline="\n")
     return str(json_path), str(md_path)
 
 

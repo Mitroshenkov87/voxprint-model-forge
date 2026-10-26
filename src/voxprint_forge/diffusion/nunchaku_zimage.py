@@ -843,12 +843,20 @@ def execute(
         if "cap16" in options.caps:
             export_aliases(out, arm, "cap16", [case.case_id for case in cases_for(arm, requested, smoke=options.smoke)])
     text = render_message(result)
-    (out / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (out / "MESSAGE.md").write_text(text, encoding="utf-8")
+    (out / "result.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (out / "MESSAGE.md").write_text(text, encoding="utf-8", newline="\n")
     mirrored = _mirror(out)
     if mirrored is not None:
         result["mirror"] = mirrored
-        (out / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (out / "result.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
     if options.cleanup:
         _cleanup_weights(arms)
     return code, result
@@ -1675,12 +1683,12 @@ def _log(message: str) -> None:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 
 
 def _mark(directory: Path, step: str, token: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / step).write_text(token + "\n", encoding="utf-8")
+    (directory / step).write_text(token + "\n", encoding="utf-8", newline="\n")
 
 
 def _marked(directory: Path, step: str, token: str) -> bool:

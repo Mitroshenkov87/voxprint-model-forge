@@ -390,13 +390,13 @@ class Rerun:
         argv = [sys.executable, str(convert), str(source / AUTHOR_DIR), "--outtype", "q8_0"]
         argv += ["--outfile", str(self.reference)]
         self.log("convert to Q8_0 (llama.cpp 988190680)")
-        with (self.out / "convert.log").open("w", encoding="utf-8") as handle:
+        with (self.out / "convert.log").open("w", encoding="utf-8", newline="\n") as handle:
             done = subprocess.run(argv, stdout=handle, stderr=subprocess.STDOUT, check=False)
         if done.returncode != 0 or not self.reference.is_file():
             raise RerunError("conversion failed (see convert.log)")
         shutil.rmtree(source)
         digest = sha256_path(self.reference)
-        stamp.write_text(f"{digest}  {self.reference.name}\n", encoding="utf-8")
+        stamp.write_text(f"{digest}  {self.reference.name}\n", encoding="utf-8", newline="\n")
         self.log(f"reference {self.reference.name}: sha256 {digest[:12]}, author safetensors deleted")
         return digest
 
@@ -420,7 +420,7 @@ class Rerun:
         def run(name: str, model: Path, digest: str, *, compare: bool) -> str:
             argv = perplexity_argv(perplexity, model, corpus, logits, compare=compare, fit=self.args.fit)
             path = self.out / f"ppl-{name}.log"
-            with path.open("w", encoding="utf-8") as handle:
+            with path.open("w", encoding="utf-8", newline="\n") as handle:
                 handle.write(f"# argv: {' '.join(argv)}\n# model sha256: {digest}\n# {json.dumps(header)}\n")
                 handle.flush()
                 done = subprocess.run(argv, stdout=handle, stderr=subprocess.STDOUT, check=False)
@@ -451,7 +451,7 @@ class Rerun:
         problems = reference_check(rows, reference_sha, expected)
         summary = {"job": "G4R-rerun", **header, "ppl_base": base_ppl, "quants": rows, "reference_problems": problems}
         path = self.out / "kl-summary.json"
-        path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
         if problems:
             raise RerunError("KL reference check: " + "; ".join(problems))
         self.log(f"KL reference check OK (base PPL {base_ppl}; every tier read the same logits)")
@@ -461,7 +461,7 @@ class Rerun:
         """Serve one model, probe it, stop the server. Summary to results, raw text to the private dir."""
         port = self.args.port
         log_path = self.out / f"server-{label}.log"
-        with log_path.open("w", encoding="utf-8") as handle:
+        with log_path.open("w", encoding="utf-8", newline="\n") as handle:
             server = subprocess.Popen(
                 server_argv(exe(self.bin, "llama-server"), model, port, fit=self.args.fit),
                 stdout=handle,
@@ -482,7 +482,7 @@ class Rerun:
                 except subprocess.TimeoutExpired:
                     server.kill()
         text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-        (self.out / f"probe-{label}.json").write_text(text, encoding="utf-8")
+        (self.out / f"probe-{label}.json").write_text(text, encoding="utf-8", newline="\n")
         self.log(
             f"probe {label}: refusal rate {payload['refusal_rate']}, {payload['answered']}/{payload['n']} answered, "
             f"{payload['empty']} empty ({payload['thinking_only']} thinking-only), finish {payload['finish_reasons']}"
@@ -520,10 +520,14 @@ class Rerun:
         for quant, path in self.tiers.items():
             self.probe_arm(f"new-{quant}", path)
         diff = Path(self.args.tensor_diff)
-        (self.out / "tensor-diff.json").write_text(diff.read_text(encoding="utf-8"), encoding="utf-8")
+        (self.out / "tensor-diff.json").write_text(diff.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
         pairs = [(quant, f"stock-{quant}", f"new-{quant}") for quant in self.tiers]
         verdict = rc._verdict(self.out, summary, {quant: L2_KL[quant] for quant in self.tiers}, pairs)
-        (self.out / "verdict.json").write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (self.out / "verdict.json").write_text(
+            json.dumps(verdict, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         self.log(f"verdict: {verdict['verdict']}")
         if verdict["verdict"] == "INVALID":
             return rc.HARNESS_INVALID_EXIT

@@ -46,9 +46,9 @@ def release_consumer(
     """Record ``consumer`` as finished. Delete the shared tree when the list is complete."""
     folder = _markers(forge_out, job_id, source_id)
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / consumer).write_text("released\n", encoding="utf-8")
+    (folder / consumer).write_text("released\n", encoding="utf-8", newline="\n")
     if consumers:
-        (folder / "_consumers").write_text("\n".join(consumers) + "\n", encoding="utf-8")
+        (folder / "_consumers").write_text("\n".join(consumers) + "\n", encoding="utf-8", newline="\n")
     if not consumers or any(not (folder / name).is_file() for name in consumers):
         return False
     tree = source_store(forge_out, job_id) / source_id

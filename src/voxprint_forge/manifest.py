@@ -76,8 +76,8 @@ def write_run_manifest(
     snippet_name = f"{date}-a100.MODELS.md"
     folder = layout.manifest_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / name).write_text(body, encoding="utf-8")
-    (folder / snippet_name).write_text(snippet, encoding="utf-8")
+    (folder / name).write_text(body, encoding="utf-8", newline="\n")
+    (folder / snippet_name).write_text(snippet, encoding="utf-8", newline="\n")
     instructions = copy_back_instructions(date, folder)
     return {
         "manifests": [str(folder / name)],

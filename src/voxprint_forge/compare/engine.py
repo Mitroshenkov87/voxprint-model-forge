@@ -231,6 +231,7 @@ def load_controlnet(path: Path) -> object:
     (folder / "config.json").write_text(
         json.dumps(union_config(places_for_count(len(layers)))),
         encoding="utf-8",
+        newline="\n",
     )
     return ZImageControlNetModel.from_single_file(str(path), config=str(folder), torch_dtype=torch.bfloat16)
 

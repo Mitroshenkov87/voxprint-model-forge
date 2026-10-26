@@ -88,13 +88,13 @@ def check_disk(ctx: Ctx) -> None:
 def write_notice(output: Path) -> None:
     """Write the licence notice next to published weights."""
     output.mkdir(parents=True, exist_ok=True)
-    (output / "NOTICE").write_text(NOTICE_TEXT, encoding="utf-8")
+    (output / "NOTICE").write_text(NOTICE_TEXT, encoding="utf-8", newline="\n")
 
 
 def write_json(path: Path, payload: object) -> None:
     """Write JSON with a trailing newline."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 
 
 def progress(ctx: Ctx, stage: str, pct: int, eta_min: float) -> None:

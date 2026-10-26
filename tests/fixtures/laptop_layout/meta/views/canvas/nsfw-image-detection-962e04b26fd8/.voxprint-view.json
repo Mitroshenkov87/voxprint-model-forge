@@ -1,0 +1,9 @@
+{
+  "files": {
+    "config.json": "cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2",
+    "model.safetensors": "97b2ce64ec146884b37f98ee7944ca4891aa72f6827dc0cb10684a1cbecd5830",
+    "preprocessor_config.json": "a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d"
+  },
+  "key": "nsfw-image-detection",
+  "schema": 1
+}

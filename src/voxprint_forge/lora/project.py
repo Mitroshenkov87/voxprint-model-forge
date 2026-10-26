@@ -136,5 +136,5 @@ def package_stem(data: dict[str, object]) -> str:
 
 def _atomic(path: Path, content: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    tmp.write_text(content, encoding="utf-8", newline="\n")
     tmp.replace(path)

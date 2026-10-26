@@ -2461,7 +2461,7 @@ class ForgeApp:
         lines = [json.dumps({"id": str(row.get("id")), "short": str(row.get("short", "")),
                              "long": str(row.get("long", ""))}, ensure_ascii=False)
                  for row in self.draft.prepared.kept]
-        edits.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        edits.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     def _needs(self, command: str) -> bool:
         if command in self.commands:

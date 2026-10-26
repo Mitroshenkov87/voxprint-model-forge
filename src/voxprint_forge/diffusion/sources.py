@@ -119,5 +119,5 @@ def fetch_sources(sources: tuple[Source, ...], dest: Path, token: str | None) ->
             "files": hashes,
         }
     path = dest / "upstream-sha256.json"
-    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return record

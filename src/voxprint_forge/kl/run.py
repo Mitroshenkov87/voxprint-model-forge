@@ -146,7 +146,7 @@ def run_kl(
 def keep_log(work: Path, name: str, argv: Sequence[str], text: str) -> Path:
     """Full llama-perplexity output next to summary.json (G4R 07:29 kept only the parsed figures)."""
     path = work / f"perplexity-{name}.log"
-    path.write_text("# argv: " + " ".join(str(item) for item in argv) + "\n" + text, encoding="utf-8")
+    path.write_text("# argv: " + " ".join(str(item) for item in argv) + "\n" + text, encoding="utf-8", newline="\n")
     return path
 
 
@@ -447,8 +447,12 @@ def _one_quant(
 
 
 def _write(work: Path, payload: dict[str, object]) -> None:
-    (work / "summary.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (work / "summary.md").write_text(_markdown(payload), encoding="utf-8")
+    (work / "summary.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (work / "summary.md").write_text(_markdown(payload), encoding="utf-8", newline="\n")
 
 
 def _markdown(payload: dict[str, object]) -> str:

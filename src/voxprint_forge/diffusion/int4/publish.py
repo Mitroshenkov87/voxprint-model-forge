@@ -111,7 +111,7 @@ def write_publish_tree(output: Path, files: list[Path], card_text: str) -> list[
     output.mkdir(parents=True, exist_ok=True)
     published: list[Path] = []
     readme = output / "README.md"
-    readme.write_text(card_text, encoding="utf-8")
+    readme.write_text(card_text, encoding="utf-8", newline="\n")
     published.append(readme)
     used = {"README.md"}
     for src in files:

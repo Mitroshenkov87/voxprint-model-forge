@@ -31,5 +31,5 @@ def write_sha256(path: Path, digest: str | None = None) -> Path:
     """Write ``<file>.sha256`` next to ``path``. Returns the sidecar path."""
     value = digest if digest is not None else sha256_file(path)
     sidecar = Path(str(path) + ".sha256")
-    sidecar.write_text(f"{value}  {path.name}\n", encoding="utf-8")
+    sidecar.write_text(f"{value}  {path.name}\n", encoding="utf-8", newline="\n")
     return sidecar

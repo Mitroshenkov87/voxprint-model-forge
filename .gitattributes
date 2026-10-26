@@ -6,6 +6,22 @@
 *.png binary
 *.webp binary
 *.ico binary
+*.whl binary
+*.gz binary
+*.pdf binary
+*.exe binary
+*.zip binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.onnx binary
+*.pt binary
+*.pth binary
+*.ckpt binary
+*.bin binary
 # Vendored files are sha256-pinned; keep their bytes on every OS.
 src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py -text
 src/voxprint_forge/vendored/moss_image/LICENSE -text
+# Laptop snapshot bytes are content-addressed, including CRLF JSON.
+tests/fixtures/laptop_layout/meta/** binary

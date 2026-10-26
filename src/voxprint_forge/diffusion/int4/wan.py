@@ -246,7 +246,7 @@ def smoke_step(ctx: StageContext) -> dict[str, object]:
         payload["save_file"] = str(save)
     path = work / "smoke" / "smoke.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return payload
 
 
