@@ -1,7 +1,8 @@
 """Check and repair calls the voxprint-common 0.5.2 names.
 
-``--gui`` launches ``voxprint-mdl-gui``. These tests substitute that process
-so a headless run does not open the window.
+``--gui`` launches ``voxprint-mdl verify --gui``. These tests substitute that
+process so a headless run does not open the window. A terminal check substitutes
+``verify_repair`` so the suite does not hash the fixture.
 """
 
 from __future__ import annotations
@@ -19,11 +20,12 @@ from voxprint_common.model_park import ModelPark
 from voxprint_forge.cli import main
 from voxprint_forge.mdl_adapter import (
     MdlAdapterError,
+    format_verify_counts,
     installed_model_ids,
-    launch_mdl_gui,
-    mdl_gui_argv,
+    mdl_script,
     spawn,
     stage,
+    verify_window_argv,
 )
 
 USER_LORA = b"do-not-touch-lora"
@@ -110,9 +112,9 @@ def test_installed_ids_skip_user_data_and_absent_catalog_rows(tmp_path: Path) ->
 
 
 def _gui(monkeypatch: pytest.MonkeyPatch, exe: str) -> dict[str, object]:
-    """Record the ``voxprint-mdl-gui`` launch and return what the fake saw."""
+    """Record the ``voxprint-mdl verify --gui`` launch and return what the fake saw."""
     seen: dict[str, object] = {}
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_gui_executable", lambda: [exe])
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_script", lambda: [exe])
 
     def fake_run(command: list[str], check: bool = False, **kwargs: object) -> subprocess.CompletedProcess[str]:
         seen["command"] = list(command)
@@ -132,18 +134,32 @@ def _gui(monkeypatch: pytest.MonkeyPatch, exe: str) -> dict[str, object]:
     return seen
 
 
-def test_gui_launches_mdl_gui_even_when_every_model_is_ok(
+def _assert_verify_gui(command: object, exe: str, *, repair: bool) -> None:
+    assert isinstance(command, list)
+    assert command[0] == exe
+    assert Path(command[0]).name.lower().removesuffix(".exe") != "voxprint-mdl-gui"
+    assert command[1:4] == ["verify", "--app", "model-forge"]
+    assert "--gui" in command
+    assert ("--repair" in command) is repair
+    assert "plug-toy" not in command
+    assert "secret-lora" not in command
+    assert "never-installed" not in command
+    assert "toy" in command
+    assert "blob-only" in command
+
+
+def test_gui_launches_verify_even_when_every_model_is_ok(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     manifest, _, _ = _install(tmp_path)
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
     monkeypatch.setattr("voxprint_forge.mdl_adapter._is_windows", lambda: True)
-    exe = r"C:\venv\Scripts\voxprint-mdl-gui.exe"
+    exe = r"C:\venv\Scripts\voxprint-mdl.exe"
     seen = _gui(monkeypatch, exe)
     code = main(["models", "verify", "--gui"])
     assert code == 0
-    assert seen["command"] == [exe, "--app", "model-forge"]
+    _assert_verify_gui(seen["command"], exe, repair=False)
     assert seen["run"] is True
     kwargs = seen["kwargs"]
     assert isinstance(kwargs, dict)
@@ -152,20 +168,22 @@ def test_gui_launches_mdl_gui_even_when_every_model_is_ok(
     assert kwargs["stdout"] is subprocess.DEVNULL
     assert kwargs["stderr"] is subprocess.DEVNULL
     assert kwargs["start_new_session"] is True
-    assert "--repair" not in seen["command"]
     assert capsys.readouterr().out == ""
 
 
-def test_gui_repair_still_launches_the_same_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gui_repair_launches_verify_with_repair(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     manifest, _, _ = _install(tmp_path)
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
     monkeypatch.setattr("voxprint_forge.mdl_adapter._is_windows", lambda: False)
-    exe = "/opt/venv/bin/voxprint-mdl-gui"
+    exe = "/opt/venv/bin/voxprint-mdl"
     seen = _gui(monkeypatch, exe)
     code = main(["models", "verify", "--gui", "--repair"])
     assert code == 0
-    assert seen["command"] == [exe, "--app", "model-forge"]
+    _assert_verify_gui(seen["command"], exe, repair=True)
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert command[-2:] == ["--gui", "--repair"]
     kwargs = seen["kwargs"]
     assert isinstance(kwargs, dict)
     assert kwargs["creationflags"] == 0
@@ -181,7 +199,7 @@ def test_spawn_passes_create_no_window_on_windows(monkeypatch: pytest.MonkeyPatc
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.Popen", fake_popen)
-    argv = [r"C:\venv\Scripts\voxprint-mdl-gui.exe", "--app", "model-forge"]
+    argv = [r"C:\venv\Scripts\voxprint-mdl.exe", "verify", "--app", "model-forge", "--gui", "--repair"]
     assert spawn(argv) == 0
     assert seen["command"] == argv
     kwargs = seen["kwargs"]
@@ -194,7 +212,7 @@ def test_gui_returns_the_window_exit_code(monkeypatch: pytest.MonkeyPatch, tmp_p
     manifest, _, _ = _install(tmp_path)
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_gui_executable", lambda: ["voxprint-mdl-gui"])
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_script", lambda: ["voxprint-mdl"])
 
     def fake_run(command: list[str], check: bool = False, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         assert check is False
@@ -204,65 +222,111 @@ def test_gui_returns_the_window_exit_code(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert main(["models", "verify", "--gui"]) == 2
 
 
-def test_cli_prints_the_mdl_table_and_exits_when_broken(
+def _outcome(
+    code: int,
+    counts: dict[str, int],
+    steps: list[tuple[str, str]],
+    message: str = "",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        code=code,
+        message=message,
+        status=SimpleNamespace(
+            extra={"counts": counts},
+            steps=[SimpleNamespace(item_id=model_id, state=state) for model_id, state in steps],
+        ),
+    )
+
+
+def test_cli_prints_per_status_counts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     manifest, weights, note = _install(tmp_path)
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
-    calls: list[list[str]] = []
+    seen: dict[str, object] = {}
 
-    def fake_run(command: list[str], check: bool, capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
-        assert check is False
-        assert capture_output is True
-        assert text is True
-        calls.append(list(command))
-        return subprocess.CompletedProcess(
-            command, 4, stdout="toy  missing\nplug-toy  corrupt\n", stderr="hashing toy\n"
+    def fake(model_ids: list[str], repair: bool = True, manifests: list[Path] | None = None) -> SimpleNamespace:
+        seen["ids"] = list(model_ids)
+        seen["repair"] = repair
+        seen["manifests"] = list(manifests or [])
+        return _outcome(
+            2,
+            {"ok": 0, "missing": 1, "corrupt": 1, "repaired": 0, "failed": 0},
+            [("toy", "missing"), ("blob-only", "corrupt")],
         )
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.verify_repair", fake)
     code = main(["models", "verify"])
     captured = capsys.readouterr()
-    assert code == 4
-    assert "missing" in captured.out
-    assert "corrupt" in captured.out
-    assert captured.err == "hashing toy\n"
-    command = calls[0]
-    assert command[command.index("verify") + 1 : command.index("verify") + 3] == ["--app", "model-forge"]
-    assert "--repair" not in command
-    assert "--gui" not in command
-    assert "toy" in command
-    assert "blob-only" in command
-    assert "plug-toy" in command
-    assert "secret-lora" not in command
-    assert "never-installed" not in command
-    assert str(manifest) in command
+    assert code == 2
+    assert captured.out == "2 models: 0 OK, 1 damaged, 1 missing\n"
+    assert seen["repair"] is False
+    assert seen["ids"] == ["toy", "blob-only"]
+    assert seen["manifests"] == [manifest]
+    assert "plug-toy" not in seen["ids"]
+    assert "secret-lora" not in seen["ids"]
+    assert "never-installed" not in seen["ids"]
     assert weights.read_bytes() == USER_LORA
     assert note.read_bytes() == PROJECT_NOTE
 
 
-def test_cli_repair_passes_repair_to_voxprint_mdl(
+def test_cli_counts_repaired_models_as_ok(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     manifest, _, _ = _install(tmp_path)
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
-    calls: list[list[str]] = []
 
-    def fake_run(command: list[str], check: bool, capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
-        calls.append(list(command))
-        return subprocess.CompletedProcess(command, 0, stdout="toy OK\nplug-toy OK\n", stderr="")
+    def fake(model_ids: list[str], repair: bool = True, manifests: list[Path] | None = None) -> SimpleNamespace:
+        del model_ids, manifests
+        assert repair is False
+        return _outcome(0, {"ok": 11, "missing": 0, "corrupt": 0, "repaired": 0, "failed": 0}, [])
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.verify_repair", fake)
+    assert main(["models", "verify"]) == 0
+    assert capsys.readouterr().out == "11 models: 11 OK, 0 damaged, 0 missing\n"
+
+
+def test_cli_repair_passes_repair_and_counts_repaired_files_as_ok(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest, _, _ = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+    seen: dict[str, object] = {}
+
+    def fake(model_ids: list[str], repair: bool = True, manifests: list[Path] | None = None) -> SimpleNamespace:
+        del manifests
+        seen["repair"] = repair
+        seen["ids"] = list(model_ids)
+        return _outcome(0, {"ok": 9, "missing": 0, "corrupt": 0, "repaired": 2, "failed": 0}, [])
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.verify_repair", fake)
     code = main(["models", "verify", "--repair"])
     captured = capsys.readouterr()
     assert code == 0
-    assert calls[0][-1] == "--repair"
-    assert "verify" in calls[0]
-    assert "missing" not in captured.out
-    assert "corrupt" not in captured.out
-    assert "OK" in captured.out
+    assert seen["repair"] is True
+    assert captured.out == "11 models: 11 OK, 0 damaged, 0 missing\n"
+    assert format_verify_counts(11, 0, 0) == captured.out
+
+
+def test_cli_prints_the_upstream_error_when_the_check_has_no_counts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest, _, _ = _install(tmp_path)
+    monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
+
+    def fake(model_ids: list[str], repair: bool = True, manifests: list[Path] | None = None) -> SimpleNamespace:
+        del model_ids, repair, manifests
+        return SimpleNamespace(code=2, message="model toy is not available for this card", status=SimpleNamespace())
+
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.verify_repair", fake)
+    code = main(["models", "verify"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == "model toy is not available for this card\n"
 
 
 def test_cli_with_nothing_installed_is_ok_and_does_not_plan_the_catalog(
@@ -275,15 +339,14 @@ def test_cli_with_nothing_installed_is_ok_and_does_not_plan_the_catalog(
     monkeypatch.setenv("VOXPRINT_MODELS_DIR", str(root))
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
 
-    def fail_run(*_args: object, **_kwargs: object) -> None:
+    def fail_repair(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("an empty install must not ask voxprint-mdl to plan the catalog")
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail_run)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.verify_repair", fail_repair)
     code = main(["models", "verify"])
     captured = capsys.readouterr()
     assert code == 0
-    assert "(none)" in captured.out
-    assert "OK" in captured.out
+    assert captured.out == "0 models: 0 OK, 0 damaged, 0 missing\n"
 
 
 def test_stage_forwards_to_model_park(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -310,7 +373,7 @@ def test_installed_stage_is_the_050_context_manager() -> None:
     assert "model_ids" in repair_params and "repair" in repair_params and "show" in repair_params
 
 
-def test_missing_gui_executable_is_an_error_and_does_not_spawn(
+def test_missing_mdl_script_is_an_error_and_does_not_spawn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("voxprint_forge.mdl_adapter.sys.executable", str(tmp_path / "python"))
@@ -318,14 +381,15 @@ def test_missing_gui_executable_is_an_error_and_does_not_spawn(
     monkeypatch.setattr("voxprint_forge.mdl_adapter._is_windows", lambda: False)
 
     def fail(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("a missing voxprint-mdl-gui must not spawn")
+        raise AssertionError("a missing voxprint-mdl must not spawn")
 
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.Popen", fail)
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail)
-    with pytest.raises(MdlAdapterError, match=r"voxprint-mdl-gui.*does not provide it"):
-        mdl_gui_argv()
-    with pytest.raises(MdlAdapterError, match="does not provide it"):
-        launch_mdl_gui(wait=False)
+    manifest = tmp_path / "mdl.json"
+    manifest.write_text("{}", encoding="utf-8")
+    assert mdl_script() is None
+    with pytest.raises(MdlAdapterError, match=r"voxprint-mdl verify --gui.*does not provide it"):
+        verify_window_argv(repair=True, manifest=manifest)
     monkeypatch.setattr("voxprint_forge.mdl_adapter.for_process", lambda *args, **kwargs: SimpleNamespace())
     with pytest.raises(MdlAdapterError, match=r"model_park\.stage"):
         stage("load", ["toy"])
@@ -333,12 +397,15 @@ def test_missing_gui_executable_is_an_error_and_does_not_spawn(
 
 def test_windows_sibling_executable_uses_the_exe_suffix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     exe = tmp_path / "python.exe"
-    gui = tmp_path / "voxprint-mdl-gui.exe"
+    mdl = tmp_path / "voxprint-mdl.exe"
     exe.write_bytes(b"")
-    gui.write_bytes(b"")
+    mdl.write_bytes(b"")
+    manifest = tmp_path / "mdl.json"
+    manifest.write_text(json.dumps({"models": []}), encoding="utf-8")
     monkeypatch.setattr("voxprint_forge.mdl_adapter.sys.executable", str(exe))
     monkeypatch.setattr("voxprint_forge.mdl_adapter._is_windows", lambda: True)
-    assert mdl_gui_argv() == [str(gui), "--app", "model-forge"]
+    argv = verify_window_argv(repair=True, manifest=manifest, root=tmp_path)
+    assert argv == [str(mdl), "verify", "--app", "model-forge", "--manifest", str(manifest), "--gui", "--repair"]
 
 
 def test_missing_names_are_an_error_and_not_the_download_window(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -586,7 +586,7 @@ class ForgeApp:
         self._launch(manage_argv())
 
     def check_and_repair_models(self) -> None:
-        """Open the check window (``voxprint-mdl-gui --app model-forge``)."""
+        """Open check and repair (``voxprint-mdl verify --app model-forge --gui --repair``)."""
         try:
             argv = verify_argv()
         except MdlAdapterError as exc:

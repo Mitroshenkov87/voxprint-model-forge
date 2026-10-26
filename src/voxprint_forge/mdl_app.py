@@ -1,8 +1,8 @@
 """Model Forge's MDL manifest and the ``models`` commands.
 
 Manage models and download pass this app's schema 1 file with ``--manifest``.
-Check and repair opens ``voxprint-mdl-gui --app model-forge``; that windowed
-entry point finds the installed app on its own.
+Check and repair opens ``voxprint-mdl verify --app model-forge --gui --repair``.
+``voxprint-mdl-gui --app`` is Manage models and is not used for that button.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from voxprint_common.paths import models_dir
 from voxprint_forge.app_models import load as load_app_models
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.lora.backends import LEGACY_IDS
-from voxprint_forge.mdl_adapter import execute_verify, mdl_gui_argv
+from voxprint_forge.mdl_adapter import execute_verify, verify_window_argv
 from voxprint_forge.model_views import APP_DIR, MARKER, ensure_view
 from voxprint_forge.model_views import manifest_path as packaged_manifest
 
@@ -126,8 +126,8 @@ def manage_argv() -> list[str]:
 
 
 def verify_argv() -> list[str]:
-    """``voxprint-mdl-gui --app model-forge``."""
-    return mdl_gui_argv()
+    """``voxprint-mdl verify --app model-forge --gui --repair``."""
+    return verify_window_argv(repair=True, manifest=manifest_path())
 
 
 def download_argv(

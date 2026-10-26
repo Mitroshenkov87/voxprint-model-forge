@@ -3,10 +3,15 @@
 The vendored pin is 0.5.2. This module is the only forge code that names
 that surface:
 
-* ``voxprint-mdl-gui --app model-forge`` opens the shared download and check
-  window. It is the windowed entry point (``pythonw`` on Windows). The launch
-  passes ``CREATE_NO_WINDOW`` so a console does not flash.
-* ``voxprint-mdl verify [--repair]`` is the table for a terminal.
+* ``voxprint-mdl verify --app model-forge --gui --repair`` opens the
+  check-and-repair window. ``voxprint-mdl-gui --app`` opens Manage models and
+  is not used here. The launch passes ``CREATE_NO_WINDOW`` so a console does
+  not flash. A missing ``voxprint-mdl`` is an error and is not replaced with
+  ``python -m``.
+* A terminal check calls :func:`voxprint_common.mdl.job.verify_repair`. The
+  ``voxprint-mdl --json verify`` result line in this pin is ``ready`` plus
+  ``ready``, ``state``, and ``jobs``, with no per-status counts. The counts
+  are ``status.extra["counts"]``.
 * ``ModelPark.stage(name, models, device=...)`` from
   :func:`voxprint_common.model_park.for_process` is the shared RAM hot tier.
 
@@ -20,10 +25,11 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from voxprint_common.mdl.descriptor import DescriptorError, parse_descriptor_text
+from voxprint_common.mdl.job import verify_repair
 from voxprint_common.mdl.names import CLI_NAME
 from voxprint_common.model_park import for_process
 from voxprint_common.paths import models_dir
@@ -33,14 +39,16 @@ from voxprint_forge.errors import EXIT_CHECKSUM, EXIT_TOOL, ForgeError
 from voxprint_forge.model_views import APP_DIR, BLOBS_DIR
 
 APP_ID = "model-forge"
-GUI_NAME = "voxprint-mdl-gui"
 MANIFEST_NAME = "voxprint-model.json"
 USER_DATA_DIRS = frozenset({"user-models", "projects", "lora"})
 WALK_SKIP = USER_DATA_DIRS | frozenset({BLOBS_DIR, APP_DIR})
-MISSING_MDL_GUI = (
+MISSING_MDL = (
     "voxprint-common 0.5.2 is required for models verify "
-    "(voxprint-mdl-gui). The installed package does not provide it."
+    "(voxprint-mdl verify --gui). The installed package does not provide it."
 )
+_OK_STATES = frozenset({"ok", "repaired", "verified"})
+_MISSING_STATES = frozenset({"missing"})
+_DAMAGED_STATES = frozenset({"corrupt", "damaged", "failed", "stale"})
 
 
 class MdlAdapterError(ForgeError):
@@ -70,36 +78,57 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
-def mdl_gui_executable() -> list[str] | None:
-    """``voxprint-mdl-gui`` beside this interpreter, else on ``PATH``.
+def mdl_script() -> list[str] | None:
+    """``voxprint-mdl`` beside this interpreter, else on ``PATH``.
 
-    The script is the windowed entry point, ``pythonw`` on Windows. A missing
-    file is not replaced with ``python -m``: that interpreter would open a console.
+    A missing file is not replaced with ``python -m``. That interpreter would
+    open a console in front of the check window.
     """
     suffix = ".exe" if _is_windows() else ""
-    bundled = Path(sys.executable).with_name(GUI_NAME + suffix)
+    bundled = Path(sys.executable).with_name(CLI_NAME + suffix)
     if bundled.is_file():
         return [str(bundled)]
-    found = shutil.which(GUI_NAME)
+    found = shutil.which(CLI_NAME)
     if found:
         return [found]
     if suffix:
-        found = shutil.which(GUI_NAME + suffix)
+        found = shutil.which(CLI_NAME + suffix)
         if found:
             return [found]
     return None
 
 
-def mdl_gui_argv() -> list[str]:
-    """``voxprint-mdl-gui --app model-forge``.
+def verify_window_argv(
+    *,
+    repair: bool,
+    manifest: Path,
+    root: Path | None = None,
+    executable: Sequence[str] | None = None,
+) -> list[str]:
+    """``voxprint-mdl verify --app model-forge --manifest <path> [--model id] --gui [--repair]``.
+
+    Installed catalog ids are passed with ``--model``. Plug-in ids that are
+    not in this manifest are left out: 0.5.2 rejects them. MOSS FP8 ids are
+    left out so the window does not download those files. ``repair`` adds
+    ``--repair``.
 
     Raises:
-        MdlAdapterError: The windowed executable is not installed.
+        MdlAdapterError: ``voxprint-mdl`` is not installed.
     """
-    command = mdl_gui_executable()
-    if command is None:
-        raise MdlAdapterError(MISSING_MDL_GUI)
-    return [*command, "--app", APP_ID]
+    if executable is not None:
+        command = [str(part) for part in executable]
+    else:
+        found = mdl_script()
+        if found is None:
+            raise MdlAdapterError(MISSING_MDL)
+        command = list(found)
+    command += ["verify", "--app", APP_ID, "--manifest", str(manifest)]
+    for model_id in _check_ids(manifest, root):
+        command += ["--model", model_id]
+    command.append("--gui")
+    if repair:
+        command.append("--repair")
+    return command
 
 
 def spawn(argv: Sequence[str], *, wait: bool = False) -> int:
@@ -111,18 +140,6 @@ def spawn(argv: Sequence[str], *, wait: bool = False) -> int:
         return int(completed.returncode)
     subprocess.Popen(command, **options)
     return 0
-
-
-def launch_mdl_gui(*, wait: bool) -> int:
-    """Open ``voxprint-mdl-gui --app model-forge`` without a console window.
-
-    Raises:
-        MdlAdapterError: The windowed executable is missing or cannot be started.
-    """
-    try:
-        return spawn(mdl_gui_argv(), wait=wait)
-    except OSError as exc:
-        raise MdlAdapterError(MISSING_MDL_GUI) from exc
 
 
 def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> object:
@@ -142,24 +159,6 @@ def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> objec
     return fn(name, models, device=device)
 
 
-def verify_argv(
-    *,
-    repair: bool,
-    model_ids: Sequence[str],
-    manifest: Path,
-    executable: Sequence[str] | None = None,
-) -> list[str]:
-    """``voxprint-mdl verify --app model-forge --manifest <path> [--model id] [--repair]``."""
-    command = list(executable) if executable is not None else _mdl_executable()
-    command.append("verify")
-    command += ["--app", APP_ID, "--manifest", str(manifest)]
-    for model_id in model_ids:
-        command += ["--model", model_id]
-    if repair:
-        command.append("--repair")
-    return command
-
-
 def execute_verify(
     *,
     manifest: Path,
@@ -170,45 +169,60 @@ def execute_verify(
 ) -> dict[str, object]:
     """Check installed models and return ``ok``, ``exit_code``, ``models``, and ``text``.
 
-    ``gui`` launches :func:`launch_mdl_gui` and waits for that window, including
-    when every installed model is already OK. Without ``gui``, ``voxprint-mdl
-    verify`` prints the table and its exit code is returned. An empty install
-    without ``gui`` is success and does not ask MDL to plan the whole catalog.
+    ``gui`` launches :func:`verify_window_argv` and waits for that window,
+    including when every installed model is already OK. Without ``gui``,
+    :func:`verify_repair` checks the same ids and ``text`` is
+    ``N models: X OK, Y damaged, Z missing``. An empty install without ``gui``
+    is success and does not ask MDL to plan the whole catalog.
 
     MOSS FP8 ids are left out of that call. They are hashed here, and ``repair``
     rebuilds a missing or corrupt file from the pinned bf16 snapshot (or from
     the mirror, once that revision is published).
     """
-    ids = installed_model_ids(manifest, root=root)
     base = root if root is not None else models_dir()
     fp8_rows = [dict(row) for row in moss_fp8.cover(base, repair=repair)]
-    upstream = [model_id for model_id in ids if model_id not in moss_fp8.model_ids()]
     if gui:
-        code = launch_mdl_gui(wait=True)
+        try:
+            code = spawn(
+                verify_window_argv(repair=repair, manifest=manifest, root=root, executable=executable),
+                wait=True,
+            )
+        except OSError as exc:
+            raise MdlAdapterError(MISSING_MDL) from exc
         return _with_fp8(
             {"ok": code == 0, "exit_code": code, "models": [], "text": ""},
             fp8_rows,
         )
+    upstream = _check_ids(manifest, root)
     if not upstream and not fp8_rows:
-        return {"ok": True, "exit_code": 0, "models": [], "text": _empty_table()}
+        return {"ok": True, "exit_code": 0, "models": [], "text": format_verify_counts(0, 0, 0)}
     if not upstream:
-        return _with_fp8({"ok": True, "exit_code": 0, "models": [], "text": ""}, fp8_rows)
-    command = verify_argv(repair=repair, model_ids=upstream, manifest=manifest, executable=executable)
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
-    if completed.stderr:
-        print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
-    text = completed.stdout
-    if text and not text.endswith("\n"):
-        text += "\n"
-    return _with_fp8(
+        merged = _with_fp8({"ok": True, "exit_code": 0, "models": [], "text": ""}, fp8_rows)
+        return _with_summary(merged, counts=None, fp8_rows=fp8_rows)
+    outcome = verify_repair(list(upstream), repair=repair, manifests=[manifest])
+    counts = _outcome_counts(outcome)
+    raw_message = getattr(outcome, "message", "")
+    message = raw_message if isinstance(raw_message, str) else ""
+    merged = _with_fp8(
         {
-            "ok": completed.returncode == 0,
-            "exit_code": completed.returncode,
-            "models": [],
-            "text": text,
+            "ok": outcome.code == 0,
+            "exit_code": outcome.code,
+            "models": _rows_from_steps(getattr(outcome.status, "steps", ())),
+            "text": "",
         },
         fp8_rows,
     )
+    if counts is None and outcome.code != 0:
+        text = message if message.endswith("\n") else f"{message}\n"
+        merged["text"] = text
+        return merged
+    return _with_summary(merged, counts=counts, fp8_rows=fp8_rows)
+
+
+def format_verify_counts(ok: int, damaged: int, missing: int) -> str:
+    """``N models: X OK, Y damaged, Z missing`` including the trailing newline."""
+    total = ok + damaged + missing
+    return f"{total} models: {ok} OK, {damaged} damaged, {missing} missing\n"
 
 
 def _with_fp8(result: dict[str, object], rows: list[dict[str, object]]) -> dict[str, object]:
@@ -218,15 +232,30 @@ def _with_fp8(result: dict[str, object], rows: list[dict[str, object]]) -> dict[
     models = list(result["models"]) if isinstance(result["models"], list) else []
     models.extend(rows)
     text = result["text"] if isinstance(result["text"], str) else ""
-    if text and not text.endswith("\n"):
-        text += "\n"
-    text += "".join(f"{row['id']}  {row['status']}\n" for row in rows)
     code = result["exit_code"]
     exit_code = code if isinstance(code, int) and not isinstance(code, bool) else EXIT_CHECKSUM
-    broken = {"missing", "corrupt", "stale"}
+    broken = {"missing", "corrupt", "stale", "failed", "damaged"}
     if exit_code == 0 and any(str(row.get("status", "")).lower() in broken for row in rows):
         exit_code = EXIT_CHECKSUM
     return {"ok": exit_code == 0, "exit_code": exit_code, "models": models, "text": text}
+
+
+def _with_summary(
+    result: dict[str, object],
+    *,
+    counts: Mapping[str, object] | None,
+    fp8_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Replace ``text`` with the per-status counts line, including FP8 rows."""
+    if counts is not None:
+        ok, damaged, missing = _tally_counts(counts)
+    else:
+        models = result["models"] if isinstance(result["models"], list) else []
+        upstream = [row for row in models if row not in fp8_rows]
+        ok, damaged, missing = _tally_rows(upstream)
+    fp8_ok, fp8_damaged, fp8_missing = _tally_rows(fp8_rows)
+    result["text"] = format_verify_counts(ok + fp8_ok, damaged + fp8_damaged, missing + fp8_missing)
+    return result
 
 
 def _no_console_kwargs() -> dict[str, object]:
@@ -248,15 +277,87 @@ def _no_console_kwargs() -> dict[str, object]:
     }
 
 
-def _empty_table() -> str:
-    rows = (("model", "status", "checked", "files"), ("(none)", "OK", "0/0", "-"))
-    widths = [max(len(row[index]) for row in rows) for index in range(4)]
-    lines = [
-        "  ".join(cell.ljust(widths[column]) for column, cell in enumerate(rows[0])).rstrip(),
-        "  ".join("-" * width for width in widths).rstrip(),
-        "  ".join(cell.ljust(widths[column]) for column, cell in enumerate(rows[1])).rstrip(),
+def _check_ids(manifest: Path, root: Path | None) -> list[str]:
+    """Installed catalog ids, without MOSS FP8 and without ids 0.5.2 would reject."""
+    listed = _catalog_ids(manifest)
+    skip = moss_fp8.model_ids()
+    return [
+        model_id
+        for model_id in installed_model_ids(manifest, root=root)
+        if model_id in listed and model_id not in skip
     ]
-    return "\n".join(lines) + "\n"
+
+
+def _catalog_ids(manifest: Path) -> set[str]:
+    if not manifest.is_file():
+        return set()
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise MdlAdapterError(f"{manifest.name} could not be read") from exc
+    if not isinstance(document, dict):
+        return set()
+    found: set[str] = set()
+    for model in document.get("models") or []:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if isinstance(model_id, str) and model_id:
+            found.add(model_id)
+    return found
+
+
+def _outcome_counts(outcome: object) -> Mapping[str, object] | None:
+    extra = getattr(getattr(outcome, "status", None), "extra", None)
+    if not isinstance(extra, Mapping):
+        return None
+    counts = extra.get("counts")
+    if isinstance(counts, Mapping):
+        return counts
+    return None
+
+
+def _rows_from_steps(steps: object) -> list[dict[str, object]]:
+    if not isinstance(steps, (list, tuple)):
+        return []
+    rows: list[dict[str, object]] = []
+    for step in steps:
+        model_id = getattr(step, "item_id", "") or getattr(step, "model", "")
+        state = getattr(step, "state", "")
+        if isinstance(model_id, str) and model_id:
+            rows.append({"id": model_id, "status": state if isinstance(state, str) else ""})
+    return rows
+
+
+def _tally_counts(counts: Mapping[str, object]) -> tuple[int, int, int]:
+    ok = _count(counts, "ok") + _count(counts, "repaired") + _count(counts, "verified")
+    damaged = (
+        _count(counts, "corrupt")
+        + _count(counts, "damaged")
+        + _count(counts, "failed")
+        + _count(counts, "stale")
+    )
+    return ok, damaged, _count(counts, "missing")
+
+
+def _tally_rows(rows: Sequence[Mapping[str, object]]) -> tuple[int, int, int]:
+    ok = damaged = missing = 0
+    for row in rows:
+        status = str(row.get("status", "")).lower()
+        if status in _OK_STATES:
+            ok += 1
+        elif status in _MISSING_STATES:
+            missing += 1
+        elif status in _DAMAGED_STATES:
+            damaged += 1
+    return ok, damaged, missing
+
+
+def _count(counts: Mapping[str, object], key: str) -> int:
+    value = counts.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
 
 
 def _app_ids(manifest: Path, root: Path) -> list[str]:
@@ -311,19 +412,3 @@ def _plugin_ids(root: Path) -> list[str]:
         if descriptor.id:
             found.append(descriptor.id)
     return found
-
-
-def _mdl_executable() -> list[str]:
-    """``voxprint-mdl`` beside this interpreter, else on PATH, else ``python -m``.
-
-    Same resolution as :func:`voxprint_forge.mdl_app.mdl_executable`. This
-    module cannot import that one: ``mdl_app`` imports :func:`execute_verify`.
-    """
-    suffix = ".exe" if os.name == "nt" else ""
-    bundled = Path(sys.executable).with_name(CLI_NAME + suffix)
-    if bundled.is_file():
-        return [str(bundled)]
-    found = shutil.which(CLI_NAME)
-    if found:
-        return [found]
-    return [sys.executable, "-m", "voxprint_common.mdl"]

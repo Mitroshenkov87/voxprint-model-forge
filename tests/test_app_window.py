@@ -320,8 +320,10 @@ def test_check_and_repair_opens_the_verify_window(make_app, qapp, lang, label) -
     assert button.text() == label
     button.click()
     argv = launched[0]
-    assert Path(argv[0]).name.lower().removesuffix(".exe") == "voxprint-mdl-gui"
-    assert argv[1:] == ["--app", "model-forge"]
+    assert Path(argv[0]).name.lower().removesuffix(".exe") == "voxprint-mdl"
+    assert argv[1:4] == ["verify", "--app", "model-forge"]
+    assert argv[-2:] == ["--gui", "--repair"]
+    assert "--manifest" in argv
 
 
 def test_check_button_spawns_the_window_without_waiting(make_app, qapp, monkeypatch) -> None:
@@ -333,17 +335,19 @@ def test_check_button_spawns_the_window_without_waiting(make_app, qapp, monkeypa
         return 0
 
     monkeypatch.setattr("voxprint_forge.app.window.spawn", fake_spawn)
-    monkeypatch.setattr(
-        "voxprint_forge.mdl_adapter.mdl_gui_executable",
-        lambda: ["voxprint-mdl-gui"],
-    )
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_script", lambda: ["voxprint-mdl"])
     app = make_app(default_launch=True)
     app.layout.sections.select("check")
     app.widget.refresh()
     qapp.processEvents()
     button = app.window.findChild(QtWidgets.QPushButton, "forge.app.check.repair")
     button.click()
-    assert seen == {"argv": ["voxprint-mdl-gui", "--app", "model-forge"], "wait": False}
+    argv = seen["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "voxprint-mdl"
+    assert argv[1:4] == ["verify", "--app", "model-forge"]
+    assert argv[-2:] == ["--gui", "--repair"]
+    assert seen["wait"] is False
 
 
 def test_check_and_repair_reports_a_missing_executable(make_app, qapp, monkeypatch) -> None:
@@ -355,7 +359,7 @@ def test_check_and_repair_reports_a_missing_executable(make_app, qapp, monkeypat
     app._launch = fail
     message = (
         "voxprint-common 0.5.2 is required for models verify "
-        "(voxprint-mdl-gui). The installed package does not provide it."
+        "(voxprint-mdl verify --gui). The installed package does not provide it."
     )
 
     def missing() -> list[str]:

@@ -335,11 +335,15 @@ def test_repair_regenerates_from_the_bf16_source_and_skips_the_downloader(
         calls.append(list(command))
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_gui_executable", lambda: ["voxprint-mdl-gui"])
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_script", lambda: ["voxprint-mdl"])
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
     result = execute_verify(manifest=manifest, repair=True, gui=True, root=root)
-    assert calls == [["voxprint-mdl-gui", "--app", "model-forge"]]
-    assert pin.mdl_id not in calls[0]
+    assert calls
+    command = calls[0]
+    assert command[0] == "voxprint-mdl"
+    assert command[1:4] == ["verify", "--app", "model-forge"]
+    assert command[-2:] == ["--gui", "--repair"]
+    assert pin.mdl_id not in command
     assert downloads == []
     assert produced == [source]
     assert {"id": pin.mdl_id, "status": "repaired"} in result["models"]
