@@ -1,17 +1,20 @@
-"""Check and repair delegates to voxprint-common 0.5.0 names, which tests mock.
+"""Check and repair calls the voxprint-common 0.5.0 names.
 
-The vendored pin is 0.4.1, so ``run_verify_repair`` and ``model_park.stage``
-are not importable here. The progress window stays in that release.
+The progress window stays in that release. These tests substitute the
+functions so a headless run does not open it.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from voxprint_common.mdl import run_verify_repair as upstream_verify
+from voxprint_common.model_park import ModelPark
 
 from voxprint_forge.cli import main
 from voxprint_forge.mdl_adapter import (
@@ -111,9 +114,11 @@ def test_gui_calls_run_verify_repair_even_when_every_model_is_ok(
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
     seen: dict[str, object] = {}
 
-    def fake(model_ids: list[str], repair: bool = False) -> int:
+    def fake(model_ids: list[str], repair: bool = False, **kwargs: object) -> int:
         seen["ids"] = list(model_ids)
         seen["repair"] = repair
+        seen["show"] = kwargs.get("show")
+        seen["manifests"] = kwargs.get("manifests")
         return 0
 
     monkeypatch.setattr("voxprint_common.mdl.run_verify_repair", fake, raising=False)
@@ -124,7 +129,10 @@ def test_gui_calls_run_verify_repair_even_when_every_model_is_ok(
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fail_run)
     code = main(["models", "verify", "--gui"])
     assert code == 0
-    assert seen == {"ids": ["toy", "blob-only", "plug-toy"], "repair": False}
+    assert seen["ids"] == ["toy", "blob-only", "plug-toy"]
+    assert seen["repair"] is False
+    assert seen["show"] is True
+    assert seen["manifests"] == [manifest]
     assert capsys.readouterr().out == ""
 
 
@@ -134,7 +142,7 @@ def test_gui_repair_forwards_repair_and_a_summary(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("voxprint_forge.mdl_app.manifest_path", lambda: manifest)
     seen: dict[str, object] = {}
 
-    def fake(model_ids: list[str], repair: bool = False) -> dict[str, object]:
+    def fake(model_ids: list[str], repair: bool = False, **_kwargs: object) -> dict[str, object]:
         seen["ids"] = list(model_ids)
         seen["repair"] = repair
         return {
@@ -153,7 +161,7 @@ def test_gui_repair_forwards_repair_and_a_summary(monkeypatch: pytest.MonkeyPatc
 def test_summary_without_a_code_exits_when_a_model_is_corrupt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     manifest, _, _ = _install(tmp_path)
 
-    def fake(model_ids: list[str], repair: bool = False) -> dict[str, object]:
+    def fake(model_ids: list[str], repair: bool = False, **_kwargs: object) -> dict[str, object]:
         assert repair is False
         assert "secret-lora" not in model_ids
         return {"models": [{"id": "toy", "status": "corrupt"}, {"id": "plug-toy", "status": "OK"}]}
@@ -250,23 +258,34 @@ def test_cli_with_nothing_installed_is_ok_and_does_not_plan_the_catalog(
 def test_stage_forwards_to_model_park(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake(*args: object, **kwargs: object) -> str:
-        seen["args"] = args
-        seen["kwargs"] = kwargs
+    def fake(name: str, models: list[str], *, device: object = "cuda") -> str:
+        seen["name"] = name
+        seen["models"] = list(models)
+        seen["device"] = device
         return "hot"
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter._model_park", SimpleNamespace(stage=fake))
-    assert stage("z-image", role="main") == "hot"
-    assert seen == {"args": ("z-image",), "kwargs": {"role": "main"}}
+    monkeypatch.setattr(
+        "voxprint_forge.mdl_adapter.for_process",
+        lambda *args, **kwargs: SimpleNamespace(stage=fake),
+    )
+    assert stage("load", ["z-image"], device="cpu") == "hot"
+    assert seen == {"name": "load", "models": ["z-image"], "device": "cpu"}
+
+
+def test_installed_stage_is_the_050_context_manager() -> None:
+    stage_params = inspect.signature(ModelPark.stage).parameters
+    assert [name for name in stage_params if name != "self"] == ["name", "models", "device"]
+    repair_params = inspect.signature(upstream_verify).parameters
+    assert "model_ids" in repair_params and "repair" in repair_params and "show" in repair_params
 
 
 def test_missing_names_are_an_error_and_not_the_download_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr("voxprint_common.mdl.run_verify_repair", raising=False)
     with pytest.raises(MdlAdapterError, match="run_verify_repair"):
         run_verify_repair(["toy"], repair=True)
-    monkeypatch.setattr("voxprint_forge.mdl_adapter._model_park", None)
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.for_process", lambda *args, **kwargs: SimpleNamespace())
     with pytest.raises(MdlAdapterError, match=r"model_park\.stage"):
-        stage("toy")
+        stage("load", ["toy"])
     adapter = Path(__file__).resolve().parents[1] / "src" / "voxprint_forge" / "mdl_adapter.py"
     source = adapter.read_text(encoding="utf-8")
     assert "voxprint_common.mdl.progress_ui" not in source

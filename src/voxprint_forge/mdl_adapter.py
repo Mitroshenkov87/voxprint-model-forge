@@ -1,18 +1,16 @@
 """Calls into voxprint-common 0.5.0 for check, repair, and RAM staging.
 
-The vendored pin is still 0.4.1. That wheel has neither
-``voxprint_common.mdl.run_verify_repair`` nor ``model_park.stage``, and its
-``voxprint-mdl verify --repair`` only neutralises runtime-manifest paths.
-This module is the only forge code that names the 0.5.0 surface:
+The vendored pin is 0.5.0. This module is the only forge code that names
+that surface:
 
 * ``run_verify_repair(model_ids, repair=...)`` opens the shared progress
   window, hashes each model, reports OK / missing / corrupt, repairs only
   the bad ones when asked, then shows a summary.
 * ``voxprint-mdl verify [--repair]`` is the table for a terminal.
-* ``model_park.stage`` is the shared RAM hot tier.
+* ``ModelPark.stage(name, models, device=...)`` from
+  :func:`voxprint_common.model_park.for_process` is the shared RAM hot tier.
 
-Nothing here wraps ``progress_ui``. A missing name is an error, not a
-fallback onto the 0.4.1 download window.
+Nothing here imports the progress-window module. A missing name is an error.
 """
 
 from __future__ import annotations
@@ -29,6 +27,7 @@ from pathlib import Path
 import voxprint_common.mdl as mdl
 from voxprint_common.mdl.descriptor import DescriptorError, parse_descriptor_text
 from voxprint_common.mdl.names import CLI_NAME
+from voxprint_common.model_park import for_process
 from voxprint_common.paths import models_dir
 
 from voxprint_forge.errors import EXIT_CHECKSUM, EXIT_TOOL, ForgeError
@@ -38,13 +37,6 @@ APP_ID = "model-forge"
 MANIFEST_NAME = "voxprint-model.json"
 USER_DATA_DIRS = frozenset({"user-models", "projects", "lora"})
 WALK_SKIP = USER_DATA_DIRS | frozenset({BLOBS_DIR, APP_DIR})
-
-# 0.4.1 does not ship model_park. Importing it at startup would stop the app.
-# 0.5.0 adds the module; until that wheel is pinned this stays None.
-try:
-    from voxprint_common import model_park as _model_park
-except ImportError:
-    _model_park = None
 
 
 class MdlAdapterError(ForgeError):
@@ -78,11 +70,18 @@ def installed_model_ids(manifest: Path, *, root: Path | None = None) -> list[str
     return found
 
 
-def run_verify_repair(model_ids: Sequence[str], *, repair: bool = False) -> VerifyRepairResult:
+def run_verify_repair(
+    model_ids: Sequence[str],
+    *,
+    repair: bool = False,
+    manifest: Path | None = None,
+) -> VerifyRepairResult:
     """Call ``voxprint_common.mdl.run_verify_repair(model_ids, repair=repair)``.
 
     ``repair`` re-downloads only missing or corrupt files. The call still
     happens when ``model_ids`` is empty, so the progress window opens.
+    ``manifest`` is that app's ``mdl.json``. An empty id list is not ``None``,
+    so the planned tier is not substituted for the installed set.
     """
     upstream = getattr(mdl, "run_verify_repair", None)
     if not callable(upstream):
@@ -90,22 +89,25 @@ def run_verify_repair(model_ids: Sequence[str], *, repair: bool = False) -> Veri
             "voxprint-common 0.5.0 is required for models verify "
             "(voxprint_common.mdl.run_verify_repair). The installed package does not provide it."
         )
-    return _normalize(upstream(list(model_ids), repair=repair))
+    manifests = None if manifest is None else [manifest]
+    return _normalize(upstream(list(model_ids), repair=repair, manifests=manifests, show=True))
 
 
-def stage(*args: object, **kwargs: object) -> object:
-    """Stage weights through ``voxprint_common.model_park.stage``.
+def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> object:
+    """Unpark ``models`` onto ``device`` for the step named ``name``.
 
-    That function is the shared RAM hot tier. Arguments are forwarded as
-    given; 0.5.0 owns the signature.
+    This is ``for_process().stage(name, models, device=device)``. The returned
+    context manager yields each model's state dict and moves those weights
+    back to RAM on exit.
     """
-    fn = getattr(_model_park, "stage", None) if _model_park is not None else None
+    park = for_process(app="model-forge")
+    fn = getattr(park, "stage", None)
     if not callable(fn):
         raise MdlAdapterError(
             "voxprint-common 0.5.0 is required to stage a model "
             "(voxprint_common.model_park.stage). The installed package does not provide it."
         )
-    return fn(*args, **kwargs)
+    return fn(name, models, device=device)
 
 
 def verify_argv(
@@ -143,7 +145,7 @@ def execute_verify(
     """
     ids = installed_model_ids(manifest, root=root)
     if gui:
-        outcome = run_verify_repair(ids, repair=repair)
+        outcome = run_verify_repair(ids, repair=repair, manifest=manifest)
         return {
             "ok": outcome.exit_code == 0,
             "exit_code": outcome.exit_code,
@@ -178,10 +180,12 @@ def _normalize(value: object) -> VerifyRepairResult:
     if code is None:
         code = _code(value, "code")
     models = _model_rows(getattr(value, "models", ()))
-    text = getattr(value, "text", "")
+    if not models:
+        models = _rows_from_status(getattr(value, "status", None))
+    text = _text(value)
     if code is None:
         raise MdlAdapterError("run_verify_repair returned an unusable result")
-    return VerifyRepairResult(code, models, text if isinstance(text, str) else "")
+    return VerifyRepairResult(code, models, text)
 
 
 def _from_mapping(value: Mapping[object, object]) -> VerifyRepairResult:
@@ -204,6 +208,30 @@ def _code(value: object, name: str) -> int | None:
     if isinstance(code, int) and not isinstance(code, bool):
         return code
     return None
+
+
+def _text(value: object) -> str:
+    text = getattr(value, "text", None)
+    if isinstance(text, str) and text:
+        return text
+    message = getattr(value, "message", "")
+    if isinstance(message, str) and message:
+        return message
+    return text if isinstance(text, str) else ""
+
+
+def _rows_from_status(status: object) -> tuple[Mapping[str, object], ...]:
+    """One row per step on an ``Outcome`` status. ``item_id`` is the model id."""
+    steps = getattr(status, "steps", None)
+    if not isinstance(steps, (list, tuple)):
+        return ()
+    rows: list[Mapping[str, object]] = []
+    for step in steps:
+        model_id = getattr(step, "item_id", "") or getattr(step, "model", "")
+        state = getattr(step, "state", "")
+        if isinstance(model_id, str) and model_id:
+            rows.append({"id": model_id, "status": state if isinstance(state, str) else ""})
+    return tuple(rows)
 
 
 def _model_rows(value: object) -> tuple[Mapping[str, object], ...]:

@@ -1,14 +1,18 @@
-"""Session RAM park for base, caption, and preview weights.
+"""Session residency for base, caption, and preview weights.
 
-voxprint-common 0.4.1 does not ship ``model_park`` (it is on the unreleased
-RAM-tier work, and 0.5.0 is expected to add ``stage``). This is the thin
-stand-in: each key is read once per process, kept resident, copied to VRAM
-with :func:`stage`, and dropped from VRAM with :func:`drop_vram`. A later
-``voxprint_common.model_park.park`` replaces the local cache.
+voxprint-common 0.5.0 keeps those weights in :class:`voxprint_common.model_park.ModelPark`.
+:meth:`ModelPark.get` reads a key from disk once. This module does not keep a
+second copy of the weights. The reference returned by ``get`` stays open so a
+``ram32`` budget, which drops unreferenced models, still holds the object for
+the process.
 
-Upstream should ship that module with ``park(key, loader)``, ``stage`` (RAM
-to VRAM), and ``drop`` (release the VRAM copy, keep the RAM copy), and log
-the same park/unpark timings.
+:func:`stage` and :func:`drop_vram` move that live module. :meth:`ModelPark.stage`
+copies state-dict tensors and is what :func:`voxprint_forge.mdl_adapter.stage`
+calls. A pipeline is not a state dict: LoRA injection mutates the module
+``get`` stored, and ``tensor.to`` would return a different object.
+
+``replay_rng`` stays here. Upstream ``get`` does not restore the torch RNG
+that a resumed ``train`` reseeded past.
 """
 
 from __future__ import annotations
@@ -20,22 +24,38 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
+from voxprint_common.model_park import for_process, reset_process_park
+
 log = logging.getLogger("voxprint.model_park")
 
 GIB = 2**30
 T = TypeVar("T")
 
-_cache: dict[str, object] = {}
 _events: list[dict[str, object]] = []
 _rng: dict[str, tuple[object, list[object] | None]] = {}
-_MISSING = object()
+
+
+class _Hold:
+    """Box one live object inside a state-dict park.
+
+    ``ModelPark`` copies each stored value with ``to``. A module's ``to``
+    moves parameters in place, so this box returns itself and the caller
+    moves the module with :func:`stage`.
+    """
+
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def to(self, device: object, non_blocking: bool = False) -> _Hold:
+        del device, non_blocking
+        return self
 
 
 def reset() -> None:
-    """Drop the session cache and the log. Tests call this between cases."""
-    _cache.clear()
+    """Drop the process park and the log. Tests call this between cases."""
     _events.clear()
     _rng.clear()
+    reset_process_park()
 
 
 def events() -> list[dict[str, object]]:
@@ -52,24 +72,27 @@ def park(key: str, loader: Callable[[], T], *, stage_name: str, replay_rng: bool
     in the same process would shift every random draw that follows (the cached
     latents included).
     """
-    found = _cache.get(key)
-    if found is not None:
+    upstream = for_process(app="model-forge")
+    before = upstream.stats().disk_reads.get(key, 0)
+    started = time.perf_counter()
+
+    def load() -> dict[str, _Hold]:
+        return {"value": _Hold(loader())}
+
+    parked = upstream.get(key, load, size_bytes=1, role="main")
+    # Leave the get() reference open. Releasing it lets ram32 drop the model.
+    held = parked.to("cpu")["value"]
+    if not isinstance(held, _Hold):
+        raise RuntimeError(f"model park returned an unexpected value for {key}")
+    value: T = held.value  # type: ignore[assignment]
+    if upstream.stats().disk_reads.get(key, 0) == before:
         if replay_rng:
             _restore_rng(key)
         _record("hit", key, stage_name, 0.0)
-        return found  # type: ignore[return-value]
-    upstream = _upstream_park(key, loader, stage_name=stage_name)
-    if upstream is not _MISSING:
-        _cache[key] = upstream
+    else:
         if replay_rng:
             _remember_rng(key)
-        return upstream  # type: ignore[return-value]
-    started = time.perf_counter()
-    value = loader()
-    _cache[key] = value
-    if replay_rng:
-        _remember_rng(key)
-    _record("park", key, stage_name, time.perf_counter() - started)
+        _record("park", key, stage_name, time.perf_counter() - started)
     return value
 
 
@@ -84,7 +107,7 @@ def stage(module: object, device: object, *, key: str, stage_name: str) -> objec
 
 
 def drop_vram(module: object, *, key: str, stage_name: str) -> None:
-    """Drop the VRAM copy. The object stays in the session cache."""
+    """Drop the VRAM copy. The object stays in the process park."""
     started = time.perf_counter()
     move = getattr(module, "to", None)
     if callable(move):
@@ -97,22 +120,6 @@ def drop_vram(module: object, *, key: str, stage_name: str) -> None:
     _record("unpark", key, stage_name, time.perf_counter() - started)
 
 
-def _upstream_park(key: str, loader: Callable[[], T], *, stage_name: str) -> object:
-    """Use ``voxprint_common.model_park.park`` when the pin provides it.
-
-    Imported here because voxprint-common 0.4.1 does not ship ``model_park``.
-    A top-level import would stop the app on the current pin.
-    """
-    try:
-        import voxprint_common.model_park as upstream
-    except ImportError:
-        return _MISSING
-    fn = getattr(upstream, "park", None)
-    if not callable(fn):
-        return _MISSING
-    return fn(key, loader, stage=stage_name)
-
-
 def _remember_rng(key: str) -> None:
     # Imported here so ``voxprint-forge --version`` does not pull torch via the park.
     import torch
@@ -122,6 +129,7 @@ def _remember_rng(key: str) -> None:
 
 
 def _restore_rng(key: str) -> None:
+    # Imported here so ``voxprint-forge --version`` does not pull torch via the park.
     import torch
 
     saved = _rng.get(key)
@@ -178,6 +186,7 @@ def _vram_bytes() -> int:
 
 
 def _empty_cache() -> None:
+    # Imported here so ``voxprint-forge --version`` does not pull torch via the park.
     import torch
 
     if not torch.cuda.is_available():

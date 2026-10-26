@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from torch import nn
+from voxprint_common.model_park import for_process
 
 import voxprint_forge.lora.vram_stage as vram_stage
 import voxprint_forge.model_park as model_park
@@ -55,6 +56,9 @@ def test_park_reads_each_key_once() -> None:
     assert park("base", loader, stage_name="load") == {"weights": 1}
     assert park("base", loader, stage_name="encode")["weights"] == 1
     assert calls == [1]
+    stats = for_process().stats()
+    assert stats.disk_reads["base"] == 1
+    assert stats.reloads == 1
     rows = events()
     assert [row["action"] for row in rows] == ["park", "hit"]
     assert rows[0]["stage"] == "load" and rows[1]["stage"] == "encode"
