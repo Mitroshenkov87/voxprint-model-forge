@@ -129,6 +129,7 @@ def collect_assets(
         if action == "download":
             action, run_id = choose_run(_runs(runner, sha))
             if action != "download" or run_id is None:
+                sleep(poll_s)
                 continue
             _download(runner, run_id, dest)
             assets = find_assets(dest)
