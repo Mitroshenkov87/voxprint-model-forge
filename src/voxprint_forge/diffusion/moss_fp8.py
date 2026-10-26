@@ -358,8 +358,10 @@ def write_bundle(
     """Write the card files and ``voxprint-model.json``. Returns the manifest path."""
     folder.mkdir(parents=True, exist_ok=True)
     _copy_license(folder)
-    (folder / "NOTICE").write_text(notice_text(pin), encoding="utf-8")
-    (folder / "README.md").write_text(card_text(pin, weight_sha, weight_size), encoding="utf-8")
+    # newline="\n": Path.write_text otherwise turns \n into \r\n on Windows, and the
+    # card sha256 in the manifest would not match the LF files this repo commits.
+    (folder / "NOTICE").write_text(notice_text(pin), encoding="utf-8", newline="\n")
+    (folder / "README.md").write_text(card_text(pin, weight_sha, weight_size), encoding="utf-8", newline="\n")
     files: list[dict[str, object]] = [
         _file_row(folder / "LICENSE"),
         _file_row(folder / "NOTICE"),
