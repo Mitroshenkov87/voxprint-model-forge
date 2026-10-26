@@ -12,6 +12,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  pin:
+    uses: ./.github/workflows/pin-check.yml
+    with:
+      tag: v0.5.2
+      lock: vendor/pins.txt
   test:
     name: test (${{ matrix.os }})
     strategy:
@@ -62,7 +67,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install vendor/voxprint_common-0.5.1-py3-none-any.whl
+          python -m pip install vendor/voxprint_common-0.5.2-py3-none-any.whl
           python -m pip install -e ".[dev]"
       - name: Ruff
         run: python -m ruff check src tests tools/check_vendor_pins.py scripts/release_assets.py
@@ -74,7 +79,11 @@ jobs:
         run: python -m voxprint_forge.cli_reference --check
       - name: Docs site
         run: python -m mkdocs build --strict
+  # Signed index and the bundled model-index.pin.json. The pin job already
+  # compared vendor/pins.txt with the v0.5.2 release wheel, so this job does
+  # not run that pin check again. The test job still hashes the vendored bytes.
   model-index:
+    needs: pin
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -82,9 +91,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Vendor pins
-        run: python tools/check_vendor_pins.py
       - name: Install voxprint-common
-        run: python -m pip install vendor/voxprint_common-0.5.1-py3-none-any.whl
+        run: python -m pip install vendor/voxprint_common-0.5.2-py3-none-any.whl
       - name: model-index
         run: python tools/check_model_index.py

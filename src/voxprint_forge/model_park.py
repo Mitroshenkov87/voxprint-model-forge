@@ -1,6 +1,6 @@
 """Session residency for base, caption, and preview weights.
 
-voxprint-common 0.5.1 keeps those weights in :class:`voxprint_common.model_park.ModelPark`.
+voxprint-common 0.5.2 keeps those weights in :class:`voxprint_common.model_park.ModelPark`.
 :meth:`ModelPark.get` reads a key from disk once and raises ``entry.refs``.
 :class:`~voxprint_common.model_park.Parked` has no destructor, so dropping that
 handle does not drop the ref. ``ram32`` evicts only entries with ``refs <= 0``.

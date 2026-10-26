@@ -99,7 +99,7 @@ if (-not (Test-Path $VenvStamp)) {
   if ($LASTEXITCODE -ne 0) { Stop-Run "pip install torch" 6 }
   & $Py -m pip install -q @PipPins; if ($LASTEXITCODE -ne 0) { Stop-Run "pip install pins" 6 }
   & $Py -m pip install -q (Join-Path $LlamaSrc "gguf-py"); if ($LASTEXITCODE -ne 0) { Stop-Run "pip install gguf-py" 6 }
-  & $Py -m pip install -q (Join-Path $Root "vendor\voxprint_common-0.5.1-py3-none-any.whl")
+  & $Py -m pip install -q (Join-Path $Root "vendor\voxprint_common-0.5.2-py3-none-any.whl")
   if ($LASTEXITCODE -ne 0) { Stop-Run "pip install voxprint_common" 6 }
   & $Py -m pip install -q $Root; if ($LASTEXITCODE -ne 0) { Stop-Run "pip install forge tree" 6 }
   Set-Content -Path $VenvStamp -Value (Get-Date).ToUniversalTime().ToString("o")

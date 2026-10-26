@@ -258,7 +258,7 @@ def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkey
 
 
 def test_index_serial_follows_the_published_one() -> None:
-    # voxprint-common 0.5.0 bundles serial 9, so nothing below 10 is published.
+    # voxprint-common 0.5.2 bundles serial 9, so nothing below 10 is published.
     assert next_serial(None) == 10
     assert next_serial(1) == 10
     assert next_serial(9) == 10

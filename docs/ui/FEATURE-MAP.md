@@ -1,6 +1,6 @@
 # Model Forge GUI feature map
 
-The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.5.1 (merge commit 4bbb80c4), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Every LoRA step runs `voxprint-forge-cli lora ... --json`; the window shows the engine's events and never filters or gates a photo itself.
+The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.5.2 (merge commit c3a74eaa), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Every LoRA step runs `voxprint-forge-cli lora ... --json`; the window shows the engine's events and never filters or gates a photo itself.
 
 The pre-Yitro operator window (`forge-gui`, `voxprint_forge.gui`) is retired from the user app. It stays in the tree for internal VM work and is not shipped. Its features are CLI-only for users.
 

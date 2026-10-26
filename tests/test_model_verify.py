@@ -1,4 +1,4 @@
-"""Check and repair calls the voxprint-common 0.5.1 names.
+"""Check and repair calls the voxprint-common 0.5.2 names.
 
 ``--gui`` launches ``voxprint-mdl-gui``. These tests substitute that process
 so a headless run does not open the window.
