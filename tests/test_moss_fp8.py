@@ -335,11 +335,12 @@ def test_repair_regenerates_from_the_bf16_source_and_skips_the_downloader(
         calls.append(list(command))
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_gui_executable", lambda: ["voxprint-mdl-gui"])
+    monkeypatch.setattr("voxprint_forge.mdl_adapter.mdl_script", lambda: ["voxprint-mdl"])
     monkeypatch.setattr("voxprint_forge.mdl_adapter.subprocess.run", fake_run)
     result = execute_verify(manifest=manifest, repair=True, gui=True, root=root)
-    assert calls == [["voxprint-mdl-gui", "--app", "model-forge"]]
-    assert pin.mdl_id not in calls[0]
+    # The FP8 id is not in the app manifest, so no --model is passed. Launching
+    # then would plan and, with --repair, download the whole catalog.
+    assert calls == []
     assert downloads == []
     assert produced == [source]
     assert {"id": pin.mdl_id, "status": "repaired"} in result["models"]
