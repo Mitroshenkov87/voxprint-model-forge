@@ -191,7 +191,7 @@ jobs:
           $py = Join-Path $env:RUNNER_TEMP "check_icon.py"
           @(
             'from PIL import Image',
-            '# voxprint_common 0.5.0 branding: python -m voxprint_common.branding check',
+            '# voxprint_common 0.5.1 branding: python -m voxprint_common.branding check',
             'path = r"assets/voxprint-model-forge.ico"',
             'with Image.open(path) as image:',
             '    sizes = set(image.ico.sizes())',

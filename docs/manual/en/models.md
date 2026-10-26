@@ -30,6 +30,6 @@ voxprint-forge-cli models verify --repair
 voxprint-forge-cli models verify --gui
 ```
 
-`models verify` runs `voxprint-mdl verify`, prints that table, and exits with an error when anything is still broken. `--repair` is `voxprint-mdl verify --repair` and fixes the files without asking. `--gui` opens the shared progress window.
+`models verify` runs `voxprint-mdl verify`, prints that table, and exits with an error when anything is still broken. `--repair` is `voxprint-mdl verify --repair` and fixes the files without asking. `--gui` opens the shared window with `voxprint-mdl-gui --app model-forge`. The Check and repair models button launches that same command.
 
 To remove a model you no longer need, open **Manage models** again: it lists installed models with their size and licence.

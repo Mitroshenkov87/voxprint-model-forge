@@ -1,7 +1,8 @@
 """Model Forge's MDL manifest and the ``models`` commands.
 
-Every MDL invocation passes this app's schema 1 file with ``--manifest``.
-Discovery of ``model-forge`` is not required.
+Manage models and download pass this app's schema 1 file with ``--manifest``.
+Check and repair opens ``voxprint-mdl-gui --app model-forge``; that windowed
+entry point finds the installed app on its own.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from voxprint_common.paths import models_dir
 from voxprint_forge.app_models import load as load_app_models
 from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.lora.backends import LEGACY_IDS
-from voxprint_forge.mdl_adapter import execute_verify
+from voxprint_forge.mdl_adapter import execute_verify, mdl_gui_argv
 from voxprint_forge.model_views import APP_DIR, MARKER, ensure_view
 from voxprint_forge.model_views import manifest_path as packaged_manifest
 
@@ -125,20 +126,8 @@ def manage_argv() -> list[str]:
 
 
 def verify_argv() -> list[str]:
-    """``voxprint-forge-cli models verify --gui``."""
-    return [*_cli_executable(), "models", "verify", "--gui"]
-
-
-def _cli_executable() -> list[str]:
-    """``voxprint-forge-cli`` beside this interpreter, else on ``PATH``, else ``python -m``."""
-    suffix = ".exe" if os.name == "nt" else ""
-    bundled = Path(sys.executable).with_name("voxprint-forge-cli" + suffix)
-    if bundled.is_file():
-        return [str(bundled)]
-    found = shutil.which("voxprint-forge-cli")
-    if found:
-        return [found]
-    return [sys.executable, "-m", "voxprint_forge.cli"]
+    """``voxprint-mdl-gui --app model-forge``."""
+    return mdl_gui_argv()
 
 
 def download_argv(

@@ -1,16 +1,16 @@
-"""Calls into voxprint-common 0.5.0 for check, repair, and RAM staging.
+"""Calls into voxprint-common 0.5.1 for check, repair, and RAM staging.
 
-The vendored pin is 0.5.0. This module is the only forge code that names
+The vendored pin is 0.5.1. This module is the only forge code that names
 that surface:
 
-* ``run_verify_repair(model_ids, repair=...)`` opens the shared progress
-  window, hashes each model, reports OK / missing / corrupt, repairs only
-  the bad ones when asked, then shows a summary.
+* ``voxprint-mdl-gui --app model-forge`` opens the shared download and check
+  window. It is the windowed entry point (``pythonw`` on Windows). The launch
+  passes ``CREATE_NO_WINDOW`` so a console does not flash.
 * ``voxprint-mdl verify [--repair]`` is the table for a terminal.
 * ``ModelPark.stage(name, models, device=...)`` from
   :func:`voxprint_common.model_park.for_process` is the shared RAM hot tier.
 
-Nothing here imports the progress-window module. A missing name is an error.
+Nothing here imports the progress-window module. A missing executable is an error.
 """
 
 from __future__ import annotations
@@ -20,11 +20,9 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 
-import voxprint_common.mdl as mdl
 from voxprint_common.mdl.descriptor import DescriptorError, parse_descriptor_text
 from voxprint_common.mdl.names import CLI_NAME
 from voxprint_common.model_park import for_process
@@ -35,24 +33,20 @@ from voxprint_forge.errors import EXIT_CHECKSUM, EXIT_TOOL, ForgeError
 from voxprint_forge.model_views import APP_DIR, BLOBS_DIR
 
 APP_ID = "model-forge"
+GUI_NAME = "voxprint-mdl-gui"
 MANIFEST_NAME = "voxprint-model.json"
 USER_DATA_DIRS = frozenset({"user-models", "projects", "lora"})
 WALK_SKIP = USER_DATA_DIRS | frozenset({BLOBS_DIR, APP_DIR})
+MISSING_MDL_GUI = (
+    "voxprint-common 0.5.1 is required for models verify "
+    "(voxprint-mdl-gui). The installed package does not provide it."
+)
 
 
 class MdlAdapterError(ForgeError):
-    """The installed voxprint-common does not provide a 0.5.0 name this command needs."""
+    """The installed voxprint-common does not provide a 0.5.1 name this command needs."""
 
     exit_code = EXIT_TOOL
-
-
-@dataclass(frozen=True)
-class VerifyRepairResult:
-    """Exit code, per-model rows, and the summary text from ``run_verify_repair``."""
-
-    exit_code: int
-    models: tuple[Mapping[str, object], ...]
-    text: str
 
 
 def installed_model_ids(manifest: Path, *, root: Path | None = None) -> list[str]:
@@ -71,27 +65,64 @@ def installed_model_ids(manifest: Path, *, root: Path | None = None) -> list[str
     return found
 
 
-def run_verify_repair(
-    model_ids: Sequence[str],
-    *,
-    repair: bool = False,
-    manifest: Path | None = None,
-) -> VerifyRepairResult:
-    """Call ``voxprint_common.mdl.run_verify_repair(model_ids, repair=repair)``.
+def _is_windows() -> bool:
+    """True when this process should use the Windows launch flags."""
+    return os.name == "nt"
 
-    ``repair`` re-downloads only missing or corrupt files. The call still
-    happens when ``model_ids`` is empty, so the progress window opens.
-    ``manifest`` is that app's ``mdl.json``. An empty id list is not ``None``,
-    so the planned tier is not substituted for the installed set.
+
+def mdl_gui_executable() -> list[str] | None:
+    """``voxprint-mdl-gui`` beside this interpreter, else on ``PATH``.
+
+    The script is the windowed entry point, ``pythonw`` on Windows. A missing
+    file is not replaced with ``python -m``: that interpreter would open a console.
     """
-    upstream = getattr(mdl, "run_verify_repair", None)
-    if not callable(upstream):
-        raise MdlAdapterError(
-            "voxprint-common 0.5.0 is required for models verify "
-            "(voxprint_common.mdl.run_verify_repair). The installed package does not provide it."
-        )
-    manifests = None if manifest is None else [manifest]
-    return _normalize(upstream(list(model_ids), repair=repair, manifests=manifests, show=True))
+    suffix = ".exe" if _is_windows() else ""
+    bundled = Path(sys.executable).with_name(GUI_NAME + suffix)
+    if bundled.is_file():
+        return [str(bundled)]
+    found = shutil.which(GUI_NAME)
+    if found:
+        return [found]
+    if suffix:
+        found = shutil.which(GUI_NAME + suffix)
+        if found:
+            return [found]
+    return None
+
+
+def mdl_gui_argv() -> list[str]:
+    """``voxprint-mdl-gui --app model-forge``.
+
+    Raises:
+        MdlAdapterError: The windowed executable is not installed.
+    """
+    command = mdl_gui_executable()
+    if command is None:
+        raise MdlAdapterError(MISSING_MDL_GUI)
+    return [*command, "--app", APP_ID]
+
+
+def spawn(argv: Sequence[str], *, wait: bool = False) -> int:
+    """Start ``argv`` with no console window. Return the exit code when ``wait`` is set."""
+    command = [str(part) for part in argv]
+    options = _no_console_kwargs()
+    if wait:
+        completed = subprocess.run(command, check=False, **options)
+        return int(completed.returncode)
+    subprocess.Popen(command, **options)
+    return 0
+
+
+def launch_mdl_gui(*, wait: bool) -> int:
+    """Open ``voxprint-mdl-gui --app model-forge`` without a console window.
+
+    Raises:
+        MdlAdapterError: The windowed executable is missing or cannot be started.
+    """
+    try:
+        return spawn(mdl_gui_argv(), wait=wait)
+    except OSError as exc:
+        raise MdlAdapterError(MISSING_MDL_GUI) from exc
 
 
 def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> object:
@@ -105,7 +136,7 @@ def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> objec
     fn = getattr(park, "stage", None)
     if not callable(fn):
         raise MdlAdapterError(
-            "voxprint-common 0.5.0 is required to stage a model "
+            "voxprint-common 0.5.1 is required to stage a model "
             "(voxprint_common.model_park.stage). The installed package does not provide it."
         )
     return fn(name, models, device=device)
@@ -139,10 +170,10 @@ def execute_verify(
 ) -> dict[str, object]:
     """Check installed models and return ``ok``, ``exit_code``, ``models``, and ``text``.
 
-    ``gui`` calls :func:`run_verify_repair`, including when every installed
-    model is already OK. Without ``gui``, ``voxprint-mdl verify`` prints the
-    table and its exit code is returned. An empty install is success and does
-    not ask MDL to plan the whole catalog.
+    ``gui`` launches :func:`launch_mdl_gui` and waits for that window, including
+    when every installed model is already OK. Without ``gui``, ``voxprint-mdl
+    verify`` prints the table and its exit code is returned. An empty install
+    without ``gui`` is success and does not ask MDL to plan the whole catalog.
 
     MOSS FP8 ids are left out of that call. They are hashed here, and ``repair``
     rebuilds a missing or corrupt file from the pinned bf16 snapshot (or from
@@ -153,14 +184,9 @@ def execute_verify(
     fp8_rows = [dict(row) for row in moss_fp8.cover(base, repair=repair)]
     upstream = [model_id for model_id in ids if model_id not in moss_fp8.model_ids()]
     if gui:
-        outcome = run_verify_repair(upstream, repair=repair, manifest=manifest)
+        code = launch_mdl_gui(wait=True)
         return _with_fp8(
-            {
-                "ok": outcome.exit_code == 0,
-                "exit_code": outcome.exit_code,
-                "models": [dict(row) for row in outcome.models],
-                "text": outcome.text,
-            },
+            {"ok": code == 0, "exit_code": code, "models": [], "text": ""},
             fp8_rows,
         )
     if not upstream and not fp8_rows:
@@ -203,79 +229,23 @@ def _with_fp8(result: dict[str, object], rows: list[dict[str, object]]) -> dict[
     return {"ok": exit_code == 0, "exit_code": exit_code, "models": models, "text": text}
 
 
-def _normalize(value: object) -> VerifyRepairResult:
-    if isinstance(value, bool) or value is None:
-        raise MdlAdapterError("run_verify_repair returned an unusable result")
-    if isinstance(value, int):
-        return VerifyRepairResult(value, (), "")
-    if isinstance(value, Mapping):
-        return _from_mapping(value)
-    code = _code(value, "exit_code")
-    if code is None:
-        code = _code(value, "code")
-    models = _model_rows(getattr(value, "models", ()))
-    if not models:
-        models = _rows_from_status(getattr(value, "status", None))
-    text = _text(value)
-    if code is None:
-        raise MdlAdapterError("run_verify_repair returned an unusable result")
-    return VerifyRepairResult(code, models, text)
+def _no_console_kwargs() -> dict[str, object]:
+    """``CREATE_NO_WINDOW`` on Windows, and detached standard streams everywhere.
 
-
-def _from_mapping(value: Mapping[object, object]) -> VerifyRepairResult:
-    models = _model_rows(value.get("models", ()))
-    text = value.get("text", "")
-    summary = text if isinstance(text, str) else ""
-    code = value.get("exit_code", value.get("code"))
-    if isinstance(code, int) and not isinstance(code, bool):
-        return VerifyRepairResult(code, models, summary)
-    ok = value.get("ok")
-    if ok is True:
-        return VerifyRepairResult(0, models, summary)
-    if ok is False or any(_broken(row) for row in models):
-        return VerifyRepairResult(EXIT_CHECKSUM, models, summary)
-    return VerifyRepairResult(0, models, summary)
-
-
-def _code(value: object, name: str) -> int | None:
-    code = getattr(value, name, None)
-    if isinstance(code, int) and not isinstance(code, bool):
-        return code
-    return None
-
-
-def _text(value: object) -> str:
-    text = getattr(value, "text", None)
-    if isinstance(text, str) and text:
-        return text
-    message = getattr(value, "message", "")
-    if isinstance(message, str) and message:
-        return message
-    return text if isinstance(text, str) else ""
-
-
-def _rows_from_status(status: object) -> tuple[Mapping[str, object], ...]:
-    """One row per step on an ``Outcome`` status. ``item_id`` is the model id."""
-    steps = getattr(status, "steps", None)
-    if not isinstance(steps, (list, tuple)):
-        return ()
-    rows: list[Mapping[str, object]] = []
-    for step in steps:
-        model_id = getattr(step, "item_id", "") or getattr(step, "model", "")
-        state = getattr(step, "state", "")
-        if isinstance(model_id, str) and model_id:
-            rows.append({"id": model_id, "status": state if isinstance(state, str) else ""})
-    return tuple(rows)
-
-
-def _model_rows(value: object) -> tuple[Mapping[str, object], ...]:
-    if not isinstance(value, (list, tuple)):
-        return ()
-    return tuple(row for row in value if isinstance(row, Mapping))
-
-
-def _broken(row: Mapping[str, object]) -> bool:
-    return str(row.get("status", "")).lower() in {"missing", "corrupt"}
+    The flag is how a ``pythonw``-style child avoids a flashing command window.
+    Other platforms pass ``creationflags=0``.
+    """
+    if _is_windows():
+        flags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+    else:
+        flags = 0
+    return {
+        "start_new_session": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "creationflags": flags,
+    }
 
 
 def _empty_table() -> str:
