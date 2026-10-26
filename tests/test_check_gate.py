@@ -160,12 +160,54 @@ def test_mark_dirty_during_a_run_stays_dirty(qtbot) -> None:
     qtbot.addWidget(gate)
     gate.start()
     assert started.wait(2)
+    worker = gate._worker
     gate.mark_dirty()
     release.set()
-    for _ in range(100):
-        QtWidgets.QApplication.processEvents()
-        if gate._worker is not None and not gate._worker.isRunning():
-            break
+    qtbot.waitUntil(worker.isFinished, timeout=5000)
+    assert gate.shutdown()
     QtWidgets.QApplication.processEvents()
     assert gate.state is GateState.DIRTY
     assert not gate.can_proceed
+
+
+def test_check_pressed_while_a_stale_run_ends_starts_a_new_run(qtbot) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    seen: list[str] = []
+
+    def job(item: CheckItem, _token: CancelToken) -> ItemResult:
+        seen.append(item.id)
+        started.set()
+        assert release.wait(2)
+        return ItemResult(item.id, True)
+
+    gate = _gate(job, [CheckItem("a", "a")])
+    qtbot.addWidget(gate)
+    gate.start()
+    assert started.wait(2)
+    gate.mark_dirty()
+    gate.start()
+    assert gate.state is GateState.DIRTY
+    release.set()
+    qtbot.waitUntil(lambda: gate.state is GateState.PASSED, timeout=5000)
+    assert seen == ["a", "a"]
+    assert gate.shutdown()
+
+
+def test_shutdown_cancels_and_joins_a_running_check(qtbot) -> None:
+    started = threading.Event()
+    unloaded: list[bool] = []
+
+    def job(item: CheckItem, token: CancelToken) -> ItemResult:
+        started.set()
+        while not token.is_cancelled:
+            threading.Event().wait(0.01)
+        return ItemResult(item.id, True)
+
+    gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=lambda: unloaded.append(True))
+    qtbot.addWidget(gate)
+    gate.start()
+    assert started.wait(2)
+    assert gate.shutdown(5000)
+    assert not gate._worker.isRunning()
+    assert unloaded == [True]

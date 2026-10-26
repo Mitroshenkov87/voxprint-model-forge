@@ -478,6 +478,10 @@ def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path,
                 _pass_photo_check(app)
                 app.repaint()
             _next(app).click()
+        if step == "photos":
+            _pass_photo_check(app)
+            app.repaint()
+            QtWidgets.QApplication.processEvents()
         app.repaint()
         missing = []
         checked = 0

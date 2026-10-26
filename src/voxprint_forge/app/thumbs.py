@@ -34,7 +34,8 @@ def decode_thumbnail(path: Path, size: int) -> QtGui.QImage:
 class ThumbService(QtCore.QObject):
     """Cache of scaled images. :meth:`request` returns immediately on the GUI thread."""
 
-    _ready = QtCore.Signal(str, int, int, object)
+    # mtime is st_mtime_ns: it does not fit the 32-bit int a Qt "int" argument is.
+    _ready = QtCore.Signal(str, int, object, object)
 
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)

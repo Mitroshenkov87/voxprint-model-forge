@@ -539,7 +539,7 @@ class ForgeApp:
             key, params, warning = result.key, result.params, result.warning
         else:
             key, params, warning = "forge.app.ok", {}, False
-        if step.step_id == "photos" and self.status is None and result.ok and not self.photo_gate.can_proceed:
+        if step.step_id == "photos" and self.status is None and self._check_first():
             key, params, warning = self._check_block()
         label.setText(tr(key, **params))
         label.setObjectName("warn" if (warning or not result.ok) else "ok")
@@ -712,6 +712,10 @@ class ForgeApp:
         self.photo_gate.mark_dirty()
         self.repaint()
 
+    def _check_first(self) -> bool:
+        """Once the kind is chosen, the image check speaks before the count: it can switch photos off."""
+        return bool(self.draft.photos) and self.draft.kind in KINDS and not self.photo_gate.can_proceed
+
     def _check_block(self) -> tuple[str, dict[str, object], bool]:
         """Footer text while Next is waiting on the image check."""
         state = self.photo_gate.state
@@ -746,12 +750,12 @@ class ForgeApp:
             return tr("forge.app.next.review.tip")
         if self.runner.busy:  # type: ignore[attr-defined]
             return tr("forge.app.next.busy.tip")
+        if step.step_id == "photos" and self._check_first():
+            key, params, _warning = self._check_block()
+            return tr(key, **params)
         result = self.draft.check(step.step_id)
         if not result.ok and result.key:
             return tr(result.key, **result.params)
-        if step.step_id == "photos" and not self.photo_gate.can_proceed:
-            key, params, _warning = self._check_block()
-            return tr(key, **params)
         return tr("forge.app.next.tip")
 
     def _back_tip(self) -> str:

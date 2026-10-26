@@ -41,7 +41,6 @@ def test_request_returns_before_the_worker_decodes(qtbot, tmp_path: Path, monkey
 
     monkeypatch.setattr(thumbs_mod, "decode_thumbnail", fake)
     service = ThumbService()
-    qtbot.addWidget(service)
     holder: list[QtGui.QPixmap] = []
     pixmap = service.request(path, 48, holder.append)
     assert not pixmap.isNull()

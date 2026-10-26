@@ -4,6 +4,10 @@
 a worker, one at a time. ``unload`` runs on that worker after every run,
 including cancel and error. When ``on_deactivate`` is set and returns, failed
 items are handled: one or more passes ends in :attr:`GateState.PASSED`.
+
+A worker is kept alive until its thread has returned, even when the gate is
+deleted first. :meth:`CheckGate.shutdown` and :func:`join_workers` cancel and
+join, for application quit and test teardown.
 """
 
 from __future__ import annotations
@@ -11,12 +15,33 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from types import MappingProxyType
 from typing import assert_never
 
 from PySide6 import QtCore, QtWidgets
 
 from voxprint_forge.app.text import tr
+
+_LIVE: set[_CheckWorker] = set()
+
+
+def join_workers(timeout_ms: int = 5000) -> bool:
+    """Cancel every running check and wait for its thread. False if one is still running."""
+    for worker in list(_LIVE):
+        worker.token.cancel()
+    joined = True
+    for worker in list(_LIVE):
+        if worker.wait(timeout_ms):
+            _LIVE.discard(worker)
+        else:
+            joined = False
+    return joined
+
+
+def _release(worker: _CheckWorker) -> None:
+    worker.wait()
+    _LIVE.discard(worker)
 
 
 class GateState(Enum):
@@ -91,6 +116,7 @@ class CheckGate(QtWidgets.QWidget):
         self._deactivated: tuple[str, ...] = ()
         self._state = GateState.DIRTY
         self._worker: _CheckWorker | None = None
+        self._restart = False
         self._done = 0
         self._total = 0
         self.setObjectName("forge.photos.gate")
@@ -152,9 +178,16 @@ class CheckGate(QtWidgets.QWidget):
         self._set_state(GateState.DIRTY)
 
     def start(self) -> None:
-        """Check the active items on a worker. Ignored while a worker is still running."""
+        """Check the active items on a worker.
+
+        Ignored while the current run is going. After :meth:`mark_dirty` the old
+        worker may still be on its last item; the new run starts when it returns.
+        """
         if self._worker is not None and self._worker.isRunning():
+            if self._worker.epoch != self._epoch:
+                self._restart = True
             return
+        self._restart = False
         self._epoch += 1
         epoch = self._epoch
         self._token = CancelToken()
@@ -167,16 +200,35 @@ class CheckGate(QtWidgets.QWidget):
         worker = _CheckWorker(self._job, items, self._token, self._unload, epoch)
         worker.item_done.connect(self._on_item)
         worker.ended.connect(self._on_ended)
+        worker.finished.connect(self._on_thread_finished)
+        worker.finished.connect(partial(_release, worker))
+        _LIVE.add(worker)
         self._worker = worker
         self._paint()
         worker.start()
 
     def cancel(self) -> None:
         """Stop after the item the worker is on. The state becomes cancelled when it ends."""
+        self._restart = False
         self._token.cancel()
 
+    def shutdown(self, timeout_ms: int = 5000) -> bool:
+        """Cancel and join the worker. The checker is unloaded on the worker before this returns."""
+        self._restart = False
+        self._token.cancel()
+        worker = self._worker
+        if worker is None:
+            return True
+        return worker.wait(timeout_ms)
+
+    def _on_thread_finished(self) -> None:
+        if self._restart:
+            if self._worker is not None:
+                self._worker.wait()
+            self.start()
+
     def _on_button(self) -> None:
-        if self._state is GateState.RUNNING or (self._worker is not None and self._worker.isRunning()):
+        if self._state is GateState.RUNNING:
             self.cancel()
             return
         self.start()
@@ -290,9 +342,9 @@ class _CheckWorker(QtCore.QThread):
         super().__init__()
         self._job = job
         self._items = list(items)
-        self._token = token
+        self.token = token
         self._unload = unload
-        self._epoch = epoch
+        self.epoch = epoch
         self.error: BaseException | None = None
 
     def run(self) -> None:
@@ -300,12 +352,12 @@ class _CheckWorker(QtCore.QThread):
         try:
             total = len(self._items)
             for index, item in enumerate(self._items, start=1):
-                if self._token.is_cancelled:
+                if self.token.is_cancelled:
                     break
-                result = self._job(item, self._token)
-                if self._token.is_cancelled:
+                result = self._job(item, self.token)
+                if self.token.is_cancelled:
                     break
-                self.item_done.emit(result, index, total, item.id, self._epoch)
+                self.item_done.emit(result, index, total, item.id, self.epoch)
         except Exception as exc:  # noqa: BLE001 - the gate turns a job error into FAILED
             self.error = exc
         finally:
@@ -315,4 +367,4 @@ class _CheckWorker(QtCore.QThread):
                 except Exception as exc:  # noqa: BLE001 - unload failure is a failed check
                     if self.error is None:
                         self.error = exc
-            self.ended.emit(self._epoch)
+            self.ended.emit(self.epoch)

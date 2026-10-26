@@ -16,3 +16,14 @@ def _suite_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Mo
     monkeypatch.setenv("VOXPRINT_HOME", str(root))
     monkeypatch.delenv("VOXPRINT_MODELS_DIR", raising=False)
     monkeypatch.delenv("VOXPRINT_MODEL_CACHE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _join_check_workers():
+    """Join check-gate threads so none outlives its test (Qt aborts on a running QThread)."""
+    yield
+    try:
+        from voxprint_forge.ui.check_gate import join_workers
+    except ImportError:
+        return
+    assert join_workers(), "a check-gate worker did not finish"
