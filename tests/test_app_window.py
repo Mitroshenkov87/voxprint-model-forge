@@ -354,7 +354,7 @@ def test_check_and_repair_reports_a_missing_executable(make_app, qapp, monkeypat
 
     app._launch = fail
     message = (
-        "voxprint-common 0.5.1 is required for models verify "
+        "voxprint-common 0.5.2 is required for models verify "
         "(voxprint-mdl-gui). The installed package does not provide it."
     )
 

@@ -1,1 +1,1 @@
-c618239aa2f966608aea17ec108df2d9ed9c4bdc7edd81ef3e6a3fa960ee3939  voxprint_common-0.5.1-py3-none-any.whl
+dd2ac2352a63313ff9fc23c2dfddfb2ade8d7ac49cf95802fcae1000e1f7f9c1  voxprint_common-0.5.2-py3-none-any.whl

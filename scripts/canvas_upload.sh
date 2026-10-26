@@ -74,7 +74,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 export PATH="${HOME}/.local/bin:${PATH}"
 if command -v uv >/dev/null 2>&1; then
-  uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.5.1-py3-none-any.whl"
+  uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.5.2-py3-none-any.whl"
   uv pip install --python "$VENV" -e "$ROOT" --no-deps
 fi
 # shellcheck source=scripts/vm_logins.sh
