@@ -7,6 +7,12 @@ guide PDFs, and the sums file. A tag whose name contains ``-rc`` is a
 prerelease. An existing release is updated in place. Lists of installer
 runs are polled with a sleep, including when a finished run is joined by
 one that is still in progress.
+
+The release's build number is the installer run's ``number`` plus the
+``BUILD.json`` offset, the same sum ``installer/stamp_build.py`` wrote into
+the setup. ``publish`` writes that run number to ``$GITHUB_OUTPUT`` as
+``installer_run``. This workflow's own ``github.run_number`` is a separate,
+much smaller counter and is not a build number.
 """
 
 from __future__ import annotations
@@ -41,6 +47,14 @@ class CmdResult:
 
 
 Runner = Callable[[list[str]], CmdResult]
+
+
+@dataclass(frozen=True)
+class Collected:
+    """Where the sums file was written, and the installer run the assets came from."""
+
+    sums: Path
+    run_number: int
 
 
 def is_prerelease(tag: str) -> bool:
@@ -112,7 +126,7 @@ def collect_assets(
     grace_s: float = GRACE_S,
     poll_s: float = POLL_S,
     timeout_s: float = TIMEOUT_S,
-) -> Path:
+) -> Collected:
     """Download installer artifacts for ``sha`` into ``dest`` and write the sums file.
 
     When no installer run exists, wait ``grace_s`` and then start
@@ -128,15 +142,17 @@ def collect_assets(
             sleep(poll_s)
             continue
         if action == "download":
-            action, run_id = choose_run(_runs(runner, sha))
+            runs = _runs(runner, sha)
+            action, run_id = choose_run(runs)
             if action != "download" or run_id is None:
                 sleep(poll_s)
                 continue
+            number = _run_number(next(run for run in runs if _run_id(run) == run_id))
             _download(runner, run_id, dest)
             assets = find_assets(dest)
             sums = dest / "SHA256SUMS.txt"
             write_sha256sums(assets, sums)
-            return sums
+            return Collected(sums, number)
         if action == "fail":
             raise SystemExit("installer.yml failed")
         if dispatched_at is None and now() - started < grace_s:
@@ -181,6 +197,15 @@ def _run_id(run: Mapping[str, object]) -> int:
     raise SystemExit("installer run has no databaseId")
 
 
+def _run_number(run: Mapping[str, object]) -> int:
+    value = run.get("number")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    raise SystemExit("installer run has no run number")
+
+
 def _runs(runner: Runner, sha: str) -> list[dict[str, object]]:
     result = runner(
         [
@@ -192,7 +217,7 @@ def _runs(runner: Runner, sha: str) -> list[dict[str, object]]:
             "--commit",
             sha,
             "--json",
-            "databaseId,status,conclusion,event,headSha,url,createdAt",
+            "databaseId,number,status,conclusion,event,headSha,url,createdAt",
             "--limit",
             "50",
         ]
@@ -219,6 +244,15 @@ def _run_all(runner: Runner, commands: Sequence[Sequence[str]]) -> None:
             raise SystemExit(result.stderr.strip() or "gh release failed")
 
 
+def _write_output(key: str, value: str) -> None:
+    """Append ``key=value`` to ``$GITHUB_OUTPUT`` and echo it for the log."""
+    print(f"{key}={value}")
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{key}={value}\n")
+
+
 def _gh(argv: list[str]) -> CmdResult:
     completed = subprocess.run(argv, check=False, text=True, capture_output=True)
     return CmdResult(completed.returncode, completed.stdout, completed.stderr)
@@ -237,11 +271,13 @@ def main(argv: list[str] | None = None) -> int:
     sha = os.environ["GITHUB_SHA"]
     ref = os.environ["GITHUB_REF_NAME"]
     if args.command == "collect":
-        collect_assets(dest, ref=ref, sha=sha, runner=_gh)
+        collected = collect_assets(dest, ref=ref, sha=sha, runner=_gh)
+        _write_output("installer_run", str(collected.run_number))
         return 0
     if args.command == "publish":
-        collect_assets(dest, ref=ref, sha=sha, runner=_gh)
+        collected = collect_assets(dest, ref=ref, sha=sha, runner=_gh)
         publish_release(dest, ref, sha, _gh)
+        _write_output("installer_run", str(collected.run_number))
         return 0
     raise SystemExit(f"unknown command {args.command}")
 

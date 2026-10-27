@@ -46,8 +46,15 @@ def test_the_job_and_unload_run_off_the_ui_thread(qtbot) -> None:
 
     gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b", active=False)], unload=unload)
     qtbot.addWidget(gate)
-    with qtbot.waitSignal(gate.finished, timeout=5000):
-        gate.start()
+    ended: list[object] = []
+    gate.finished.connect(ended.append)
+    gate.start()
+    # Join the worker with no deadline, then deliver its queued signals: no wall-clock race on slow runners.
+    assert gate._worker is not None
+    gate._worker.wait()
+    while not ended:
+        QtWidgets.QApplication.sendPostedEvents()
+        QtWidgets.QApplication.processEvents()
     assert threads == [threads[0]]
     assert threads[0] != threading.get_ident()
     assert unloaded == [threads[0]]

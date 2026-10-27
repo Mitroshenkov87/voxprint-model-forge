@@ -25,6 +25,12 @@ def need_more(count: int, mode: str) -> int:
     return max(0, min_photos(mode) - count)
 
 
+def expert_only(count: int) -> bool:
+    """True when Expert trains on ``count`` photos and Simple refuses them."""
+    low, high = RECOMMENDED_RANGE
+    return not low <= count <= high and EXPERT_FLOOR <= count <= EXPERT_CAP
+
+
 def expert_range_differs() -> bool:
     """True when Expert mode allows a range other than the recommended one."""
     return EXPERT_RANGE != RECOMMENDED_RANGE

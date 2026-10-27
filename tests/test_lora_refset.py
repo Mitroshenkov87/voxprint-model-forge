@@ -319,6 +319,24 @@ def test_finish_hands_the_approved_set_to_prepare_and_records_how_it_was_made(tm
     assert refset.approved_files(project) == []  # a changed verdict reopens the set
 
 
+@pytest.mark.parametrize(("mode", "key"), [("simple", "lora.err.too_many"), ("expert", "lora.err.above_cap")])
+def test_finish_refuses_an_oversized_set_with_the_same_key_as_intake(tmp_path, monkeypatch, mode, key) -> None:
+    """``finish`` and ``photos.check_count`` agree: Expert over its cap is ``above_cap``, not ``too_many``."""
+    from voxprint_forge.lora.limits import EXPERT_CAP
+    from voxprint_forge.lora.photos import check_count
+
+    project = Project(tmp_path / "proj")
+    _round(project, _refs(tmp_path / "refs", 3), Loaders())
+    refset.set_verdict(project, refset.candidates(refset.load_state(project))[0]["id"], "keep")
+    monkeypatch.setattr(refset, "approved_count", lambda _state: EXPERT_CAP + 1)
+    with pytest.raises(LoraUsageError) as caught:
+        refset.finish(project, Progress(), mode=mode)
+    assert caught.value.key == key
+    with pytest.raises(LoraUsageError) as intake:
+        check_count(EXPERT_CAP + 1, mode)
+    assert intake.value.key == key
+
+
 def test_teacher_pin_matches_the_turbo_pin() -> None:
     nunchaku = pytest.importorskip("voxprint_forge.diffusion.nunchaku_zimage")
     assert refset.TEACHER_REPO == nunchaku.ZIMAGE_BASE_REPO
