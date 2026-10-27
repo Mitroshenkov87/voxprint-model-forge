@@ -93,7 +93,7 @@ def test_deactivation_with_a_pass_ends_passed(qtbot) -> None:
     assert gate.state is GateState.PASSED
     assert gate.can_proceed
     assert gate.deactivated == ("bad",)
-    assert gate.findChild(QtWidgets.QLabel, "forgeCheckMark").text() == "→"
+    assert gate.findChild(QtWidgets.QLabel, "forgeCheckMark").text() == "✓"
 
 
 def test_no_pass_ends_failed_even_after_deactivation(qtbot) -> None:
