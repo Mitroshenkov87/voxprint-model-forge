@@ -136,15 +136,13 @@ def test_shell_parts_this_app_extends_exist(make_app) -> None:
 
 @pytest.mark.parametrize(("lang", "count", "reset"), [
     ("en", "Step 1 of 6", "Reset to the “Balanced” preset"),
-    ("ru", "Шаг 1 из 6", "Сбросить к пресету «Сбалансированная»"),
 ])
 def test_review_wording(make_app, lang, count, reset) -> None:
     make_app()
     set_language(lang)
     try:
         assert tr("wizard.step_count", current=1, total=len(STEPS)) == count
-        name = "Balanced" if lang == "en" else "Сбалансированная"
-        assert tr("simple.preset.reset", name=name) == reset
+        assert tr("simple.preset.reset", name="Balanced") == reset
     finally:
         set_language("en")
 
@@ -254,7 +252,7 @@ def test_subject_attr_is_disabled_and_cleared_when_18_is_unticked(make_app, tmp_
     assert not app.draft.adult_content
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 def test_subject_rows_wrap_without_clipping_in_a_narrow_window(make_app, tmp_path, lang) -> None:
     app = make_app(lang=lang)
     _subject_step(app, tmp_path)
@@ -359,7 +357,6 @@ def test_manage_models_passes_the_manifest(make_app) -> None:
     ("lang", "label"),
     [
         ("en", "Check and repair models"),
-        ("ru", "Проверить и восстановить модели"),
     ],
 )
 def test_check_and_repair_opens_the_verify_window(make_app, qapp, lang, label, monkeypatch) -> None:
@@ -476,7 +473,7 @@ def test_a_command_missing_from_this_build_says_so(make_app, tmp_path) -> None:
     assert _status(app) == tr("forge.app.err.missing_command")
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_every_control_has_a_tooltip_and_every_step_has_help(make_app, tmp_path, lang, expert) -> None:
     photos = make_photos(tmp_path / "p", 12)
@@ -556,7 +553,7 @@ def test_entry_point_builds_the_window(qapp, monkeypatch, tmp_path) -> None:
     assert entry.main([]) == 0
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 def test_open_guide_opens_the_offline_page_in_the_app_language(make_app, lang) -> None:
     app = make_app(lang=lang)
     opened = []
@@ -566,7 +563,7 @@ def test_open_guide_opens_the_offline_page_in_the_app_language(make_app, lang) -
     assert 'src="http' not in opened[0].read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp_path, lang, expert) -> None:
     from voxprint_forge.app import basepicker
@@ -612,7 +609,7 @@ def test_base_vram_uses_measured_peaks_only_when_present(monkeypatch) -> None:
         tr("forge.app.base.vram_measured.tip", vram=measured))
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 def test_base_details_name_only_measured_memory(make_app, tmp_path, lang) -> None:
     from voxprint_forge.app import basepicker
     from voxprint_forge.app.details import Details
@@ -622,7 +619,7 @@ def test_base_details_name_only_measured_memory(make_app, tmp_path, lang) -> Non
     texts = [label.text() for label in box.body.findChildren(QtWidgets.QLabel)]
     assert texts == [tr("forge.app.base.details"), basepicker.memory_details()]
     assert "MOSS-Image Base" in texts[1] and "Z-Image" not in texts[1]
-    assert all(word not in text for text in texts for word in ("Not measured", "Ещё не измерено"))
+    assert all(word not in text for text in texts for word in ("Not measured",))
 
 
 def _train(make_app, tmp_path, lang, expert):
@@ -648,7 +645,7 @@ def _labels_fit(page):
     return bad
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_train_step_text_is_never_cut_with_details_closed_or_open(make_app, tmp_path, lang, expert) -> None:
     from voxprint_forge.app.details import Details
@@ -670,7 +667,7 @@ def test_train_step_text_is_never_cut_with_details_closed_or_open(make_app, tmp_
     assert all(box.opened for box in app.window.findChildren(Details))  # survives a repaint
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_base_list_opens_below_the_field(make_app, tmp_path, lang, expert) -> None:
     app = _train(make_app, tmp_path, lang, expert)
@@ -761,7 +758,7 @@ def _scroll_problems(app, step):
     return bad
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_every_control_scrolls_into_view_above_the_footer_with_all_details_open(
         make_app, tmp_path, lang, expert) -> None:

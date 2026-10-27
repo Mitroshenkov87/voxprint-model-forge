@@ -90,7 +90,7 @@ During a stage the engine also writes `<project>/train.json` (`step`, `total`, `
 
 During round 1, `train.json` also carries `round`, `seconds_per_step`, `first_pictures_seconds`, `seconds_per_sample` and `sample_seconds_estimated`. The first-pictures time is the steps still to run times the measured seconds per step, plus the pictures still to draw times the seconds per picture. Until one picture has been timed, each denoising step is estimated as half a training step (`sample_seconds_estimated` is true and `seconds_per_sample` is omitted). After that, the measured seconds per picture are stored. The sentence is localized in the GUI and in `lora status`; `train.json` keeps the numbers. Later rounds and a train-fully stage do not write these fields. The final `stage` of `review` omits them.
 
-All strings are in `src/voxprint_forge/lora/i18n/en.json` and `ru.json`; a test keeps their keys and placeholders identical.
+All strings are in `src/voxprint_forge/lora/i18n/en.json`. The UI is English only; Russian stays a content language (captions, prompts, the safety check).
 
 ## Project folder
 

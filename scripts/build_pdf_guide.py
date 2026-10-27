@@ -1,10 +1,10 @@
-"""Render the user manual (docs/manual/{en,ru}) into one PDF per language with WeasyPrint.
+"""Render the user manual (docs/manual/en) into the PDF guide with WeasyPrint.
 
     python scripts/build_pdf_guide.py OUT_DIR [--font-dir DIR]
 
-Writes OUT_DIR/VOXPrint-Model-Forge-Guide-en.pdf and -ru.pdf: a cover page with the version, a table of
+Writes OUT_DIR/VOXPrint-Model-Forge-Guide-en.pdf: a cover page with the version, a table of
 contents with page numbers, then the manual pages in nav order with their screenshots and numbered pages.
-The fonts (DejaVu Sans and Sans Mono, which cover Cyrillic) are embedded from --font-dir; the oblique
+The fonts (DejaVu Sans and Sans Mono) are embedded from --font-dir; the oblique
 faces are used when present there.
 Pinned dependencies: installer/requirements-pdf.txt.
 """
@@ -33,8 +33,6 @@ NAME = "VOXPrint-Model-Forge-Guide-{lang}.pdf"
 TEXT = {
     "en": {"title": "VOXPrint AI Model Forge", "subtitle": "User guide", "version": "Version",
            "contents": "Contents", "lang": "English"},
-    "ru": {"title": "VOXPrint AI Model Forge", "subtitle": "Руководство пользователя", "version": "Версия",
-           "contents": "Содержание", "lang": "Русский"},
 }
 
 
@@ -103,7 +101,7 @@ def document(lang: str) -> str:
 
 
 def build(out: Path, font_dir: Path = FONT_DIR) -> list[Path]:
-    """Write both PDFs into ``out`` and return their paths."""
+    """Write the PDF into ``out`` and return their paths."""
     from weasyprint import CSS, HTML
     from weasyprint.text.fonts import FontConfiguration
 

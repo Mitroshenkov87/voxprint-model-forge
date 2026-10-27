@@ -1,4 +1,4 @@
-"""Render the main Model Forge screens offscreen, in English and Russian, for UI review.
+"""Render the main Model Forge screens offscreen, in English, for UI review.
 
 Usage:
     QT_QPA_PLATFORM=offscreen QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu \
@@ -9,8 +9,9 @@ window at devicePixelRatio 2, a HiDPI check, and only the screens in ``HIDPI``).
 ``*-end`` scroll the step (or the Expert panel) to the bottom first, so the check gate, the set-aside
 list and the last Expert fields are in view on a short window. Pictures are saved as
 8-bit palette PNGs to keep them small; ``--full-color`` keeps true colours, since the palette
-merges close dark greys (a panel on the card) and shifts the window background. A stub engine answers every ``lora`` command; the photo
-check passes through a stub job, so no model is loaded and nothing is trained.
+merges close dark greys (a panel on the card) and shifts the window background. A stub engine
+answers every ``lora`` command; the photo check passes through a stub job, so no model is loaded
+and nothing is trained.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def main(out: Path, scale: int, window: tuple[int, int] | None = None, full_colo
     photos = make_photos(home / "photos", 14)
     size = HIDPI_SIZE if scale != 1 else window or SIZE
     suffix = f"@{scale}x" if scale != 1 else ""
-    for lang in ("en", "ru"):
+    for lang in ("en",):
         set_language(lang)
         runner = StubRunner({
             "prepare": ([], Outcome(True, {"state": "done", "prepared": 12})),

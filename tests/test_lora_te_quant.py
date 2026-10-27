@@ -65,7 +65,6 @@ def test_missing_library_is_a_localized_stage_error(monkeypatch) -> None:
         te_quant.check_available("int8")
     assert caught.value.key == "lora.err.te_quant_missing"
     assert "bitsandbytes" in text("lora.err.te_quant_missing", "en", mode="int8")
-    assert "bitsandbytes" in text("lora.err.te_quant_missing", "ru", mode="int8")
     monkeypatch.setattr(te_quant, "cuda_available", lambda: True)
     with pytest.raises(LoraStageError):
         te_quant.plan("nf4", "gpu", 16)

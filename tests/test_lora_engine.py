@@ -15,7 +15,7 @@ from tests.lora_fakes import TinyAdapter, make_project
 from voxprint_forge.lora import bases
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress, sentence
-from voxprint_forge.lora.i18n import catalog, text
+from voxprint_forge.lora.i18n import catalog
 from voxprint_forge.lora.presets import build_config
 from voxprint_forge.lora.project import Item
 from voxprint_forge.lora.train import estimate, select_items, train
@@ -28,18 +28,6 @@ def tiny(**overrides):
     values.update(overrides)
     vram = values.pop("vram")
     return build_config("quick", "balanced", vram, **values)
-
-
-def test_catalogs_have_the_same_keys_and_placeholders() -> None:
-    en, ru = catalog("en"), catalog("ru")
-    assert set(en) == set(ru)
-    def found(value):  # a count string holds one text per plural form
-        forms = value.values() if isinstance(value, dict) else (value,)
-        return {name for form in forms for name in PLACEHOLDER.findall(form)}
-
-    for key in en:
-        assert found(en[key]) == found(ru[key]), key
-        assert en[key] and ru[key], key
 
 
 def test_catalogs_cover_the_plan_tables() -> None:
@@ -55,7 +43,6 @@ def test_catalogs_cover_the_plan_tables() -> None:
         "lora.warn.count",
     ):
         assert key in en
-    assert text("lora.err.too_few", "ru", need=3) == "Добавьте ещё хотя бы 3 фото, чтобы продолжить."
 
 
 def test_presets_follow_memory_tier_and_likeness() -> None:
@@ -101,7 +88,6 @@ def test_events_give_sentences_and_eta_after_warmup() -> None:
     assert events[-1].eta_seconds == 10
     assert events[-1].percent == 50.0
     assert "About 1 min left" in sentence(events[-1], "en")
-    assert sentence(events[0], "ru").startswith("Обучение: шаг 1 из 10 — модель изучает ваши фото — Оцениваю")
 
 
 def test_train_writes_checkpoints_and_events(tmp_path) -> None:

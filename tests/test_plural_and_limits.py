@@ -1,4 +1,4 @@
-"""One RU plural helper for every count string (GUI and CLI) and one source for the set-size range."""
+"""One plural helper for every count string (GUI and CLI) and one source for the set-size range."""
 
 from __future__ import annotations
 
@@ -40,25 +40,12 @@ def test_ru_plural_agrees_with_the_shell_rule() -> None:
         assert category(count, "en") == plural_category(count, "en"), count
 
 
-def test_every_count_string_has_full_forms_in_both_languages() -> None:
-    en, ru = _all("en"), _all("ru")
-    plural_keys = {k for k, v in {**en, **ru}.items() if isinstance(v, dict)}
+def test_every_count_string_has_full_forms() -> None:
+    en = _all("en")
+    plural_keys = {k for k, v in en.items() if isinstance(v, dict)}
     assert "lora.progress.refset_done" in plural_keys and "forge.app.refset.simple" in plural_keys
     for key in plural_keys:
-        if isinstance(ru[key], dict):
-            assert set(ru[key]) - {"by"} == {"one", "few", "many"}, key
-        if isinstance(en[key], dict):
-            assert set(en[key]) - {"by"} == {"one", "other"}, key
-        if isinstance(en[key], dict) and isinstance(ru[key], dict):
-            assert en[key].get("by") == ru[key].get("by"), key
-
-
-def test_no_russian_count_string_is_left_without_forms() -> None:
-    """A number placeholder right before a noun that changes with the number must be a plural entry."""
-    nouns = r"(картин|образ|шаг|пиксел|круг|фотограф|снимк)"
-    pattern = re.compile(r"\{\w+\}\s+" + nouns)
-    plain = [(k, v) for k, v in _all("ru").items() if isinstance(v, str) and pattern.search(v)]
-    assert plain == []
+        assert set(en[key]) - {"by"} == {"one", "other"}, key
 
 
 @pytest.mark.parametrize("count", NUMBERS)
@@ -70,29 +57,17 @@ def test_gui_and_cli_render_the_same_form(count) -> None:
     from voxprint_forge.app.window import register_catalogs
 
     register_catalogs()
-    set_language("ru")
-    try:
-        ru = _all("ru")
-        for key, value in ru.items():
-            if not isinstance(value, dict):
-                continue
-            by = value.get("by", "count")
-            params = {"count": 0, "round": 1, "low": 1, "high": 0, "minutes": 3, "need": 0, "extra": 0, "shown": 0,
-                      "steps": 0, "done": 0, "planned": 0, "total": 9, "kept": 0, "dropped": 0, by: count}
-            want = value[EXPECTED[count]].format(**{**limits.text_params(), **params})
-            assert tr(key, **params) == want, key
-            if key.startswith("lora."):
-                assert text(key, "ru", **params) == want, key
-    finally:
-        set_language("en")
-
-
-@pytest.mark.parametrize(("count", "words"), [
-    (1, "1 картинка"), (2, "2 картинки"), (5, "5 картинок"), (11, "11 картинок"),
-    (21, "21 картинка"), (22, "22 картинки"), (24, "24 картинки"), (25, "25 картинок"),
-])
-def test_round_ready_reads_right_in_russian(count, words) -> None:
-    assert text("lora.progress.refset_done", "ru", round=1, shown=count) == f"Круг 1 готов: {words} на просмотр"
+    set_language("en")
+    for key, value in _all("en").items():
+        if not isinstance(value, dict):
+            continue
+        by = value.get("by", "count")
+        params = {"count": 0, "round": 1, "low": 1, "high": 0, "minutes": 3, "need": 0, "extra": 0, "shown": 0,
+                  "steps": 0, "done": 0, "planned": 0, "total": 9, "kept": 0, "dropped": 0, by: count}
+        want = value[category(count, "en")].format(**{**limits.text_params(), **params})
+        assert tr(key, **params) == want, key
+        if key.startswith("lora."):
+            assert text(key, "en", **params) == want, key
 
 
 def test_english_singular() -> None:
@@ -112,7 +87,7 @@ def _ranges(value: str) -> set[tuple[int, int]]:
 def test_catalogs_take_the_set_range_from_the_constant() -> None:
     """No catalog string spells the recommended or Expert range itself; they use {rec_low}… placeholders."""
     literal = {limits.RECOMMENDED_RANGE, limits.EXPERT_RANGE}
-    for lang in ("en", "ru"):
+    for lang in ("en",):
         for key, value in _all(lang).items():
             for form in (value.values() if isinstance(value, dict) else (value,)):
                 assert not (_ranges(form) & literal), (lang, key, form)
@@ -123,8 +98,7 @@ def test_catalogs_take_the_set_range_from_the_constant() -> None:
 
 def test_the_manual_uses_the_constant_ranges() -> None:
     allowed = {limits.RECOMMENDED_RANGE, limits.EXPERT_RANGE, (1, 10), (15, 20)}  # (15, 20): the "usually enough" tip
-    for lang, recommended, expert in (("en", "Recommended: {} to {}", "Allowed in Expert: {} to {}"),
-                                      ("ru", "от {} до {}", "Допустимо в режиме эксперта: от {} до {}")):
+    for lang, recommended, expert in (("en", "Recommended: {} to {}", "Allowed in Expert: {} to {}"),):
         manual = "\n".join(page.read_text(encoding="utf-8")
                            for page in sorted((ROOT / "docs" / "manual" / lang).glob("*.md")))
         assert manual
