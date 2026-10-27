@@ -36,7 +36,14 @@ class Clock:
 
 
 def _run(run_id: int, status: str, conclusion: str | None, created: str) -> dict[str, object]:
-    return {"databaseId": run_id, "status": status, "conclusion": conclusion, "createdAt": created, "event": "push"}
+    return {
+        "databaseId": run_id,
+        "number": 180 + run_id,
+        "status": status,
+        "conclusion": conclusion,
+        "createdAt": created,
+        "event": "push",
+    }
 
 
 def test_rc_tag_is_a_prerelease() -> None:
@@ -107,11 +114,41 @@ def test_collect_downloads_a_finished_run(tmp_path: Path) -> None:
             return CmdResult(0)
         return CmdResult(1, "", "unexpected")
 
-    sums = collect_assets(tmp_path, ref="v0.1.0", sha="abc", runner=runner, grace_s=120, poll_s=20, timeout_s=500)
-    assert sums.is_file()
-    assert b"\r" not in sums.read_bytes()
+    collected = collect_assets(tmp_path, ref="v0.1.0", sha="abc", runner=runner, grace_s=120, poll_s=20, timeout_s=500)
+    assert collected.sums.is_file()
+    assert b"\r" not in collected.sums.read_bytes()
+    assert collected.run_number == 189
     assert not any(argv[1:3] == ["workflow", "run"] for argv in calls)
     assert any(argv[1:3] == ["run", "download"] and "9" in argv for argv in calls)
+
+
+def test_collect_reports_the_installer_run_number_not_the_run_id(tmp_path: Path) -> None:
+    """The release build is the installer counter (rc.8 = 183), never this workflow's own run number."""
+    runs = [
+        {**_run(9_000_000_001, "completed", "success", "2026-10-26T00:00:00Z"), "number": 183},
+        {**_run(9_000_000_002, "completed", "success", "2026-10-27T00:00:00Z"), "number": 185},
+    ]
+
+    def runner(argv: list[str]) -> CmdResult:
+        if argv[1:3] == ["run", "list"]:
+            assert "number" in argv[argv.index("--json") + 1].split(",")
+            return CmdResult(0, json.dumps(runs))
+        if argv[1:3] == ["run", "download"]:
+            _assets(Path(argv[argv.index("--dir") + 1]))
+            return CmdResult(0)
+        return CmdResult(1, "", "unexpected")
+
+    assert collect_assets(tmp_path, ref="v0.1.0-rc.9", sha="abc", runner=runner).run_number == 185
+
+
+def test_collect_refuses_a_run_without_a_number(tmp_path: Path) -> None:
+    runs = [{**_run(9, "completed", "success", "2026-10-26T00:00:00Z"), "number": None}]
+
+    def runner(argv: list[str]) -> CmdResult:
+        return CmdResult(0, json.dumps(runs)) if argv[1:3] == ["run", "list"] else CmdResult(0)
+
+    with pytest.raises(SystemExit, match="run number"):
+        collect_assets(tmp_path, ref="v0.1.0", sha="abc", runner=runner, timeout_s=50)
 
 
 def test_collect_starts_installer_once_when_no_run_appears(tmp_path: Path) -> None:
