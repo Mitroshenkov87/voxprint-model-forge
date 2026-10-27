@@ -43,6 +43,7 @@ from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.image_check import ImageChecker
 from voxprint_forge.lora.limits import EXPERT_CAP, RECOMMENDED_RANGE, expert_range_differs, need_more
+from voxprint_forge.lora.photos import MIN_SIDE
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, report_from_drops
@@ -154,15 +155,14 @@ QLabel#forgePhotoRefusal, QLabel#forgePrepareWayOut {
 QFrame#forgePrepareAside { background: #2a2a33; border: 1px solid #3a3a46; border-radius: 6px; }
 QFrame#forgePrepareAside QLabel { background: transparent; border: none; color: #f4f1ea; }
 QFrame#forgePrepareAside QLabel#forgePrepareAsideSummary { font-weight: 600; }
-QFrame#forgePrepareAside QLabel#forgePrepareAsideCount {
-    background: #3a3a46; border-radius: 4px; font-weight: 700; padding: 1px 6px; }
-QFrame#forgePrepareAside QLabel#forgePrepareAsideNames { color: #9a9aa8; font-size: 12px; }
+QFrame#forgePrepareAside QLabel#forgePrepareAsideNames { font-weight: 600; }
+QFrame#forgePrepareAside QLabel#forgePrepareReason { color: #c8c8d2; }
 QFrame#forgePrepareAside QLabel#forgePrepareWayOut { color: #f5d76e; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
     background: transparent; color: #e8e6e3; border: none; border-radius: 0;
-    padding: 8px 10px; min-height: 34px; }
+    padding: 8px 12px; min-height: 34px; }
 QFrame#kindSegments QPushButton[segment="true"][end="left"] {
     border-top-left-radius: @@RADIUS@@px; border-bottom-left-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"][end="right"] {
@@ -189,7 +189,7 @@ QToolButton[selectionRemove="true"]:hover { background: #2a2a35; border-color: #
 QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
 QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
 QFrame[photoTile="true"][inactive="true"] { background: #14141a; border-color: #3a3a46; }
-QLabel[photoReason="true"] { color: #f0b0b0; font-size: 11px; }
+QLabel[photoReason="true"] { color: #f0b0b0; font-size: 12px; }
 QWidget[checkGate="stop"] {
     background: #33232a; border: 1px solid #7a3a40; border-left: 4px solid #d06060; border-radius: 6px; }
 QWidget[checkGate="go"] {
@@ -197,17 +197,18 @@ QWidget[checkGate="go"] {
 QWidget[checkGate="run"] {
     background: #2a2a33; border: 1px solid #3a3a46; border-left: 4px solid #8a8a9c; border-radius: 6px; }
 QLabel#forgeCheckMark[gate="stop"] {
-    background: #c45c5c; color: #fff8f8; border-radius: 13px; font-weight: 700; }
+    background: #c45c5c; color: #fff8f8; border-radius: 13px; font-weight: 700; font-size: 14px; }
 QLabel#forgeCheckMark[gate="go"] {
-    background: #3fa463; color: #f4fff6; border-radius: 13px; font-weight: 700; font-size: 15px; }
+    background: #3fa463; color: #f4fff6; border-radius: 13px; font-weight: 700; font-size: 14px; }
 QLabel#forgeCheckMark[gate="run"] {
-    background: #3a3a46; color: #f4f1ea; border-radius: 13px; font-weight: 700; }
+    background: #3a3a46; color: #f4f1ea; border-radius: 13px; font-weight: 700; font-size: 14px; }
 QLabel[gateStatus] { background: transparent; border: none; font-weight: 600; }
 QLabel[gateStatus="stop"] { color: #f6c9c9; }
 QLabel[gateStatus="go"] { color: #bfeccb; }
 QLabel[gateStatus="run"] { color: #f4f1ea; }
 QPushButton[gateAction="true"] {
-    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; padding: 6px 12px; }
+    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604;
+    padding: 4px 12px; min-height: 28px; }
 QPushButton[gateAction="true"]:hover { background: #f9e291; }
 QPushButton[gateAction="true"][running="true"] {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; }
@@ -1798,13 +1799,9 @@ class ForgeApp:
         column.addWidget(final)
 
     def _aside_list(self, prepared: Prepared) -> QtWidgets.QFrame:
-        """"N of M set aside", then one row per reason: how many photos, the reason, and their names."""
+        """"N of M set aside", then one row per photo: its name and the plain-English reason."""
         kept = len(prepared.kept)
         total = kept + len(prepared.drops)
-        groups: dict[str, list[str]] = {}
-        for item in prepared.drops:
-            name = str(item.get("name") or Path(str(item.get("file", ""))).name)
-            groups.setdefault(str(item.get("reason") or ""), []).append(name)
         box = QtWidgets.QFrame()
         box.setObjectName("forgePrepareAside")
         box.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1816,23 +1813,16 @@ class ForgeApp:
         stack.addWidget(_wrap_label(summary, "forgePrepareAsideSummary"))
         rows = QtWidgets.QGridLayout()
         rows.setContentsMargins(0, 0, 0, 0)
-        rows.setHorizontalSpacing(10)
-        rows.setVerticalSpacing(8)
+        rows.setHorizontalSpacing(12)
+        rows.setVerticalSpacing(6)
         rows.setColumnStretch(1, 1)
-        for index, (reason, names) in enumerate(groups.items()):
-            count = QtWidgets.QLabel(str(len(names)))
-            count.setObjectName("forgePrepareAsideCount")
-            count.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            count.setMinimumWidth(28)
-            text = QtWidgets.QWidget()
-            lines = QtWidgets.QVBoxLayout(text)
-            lines.setContentsMargins(0, 0, 0, 0)
-            lines.setSpacing(2)
-            lines.addWidget(_wrap_label(tr(reason) if reason else ", ".join(names), "forgePrepareReason"))
-            if reason:
-                lines.addWidget(_wrap_label(", ".join(names), "forgePrepareAsideNames"))
-            rows.addWidget(count, index, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-            rows.addWidget(text, index, 1)
+        for index, item in enumerate(prepared.drops):
+            name = QtWidgets.QLabel(str(item.get("name") or Path(str(item.get("file", ""))).name))
+            name.setObjectName("forgePrepareAsideNames")
+            reason = str(item.get("reason") or "")
+            text = tr(reason, min_side=MIN_SIDE) if reason else tr("forge.app.prepare.aside.unknown")
+            rows.addWidget(name, index, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+            rows.addWidget(_wrap_label(text, "forgePrepareReason"), index, 1)
         stack.addLayout(rows)
         return box
 

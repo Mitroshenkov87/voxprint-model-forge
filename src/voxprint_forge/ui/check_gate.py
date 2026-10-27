@@ -123,8 +123,8 @@ class CheckGate(QtWidgets.QWidget):
         # The whole row is tinted red or green (``checkGate`` in the window style), not only the mark.
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(12, 8, 8, 8)
-        row.setSpacing(10)
+        row.setContentsMargins(12, 10, 12, 10)
+        row.setSpacing(12)
         self._mark = QtWidgets.QLabel("■")
         self._mark.setObjectName("forgeCheckMark")
         self._mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
