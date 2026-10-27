@@ -120,16 +120,19 @@ class CheckGate(QtWidgets.QWidget):
         self._done = 0
         self._total = 0
         self.setObjectName("forge.photos.gate")
+        # The whole row is tinted red or green (``checkGate`` in the window style), not only the mark.
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
+        row.setContentsMargins(12, 10, 12, 10)
+        row.setSpacing(12)
         self._mark = QtWidgets.QLabel("■")
         self._mark.setObjectName("forgeCheckMark")
         self._mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._mark.setFixedSize(28, 28)
+        self._mark.setFixedSize(26, 26)
         self._status = QtWidgets.QLabel()
         self._status.setObjectName("forge.photos.check.status")
         self._status.setWordWrap(True)
+        self._status.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self._bar = QtWidgets.QProgressBar()
         self._bar.setObjectName("forge.photos.check.bar")
         self._bar.setTextVisible(False)
@@ -300,10 +303,12 @@ class CheckGate(QtWidgets.QWidget):
             self._bar.setRange(0, 1)
             self._bar.setValue(0)
         stopped = self._state in (GateState.DIRTY, GateState.FAILED, GateState.CANCELLED)
-        self._mark.setText("■" if stopped or running else "→")
-        self._mark.setProperty("gate", "stop" if stopped else "go" if self._state is GateState.PASSED else "run")
-        self._mark.style().unpolish(self._mark)
-        self._mark.style().polish(self._mark)
+        gate = "stop" if stopped else "go" if self._state is GateState.PASSED else "run"
+        self._mark.setText("■" if stopped or running else "✓")
+        for widget, name in ((self, "checkGate"), (self._mark, "gate"), (self._status, "gateStatus")):
+            widget.setProperty(name, gate)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
         self._status.setText(self._status_text())
 
     def _status_text(self) -> str:

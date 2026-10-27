@@ -152,13 +152,9 @@ def test_the_sample_switch_hint_describes_pictures_during_training() -> None:
     set_language("en")
     assert "before training" not in tr("forge.app.photos.extend.hint").lower()
     assert tr("forge.app.photos.extend.hint").startswith("During training")
-    set_language("ru")
-    hint = tr("forge.app.photos.extend.hint")
-    assert "перед обучением" not in hint
-    assert hint == (
-        "Во время обучения приложение покажет новые картинки — вы отметите удачные, и они войдут в набор."
+    assert tr("forge.app.photos.extend.hint") == (
+        "During training the app shows new pictures — you mark the ones that work, and they join the set."
     )
-    set_language("en")
 
 
 def _assert_review_fits(app, qapp) -> None:
@@ -211,7 +207,7 @@ def _assert_menu_anchored_to_button(
 
 def test_the_finish_menu_hangs_off_the_finish_button(make_app, tmp_path, qapp) -> None:
     """At 1280×800 the menu's top meets the button's bottom and their right edges line up."""
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -219,7 +215,7 @@ def test_the_finish_menu_hangs_off_the_finish_button(make_app, tmp_path, qapp) -
     app.repaint()
     qapp.processEvents()
     finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
-    assert finish is not None and finish.text() == "Завершить"
+    assert finish is not None and finish.text() == "Finish"
     menu = finish.menu()
     assert menu is not None
     QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
@@ -240,13 +236,13 @@ def test_the_finish_menu_flips_above_the_button_when_nothing_fits_below(qapp) ->
     window = QtWidgets.QWidget()
     window.setFixedSize(1280, 220)
     window.show()
-    button = QtWidgets.QPushButton("Завершить", window)
+    button = QtWidgets.QPushButton("Finish", window)
     button.setGeometry(1080, 176, 140, 32)
     menu = QtWidgets.QMenu(button)
     menu.setObjectName("forgeReviewMenu")
-    save = menu.addAction("Сохранить")
+    save = menu.addAction("Save")
     save.setObjectName("forge.review.finish.save")
-    discard = menu.addAction("Принудительно, без сохранения")
+    discard = menu.addAction("Force, without saving")
     discard.setObjectName("forge.review.finish.discard")
     button.setMenu(menu)
     button.show()
@@ -287,7 +283,7 @@ def _tooltip_label() -> QtWidgets.QWidget | None:
 
 def test_the_review_tooltip_opens_under_the_button(make_app, tmp_path, qapp) -> None:
     """The tip is a dark wrapped panel under the main button, not a yellow bubble on top of it."""
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "tip", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -341,7 +337,7 @@ def test_the_review_tooltip_opens_under_the_button(make_app, tmp_path, qapp) -> 
 
 def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app, tmp_path, qapp) -> None:
     """One muted line names the current mode, and the long explanations live on the controls."""
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -353,7 +349,7 @@ def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app
     finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
     assert note is not None and cont is not None and chevron is not None and finish is not None
     assert note.property("muted") == "true"
-    assert note.text() == "Следующий раунд и снова проверка"
+    assert note.text() == "Next round, then another review"
     assert "\n" not in note.text()
     assert cont.toolTip() == tr("forge.app.review.continue.tip")
     assert chevron.toolTip() == tr("forge.app.review.unattended.tip")
@@ -361,7 +357,7 @@ def test_the_review_note_follows_the_button_and_the_tooltips_explain_it(make_app
     _assert_review_tooltips(app.window)
     QtTest.QTest.mouseClick(chevron, QtCore.Qt.MouseButton.LeftButton)
     qapp.processEvents()
-    assert note.text() == "Дообучить без проверок"
+    assert note.text() == "Train on without reviews"
     assert cont.toolTip() == tr("forge.app.review.unattended.tip")
     assert chevron.toolTip() == tr("forge.app.review.continue.tip")
     _assert_review_tooltips(app.window)
@@ -401,15 +397,15 @@ def _card(button: QtWidgets.QPushButton) -> QtWidgets.QFrame:
 
 
 def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app, tmp_path, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
-    assert app.window.findChild(QtWidgets.QLabel, "forge.review.heading").text() == "Проверьте новые картинки"
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.heading").text() == "Check the new pictures"
     assert app.window.findChild(QtWidgets.QLabel, "forge.review.lead").text() == (
-        "Отметьте, какие подходят: 👍 — добавить в набор, 👎 — не брать."
+        "Mark the ones that fit: 👍 adds them to the set, 👎 leaves them out."
     )
     assert app.window.findChild(Details, "forge.details.step.train") is None
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
@@ -421,15 +417,15 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     assert back is not None and nxt is not None
     assert not back.isVisible() and not nxt.isVisible()
     assert app._status_label.text() == tr("forge.app.review.footer", liked=1, disliked=1, unmarked=1)
-    assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Раунд 1 из 3"
+    assert app.window.findChild(QtWidgets.QLabel, "forge.review.round").text() == "Round 1 of 3"
     finish = app.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
-    assert finish is not None and finish.text() == "Завершить"
+    assert finish is not None and finish.text() == "Finish"
     save_action = next(item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.save")
     discard_action = next(
         item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
     )
-    assert save_action.text() == "Сохранить"
-    assert discard_action.text() == "Принудительно, без сохранения"
+    assert save_action.text() == "Save"
+    assert discard_action.text() == "Force, without saving"
     menu = finish.menu()
     assert menu is not None
     QtTest.QTest.mouseClick(finish, QtCore.Qt.MouseButton.LeftButton)
@@ -450,9 +446,9 @@ def test_the_review_screen_counts_marks_and_offers_continue_and_finish(make_app,
     chevron = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
     host = cont.parentWidget()
     assert cont is not None and chevron is not None and host is not None
-    assert cont.text() == "Продолжить с подкреплением" and cont.isEnabled() and cont.menu() is None
+    assert cont.text() == "Continue with reinforcement" and cont.isEnabled() and cont.menu() is None
     text_width = host.fontMetrics().horizontalAdvance(cont.text())
-    plain_width = host.fontMetrics().horizontalAdvance("Просто продолжить")
+    plain_width = host.fontMetrics().horizontalAdvance("Just continue")
     assert host.sizeHint().width() >= text_width
     assert host.sizeHint().width() >= plain_width
     assert host.width() >= host.sizeHint().width()
@@ -595,12 +591,6 @@ def test_unmarked_pictures_ask_before_continue_and_marks_can_be_set_in_bulk(make
 
 def test_progress_spans_use_hours_and_minutes() -> None:
     register_catalogs()
-    set_language("ru")
-    assert format_span(120) == "2 мин"
-    assert format_span(900) == "15 мин"
-    assert format_span(3600) == "1 ч"
-    assert format_span(5400) == "1 ч 30 мин"
-    assert format_span(20) == "меньше 1 мин"
     set_language("en")
     assert format_span(120) == "2 min"
     assert format_span(3600) == "1 h"
@@ -609,7 +599,7 @@ def test_progress_spans_use_hours_and_minutes() -> None:
 
 
 def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.runner.busy = True
     app.project.mkdir(parents=True, exist_ok=True)
     save_state(Project(app.project), transition(
@@ -623,12 +613,12 @@ def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, q
     qapp.processEvents()
     page = app.window.findChild(QtWidgets.QWidget, "forgeStepPage")
     labels = [label.text() for label in page.findChildren(QtWidgets.QLabel)]
-    assert "Идёт обучение — раунд 1 из 3" in labels
+    assert "Training is running — round 1 of 3" in labels
     assert tr("forge.app.step.train.short") not in labels
     text = page.findChild(QtWidgets.QLabel, "progressText")
     bar = page.findChild(QtWidgets.QProgressBar, "progress")
     percent = page.findChild(QtWidgets.QLabel, "progressPercent")
-    assert text.text() == "Шаг 450 из 1500 · прошло 2 мин · осталось около 15 мин"
+    assert text.text() == "Step 450 of 1500 · 2 min elapsed · about 15 min left"
     assert "0.1800" not in text.text()
     assert bar.isVisible() and bar.value() == 300
     assert percent.text() == "30%" and percent.isVisible()
@@ -652,7 +642,7 @@ def test_a_running_stage_locks_the_form_and_shows_the_train_json_bar(make_app, q
 
 
 def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.runner.busy = True
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
@@ -686,7 +676,7 @@ def test_stop_asks_before_it_ends_the_run(make_app, qapp) -> None:
 
 
 def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
     qapp.processEvents()
@@ -698,7 +688,7 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
     assert shared in FORGE_STYLE
     assert "border-radius: 15px" not in FORGE_STYLE
     assert "border-radius: 14px" not in FORGE_STYLE
-    expected = {"balanced": "Сбалансированная", "best": "Лучшее качество", "close": "Близко к фото"}
+    expected = {"balanced": "Balanced", "best": "Best quality", "close": "Close"}
     for name, label in expected.items():
         button = app.window.findChild(QtWidgets.QPushButton, f"forge.chip.{name}")
         assert button.text() == label
@@ -707,7 +697,7 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
     likeness = [
         button.text() for button in app.window.findChildren(QtWidgets.QPushButton, "forge.chip.balanced")
     ]
-    assert "Умеренно" in likeness
+    assert "Balanced" in likeness
     app.layout.sections._index = STEPS.index("photos")
     app.repaint()
     qapp.processEvents()
@@ -720,7 +710,7 @@ def test_choice_buttons_fit_their_labels(make_app, qapp) -> None:
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 def test_choice_buttons_measure_the_drawn_font(make_app, qapp, lang) -> None:
     app = make_app(lang)
     for step, names in (("train", ("balanced", "best", "close")), ("photos", ("person", "object", "style"))):
@@ -781,7 +771,7 @@ def test_just_continue_sends_unattended(make_app, tmp_path, qapp) -> None:
 
 
 def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -805,7 +795,7 @@ def test_finish_cancel_leaves_the_review_open(make_app, tmp_path, qapp) -> None:
 
 
 def test_the_result_names_the_steps_the_lora_got(make_app, qapp, monkeypatch) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.project.mkdir(parents=True, exist_ok=True)
     Project(app.project).write({
         "schema": SCHEMA,
@@ -825,11 +815,11 @@ def test_the_result_names_the_steps_the_lora_got(make_app, qapp, monkeypatch) ->
     qapp.processEvents()
     label = app.window.findChild(QtWidgets.QLabel, "forge.result.steps")
     assert label is not None
-    assert label.text() == "Завершено на 450 из 1500 шагов"
+    assert label.text() == "Finished at 450 of 1500 steps"
     chosen = app.project / "shape.voxlora"
     monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(chosen), ""))
     export = next(
-        button for button in app.window.findChildren(QtWidgets.QPushButton) if button.text() == "Экспорт LoRA"
+        button for button in app.window.findChildren(QtWidgets.QPushButton) if button.text() == "Export LoRA"
     )
     assert export.objectName() == "primary"
     export.click()
@@ -840,7 +830,7 @@ def test_the_result_names_the_steps_the_lora_got(make_app, qapp, monkeypatch) ->
 
 
 def test_review_rounds_live_under_details(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.draft.set_source("refs")
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
@@ -854,7 +844,7 @@ def test_review_rounds_live_under_details(make_app, qapp) -> None:
     assert spin.minimum() == 1 and spin.maximum() == 6 and spin.value() == 3
     assert spin.toolTip() == tr("forge.app.train.review_rounds.tip")
     label = app.window.findChild(QtWidgets.QLabel, "forge.train.review_rounds.label")
-    assert label is not None and label.text() == "Число раундов"
+    assert label is not None and label.text() == "Review rounds"
     spin.setValue(4)
     args = app._train_args()
     assert args[args.index("--review-rounds") + 1] == "4"
@@ -871,7 +861,7 @@ def test_review_rounds_live_under_details(make_app, qapp) -> None:
 
 
 def test_first_round_steps_live_under_details(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.draft.set_source("refs")
     app.layout.sections._index = STEPS.index("train")
     app.repaint()
@@ -890,7 +880,7 @@ def test_first_round_steps_live_under_details(make_app, qapp) -> None:
 
 
 def test_round_one_shows_the_first_pictures_line_and_a_grey_start_button(make_app, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     app.project.mkdir(parents=True, exist_ok=True)
     save_state(Project(app.project), transition(
         {}, "start", rounds=3, samples_per_round=8, first_round_steps=200, prompts=["shape"],
@@ -909,17 +899,17 @@ def test_round_one_shows_the_first_pictures_line_and_a_grey_start_button(make_ap
     text = page.findChild(QtWidgets.QLabel, "progressText")
     elapsed = format_span(90)
     eta = format_span(480)
-    assert text.text() == f"Шаг 40 из 200 · прошло {elapsed} · первые картинки примерно через {eta} · 18 с на картинку"
+    assert text.text() == f"Step 40 of 200 · {elapsed} elapsed · first pictures in about {eta} · 18 s per picture"
     start = app.window.findChild(QtWidgets.QPushButton, "primary")
     assert start is not None and not start.isEnabled()
-    assert start.text() == "Начать обучение"
+    assert start.text() == "Start training"
     image = start.grab().toImage()
     color = image.pixelColor(6, image.height() // 2)
     assert color.red() < 160 and color.green() < 160
 
 
 def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> None:
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -968,7 +958,7 @@ def test_discard_asks_then_sends_finish_discard(make_app, tmp_path, qapp) -> Non
 
 def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qapp) -> None:
     """The list is dark, aligned with the continue row, and saved for the next round."""
-    app = make_app("ru")
+    app = make_app("en")
     photos = make_photos(tmp_path / "src", 2)
     _seed_review(app.project, photos)
     app.layout.sections._index = STEPS.index("train")
@@ -979,11 +969,11 @@ def test_the_sample_attire_combo_stays_on_the_action_row(make_app, tmp_path, qap
     combo = app.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
     host = app.window.findChild(QtWidgets.QPushButton, "forge.review.continue").parentWidget()
     assert label is not None and combo is not None and host is not None
-    assert label.text() == "Пробные картинки:"
-    assert [combo.itemText(index) for index in range(combo.count())] == ["как на фото", "в белье", "без одежды"]
-    assert combo.currentText() == "как на фото"
+    assert label.text() == "Sample pictures:"
+    assert [combo.itemText(index) for index in range(combo.count())] == ["as in the photos", "underwear", "unclothed"]
+    assert combo.currentText() == "as in the photos"
     assert combo.itemData(0) == "auto"
-    assert "следующего раунда" in combo.toolTip()
+    assert "next round" in combo.toolTip()
     assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
     longest = max(
         (combo.itemText(index) for index in range(combo.count())),

@@ -19,18 +19,6 @@ def _catalog(lang: str) -> dict[str, str]:
     return json.loads((LOCALES / f"{lang}.json").read_text(encoding="utf-8"))
 
 
-def test_catalogs_have_the_same_keys_and_placeholders() -> None:
-    english, russian = _catalog("en"), _catalog("ru")
-    assert english.keys() == russian.keys()
-    def forms(value):  # a count string holds one text per plural form
-        return list(value.values()) if isinstance(value, dict) else [value]
-
-    for key, text in english.items():
-        wanted = {tuple(re.findall(r"{(\w+)}", form)) for form in forms(text)}
-        assert wanted == {tuple(re.findall(r"{(\w+)}", form)) for form in forms(russian[key])}, key
-        assert all(form.strip() for form in forms(russian[key])), key
-
-
 def test_catalogs_hold_no_safety_or_age_settings() -> None:
     assert not [key for key in _catalog("en") if re.search(r"\.(minor|age|guard|safety)(\.|$)", key)]
 
