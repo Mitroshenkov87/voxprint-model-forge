@@ -2,8 +2,6 @@
 
 > [!WARNING]
 > **⚠️ Deep alpha.** This software is experimental; nothing is guaranteed to work. Use at your own risk.
->
-> **⚠️ Глубокая альфа.** Программа экспериментальная, работа не гарантируется.
 
 Internal tooling for preparing models used by the Voxprint AI Media Suite: abliteration, quantization (GGUF/imatrix), evaluation, model cards and checksums. Not part of the end-user apps.
 

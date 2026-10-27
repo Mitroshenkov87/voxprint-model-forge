@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import assert_never
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from voxprint_common.i18n import add_catalogs, get_language
+from voxprint_common.i18n import add_catalogs, set_language
 from voxprint_common.paths import state_dir
 from voxprint_common.ui.expert import ExpertMode
 from voxprint_common.ui.sections import BodyKind, Section, SectionSet, Wizard, WizardStep
@@ -299,7 +299,8 @@ LOCALES = Path(__file__).resolve().parent / "locales"
 
 
 def register_catalogs() -> None:
-    """GUI strings, then the engine's ``lora.*`` strings (plan: add_catalogs)."""
+    """GUI strings, then the engine's ``lora.*`` strings (plan: add_catalogs). The UI is English only."""
+    set_language("en")
     add_catalogs(LOCALES)
     try:
         from voxprint_forge.lora import i18n as lora_i18n
@@ -3187,9 +3188,9 @@ class ForgeApp:
         self.repaint()
 
     def open_guide(self) -> None:
-        """Open the offline user guide shipped with the app, in the app's language."""
+        """Open the offline user guide shipped with the app."""
         folder = Path(__file__).resolve().parent / "guide"
-        guide = folder / f"{get_language()}.html"
+        guide = folder / "en.html"
         if not guide.is_file():
             guide = folder / "index.html"
         if guide.is_file():

@@ -1,6 +1,6 @@
-"""Render docs/manual/{en,ru}/*.md into the offline guide shipped with the app (one page per language).
+"""Render docs/manual/en/*.md into the offline guide shipped with the app.
 
-Output: src/voxprint_forge/app/guide/{index,en,ru}.html plus img/. The installer's
+Output: src/voxprint_forge/app/guide/{index,en}.html plus img/. The installer's
 wheel carries it (package-data), so More -> Open guide works without a network.
 
     python scripts/build_guide.py          # write
@@ -20,7 +20,7 @@ import markdown
 ROOT = Path(__file__).resolve().parents[1]
 MANUAL = ROOT / "docs" / "manual"
 GUIDE = ROOT / "src" / "voxprint_forge" / "app" / "guide"
-LANGS = ("en", "ru")
+LANGS = ("en",)
 # Manual pages in reading order (the mkdocs nav order). Each becomes a section of one offline page.
 PAGES = ("index", "install", "models", "project", "presets", "training", "export", "compression", "memory",
          "troubleshooting")

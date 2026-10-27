@@ -33,7 +33,7 @@ permissions:
   contents: read
 jobs:
   pdf-guide:
-    # The user guide PDFs (en, ru) from docs/manual with embedded DejaVu fonts. Installed into {app}\docs.
+    # The user guide PDF (en) from docs/manual with embedded DejaVu fonts. Installed into {app}\docs.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -175,7 +175,7 @@ jobs:
       - name: Check the staged PDF guide
         shell: pwsh
         run: |
-          foreach ($lang in @("en", "ru")) {
+          foreach ($lang in @("en")) {
             $pdf = "installer\windows\staging\docs\VOXPrint-Model-Forge-Guide-$lang.pdf"
             if (-not (Test-Path $pdf)) { throw "missing $pdf" }
             "{0}: {1:N1} MB" -f $pdf, ((Get-Item $pdf).Length / 1MB)

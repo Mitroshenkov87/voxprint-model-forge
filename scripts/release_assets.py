@@ -24,7 +24,6 @@ from pathlib import Path
 ASSET_NAMES = (
     "VoxprintModelForgeSetup.exe",
     "VOXPrint-Model-Forge-Guide-en.pdf",
-    "VOXPrint-Model-Forge-Guide-ru.pdf",
 )
 IN_PROGRESS = frozenset({"queued", "in_progress", "waiting", "pending", "requested", "action_required"})
 GRACE_S = 120.0

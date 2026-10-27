@@ -267,7 +267,7 @@ def test_a_blocked_set_cannot_continue(make_app, tmp_path) -> None:
     assert refset.load_state(app.project)["blocked"]
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_refset_step_scrolls_above_the_footer_at_1024x768(make_app, tmp_path, lang, expert) -> None:
     app = make_app(_engine([]), lang=lang)
@@ -286,7 +286,7 @@ def test_refset_step_scrolls_above_the_footer_at_1024x768(make_app, tmp_path, la
     assert problems == []
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 @pytest.mark.parametrize("expert", [False, True])
 def test_every_refset_control_has_a_tooltip(make_app, tmp_path, lang, expert) -> None:
     app = make_app(_engine([]), lang=lang)
@@ -306,7 +306,7 @@ def test_every_refset_control_has_a_tooltip(make_app, tmp_path, lang, expert) ->
         assert len(tr(key)) <= 60
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"])
+@pytest.mark.parametrize("lang", ["en"])
 def test_refset_step_has_one_details_and_one_action_row(make_app, tmp_path, lang) -> None:
     app = make_app(_engine([]), lang=lang)
     _to_refset(app, _refs(tmp_path / "refs", 2))
@@ -377,16 +377,16 @@ def test_open_folder_lines_up_with_back(make_app, tmp_path, expert) -> None:
     assert folder.mapTo(app.window, QtCore.QPoint()).x() < back.mapTo(app.window, QtCore.QPoint()).x()
 
 
-def test_ru_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:
-    app = make_app(_engine([]), lang="ru")
+def test_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:
+    app = make_app(_engine([]), lang="en")
     app.window.resize(1024, 768)
     _to_refset(app, _refs(tmp_path / "refs", 2))
     _make(app).click()
     QtWidgets.QApplication.processEvents()
     page = _find(app, QtWidgets.QWidget, "forgeStepPage")
     labels = [w.text() for w in page.findChildren(QtWidgets.QLabel)]
-    assert "Круг 1 готов: 24 картинки на просмотр" in labels
-    assert "24 картинки за круг, средние изменения." in labels
+    assert "Round 1 is ready: 24 pictures to review" in labels
+    assert tr("forge.app.refset.simple", count=24) in labels
     assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr("forge.app.refset.kept", kept=0, shown=24)
     app.expert.set_enabled(True)
     assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr(

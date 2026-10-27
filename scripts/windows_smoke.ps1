@@ -213,7 +213,7 @@ $installed = Invoke-Step "install" {
     foreach ($f in @("voxprint-model-forge.exe", "mdl.json", "assets\voxprint-model-forge.ico",
             "venv\Scripts\voxprint-model-forge.exe", "venv\Scripts\voxprint-forge-cli.exe",
             "venv-mivolo\Scripts\python.exe", "uv.exe", "LICENSE", "ACCEPTABLE_USE.md", "unins000.exe",
-            "docs\VOXPrint-Model-Forge-Guide-en.pdf", "docs\VOXPrint-Model-Forge-Guide-ru.pdf")) {
+            "docs\VOXPrint-Model-Forge-Guide-en.pdf")) {
         if (-not (Test-Path (Join-Path $Dir $f))) { throw "missing $f" }
     }
     $owned = @("VOXPrint AI Model Forge.lnk") + @($OldLinks | ForEach-Object { Split-Path -Leaf $_ })

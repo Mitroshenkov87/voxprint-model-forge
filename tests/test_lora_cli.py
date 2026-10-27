@@ -51,11 +51,11 @@ def test_train_prints_json_events_then_result(tmp_path, capsys) -> None:
     assert events[-1]["state"] == "done"
 
 
-def test_plain_mode_prints_sentences(tmp_path, capsys, monkeypatch) -> None:
+def test_plain_mode_prints_english_sentences_on_a_russian_system(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setenv("VOXPRINT_LANG", "ru")
     make_project(tmp_path)
     assert main(["lora", "train", "--project", str(tmp_path), *ARGS]) == 0
-    assert "Обучение: шаг 4 из 4" in capsys.readouterr().out
+    assert "Training: step 4 of 4" in capsys.readouterr().out
 
 
 def test_unprepared_project_is_a_usage_error(tmp_path, capsys) -> None:
