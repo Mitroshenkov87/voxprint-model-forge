@@ -12,6 +12,7 @@ from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import AVG_MIN, RULE_VERSION, Decision, Gate, child_keyword
+from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
     DUP_THRESHOLD,
@@ -219,7 +220,6 @@ def prepare(
             "rounds": round_no + 1,
         }
     )
-    floor = MIN_PHOTOS[mode]
     summary = {
         "state": "done",
         "prepared": len(items),
@@ -227,10 +227,15 @@ def prepare(
         "set_aside": len(drops),
         "round": round_no,
     }
+    report = report_from_drops(drops, len(items), len(files))
     if mode == "simple":
-        announce(progress, report_from_drops(drops, len(items), len(files)))
-    if len(items) < floor:
-        raise LoraUsageError("lora.err.too_few", need=floor - len(items))
+        announce(progress, report)
+    elif drops:
+        # Expert skips the Simple-mode hints, but still says how many photos were set aside and why.
+        progress.emit("prepare.refuse", report.summary_key(), report.params())
+    need = need_more(len(items), mode)
+    if need:
+        raise LoraUsageError("lora.err.too_few", need=need)
     progress.emit("prepare.done", "lora.progress.done", state="done")
     return summary
 

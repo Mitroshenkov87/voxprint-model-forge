@@ -21,6 +21,7 @@ from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
+from voxprint_forge.lora.limits import min_photos, need_more
 from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
@@ -56,7 +57,7 @@ from voxprint_forge.lora.vram_stage import fail_peak
 from voxprint_forge.mdl_app import missing_id_text
 from voxprint_forge.model_park import events
 
-MIN_PHOTOS = {"simple": 10, "expert": 5}
+MIN_PHOTOS = {mode: min_photos(mode) for mode in ("simple", "expert")}
 STATE_FILE = "state.pt"
 
 
@@ -68,9 +69,9 @@ def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, o
             raise LoraBlocked("lora.err.not_prepared")
         raise LoraBlocked("lora.err.gate_missing", ids=ids)
     items = project.items()
-    floor = MIN_PHOTOS.get(str(data.get("mode", "simple")), 10)
-    if mode_floor and len(items) < floor:
-        raise LoraUsageError("lora.err.too_few", need=floor - len(items))
+    need = need_more(len(items), str(data.get("mode", "simple")))
+    if mode_floor and need:
+        raise LoraUsageError("lora.err.too_few", need=need)
     return data, items
 
 

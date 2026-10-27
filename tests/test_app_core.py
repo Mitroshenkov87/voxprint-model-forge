@@ -63,7 +63,8 @@ def test_simple_mode_is_a_hard_recommended_range(tmp_path: Path) -> None:
 def test_expert_mode_warns_outside_10_30_with_floor_5(tmp_path: Path) -> None:
     draft = Draft(kind="style", expert=True)
     draft.add_photos(_photos(tmp_path, 4))
-    assert draft.check("photos").key == "lora.err.below_floor"
+    low = draft.check("photos")
+    assert low.key == "lora.err.too_few" and low.params == {"need": 1}
     (tmp_path / "b").mkdir()
     draft.add_photos(_photos(tmp_path / "b", 1))
     result = draft.check("photos")
