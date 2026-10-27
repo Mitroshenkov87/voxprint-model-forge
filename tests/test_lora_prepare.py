@@ -16,6 +16,7 @@ from voxprint_forge.lora.consent import check_subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict, decide
+from voxprint_forge.lora.i18n import text
 from voxprint_forge.lora.photos import check_count, collect
 from voxprint_forge.lora.prepare import prepare
 from voxprint_forge.lora.project import Project
@@ -110,7 +111,7 @@ def test_simple_mode_is_the_recommended_range_and_expert_warns_with_floor_5() ->
     assert check_count(20, "expert") is None
     with pytest.raises(LoraUsageError) as floor:
         check_count(4, "expert")
-    assert floor.value.code == "lora.err.below_floor"
+    assert floor.value.code == "lora.err.too_few" and floor.value.params == {"need": 1}
 
 
 def test_consent_per_kind() -> None:
@@ -348,6 +349,46 @@ def test_second_prepare_adds_a_round(tmp_path) -> None:
     assert result["round"] == 1 and result["prepared"] == 15
     rounds = sorted({i.round for i in Project(tmp_path / "proj").items()})
     assert rounds == [0, 1]
+
+
+def style():
+    return check_subject("style", name="pgtest", rights_confirmed=True)
+
+
+def test_expert_prepare_accepts_six_photos(tmp_path) -> None:
+    """rc.8 regression: 6 style photos in Expert are inside 5-60 and must prepare."""
+    result = run(tmp_path, photos(tmp_path / "in", 6), mode="expert", subject=style())
+    assert result["state"] == "done" and result["prepared"] == 6 and result["set_aside"] == 0
+
+
+def test_expert_prepare_refuses_four_photos_asking_for_one_more(tmp_path) -> None:
+    with pytest.raises(LoraUsageError) as info:
+        run(tmp_path, photos(tmp_path / "in", 4), mode="expert", subject=style())
+    assert info.value.code == "lora.err.too_few" and info.value.params == {"need": 1}
+    assert text(info.value.code, "en", **info.value.params) == "Add at least 1 more photo to continue."
+    assert not (tmp_path / "proj" / "prepared").exists()
+
+
+def test_expert_too_few_after_drops_counts_kept_photos_and_says_why(tmp_path) -> None:
+    """Need is the Expert floor minus the photos that survived, and the set-aside count is printed first."""
+    files = photos(tmp_path / "in", 6)
+    for path in files[:2]:
+        noise(int(path.stem[-2:]), size=300).save(path)
+    events = []
+    progress = Progress(events.append)
+    with pytest.raises(LoraUsageError) as info:
+        prepare(
+            Project(tmp_path / "proj"),
+            files,
+            style(),
+            gate=Gate(FakeJudge(), FakeEstimator()),
+            load_captioner=lambda choice: FakeCaptioner(),
+            progress=progress,
+            mode="expert",
+        )
+    assert info.value.code == "lora.err.too_few" and info.value.params == {"need": 1}
+    refuse = [e for e in events if e.step == "prepare.refuse"]
+    assert [(e.message_key, e.params) for e in refuse] == [("lora.refuse.line", {"dropped": 2, "total": 6, "kept": 4})]
 
 
 def test_cli_prepare_refuses_without_consent_and_runs_with_fakes(tmp_path, capsys, monkeypatch) -> None:

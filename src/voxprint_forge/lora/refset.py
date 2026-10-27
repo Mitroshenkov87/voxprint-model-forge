@@ -37,7 +37,8 @@ from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import RULE_VERSION, Gate
-from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE, open_photo, photo_id
+from voxprint_forge.lora.limits import need_more
+from voxprint_forge.lora.photos import EXPERT_CAP, MIN_SIDE, RECOMMENDED_RANGE, open_photo, photo_id
 from voxprint_forge.lora.presets import detect_vram_gb
 from voxprint_forge.lora.project import Project
 from voxprint_forge.lora.vram_stage import (
@@ -653,9 +654,10 @@ def finish(
     if not chosen:
         raise LoraUsageError("lora.err.refset_none_kept")
     total = approved_count(state)
-    low, high = RECOMMENDED_RANGE if mode == "simple" else (EXPERT_FLOOR, EXPERT_CAP)
-    if total < low:
-        raise LoraUsageError("lora.err.too_few", need=low - total)
+    high = RECOMMENDED_RANGE[1] if mode == "simple" else EXPERT_CAP
+    need = need_more(total, mode)
+    if need:
+        raise LoraUsageError("lora.err.too_few", need=need)
     if total > high:
         raise LoraUsageError("lora.err.too_many", extra=total - high, high=high)
     root = folder(project)

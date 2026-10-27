@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.lora.attr import accepted
+from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, RECOMMENDED_RANGE
 from voxprint_forge.lora.refset import REF_RANGE
 from voxprint_forge.lora.trigger import looks_like_words, rare_trigger
@@ -168,6 +169,11 @@ class Draft:
             self.adult_content = False
             self.attr = None
 
+    @property
+    def mode(self) -> str:
+        """``expert`` or ``simple``: the engine's ``--mode``."""
+        return "expert" if self.expert else "simple"
+
     def consent_method(self) -> str:
         """``verbal`` or ``file`` for a person, else empty."""
         if self.kind != "person":
@@ -183,14 +189,13 @@ class Draft:
             if self.kind not in KINDS:
                 return Check(False, "forge.app.err.no_kind")
             return Check(True)
+        need = need_more(count, self.mode)
+        if need:
+            return Check(False, "lora.err.too_few", {"need": need})
         if self.expert:
-            if count < EXPERT_FLOOR:
-                return Check(False, "lora.err.below_floor")
             if count > EXPERT_CAP:
                 return Check(False, "lora.err.above_cap", {"cap": EXPERT_CAP})
         else:
-            if count < SIMPLE_MIN:
-                return Check(False, "lora.err.too_few", {"need": SIMPLE_MIN - count})
             if count > SIMPLE_MAX:
                 return Check(False, "lora.err.too_many", {"extra": count - SIMPLE_MAX, "high": SIMPLE_MAX})
         if self.kind not in KINDS:
@@ -240,10 +245,9 @@ class Draft:
             return Check(False, "forge.app.err.not_prepared")
         if self.prepared.blocked:
             return Check(False, "lora.err.blocked")
-        kept = len(self.prepared.kept)
-        need = EXPERT_FLOOR if self.expert else SIMPLE_MIN
-        if kept < need:
-            return Check(False, "lora.err.too_few", {"need": need - kept})
+        need = need_more(len(self.prepared.kept), self.mode)
+        if need:
+            return Check(False, "lora.err.too_few", {"need": need})
         return Check(True)
 
     def check_train(self) -> Check:

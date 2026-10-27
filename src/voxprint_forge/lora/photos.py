@@ -17,7 +17,13 @@ except ImportError:
     pillow_avif = None
 
 from voxprint_forge.lora.errors import LoraUsageError
-from voxprint_forge.lora.limits import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE  # noqa: F401 - re-export
+from voxprint_forge.lora.limits import (  # noqa: F401 - re-export
+    EXPERT_CAP,
+    EXPERT_FLOOR,
+    MIN_SIDE,
+    RECOMMENDED_RANGE,
+    need_more,
+)
 
 EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".avif")
 _COLLAGE_WORD = re.compile(r"\b(?:grids?|collages?)\b", re.IGNORECASE)
@@ -46,14 +52,13 @@ def check_count(count: int, mode: str) -> str | None:
     low, high = RECOMMENDED_RANGE
     if count == 0:
         raise LoraUsageError("lora.err.no_photos")
+    need = need_more(count, mode)
+    if need:
+        raise LoraUsageError("lora.err.too_few", need=need)
     if mode == "simple":
-        if count < low:
-            raise LoraUsageError("lora.err.too_few", need=low - count)
         if count > high:
             raise LoraUsageError("lora.err.too_many", extra=count - high, high=high)
         return None
-    if count < EXPERT_FLOOR:
-        raise LoraUsageError("lora.err.below_floor")
     if count > EXPERT_CAP:
         raise LoraUsageError("lora.err.above_cap", cap=EXPERT_CAP)
     return "lora.warn.count" if not low <= count <= high else None

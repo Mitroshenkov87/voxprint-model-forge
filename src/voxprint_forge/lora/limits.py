@@ -15,6 +15,16 @@ EXPERT_RANGE = (EXPERT_FLOOR, EXPERT_CAP)
 MIN_SIDE = 512
 
 
+def min_photos(mode: str) -> int:
+    """The fewest photos ``mode`` trains on: the recommended low in Simple, ``EXPERT_FLOOR`` in Expert."""
+    return EXPERT_FLOOR if mode == "expert" else RECOMMENDED_RANGE[0]
+
+
+def need_more(count: int, mode: str) -> int:
+    """How many photos to add before ``mode`` accepts ``count``; 0 when it already does."""
+    return max(0, min_photos(mode) - count)
+
+
 def expert_range_differs() -> bool:
     """True when Expert mode allows a range other than the recommended one."""
     return EXPERT_RANGE != RECOMMENDED_RANGE
