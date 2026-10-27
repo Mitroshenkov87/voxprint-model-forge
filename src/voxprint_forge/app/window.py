@@ -32,7 +32,7 @@ from voxprint_common.ui.variants import state_names, surface_for
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
-from voxprint_forge.app.draft import EXPERT_FLOOR, KINDS, STEPS, Draft, Prepared, photo_key
+from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared, photo_key
 from voxprint_forge.app.flow import FlowRow
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
@@ -42,7 +42,7 @@ from voxprint_forge.lora import review as rounds
 from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.image_check import ImageChecker
-from voxprint_forge.lora.limits import EXPERT_CAP, RECOMMENDED_RANGE, expert_range_differs, need_more
+from voxprint_forge.lora.limits import expert_only, expert_range_differs, need_more
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, report_from_drops
@@ -1216,8 +1216,7 @@ class ForgeApp:
         if self.draft.expert or self.draft.source != "photos" or self.photo_gate.state is not GateState.PASSED:
             return
         count = len(self.draft.active_photos())
-        low, high = RECOMMENDED_RANGE
-        if low <= count <= high or not EXPERT_FLOOR <= count <= EXPERT_CAP:
+        if not expert_only(count):
             return
         note = QtWidgets.QLabel(tr("forge.app.photos.expert_offer", count=count))
         note.setObjectName("forgePhotoRefusal")

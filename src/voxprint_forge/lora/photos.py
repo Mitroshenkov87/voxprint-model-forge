@@ -19,7 +19,6 @@ except ImportError:
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.limits import (  # noqa: F401 - re-export
     EXPERT_CAP,
-    EXPERT_FLOOR,
     MIN_SIDE,
     RECOMMENDED_RANGE,
     need_more,

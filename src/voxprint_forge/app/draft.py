@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from voxprint_forge.lora.attr import accepted
-from voxprint_forge.lora.limits import need_more
-from voxprint_forge.lora.photos import EXPERT_CAP, EXPERT_FLOOR, EXTENSIONS, RECOMMENDED_RANGE
+from voxprint_forge.lora.limits import EXPERT_CAP, RECOMMENDED_RANGE, need_more
+from voxprint_forge.lora.photos import EXTENSIONS
 from voxprint_forge.lora.refset import REF_RANGE
 from voxprint_forge.lora.trigger import looks_like_words, rare_trigger
 
@@ -24,7 +24,7 @@ PHOTO_SUFFIXES = EXTENSIONS
 KINDS = ("person", "object", "style")
 SOURCES = ("photos", "refs")
 REF_MIN, REF_MAX = REF_RANGE
-__all__ = ["EXPERT_CAP", "EXPERT_FLOOR", "SIMPLE_MAX", "SIMPLE_MIN", "Check", "Draft", "Prepared", "photo_key"]
+__all__ = ["EXPERT_CAP", "SIMPLE_MAX", "SIMPLE_MIN", "Check", "Draft", "Prepared", "photo_key"]
 STEPS = ("photos", "subject", "refset", "prepare", "train", "result")
 
 
