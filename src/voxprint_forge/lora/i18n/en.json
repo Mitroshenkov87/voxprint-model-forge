@@ -17,7 +17,6 @@
  "lora.err.base_missing": "The base model is not installed. Open Manage models.",
  "lora.err.base_runtime": "This base model needs newer picture libraries than this version has ({need}).",
  "lora.err.base_restrictive": "This base model's licence does not allow sharing trained models. Saving for your own use only.",
- "lora.err.below_floor": "At least {expert_low} photos are needed.",
  "lora.err.blocked": "These photos cannot be used for training.",
  "lora.err.captioner_missing": "The description model is not installed. Open Manage models.",
  "lora.err.consent_method": "Choose one way of consent: verbal, or an attached release file.",

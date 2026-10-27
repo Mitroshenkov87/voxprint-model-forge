@@ -12,7 +12,7 @@ from pathlib import Path
 
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.i18n import text
-from voxprint_forge.lora.limits import EXPERT_CAP, EXPERT_FLOOR, MIN_SIDE, RECOMMENDED_RANGE
+from voxprint_forge.lora.limits import MIN_SIDE, RECOMMENDED_RANGE, expert_only
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, Drop, filter_reason, open_photo
 
 SAFETY = "lora.drop.safety"
@@ -73,10 +73,7 @@ class Report:
         """
         if self.blocked or self.safety_notes:
             return False
-        low, high = RECOMMENDED_RANGE
-        if low <= self.kept <= high:
-            return False
-        return EXPERT_FLOOR <= self.kept <= EXPERT_CAP
+        return expert_only(self.kept)
 
     def notable(self) -> bool:
         """Something new to say. A pure age or minors refusal stays on its own wording."""

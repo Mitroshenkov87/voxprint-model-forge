@@ -138,3 +138,13 @@ def test_expert_range_is_named_only_when_it_differs(monkeypatch) -> None:
     assert limits.expert_range_differs()
     monkeypatch.setattr(limits, "EXPERT_RANGE", limits.RECOMMENDED_RANGE)
     assert not limits.expert_range_differs()
+
+
+def test_expert_only_is_outside_simple_and_inside_expert() -> None:
+    low, high = limits.RECOMMENDED_RANGE
+    assert not limits.expert_only(low) and not limits.expert_only(high)
+    assert limits.expert_only(limits.EXPERT_FLOOR) == (limits.EXPERT_FLOOR < low)
+    assert not limits.expert_only(limits.EXPERT_FLOOR - 1)
+    assert limits.expert_only(limits.EXPERT_CAP) == (limits.EXPERT_CAP > high)
+    assert not limits.expert_only(limits.EXPERT_CAP + 1)
+
