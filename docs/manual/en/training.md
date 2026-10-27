@@ -52,4 +52,4 @@ In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Lea
 
 ![Expert mode while training](../img/en-expert-5-train-running.png)
 
-Recommended: 10 to 30 photos. Allowed in Expert: 5 to 60 photos.
+Recommended: 10 to 50 photos. Allowed in Expert: 5 to 60 photos.

@@ -74,11 +74,15 @@ def _engine(app_ref: list, *, loaders_factory=Loaders) -> StubRunner:
 
 
 def _to_refset(app, refs) -> None:
+    from tests.test_app_window import _pass_photo_check
+
     app.draft.add_photos(refs)
     app.draft.kind = "person"
     app.repaint()
     app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
     assert app.draft.source == "refs"
+    _pass_photo_check(app)
+    app.repaint()
     assert _next(app).isEnabled(), _status(app)
     _next(app).click()
     app.draft.set_names("Shape Demo", "")
@@ -121,6 +125,11 @@ def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
     assert not _next(app).isEnabled()
     app.draft.remove_photo(app.draft.photos[-1])
     app.repaint()
+    from tests.test_app_window import _pass_photo_check
+
+    assert not _next(app).isEnabled()
+    _pass_photo_check(app)
+    app.repaint()
     assert _next(app).isEnabled()
     assert tr("forge.app.step.photos.short_refs.person") in [
         w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
@@ -128,20 +137,28 @@ def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
 
 def test_own_photos_skip_the_step(make_app, tmp_path) -> None:
     from tests.forge_app_stub import make_photos
+    from tests.test_app_window import _pass_photo_check
 
     app = make_app()
     app.draft.add_photos(make_photos(tmp_path / "p", 12))
     app.draft.kind = "object"
+    app.repaint()
+    _pass_photo_check(app)
     app.repaint()
     _next(app).click()
     app.draft.set_names("Cube", "")
     app.draft.rights = True
     app.repaint()
     _next(app).click()
-    assert app.layout.sections.step.step_id == "refset"
-    assert _next(app).isEnabled()
+    assert app.layout.sections.step.step_id == "prepare"
     labels = [w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
-    assert tr("forge.app.refset.skip") in labels
+    assert tr("forge.app.refset.skip") not in labels
+    count = app.window.findChild(QtWidgets.QLabel, "wizardCount")
+    assert count.text() == tr("wizard.step_count", current=3, total=5)
+    _find(app, QtWidgets.QPushButton, "wizardBack").click()
+    assert app.layout.sections.step.step_id == "subject"
+    _find(app, QtWidgets.QPushButton, "wizardBack").click()
+    assert app.layout.sections.step.step_id == "photos"
 
 
 def test_round_keep_and_this_is_it_hand_the_set_to_prepare(make_app, tmp_path) -> None:
@@ -169,7 +186,7 @@ def test_round_keep_and_this_is_it_hand_the_set_to_prepare(make_app, tmp_path) -
     assert len(refset.kept(state)) == 8
     assert refset.candidates(state)[8]["verdict"] == "pending"
     label = _find(app, QtWidgets.QLabel, "presetLabel")
-    assert label.text() == tr("forge.app.refset.kept", kept=8, shown=24, low=10, high=30)
+    assert label.text() == tr("forge.app.refset.kept", kept=8, shown=24)
     assert not _next(app).isEnabled()  # Next stays off until This is it
     _find(app, QtWidgets.QPushButton, "forge.refset.finish").click()
     assert app.runner.calls[-1][2:4] == ["refset", "finish"]
@@ -370,10 +387,10 @@ def test_ru_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:
     labels = [w.text() for w in page.findChildren(QtWidgets.QLabel)]
     assert "Круг 1 готов: 24 картинки на просмотр" in labels
     assert "24 картинки за круг, средние изменения." in labels
-    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == "Оставлено 0 из 24. Для обучения нужно 10–30"
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr("forge.app.refset.kept", kept=0, shown=24)
     app.expert.set_enabled(True)
-    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == (
-        "Оставлено 0 из 24. Рекомендуется: 10–30. Допустимо в режиме эксперта: 5–60")
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr(
+        "forge.app.refset.kept_expert", kept=0, shown=24)
 
 
 def test_expert_range_is_not_named_when_it_matches(make_app, tmp_path, monkeypatch) -> None:
@@ -384,4 +401,4 @@ def test_expert_range_is_not_named_when_it_matches(make_app, tmp_path, monkeypat
     app.expert.set_enabled(True)
     _to_refset(app, _refs(tmp_path / "refs", 2))
     _make(app).click()
-    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == "Kept 0 of 24. Training needs 10–30"
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr("forge.app.refset.kept", kept=0, shown=24)

@@ -44,7 +44,9 @@ def _photos(tmp_path: Path, count: int) -> list[Path]:
     return paths
 
 
-def test_simple_mode_is_a_hard_10_to_30(tmp_path: Path) -> None:
+def test_simple_mode_is_a_hard_recommended_range(tmp_path: Path) -> None:
+    from voxprint_forge.app.draft import SIMPLE_MAX
+
     draft = Draft(kind="object")
     draft.add_photos(_photos(tmp_path, 9))
     assert draft.check("photos").key == "lora.err.too_few"
@@ -53,9 +55,9 @@ def test_simple_mode_is_a_hard_10_to_30(tmp_path: Path) -> None:
     draft.add_photos(_photos(tmp_path / "more", 1))
     assert draft.check("photos").ok
     (tmp_path / "big").mkdir()
-    draft.add_photos(_photos(tmp_path / "big", 21))
+    draft.add_photos(_photos(tmp_path / "big", SIMPLE_MAX - 9))
     result = draft.check("photos")
-    assert not result.ok and result.key == "lora.err.too_many" and result.params == {"extra": 1, "high": 30}
+    assert not result.ok and result.key == "lora.err.too_many" and result.params == {"extra": 1, "high": SIMPLE_MAX}
 
 
 def test_expert_mode_warns_outside_10_30_with_floor_5(tmp_path: Path) -> None:

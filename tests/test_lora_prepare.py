@@ -95,14 +95,17 @@ def run(tmp_path, files, gate=None, captioner=None, **kw):
     )
 
 
-def test_simple_mode_is_10_to_30_and_expert_warns_with_floor_5() -> None:
+def test_simple_mode_is_the_recommended_range_and_expert_warns_with_floor_5() -> None:
+    from voxprint_forge.lora.limits import RECOMMENDED_RANGE
+
+    low_n, high_n = RECOMMENDED_RANGE
     with pytest.raises(LoraUsageError) as low:
-        check_count(9, "simple")
+        check_count(low_n - 1, "simple")
     assert low.value.params == {"need": 1}
     with pytest.raises(LoraUsageError) as high:
-        check_count(31, "simple")
-    assert high.value.params == {"extra": 1, "high": 30}  # the limit is named, not spelled in the string
-    assert check_count(10, "simple") is None and check_count(30, "simple") is None
+        check_count(high_n + 1, "simple")
+    assert high.value.params == {"extra": 1, "high": high_n}  # the limit is named, not spelled in the string
+    assert check_count(low_n, "simple") is None and check_count(high_n, "simple") is None
     assert check_count(6, "expert") == "lora.warn.count"
     assert check_count(20, "expert") is None
     with pytest.raises(LoraUsageError) as floor:

@@ -1,6 +1,6 @@
 # Model Forge GUI feature map
 
-The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.5.2 (merge commit c3a74eaa), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Every LoRA step runs `voxprint-forge-cli lora ... --json`; the window shows the engine's events and never filters or gates a photo itself.
+The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.5.2 (merge commit c3a74eaa), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Training steps run `voxprint-forge-cli lora ... --json`. The Photos step checks images itself, on a background worker, and does not load a model until Check images is pressed.
 
 The pre-Yitro operator window (`forge-gui`, `voxprint_forge.gui`) is retired from the user app. It stays in the tree for internal VM work and is not shipped. Its features are CLI-only for users.
 
@@ -11,7 +11,7 @@ Status is `mapped`, `CLI-only`, `operator-only` (internal mirror work, not a use
 | Feature | CLI | Where it lives now | Status |
 | --- | --- | --- | --- |
 | Photos add/remove, folders, drag and drop | `--photo`, `--photos`, `--exclude` | Train a model → Photos | mapped |
-| Photo limits | Simple 10-30; `--allow-count-outside-range` (floor 5) | Photos: Next gate; Expert mode warns outside 10-30 | mapped |
+| Photo limits | Simple 10-50; `--allow-count-outside-range` (floor 5) | Photos: count gate plus Check images; Expert mode warns outside 10-50 | mapped |
 | What it is | `--kind person\|object\|style` | Photos: chips | mapped |
 | Name, Stage name, Trigger | `--name`, `--stage-name`, `--trigger` | Subject and consent | mapped |
 | Consent and 18+ (person) | `--consent-obtained`, `--consent-method verbal\|file`, `--subject-adult` | Subject and consent: Consent obtained with Verbal on its right (or attach a release), 18+ | mapped |

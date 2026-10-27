@@ -23,8 +23,13 @@ PHOTO_SUFFIXES = EXTENSIONS
 KINDS = ("person", "object", "style")
 SOURCES = ("photos", "refs")
 REF_MIN, REF_MAX = REF_RANGE
-__all__ = ["EXPERT_CAP", "EXPERT_FLOOR", "SIMPLE_MAX", "SIMPLE_MIN", "Check", "Draft", "Prepared"]
+__all__ = ["EXPERT_CAP", "EXPERT_FLOOR", "SIMPLE_MAX", "SIMPLE_MIN", "Check", "Draft", "Prepared", "photo_key"]
 STEPS = ("photos", "subject", "refset", "prepare", "train", "result")
+
+
+def photo_key(path: Path) -> str:
+    """Stable id of one photo file, used by the dataset check and the include switch."""
+    return str(Path(path).resolve())
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,8 @@ class Draft:
     extend_from: Path | None = None
     source: str = "photos"
     approved: list[Path] = field(default_factory=list)
+    inactive: set[str] = field(default_factory=set)
+    photo_notes: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Fill an empty trigger once. Later name edits do not replace it."""
@@ -101,13 +108,37 @@ class Draft:
 
     def remove_photo(self, path: Path) -> None:
         """Drop one photo from training. The file on disk stays."""
-        self.photos = [item for item in self.photos if item != path]
+        key = photo_key(path)
+        self.photos = [item for item in self.photos if item != path and photo_key(item) != key]
+        self.inactive.discard(key)
+        self.photo_notes.pop(key, None)
+        self.prepared = None
+        self.trained = False
+        self.approved = []
+
+    def active_photos(self) -> list[Path]:
+        """Photos still in the set. Deactivated ones stay listed but are left out of training."""
+        return [path for path in self.photos if photo_key(path) not in self.inactive]
+
+    def activate(self, path: Path) -> None:
+        """Put one photo back into the set. The dataset check must be run again."""
+        self.inactive.discard(photo_key(path))
+        self.prepared = None
+        self.trained = False
+        self.approved = []
+
+    def deactivate(self, path: Path, reason: str = "") -> None:
+        """Leave one photo out of training and keep the reason shown on its tile."""
+        key = photo_key(path)
+        self.inactive.add(key)
+        if reason:
+            self.photo_notes[key] = reason
         self.prepared = None
         self.trained = False
         self.approved = []
 
     def set_source(self, source: str) -> None:
-        """``photos``: train on the user's own 10-30 photos. ``refs``: build the set from 1-10 references."""
+        """``photos``: train on the user's own photos. ``refs``: build the set from 1-10 references."""
         if source not in SOURCES:
             raise ValueError(f"unknown source {source!r}")
         if source != self.source:
@@ -118,7 +149,7 @@ class Draft:
 
     def training_photos(self) -> list[Path]:
         """What ``lora prepare`` gets: the approved set when building from references, else the photos."""
-        return list(self.approved) if self.source == "refs" else list(self.photos)
+        return list(self.approved) if self.source == "refs" else self.active_photos()
 
     def set_names(self, name: str, stage_name: str) -> None:
         """Store the names. The trigger stays the rare token unless the user edited it."""
@@ -145,7 +176,7 @@ class Draft:
 
     def check_photos(self) -> Check:
         """Photo count and kind (step 1). References: 1 to 10 in both modes."""
-        count = len(self.photos)
+        count = len(self.active_photos())
         if self.source == "refs":
             if not REF_MIN <= count <= REF_MAX:
                 return Check(False, "forge.app.err.refs_count", {"low": REF_MIN, "high": REF_MAX})
@@ -196,7 +227,7 @@ class Draft:
         return Check(True)
 
     def check_refset(self) -> Check:
-        """The set built from references is approved ("This is it"). Own photos skip this step."""
+        """The set built from references is approved ("This is it"). Own photos do not open this step."""
         if self.source != "refs":
             return Check(True)
         if not self.approved:

@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     from voxprint_forge.app.window import ForgeApp
 
     forge = ForgeApp()
+    app.aboutToQuit.connect(forge.photo_gate.shutdown)
     forge.window.show()
     splash.set_progress(1)
     splash.finish()

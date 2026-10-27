@@ -1,6 +1,6 @@
 # LoRA trainer (engine and CLI)
 
-`forge lora ...` (also `voxprint-forge-cli lora ...`) trains a LoRA from 10 to 30 photos of a person, an object or a style. The GUI comes later and drives the same engine. Plan: project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`.
+`forge lora ...` (also `voxprint-forge-cli lora ...`) trains a LoRA from 10 to 50 photos of a person, an object or a style. The GUI drives the same engine. Plan: project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`.
 
 ## Commands
 
@@ -12,7 +12,7 @@
 | `lora export PROJECT` | Writes `<stage name or name>.voxlora` (`-o FILE` to choose the place): an uncompressed zip with `model.safetensors`, `voxprint-model.json` (schema `voxprint-model/1`, `docs/schemas/voxprint-model-1.json`) and previews from samples that passed the output check. Source photos are not included. `steps` and `steps_planned` are in the description. |
 | `lora export --project DIR` | Saves the last version (or `--checkpoint N`, any saved version; a failed export changes nothing, so run it again without retraining) as `<id>.safetensors` with `voxprint-model.json`, LICENSE and NOTICE (`--out FILE` to choose the place). `--install-to-mdl` also adds it to your models for Canvas. |
 | `lora refset round --project DIR --ref FILE ... --kind KIND ...` | Build a set from 1-10 references. The first round gates every reference (any that does not pass blocks the loop) and has the judge VLM write one prompt per reference (`refset/prompts.json`, local only). Then Z-Image-Turbo img2img (`ZImageImg2ImgPipeline`, BF16, model CPU offload) draws `--candidates` (8-64, default 24) pictures at `--strength` (0.25-0.90, default 0.5) and `--steps` (4-16, default 9); every candidate is gated before it is listed; ones that do not pass are deleted and a minor signal blocks the loop. DINOv2-base marks near-duplicates. Later rounds start from the kept candidates plus the references. Stages run one at a time with a full unload between them. |
-| `lora refset finish --project DIR` | "This is it": copies the references and kept candidates into `refset/approved/` (10-30, or 5-60 with `--mode expert`) and records rounds, seeds, settings, the base and the teacher with its licence in `refset/metadata.json` and `project.json`. Then run `lora prepare` on `refset/approved/`. |
+| `lora refset finish --project DIR` | "This is it": copies the references and kept candidates into `refset/approved/` (10-50, or 5-60 with `--mode expert`) and records rounds, seeds, settings, the base and the teacher with its licence in `refset/metadata.json` and `project.json`. Then run `lora prepare` on `refset/approved/`. |
 | `lora review PROJECT` | Lists the samples of a paused review, with the original photos. `--like ID` and `--dislike ID` mark samples (repeat either flag). `--from-file FILE` reads `like ID` / `dislike ID` lines, or a JSON object with `like`, `dislike` and `unmarked` lists. |
 | `lora continue PROJECT` | Trains the next round from the review checkpoint, on the original photos plus the liked samples, then pauses for another review. `--unattended` keeps that liked set and trains every remaining preset step with no more pauses. Disliked samples are negatives only when the base supports them. |
 | `lora finish PROJECT` | Saves the current LoRA, draws a final preview, and records the steps it got (`steps` and `steps_planned` in `train.json` and in the export). `--discard` removes temporary checkpoints and samples and saves nothing; photos stay. `--discard` needs `--yes` when the terminal is not interactive. |
@@ -51,7 +51,7 @@ Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `co
 
 ## Photos and consent
 
-Simple mode (default) takes 10 to 30 photos. Expert mode (`--mode expert` or `--allow-count-outside-range`) warns outside 10-30, needs at least 5 and takes at most 60.
+Simple mode (default) takes 10 to 50 photos. Expert mode (`--mode expert` or `--allow-count-outside-range`) warns outside 10-50, needs at least 5 and takes at most 60.
 
 | Kind | Required |
 | --- | --- |

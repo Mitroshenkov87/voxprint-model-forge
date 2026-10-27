@@ -211,7 +211,7 @@
  "lora.step.prepare.help": "This runs by itself. Photos that are blurry, too small, duplicated or can't be used are set aside with a reason. You can review the crops and descriptions before training, and remove any photo.",
  "lora.step.prepare.title": "Check and prepare",
  "lora.step.refset.desc": "Make a full photo set from 1 to 10 references: the app draws pictures from them, you keep the good ones.",
- "lora.step.refset.help": "Press Make pictures. Tick the pictures that look right; unticked ones are left out. The next round starts from the kept pictures and your references. When the set looks exactly as you see it, press This is it, then Next. With your own {rec_low} to {rec_high} photos you can skip this step.",
+ "lora.step.refset.help": "This step is shown only when Extend the set from samples is on. Press Make pictures. Tick the pictures that look right; unticked ones are left out. The next round starts from the kept pictures and your references. When the set looks exactly as you see it, press This is it, then Next.",
  "lora.step.refset.title": "Build a set",
  "lora.step.result.desc": "Try the trained model, save it, or send it to Canvas.",
  "lora.step.result.help": "Compare the previews and pick the one you like best. Save writes one file you can keep or share. Open in Canvas adds it to Canvas with a strength slider. To improve it later, use Add more photos.",
