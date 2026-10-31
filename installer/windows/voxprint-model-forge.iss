@@ -6,7 +6,7 @@
 ; bitsandbytes wheel, and uv.exe. install.ps1 then builds the Python environments.
 ; The .ps1 steps run hidden under PowerShell 7 (pwsh.exe) when it is installed. If it is missing, an
 ; interactive setup offers to install the pinned official MSI; otherwise Windows PowerShell 5.1 runs them.
-; The PDF user guide (en, ru) is installed into {app}\docs. Guides open from the app's Help menu.
+; The PDF user guide (en) is installed into {app}\docs. Guides open from the app's Help menu.
 ; No model files are inside the setup; models are downloaded by the app on first launch.
 ;
 ; Wheels are installed to {app}\wheels.new and promoted into {app}\wheels only after

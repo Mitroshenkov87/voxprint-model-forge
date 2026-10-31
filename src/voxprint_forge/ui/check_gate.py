@@ -215,14 +215,15 @@ class CheckGate(QtWidgets.QWidget):
         self._restart = False
         self._token.cancel()
 
-    def shutdown(self, timeout_ms: int = 5000) -> bool:
-        """Cancel and join the worker. The checker is unloaded on the worker before this returns."""
+    def shutdown(self) -> None:
+        """Cancel, then wait until the worker has finished. The checker is unloaded before this returns."""
         self._restart = False
         self._token.cancel()
         worker = self._worker
         if worker is None:
-            return True
-        return worker.wait(timeout_ms)
+            return
+        worker.wait()
+        _LIVE.discard(worker)
 
     def _on_thread_finished(self) -> None:
         if self._restart:

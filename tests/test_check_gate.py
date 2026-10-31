@@ -10,6 +10,7 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtWidgets  # noqa: E402
 
+from voxprint_forge.ui import check_gate  # noqa: E402
 from voxprint_forge.ui.check_gate import CancelToken, CheckGate, CheckItem, GateState, ItemResult  # noqa: E402
 
 
@@ -171,7 +172,7 @@ def test_mark_dirty_during_a_run_stays_dirty(qtbot) -> None:
     gate.mark_dirty()
     release.set()
     qtbot.waitUntil(worker.isFinished, timeout=5000)
-    assert gate.shutdown()
+    gate.shutdown()
     QtWidgets.QApplication.processEvents()
     assert gate.state is GateState.DIRTY
     assert not gate.can_proceed
@@ -198,23 +199,32 @@ def test_check_pressed_while_a_stale_run_ends_starts_a_new_run(qtbot) -> None:
     release.set()
     qtbot.waitUntil(lambda: gate.state is GateState.PASSED, timeout=5000)
     assert seen == ["a", "a"]
-    assert gate.shutdown()
+    gate.shutdown()
 
 
-def test_shutdown_cancels_and_joins_a_running_check(qtbot) -> None:
+def test_shutdown_cancels_and_waits_until_the_worker_has_finished(qtbot) -> None:
     started = threading.Event()
+    seen: list[str] = []
     unloaded: list[bool] = []
 
     def job(item: CheckItem, token: CancelToken) -> ItemResult:
+        seen.append(item.id)
         started.set()
         while not token.is_cancelled:
             threading.Event().wait(0.01)
         return ItemResult(item.id, True)
 
-    gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=lambda: unloaded.append(True))
+    def unload() -> None:
+        threading.Event().wait(0.3)
+        unloaded.append(True)
+
+    gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=unload)
     qtbot.addWidget(gate)
     gate.start()
     assert started.wait(2)
-    assert gate.shutdown(5000)
-    assert not gate._worker.isRunning()
+    worker = gate._worker
+    assert gate.shutdown() is None
+    assert worker.isFinished()
+    assert seen == ["a"]
     assert unloaded == [True]
+    assert worker not in check_gate._LIVE

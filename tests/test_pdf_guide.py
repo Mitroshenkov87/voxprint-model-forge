@@ -1,4 +1,4 @@
-"""The PDF user guide: both languages, more than 10 pages, screenshots, extractable Cyrillic, neutral wording.
+"""The PDF user guide (English): more than 10 pages, screenshots, neutral wording.
 
 The installer workflow builds the PDFs and runs this with VOXPRINT_PDF_GUIDE_DIR set. Elsewhere it builds them
 into a temporary folder when WeasyPrint and the DejaVu fonts are available, and skips otherwise.

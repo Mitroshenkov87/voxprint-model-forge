@@ -84,7 +84,7 @@ A new base is a `BaseAdapter` subclass registered with `voxprint_forge.lora.base
 
 ## Progress
 
-Each step sends an event `{step, message_key, params, reason_key, percent, eta_seconds, state}` with `state` in `running|paused|done|failed|blocked`. The CLI prints it as a sentence in English or Russian (`VOXPRINT_LANG=ru` or a Russian locale). With `--json` every event is one line `{"event": {...}}`, and the usual result object follows at the end. The time left appears after two warm-up steps.
+Each step sends an event `{step, message_key, params, reason_key, percent, eta_seconds, state}` with `state` in `running|paused|done|failed|blocked`. The CLI prints it as an English sentence. With `--json` every event is one line `{"event": {...}}`, and the usual result object follows at the end. The time left appears after two warm-up steps.
 
 During a stage the engine also writes `<project>/train.json` (`step`, `total`, `loss`, `elapsed_seconds`, `eta_seconds`, `stage`), one line in `train.log`, and one row in `vram.csv` (`elapsed_seconds`, `allocated_gb`, `reserved_gb`). A write happens at least every 60 seconds and whenever the stage name changes. Each write is flushed and fsynced, so a crash keeps the last report. `lora status` and the train step read `train.json`.
 

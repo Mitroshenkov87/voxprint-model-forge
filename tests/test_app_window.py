@@ -553,6 +553,32 @@ def test_entry_point_builds_the_window(qapp, monkeypatch, tmp_path) -> None:
     assert entry.main([]) == 0
 
 
+def test_quitting_the_app_shuts_the_photo_check_down(qapp, monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
+    from voxprint_forge.app import __main__ as entry
+    from voxprint_forge.app import window
+    from voxprint_forge.ui.check_gate import CheckGate
+
+    built: list[window.ForgeApp] = []
+    calls: list[CheckGate] = []
+
+    class Recorded(window.ForgeApp):
+        def __init__(self) -> None:
+            super().__init__()
+            built.append(self)
+
+    monkeypatch.setattr(window, "ForgeApp", Recorded)
+    monkeypatch.setattr(CheckGate, "shutdown", lambda self: calls.append(self))
+
+    def run(app: QtWidgets.QApplication) -> int:
+        app.aboutToQuit.emit()
+        return 0
+
+    monkeypatch.setattr(QtWidgets.QApplication, "exec", run)
+    assert entry.main([]) == 0
+    assert calls.count(built[0].photo_gate) == 1
+
+
 @pytest.mark.parametrize("lang", ["en"])
 def test_open_guide_opens_the_offline_page_in_the_app_language(make_app, lang) -> None:
     app = make_app(lang=lang)
