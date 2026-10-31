@@ -11,7 +11,17 @@ from voxprint_forge.lora.captioner import DEFAULT, Captioner
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import AVG_MIN, INDICATORS, RULE_VERSION, Decision, Gate, child_keyword
+from voxprint_forge.lora.gate import (
+    AVG_MIN,
+    INDICATORS,
+    RULE_VERSION,
+    UNAVAILABLE,
+    Decision,
+    Gate,
+    child_keyword,
+    minor_signal,
+)
+from voxprint_forge.lora.job_gate import caption_texts, check_subject, check_texts, pin, refuse, unpin
 from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
@@ -74,6 +84,9 @@ def prepare(
     attested = subject.kind == "person" and subject.adult_confirmed and subject.consent_obtained
     if subject.kind == "person" and not attested:
         raise LoraUsageError("lora.err.no_consent")
+    # Until this round passes, the project is not approved for training.
+    unpin(project)
+    check_subject(project, {"kind": subject.kind, "subject": subject.to_dict()})
     if not gate.available:
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
         ids = missing_id_text()
@@ -138,7 +151,9 @@ def prepare(
         key = _identity(gate, image) if not internal else None
         checked.append((pid, image, decision, key))
     safe: list[tuple[str, object]] = []
-    minor = False
+    # One minor signal refuses the job, not just the photo.
+    minor = any(minor_signal(decision) for _, _, decision, _ in checked)
+    unavailable = any(set(decision.reasons) & set(UNAVAILABLE) for _, _, decision, _ in checked)
     trace: list[dict[str, object]] = []
     outcomes = zip(checked, _aggregate(checked, internal), strict=True)
     for (_, _, decision, _), (pid, image, keep, is_minor) in outcomes:
@@ -149,8 +164,8 @@ def prepare(
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
             minor = minor or is_minor
-            if mode == "expert":
-                _print_trace_row(row)
+        if mode == "expert" and (not keep or minor_signal(decision)):
+            _print_trace_row(row)
     # Before the unload and before a refusal, so a refused run can still be measured.
     _write_gate_trace(project, trace)
     for backend in (gate.judge, gate.estimator):
@@ -158,10 +173,12 @@ def prepare(
         if callable(unload):
             unload()
     _write_drops(project, drops)
-    if minor:
+    if minor or unavailable:
         project.write({**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False})
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
-        raise LoraBlocked("lora.err.blocked")
+        if minor:
+            refuse(project, "photo")
+        refuse(project, "check_unavailable", "lora.err.check_unavailable")
     project.prepared.mkdir(parents=True, exist_ok=True)
     for index, (pid, image) in enumerate(safe, 1):
         progress.emit(
@@ -190,7 +207,10 @@ def prepare(
                     done=index,
                     total=len(safe),
                 )
-                text = captioner.caption(crop(image, crop_mode))
+                try:
+                    text = captioner.caption(crop(image, crop_mode))
+                except Exception:  # noqa: BLE001
+                    refuse(project, "captioner_error", "lora.err.check_unavailable")
                 long = str(text.get("long", ""))
                 short = str(text.get("short", ""))
                 if caption_marks_collage(long, short):
@@ -222,6 +242,7 @@ def prepare(
         drops.extend(caption_drops)
         _write_drops(project, caption_drops)
     items = [_with_trigger(subject.trigger, item) for item in existing + new_items]
+    check_texts(project, {"caption": caption_texts(items)})
     project.write_items(items)
     if release is not None:
         (project.root / "release").mkdir(parents=True, exist_ok=True)
@@ -240,6 +261,7 @@ def prepare(
             "rounds": round_no + 1,
         }
     )
+    pin(project)
     summary = {
         "state": "done",
         "prepared": len(items),

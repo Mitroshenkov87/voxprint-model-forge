@@ -9,6 +9,7 @@ import pytest
 
 from tests.lora_fakes import make_project
 from voxprint_forge.lora.captioner import text_marks_unclothed
+from voxprint_forge.lora.job_gate import pin
 from voxprint_forge.lora.project import Item
 from voxprint_forge.lora.review import load_state, passes_output_check
 from voxprint_forge.lora.sample_prompts import (
@@ -113,6 +114,7 @@ def test_a_review_without_a_prompt_file_stores_sample_prompts(tmp_path: Path) ->
         Item(item.id, item.file, item.long, item.short, item.round, index == 0)
         for index, item in enumerate(items)
     ])
+    pin(project)  # the setup edits captions after the gate
     DrawingAdapter.preview_steps = []
     train(
         project, _config(steps=2), DrawingAdapter(), Progress(),
@@ -158,6 +160,7 @@ def test_the_cli_flag_parses_and_the_next_round_uses_the_saved_mode(tmp_path: Pa
     project.write_items([
         Item(item.id, item.file, item.long, "nude", item.round, None) for item in project.items()
     ])
+    pin(project)  # the setup edits captions after the gate
     train(
         project, _config(steps=3), DrawingAdapter(), Progress(),
         review_rounds=2, samples_per_round=2, first_round_samples=2,

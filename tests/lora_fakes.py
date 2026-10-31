@@ -12,6 +12,7 @@ from PIL import Image
 from torch import nn
 
 from voxprint_forge.lora.bases import BaseAdapter, BaseInfo, Sample
+from voxprint_forge.lora.job_gate import pin
 from voxprint_forge.lora.project import Item, Project
 
 
@@ -109,4 +110,6 @@ def make_project(
             "subject": {"name": "Test cube", "trigger": "tcube"},
         }
     )
+    if gate_passed:
+        pin(project)
     return project

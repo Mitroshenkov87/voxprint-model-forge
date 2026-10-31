@@ -20,6 +20,7 @@ from safetensors.torch import load_file, save_file
 from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.job_gate import check_run, preflight_refuse
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
 from voxprint_forge.lora.limits import min_photos, need_more
 from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
@@ -61,13 +62,18 @@ MIN_PHOTOS = {mode: min_photos(mode) for mode in ("simple", "expert")}
 STATE_FILE = "state.pt"
 
 
-def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, object], list[Item]]:
+def _check_gate(project: Project) -> dict[str, object]:
     data = project.read()
     if data.get("gate_passed") is not True:
         ids = missing_id_text()
         if not ids:
             raise LoraBlocked("lora.err.not_prepared")
         raise LoraBlocked("lora.err.gate_missing", ids=ids)
+    return data
+
+
+def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, object], list[Item]]:
+    data = _check_gate(project)
     items = project.items()
     need = need_more(len(items), str(data.get("mode", "simple")))
     if mode_floor and need:
@@ -302,6 +308,10 @@ def train(
     marks before that next stage. The default reads marks already stored by the
     GUI or ``lora review``.
     """
+    _check_gate(project)
+    # The one refusal step: minors, unavailable checks, and files changed since the gate.
+    settings = {"sample_attire": sample_attire or "", **config.to_dict()}
+    preflight_refuse(project, prompts=preview_prompts, settings=settings)
     data, items = _check_ready(project)
     if project.pause.exists():
         raise LoraUsageError("lora.err.pause_file")
@@ -363,6 +373,7 @@ def train(
         config = replace(config, steps=max(1, stage) if stage > 0 else 0)
     if config.previews and _explicit_prompts(preview_prompts, data) is None:
         preview_prompts = _sample_prompt_list(project, data, config.seed, 1, 1, sample_attire)
+    check_run(project, preview_prompts, config.to_dict())
     rng = random.Random(config.seed)
     torch.manual_seed(config.seed)
     negatives: list[Item] = []

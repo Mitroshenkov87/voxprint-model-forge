@@ -155,8 +155,9 @@ def test_cfg_j(tmp_path) -> None:
     files = photos(tmp_path / "in", 6)
     with pytest.raises(LoraBlocked):
         run(tmp_path, files, Gate(None, E([30.0])))
-    with pytest.raises(LoraUsageError):
+    with pytest.raises(LoraBlocked) as info:
         run(tmp_path / "x", files, Gate(J(FACE, fail=True), E([30.0])))
+    assert info.value.code == "lora.err.check_unavailable"
 
 
 def test_cfg_k(tmp_path) -> None:

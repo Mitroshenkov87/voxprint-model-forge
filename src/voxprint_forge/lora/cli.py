@@ -16,6 +16,7 @@ from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_s
 from voxprint_forge.lora.errors import LoraBlocked, LoraUsageError
 from voxprint_forge.lora.events import Event, Progress, json_line, sentence
 from voxprint_forge.lora.i18n import current_lang
+from voxprint_forge.lora.job_gate import repin_captions
 from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
@@ -409,6 +410,7 @@ def _apply_captions(project: Project, path: Path) -> None:
             )
         )
     project.write_items(items)
+    repin_captions(project)
 
 
 def _warn_typed_trigger(args: argparse.Namespace, progress: Progress) -> None:

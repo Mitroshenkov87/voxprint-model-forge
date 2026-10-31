@@ -266,11 +266,12 @@ def test_missing_gate_blocks_before_any_work(tmp_path) -> None:
     assert not (tmp_path / "proj" / "prepared").exists()
 
 
-def test_judge_exception_drops_every_photo(tmp_path) -> None:
+def test_judge_exception_refuses_the_job(tmp_path) -> None:
     files = photos(tmp_path / "in", 10)
-    with pytest.raises(LoraUsageError) as info:
+    with pytest.raises(LoraBlocked) as info:
         run(tmp_path, files, gate=Gate(FakeJudge(fail=True), FakeEstimator()))
-    assert info.value.code == "lora.err.too_few"
+    assert info.value.code == "lora.err.check_unavailable"
+    assert Project(tmp_path / "proj").read()["gate_passed"] is False
     reasons = {json.loads(line)["reason"] for line in (tmp_path / "proj" / "drops.jsonl").read_text().splitlines()}
     assert reasons == {"lora.drop.safety"}
 
