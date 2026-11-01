@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 from voxprint_common.buildinfo import load
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,8 +107,101 @@ def test_null_rc_is_kept_in_the_stamped_files(tmp_path: Path) -> None:
     assert '"rc": null' in text
 
 
+def _stamp_argv(tmp_path: Path, *extra: str) -> list[str]:
+    return [
+        "--catalog",
+        str(tmp_path / "BUILD.json"),
+        "--package-dir",
+        str(tmp_path / "pkg"),
+        "--stage-dir",
+        str(tmp_path / "stage"),
+        "--require-build",
+        *extra,
+    ]
+
+
+def _no_tag_env(monkeypatch) -> None:
+    for name in ("GITHUB_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_rc_tag_stamps_rc_and_the_label_shows_it(tmp_path: Path, monkeypatch) -> None:
+    """A v0.1.0-rc.12 tag build stamps rc=12 over the catalogue's null rc, and the label says RC 12."""
+    _no_tag_env(monkeypatch)
+    monkeypatch.setenv("VOXPRINT_BUILD", "201")
+    _write_catalog(tmp_path / "BUILD.json", {**CATALOG, "offset": 0})
+    assert stamp_build.main(_stamp_argv(tmp_path, "--tag", "v0.1.0-rc.12")) == 0
+    for folder in ("pkg", "stage"):
+        stamped = json.loads((tmp_path / folder / "build_info.json").read_text(encoding="utf-8"))
+        assert stamped["rc"] == 12 and stamped["build"] == 201
+    info = load(package_dir=tmp_path / "pkg", env={})
+    assert info.rc == 12
+    assert info.label() == '0.1.0 RC 12 build 201 "Charash"'
+
+
+def test_rc_comes_from_github_ref_name_on_a_tag_build(tmp_path: Path) -> None:
+    """Without --tag, GITHUB_REF_NAME is read only when GitHub reports a tag ref."""
+    catalog_path = tmp_path / "BUILD.json"
+    _write_catalog(catalog_path)
+    env = {"GITHUB_RUN_NUMBER": "3", "GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.1.0-rc.7"}
+    assert stamp_build.write_pack(catalog_path, tmp_path / "pkg", tmp_path / "stage", env)["rc"] == 7
+    branch = {"GITHUB_RUN_NUMBER": "3", "GITHUB_REF_TYPE": "branch", "GITHUB_REF_NAME": "v0.1.0-rc.7"}
+    assert stamp_build.write_pack(catalog_path, tmp_path / "pkg", tmp_path / "stage", branch)["rc"] is None
+
+
+def test_final_tag_stamps_a_final_build() -> None:
+    """v0.1.0 is the final release: rc stays null and the release check keeps '0.1.0 build N'."""
+    assert stamp_build.frozen_document(CATALOG, {"GITHUB_RUN_NUMBER": "3"}, "v0.1.0")["rc"] is None
+
+
+@pytest.mark.parametrize(
+    ("tag", "words"),
+    [
+        ("v0.2.0-rc.1", "BUILD.json is version 0.1.0"),
+        ("v0.1.1", "BUILD.json is version 0.1.0"),
+        ("v0.1.0-rc", "no RC number"),
+        ("release-12", "is not v<version>"),
+    ],
+)
+def test_tag_that_does_not_match_build_json_fails(tmp_path: Path, monkeypatch, capsys, tag, words) -> None:
+    """A tag naming another version (or no RC number) fails the stamp with the reason, and writes nothing."""
+    _no_tag_env(monkeypatch)
+    monkeypatch.setenv("VOXPRINT_BUILD", "201")
+    _write_catalog(tmp_path / "BUILD.json")
+    assert stamp_build.main(_stamp_argv(tmp_path, "--tag", tag)) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("build stamp failed:") and words in err
+    assert not (tmp_path / "pkg").exists()
+
+
+def test_non_tag_build_keeps_the_catalogue_rc(tmp_path: Path, monkeypatch) -> None:
+    """Branch, pull request and laptop builds are unchanged: rc is copied from BUILD.json."""
+    _no_tag_env(monkeypatch)
+    monkeypatch.setenv("VOXPRINT_BUILD", "201")
+    _write_catalog(tmp_path / "BUILD.json", {**CATALOG, "rc": 4})
+    assert stamp_build.main(_stamp_argv(tmp_path)) == 0
+    assert json.loads((tmp_path / "pkg" / "build_info.json").read_text(encoding="utf-8"))["rc"] == 4
+    _write_catalog(tmp_path / "BUILD.json")
+    assert stamp_build.main(_stamp_argv(tmp_path)) == 0
+    assert json.loads((tmp_path / "pkg" / "build_info.json").read_text(encoding="utf-8"))["rc"] is None
+    assert load(package_dir=tmp_path / "pkg", env={}).label() == '0.1.0 build 201 "Charash"'
+
+
+def test_tag_builds_pass_the_tag_and_release_expects_rc() -> None:
+    """installer.yml passes the tag on tag builds; release.yml expects 'RC N' for rc tags only."""
+    stage = WORKFLOW.split("- name: Stage the app", 1)[1].split("- name: PowerShell 7", 1)[0]
+    assert '$env:GITHUB_REF_TYPE -eq "tag"' in stage and '"--tag", $env:GITHUB_REF_NAME' in stage
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    identity = release.split("- name: Print the release identity", 1)[1]
+    assert identity.index("stamp_build.py") < identity.index("version_line")
+    assert '--tag "$GITHUB_REF_NAME"' in identity
+    assert 'expected="0.1.0 RC ${BASH_REMATCH[1]} build ${build} \\"Charash\\""' in identity
+    assert 'expected="0.1.0 build ${build} \\"Charash\\""' in identity
+
+
 def test_require_build_fails_closed_without_a_number(tmp_path: Path, monkeypatch) -> None:
     """CI passes --require-build so a pack with no run number does not ship 'dev'."""
+    _no_tag_env(monkeypatch)
     monkeypatch.delenv("GITHUB_RUN_NUMBER", raising=False)
     monkeypatch.delenv("VOXPRINT_BUILD", raising=False)
     catalog_path = tmp_path / "BUILD.json"

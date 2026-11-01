@@ -11,7 +11,7 @@ from voxprint_forge.lora.captioner import DEFAULT, Captioner
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import AVG_MIN, RULE_VERSION, Decision, Gate, child_keyword
+from voxprint_forge.lora.gate import AVG_MIN, INDICATORS, RULE_VERSION, Decision, Gate, child_keyword
 from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
@@ -31,6 +31,18 @@ from voxprint_forge.lora.refusal import announce, outside_simple, report_from_dr
 from voxprint_forge.lora.train import MIN_PHOTOS
 from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.mdl_app import missing_id_text
+
+# Expert mode's line per dropped or minor-flagged photo: these gate_trace.jsonl fields.
+_PRINTED = (
+    "reasons",
+    "judge",
+    "reason_code",
+    "markers",
+    "judge_min_age",
+    "judge_confidence",
+    "mivolo_ages",
+    "estimate",
+)
 
 
 def prepare(
@@ -127,12 +139,20 @@ def prepare(
         checked.append((pid, image, decision, key))
     safe: list[tuple[str, object]] = []
     minor = False
-    for pid, image, keep, is_minor in _aggregate(checked, internal):
+    trace: list[dict[str, object]] = []
+    outcomes = zip(checked, _aggregate(checked, internal), strict=True)
+    for (_, _, decision, _), (pid, image, keep, is_minor) in outcomes:
+        row = _trace_row(pid, names.get(pid, pid), decision, keep, is_minor)
+        trace.append(row)
         if keep:
             safe.append((pid, image))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
             minor = minor or is_minor
+            if mode == "expert":
+                _print_trace_row(row)
+    # Before the unload and before a refusal, so a refused run can still be measured.
+    _write_gate_trace(project, trace)
     for backend in (gate.judge, gate.estimator):
         unload = getattr(backend, "unload", None)
         if callable(unload):
@@ -311,6 +331,69 @@ def _log_stage_errors(decision: Decision) -> None:
         info = decision.trace.get(part, {})
         if isinstance(info, dict) and "error" in info:
             print(f"safety gate {info.get('stage', part)} failed: {info['error']}", file=sys.stderr)
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _trace_row(pid: str, name: str, decision: Decision, keep: bool, is_minor: bool) -> dict[str, object]:
+    """One ``gate_trace.jsonl`` row: codes and numbers only, no image data, paths or metadata."""
+    judge = decision.trace.get("judge")
+    judge = judge if isinstance(judge, dict) else {}
+    verdict = judge.get("verdict")
+    verdict = verdict if isinstance(verdict, dict) else {}
+    indicators = verdict.get("indicators")
+    indicators = indicators if isinstance(indicators, dict) else {}
+    estimator = decision.trace.get("estimator")
+    estimator = estimator if isinstance(estimator, dict) else {}
+    ages = estimator.get("ages")
+    if judge.get("ok"):
+        state = "ok"
+    elif "error" in judge:
+        state = ":".join(str(judge[k])[:64] for k in ("error", "code") if k in judge)
+    else:
+        state = "missing"
+    reason_code = verdict.get("reason_code")
+    return {
+        "file": Path(name).name,
+        "id": pid,
+        "judge": state,
+        "reason_code": str(reason_code) if reason_code is not None else None,
+        "markers": [key for key in INDICATORS if indicators.get(key) == "present"],
+        "judge_min_age": _number(verdict.get("min_age")),
+        "judge_confidence": _number(verdict.get("confidence")),
+        "mivolo_ages": [_number(age) for age in ages] if isinstance(ages, list) else [],
+        "estimate": _number(decision.trace.get("estimate")),
+        "decision": "keep" if keep else ("minor" if is_minor else "drop"),
+        "reasons": [str(reason) for reason in decision.reasons],
+    }
+
+
+def _print_trace_row(row: dict[str, object]) -> None:
+    """Expert mode: one line per dropped or minor-flagged photo, with the gate numbers."""
+    import sys
+
+    def show(value: object) -> str:
+        if value is None:
+            return "-"
+        if isinstance(value, float):
+            return f"{value:g}"
+        if isinstance(value, list):
+            return ",".join(show(v) for v in value) or "-"
+        return str(value)
+
+    numbers = " ".join(f"{key}={show(row[key])}" for key in _PRINTED)
+    print(f"safety gate: {row['file']} ({row['id']}) {row['decision']}: {numbers}", file=sys.stderr)
+
+
+def _write_gate_trace(project: Project, rows: Sequence[dict[str, object]]) -> None:
+    project.root.mkdir(parents=True, exist_ok=True)
+    with project.gate_trace.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:
