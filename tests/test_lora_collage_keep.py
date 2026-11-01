@@ -147,9 +147,9 @@ def test_keep_overrides_a_duplicate_drop(tmp_path) -> None:
     files = photos(tmp_path / "in", 10)
     twin = tmp_path / "in" / "twin.jpg"
     noise(3).save(twin, quality=98)
-    first = run(tmp_path / "a", [*files, twin])
+    first = run(tmp_path / "a", [*files, twin], drop_near_duplicates=True)
     assert first["prepared"] == 10 and _drop_reasons(tmp_path / "a") == {"twin.jpg": "lora.drop.duplicate"}
-    kept = run(tmp_path / "b", [*files, twin], keep=[twin])
+    kept = run(tmp_path / "b", [*files, twin], keep=[twin], drop_near_duplicates=True)
     assert kept["prepared"] == 11 and kept["set_aside"] == 0
 
 

@@ -137,9 +137,17 @@ def filter_reason(
     if sharpness(image) < blur_threshold:
         return "lora.drop.blurry"
     value = dhash(image)
-    if "lora.drop.duplicate" not in allow and any(bin(value ^ other).count("1") <= dup_threshold for other in seen):
+    if "lora.drop.duplicate" not in allow and near_duplicate(value, seen, dup_threshold) is not None:
         return "lora.drop.duplicate"
     seen.append(value)
+    return None
+
+
+def near_duplicate(value: int, seen: Sequence[int], dup_threshold: int = DUP_THRESHOLD) -> int | None:
+    """Index of the first hash in ``seen`` within ``dup_threshold`` bits of ``value``, else ``None``."""
+    for index, other in enumerate(seen):
+        if bin(value ^ other).count("1") <= dup_threshold:
+            return index
     return None
 
 

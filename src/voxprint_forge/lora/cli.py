@@ -215,9 +215,14 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
     command.add_argument(
         "--keep", type=Path, action="append", default=[], metavar="FILE",
-        help="Keep this photo even if it is set aside as a collage or a near-duplicate. It is added to the photos "
-        "if needed and still goes through every other check, the safety check included. Repeat as needed. "
-        "--exclude wins over --keep.",
+        help="Keep this photo even if it is set aside as a collage or (with --drop-near-duplicates) a "
+        "near-duplicate. It is added to the photos if needed and still goes through every other check, the "
+        "safety check included. Repeat as needed. --exclude wins over --keep.",
+    )
+    command.add_argument(
+        "--drop-near-duplicates", action="store_true",
+        help="Set aside a photo that looks like a near-duplicate of an earlier one. By default both are kept "
+        "and a warning names the two files. A byte-identical copy is always skipped.",
     )
     _subject_flags(command)
     command.add_argument("--mode", choices=("simple", "expert"), default="simple",
@@ -614,6 +619,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         dup_threshold=args.dup_threshold,
         release=args.release,
         keep=keep,
+        drop_near_duplicates=args.drop_near_duplicates,
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)

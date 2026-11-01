@@ -91,7 +91,7 @@ def run(tmp_path, files, gate=None, captioner=None, **kw):
         kw.pop("subject", obj()),
         gate=gate or Gate(FakeJudge(), FakeEstimator()),
         load_captioner=lambda choice: cap,
-        progress=Progress(),
+        progress=kw.pop("progress", None) or Progress(),
         **kw,
     )
 
@@ -242,7 +242,9 @@ def test_prepare_filters_crops_captions_and_unloads(tmp_path) -> None:
     (tmp_path / "in" / "broken.png").write_bytes(b"not an image")
     files = collect(tmp_path / "in", [], [])
     judge, captioner = FakeJudge(), FakeCaptioner()
-    result = run(tmp_path, files, gate=Gate(judge, FakeEstimator()), captioner=captioner)
+    result = run(
+        tmp_path, files, gate=Gate(judge, FakeEstimator()), captioner=captioner, drop_near_duplicates=True
+    )
     assert result["prepared"] == 11 and result["set_aside"] == 4
     reasons = sorted(
         json.loads(line)["reason"] for line in (tmp_path / "proj" / "drops.jsonl").read_text().splitlines()
