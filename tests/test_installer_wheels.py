@@ -60,7 +60,7 @@ def test_silent_upgrade_exits_20_when_the_app_is_running() -> None:
     assert "CloseApplications=force" in setup
     assert "CloseApplicationsFilter=voxprint-model-forge.exe,voxprint-forge-cli.exe,python.exe,pythonw.exe" in setup
     assert "english.AppBusy=Close VOXPrint Model Forge" in ISS
-    assert "russian.AppBusy=Закройте VOXPrint Model Forge" in ISS
+    assert "russian.AppBusy" not in ISS
     assert "AppBusyExitCode = 20" in ISS
     init = ISS.split("function InitializeSetup", 1)[1].split("function PrepareToInstall", 1)[0]
     assert "SilentInstall" in init and "ExitProcess(AppBusyExitCode)" in init

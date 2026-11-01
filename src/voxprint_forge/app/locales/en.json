@@ -179,6 +179,7 @@
   "forge.app.prepare.kept": "Ready for training: {count}",
   "forge.app.prepare.run": "Check photos",
   "forge.app.prepare.run.tip": "Check, crop and describe every photo. Photos that fail are set aside with a reason.",
+  "forge.app.prepare.aside.unknown": "Set aside for a reason that was not recorded.",
   "forge.app.prepare.safety_final": "Some photos can't be used. This cannot be changed.",
   "forge.app.preset.custom": "Custom",
   "forge.app.preset.label": "Preset",

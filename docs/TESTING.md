@@ -64,10 +64,10 @@ if the staging folder or a bundled wheel holds model weights. Then it runs
 `scripts/windows_smoke.ps1` against the new setup and uploads
 `voxprint-model-forge-setup-<version>` (the exe) and `windows-smoke-results`.
 
-The `pdf-guide` job (Ubuntu) builds `VOXPrint-Model-Forge-Guide-en.pdf` and `-ru.pdf` from
+The `pdf-guide` job (Ubuntu) builds `VOXPrint-Model-Forge-Guide-en.pdf` from
 `docs/manual` with `scripts/build_pdf_guide.py` (WeasyPrint, embedded DejaVu fonts, pins in
-`installer/requirements-pdf.txt`), checks them with `tests/test_pdf_guide.py` (more than 10 pages,
-screenshots, extractable Cyrillic) and uploads them as `voxprint-model-forge-guide-pdf`. The Windows
+`installer/requirements-pdf.txt`), checks it with `tests/test_pdf_guide.py` (more than 10 pages,
+screenshots, neutral wording) and uploads it as `voxprint-model-forge-guide-pdf`. The Windows
 job puts them into the setup (`{app}\docs`). The app opens the guide from its menu.
 
 `scripts/windows_smoke.ps1` is the same checklist for a real PC. Run it from an
@@ -89,7 +89,7 @@ workflow downloads the pinned MSI and checks its sha256 and Microsoft signature.
 | Step | Passes when |
 |---|---|
 | home-plant | CI only (`-MigrationTest`, clean profile): a fake `%LOCALAPPDATA%\Voxprint\models\smoke-dummy\smoke-dummy-model.bin` |
-| install | the silent setup exits 0; both venvs, the CLI, the compiled launcher and its icon, the PDF guide (en, ru) in `docs\`, one Start menu launcher (target, icon, AppUserModelID; no Uninstall or guide shortcut; no desktop shortcut; old shortcuts removed) and the uninstall entry (name, icon, publisher) exist; no weights |
+| install | the silent setup exits 0; both venvs, the CLI, the compiled launcher and its icon, the PDF guide (en) in `docs\`, one Start menu launcher (target, icon, AppUserModelID; no Uninstall or guide shortcut; no desktop shortcut; old shortcuts removed) and the uninstall entry (name, icon, publisher) exist; no weights |
 | upgrade-plant | `voxprint_common-0.4.0-py3-none-any.whl` and `voxprint_forge-0.0.9-py3-none-any.whl` are planted in `{app}\wheels` before setup |
 | upgrade-wheels | those planted wheels are gone, and the app venv's voxprint-common version is the pin recorded in the app wheel |
 | upgrade-busy | a process holds `voxprint-model-forge.exe`; the silent upgrade exits 20 and leaves the previous install runnable (`--help` exits 0, the same wheels are present) |

@@ -6,7 +6,7 @@
 ; bitsandbytes wheel, and uv.exe. install.ps1 then builds the Python environments.
 ; The .ps1 steps run hidden under PowerShell 7 (pwsh.exe) when it is installed. If it is missing, an
 ; interactive setup offers to install the pinned official MSI; otherwise Windows PowerShell 5.1 runs them.
-; The PDF user guide (en, ru) is installed into {app}\docs. Guides open from the app's Help menu.
+; The PDF user guide (en) is installed into {app}\docs. Guides open from the app's Help menu.
 ; No model files are inside the setup; models are downloaded by the app on first launch.
 ;
 ; Wheels are installed to {app}\wheels.new and promoted into {app}\wheels only after
@@ -68,31 +68,19 @@ CloseApplicationsFilter=voxprint-model-forge.exe,voxprint-forge-cli.exe,python.e
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [CustomMessages]
 english.PwshCaption=Installing PowerShell 7 (Microsoft)
-russian.PwshCaption=Установка PowerShell 7 (Microsoft)
 english.PwshDescription=Setup downloads PowerShell 7 from Microsoft's official release and installs it.
-russian.PwshDescription=Установщик скачивает PowerShell 7 из официального выпуска Microsoft и устанавливает его.
 english.PwshInstalling=Installing PowerShell 7...
-russian.PwshInstalling=Устанавливается PowerShell 7...
 english.PwshOffer=PowerShell 7 (Microsoft) is not installed. Setup can download it from Microsoft's official release (about 112 MB) and install it now. This is recommended.%n%nInstall PowerShell 7 now? If you choose No, setup continues with Windows PowerShell 5.1.
-russian.PwshOffer=PowerShell 7 (Microsoft) не установлен. Установщик может скачать его из официального выпуска Microsoft (около 112 МБ) и установить сейчас. Это рекомендуется.%n%nУстановить PowerShell 7 сейчас? Если выбрать «Нет», установка продолжится с Windows PowerShell 5.1.
 english.PwshDeclined=Setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
-russian.PwshDeclined=Установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 english.PwshFailed=PowerShell 7 could not be installed, so setup continues with Windows PowerShell 5.1. We recommend installing PowerShell 7 when you can:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
-russian.PwshFailed=Не удалось установить PowerShell 7, поэтому установка продолжится с Windows PowerShell 5.1. Рекомендуем установить PowerShell 7, когда будет возможность:%nhttps://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows
 english.PrefetchCaption=Download models now
-russian.PrefetchCaption=Скачать модели сейчас
 english.PrefetchDescription=Download the required models after setup (large download)
-russian.PrefetchDescription=Скачать нужные модели после установки (большой объём)
 english.PrefetchPrompt=Download the required models after setup (large download)
-russian.PrefetchPrompt=Скачать нужные модели после установки (большой объём)
 english.PrefetchOption=Download the required models after setup (large download)
-russian.PrefetchOption=Скачать нужные модели после установки (большой объём)
 english.AppBusy=Close VOXPrint Model Forge
-russian.AppBusy=Закройте VOXPrint Model Forge
 
 [Tasks]
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -297,7 +285,7 @@ begin
 end;
 
 // Silent: exit 20 before InstallDelete and before any copy. Interactive: the prompt
-// is the English (or Russian) 'Close VOXPrint Model Forge' line; Retry after the app
+// is the English 'Close VOXPrint Model Forge' line; Retry after the app
 // is closed continues, Cancel aborts with nothing deleted.
 function RefuseIfAppBusy: String;
 begin

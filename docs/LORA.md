@@ -84,13 +84,13 @@ A new base is a `BaseAdapter` subclass registered with `voxprint_forge.lora.base
 
 ## Progress
 
-Each step sends an event `{step, message_key, params, reason_key, percent, eta_seconds, state}` with `state` in `running|paused|done|failed|blocked`. The CLI prints it as a sentence in English or Russian (`VOXPRINT_LANG=ru` or a Russian locale). With `--json` every event is one line `{"event": {...}}`, and the usual result object follows at the end. The time left appears after two warm-up steps.
+Each step sends an event `{step, message_key, params, reason_key, percent, eta_seconds, state}` with `state` in `running|paused|done|failed|blocked`. The CLI prints it as an English sentence. With `--json` every event is one line `{"event": {...}}`, and the usual result object follows at the end. The time left appears after two warm-up steps.
 
 During a stage the engine also writes `<project>/train.json` (`step`, `total`, `loss`, `elapsed_seconds`, `eta_seconds`, `stage`), one line in `train.log`, and one row in `vram.csv` (`elapsed_seconds`, `allocated_gb`, `reserved_gb`). A write happens at least every 60 seconds and whenever the stage name changes. Each write is flushed and fsynced, so a crash keeps the last report. `lora status` and the train step read `train.json`.
 
 During round 1, `train.json` also carries `round`, `seconds_per_step`, `first_pictures_seconds`, `seconds_per_sample` and `sample_seconds_estimated`. The first-pictures time is the steps still to run times the measured seconds per step, plus the pictures still to draw times the seconds per picture. Until one picture has been timed, each denoising step is estimated as half a training step (`sample_seconds_estimated` is true and `seconds_per_sample` is omitted). After that, the measured seconds per picture are stored. The sentence is localized in the GUI and in `lora status`; `train.json` keeps the numbers. Later rounds and a train-fully stage do not write these fields. The final `stage` of `review` omits them.
 
-All strings are in `src/voxprint_forge/lora/i18n/en.json` and `ru.json`; a test keeps their keys and placeholders identical.
+All strings are in `src/voxprint_forge/lora/i18n/en.json`. The UI is English only; Russian stays a content language (captions, prompts, the safety check).
 
 ## Project folder
 

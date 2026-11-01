@@ -47,12 +47,14 @@ def test_scripts_run_hidden_through_the_chosen_host() -> None:
     assert ISS.count("ScriptHost,") == 2
 
 
-def test_wizard_text_is_in_english_and_russian() -> None:
+def test_wizard_text_is_english_only() -> None:
     for key in ("PwshCaption", "PwshDescription", "PwshInstalling", "PwshOffer", "PwshDeclined", "PwshFailed"):
         assert re.search(rf"^english\.{key}=.+", ISS, re.M), key
-        assert re.search(rf"^russian\.{key}=.+", ISS, re.M), key
     assert "english.PwshCaption=Installing PowerShell 7 (Microsoft)" in ISS
-    assert "russian.PwshCaption=Установка PowerShell 7 (Microsoft)" in ISS
+    assert not re.search(r"^russian\.", ISS, re.M | re.I)
+    assert "Russian.isl" not in ISS
+    wizard_text = ISS.split("[Languages]", 1)[1].split("[Tasks]", 1)[0]
+    assert not re.search(r"[Ѐ-ӿ]", wizard_text)
 
 
 def test_workflow_checks_the_msi_pin_and_signature() -> None:

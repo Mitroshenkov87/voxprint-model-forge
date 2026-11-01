@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import assert_never
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from voxprint_common.i18n import add_catalogs, get_language
+from voxprint_common.i18n import add_catalogs, set_language
 from voxprint_common.paths import state_dir
 from voxprint_common.ui.expert import ExpertMode
 from voxprint_common.ui.sections import BodyKind, Section, SectionSet, Wizard, WizardStep
@@ -43,6 +43,7 @@ from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.image_check import ImageChecker
 from voxprint_forge.lora.limits import expert_only, expert_range_differs, need_more
+from voxprint_forge.lora.photos import MIN_SIDE
 from voxprint_forge.lora.progress_log import read_progress
 from voxprint_forge.lora.project import Project, package_stem
 from voxprint_forge.lora.refusal import Report, report_from_drops
@@ -117,6 +118,8 @@ class _ChipButton(QtWidgets.QPushButton):
 # The shell's action bar (Open folder, outside the wizard) keeps a small left inset, so the text lines up
 # with the card's content column.
 ACTION_BAR_MARGINS = (2, 0, 16, 16)
+# Gap between the step page and its scroll bar, in px.
+PAGE_INSET = 12
 FORGE_STYLE = """
 QPushButton#wizardNext:disabled, QPushButton#wizardBack:disabled {
     background: #22222b; color: #6e6e7e; border-color: #33333f; }
@@ -147,13 +150,19 @@ QLabel[muted="true"] { color: #9a9aa8; }
 QLabel#warn { color: #f4f1ea; background: transparent; }
 QLabel#forgePrepareCollage {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
-QLabel#forgePhotoRefusal, QLabel#forgePrepareWayOut, QLabel#forgePrepareReason {
+QLabel#forgePhotoRefusal, QLabel#forgePrepareWayOut {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; border-radius: 6px; }
+QFrame#forgePrepareAside { background: #2a2a33; border: 1px solid #3a3a46; border-radius: 6px; }
+QFrame#forgePrepareAside QLabel { background: transparent; border: none; color: #f4f1ea; }
+QFrame#forgePrepareAside QLabel#forgePrepareAsideSummary { font-weight: 600; }
+QFrame#forgePrepareAside QLabel#forgePrepareAsideNames { font-weight: 600; }
+QFrame#forgePrepareAside QLabel#forgePrepareReason { color: #c8c8d2; }
+QFrame#forgePrepareAside QLabel#forgePrepareWayOut { color: #f5d76e; }
 QLabel[kindNote="true"] { color: #9a9aa8; font-size: 12px; }
 QFrame#kindSegments { background: #1c1c24; border: 1px solid #4a4a58; border-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"] {
     background: transparent; color: #e8e6e3; border: none; border-radius: 0;
-    padding: 8px 10px; min-height: 34px; }
+    padding: 8px 12px; min-height: 34px; }
 QFrame#kindSegments QPushButton[segment="true"][end="left"] {
     border-top-left-radius: @@RADIUS@@px; border-bottom-left-radius: @@RADIUS@@px; }
 QFrame#kindSegments QPushButton[segment="true"][end="right"] {
@@ -180,15 +189,26 @@ QToolButton[selectionRemove="true"]:hover { background: #2a2a35; border-color: #
 QFrame[photoTile="true"] { background: #1c1c24; border: 2px solid transparent; border-radius: 8px; }
 QFrame[photoTile="true"][selected="true"] { border-color: #f5d76e; }
 QFrame[photoTile="true"][inactive="true"] { background: #14141a; border-color: #3a3a46; }
-QLabel[photoReason="true"] { color: #f0b0b0; font-size: 11px; }
+QLabel[photoReason="true"] { color: #f0b0b0; font-size: 12px; }
+QWidget[checkGate="stop"] {
+    background: #33232a; border: 1px solid #7a3a40; border-left: 4px solid #d06060; border-radius: 6px; }
+QWidget[checkGate="go"] {
+    background: #1d3127; border: 1px solid #2f6b44; border-left: 4px solid #3fa463; border-radius: 6px; }
+QWidget[checkGate="run"] {
+    background: #2a2a33; border: 1px solid #3a3a46; border-left: 4px solid #8a8a9c; border-radius: 6px; }
 QLabel#forgeCheckMark[gate="stop"] {
-    background: #c45c5c; color: #fff8f8; border-radius: 4px; font-weight: 700; }
+    background: #c45c5c; color: #fff8f8; border-radius: 13px; font-weight: 700; font-size: 14px; }
 QLabel#forgeCheckMark[gate="go"] {
-    background: #2f7d4a; color: #f4fff6; border-radius: 4px; font-weight: 700; }
+    background: #3fa463; color: #f4fff6; border-radius: 13px; font-weight: 700; font-size: 14px; }
 QLabel#forgeCheckMark[gate="run"] {
-    background: #3a3a46; color: #f4f1ea; border-radius: 4px; font-weight: 700; }
+    background: #3a3a46; color: #f4f1ea; border-radius: 13px; font-weight: 700; font-size: 14px; }
+QLabel[gateStatus] { background: transparent; border: none; font-weight: 600; }
+QLabel[gateStatus="stop"] { color: #f6c9c9; }
+QLabel[gateStatus="go"] { color: #bfeccb; }
+QLabel[gateStatus="run"] { color: #f4f1ea; }
 QPushButton[gateAction="true"] {
-    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604; padding: 6px 12px; }
+    background: #f5d76e; border: 1px solid #fbe8a6; font-weight: 600; color: #1c1604;
+    padding: 4px 12px; min-height: 28px; }
 QPushButton[gateAction="true"]:hover { background: #f9e291; }
 QPushButton[gateAction="true"][running="true"] {
     background: #2a2a33; color: #f4f1ea; border: 1px solid #3a3a46; }
@@ -280,7 +300,8 @@ LOCALES = Path(__file__).resolve().parent / "locales"
 
 
 def register_catalogs() -> None:
-    """GUI strings, then the engine's ``lora.*`` strings (plan: add_catalogs)."""
+    """GUI strings, then the engine's ``lora.*`` strings (plan: add_catalogs). The UI is English only."""
+    set_language("en")
     add_catalogs(LOCALES)
     try:
         from voxprint_forge.lora import i18n as lora_i18n
@@ -825,6 +846,11 @@ class ForgeApp:
             combo.setMinimumWidth(widest + 48)
         for spin in panel.findChildren(QtWidgets.QAbstractSpinBox):
             spin.setMinimumWidth(max(88, spin.fontMetrics().horizontalAdvance(spin.text()) + 44))
+        # Keep the spin arrows and combo chevrons clear of the panel's scroll bar.
+        self.widget._parts()["expert_form"].setContentsMargins(0, 0, PAGE_INSET, 0)  # type: ignore[attr-defined]
+        # After the layout pass: the label takes the height its field was actually given.
+        forms = panel.findChildren(QtWidgets.QFormLayout)
+        QtCore.QTimer.singleShot(0, panel, lambda: [_center_form_labels(form) for form in forms])
 
     def _extend_menu(self) -> None:
         menu = self.widget._parts()["overflow"].menu()  # type: ignore[attr-defined]
@@ -916,7 +942,8 @@ class ForgeApp:
             old.deleteLater()
         page = QtWidgets.QWidget()
         column = QtWidgets.QVBoxLayout(page)
-        column.setContentsMargins(0, 0, 0, 0)
+        # A right inset keeps full-width rows (the kind choice, the photo board) off the scroll bar.
+        column.setContentsMargins(0, 0, PAGE_INSET, 0)
         column.setSpacing(8)
         self._loss_label = None
         self._review_actions = None
@@ -1239,17 +1266,19 @@ class ForgeApp:
         button_name: str,
         *,
         per_photo: bool,
+        summary: bool = True,
     ) -> None:
         """One wrapping notice in the page column, then Expert when it would accept the set.
 
         A nested frame keeps that label at one line after the text wraps. The notice is a
         single label in the step column, and it grows to the width the column actually gives it.
         """
-        lines = [tr(report.summary_key(), **report.params())]
+        lines = [tr(report.summary_key(), **report.params())] if summary else []
         if per_photo:
             lines += [f"{note.name}: {tr(note.reason)}" for note in report.notes]
         lines += [tr(key, **report.params()) for key in report.fixes()]
-        column.addWidget(_wrap_label("\n".join(lines), name))
+        if lines:
+            column.addWidget(_wrap_label("\n".join(lines), name))
         if report.show_expert():
             button = QtWidgets.QPushButton(tr("forge.app.refuse.expert"))
             button.setObjectName(button_name)
@@ -1286,8 +1315,9 @@ class ForgeApp:
         buttons = QtWidgets.QHBoxLayout()
         buttons.setSpacing(0)
         buttons.setContentsMargins(0, 0, 0, 0)
+        # No spacing, like the segments above, so each note starts under its own segment.
         notes = QtWidgets.QHBoxLayout()
-        notes.setSpacing(8)
+        notes.setSpacing(0)
         frame = QtWidgets.QFrame()
         frame.setObjectName("kindSegments")
         frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1314,6 +1344,7 @@ class ForgeApp:
             note.setProperty("muted", "true")
             note.setWordWrap(True)
             note.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+            note.setContentsMargins(2, 0, 12, 0)
             notes.addWidget(note, 1)
         outer.addWidget(frame)
         outer.addLayout(notes)
@@ -1726,6 +1757,9 @@ class ForgeApp:
         review.verticalHeader().setVisible(False)
         review.horizontalHeader().setStretchLastSection(True)
         review.setIconSize(QtCore.QSize(56, 56))
+        review.setColumnWidth(0, 68)
+        # Up to four rows show without scrolling the table; more scroll inside it.
+        review.setMinimumHeight(min(max(len(prepared.kept), 1), 4) * 60 + 2 * review.frameWidth())
         for row, item in enumerate(prepared.kept):
             picture = _table_icon(Path(str(item.get("file", ""))), self.thumbs, 56)
             picture.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
@@ -1746,23 +1780,50 @@ class ForgeApp:
             notice.setWordWrap(True)
             notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
             column.addWidget(notice)
-        drop_lines = []
-        for item in prepared.drops:
-            name = str(item.get("name") or Path(str(item.get("file", ""))).name)
-            reason = str(item.get("reason") or "")
-            drop_lines.append(f"{name}: {tr(reason)}" if reason else name)
-        if drop_lines:
-            drops = _wrap_label("\n".join(drop_lines), "forgePrepareReason")
-            drops.setToolTip(tr("lora.prepare.dropped.tip"))
-            column.addWidget(drops)
-        if not prepared.blocked and not self.draft.expert:
-            report = report_from_drops(prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops))
-            if report.fixes() or report.show_expert():
-                self._refusal_frame(column, report, "forgePrepareWayOut", "forgePrepareExpert", per_photo=False)
+        if prepared.drops:
+            aside = self._aside_list(prepared)
+            column.addWidget(aside)
+            if not prepared.blocked and not self.draft.expert:
+                report = report_from_drops(
+                    prepared.drops, len(prepared.kept), len(prepared.kept) + len(prepared.drops)
+                )
+                if report.fixes() or report.show_expert():
+                    self._refusal_frame(
+                        aside.layout(), report, "forgePrepareWayOut", "forgePrepareExpert",
+                        per_photo=False, summary=False,
+                    )
         final = QtWidgets.QLabel(tr("forge.app.prepare.safety_final"))
         final.setObjectName("simpleNote")
         final.setWordWrap(True)
         column.addWidget(final)
+
+    def _aside_list(self, prepared: Prepared) -> QtWidgets.QFrame:
+        """"N of M set aside", then one row per photo: its name and the plain-English reason."""
+        kept = len(prepared.kept)
+        total = kept + len(prepared.drops)
+        box = QtWidgets.QFrame()
+        box.setObjectName("forgePrepareAside")
+        box.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        box.setToolTip(tr("lora.prepare.dropped.tip"))
+        stack = QtWidgets.QVBoxLayout(box)
+        stack.setContentsMargins(12, 10, 12, 10)
+        stack.setSpacing(8)
+        summary = tr("lora.refuse.line", dropped=len(prepared.drops), total=total, kept=kept)
+        stack.addWidget(_wrap_label(summary, "forgePrepareAsideSummary"))
+        rows = QtWidgets.QGridLayout()
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setHorizontalSpacing(12)
+        rows.setVerticalSpacing(6)
+        rows.setColumnStretch(1, 1)
+        for index, item in enumerate(prepared.drops):
+            name = QtWidgets.QLabel(str(item.get("name") or Path(str(item.get("file", ""))).name))
+            name.setObjectName("forgePrepareAsideNames")
+            reason = str(item.get("reason") or "")
+            text = tr(reason, min_side=MIN_SIDE) if reason else tr("forge.app.prepare.aside.unknown")
+            rows.addWidget(name, index, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+            rows.addWidget(_wrap_label(text, "forgePrepareReason"), index, 1)
+        stack.addLayout(rows)
+        return box
 
     def _train(self, column: QtWidgets.QVBoxLayout) -> None:
         if self._review_waiting() and not self.runner.busy:  # type: ignore[attr-defined]
@@ -3116,9 +3177,9 @@ class ForgeApp:
         self.repaint()
 
     def open_guide(self) -> None:
-        """Open the offline user guide shipped with the app, in the app's language."""
+        """Open the offline user guide shipped with the app."""
         folder = Path(__file__).resolve().parent / "guide"
-        guide = folder / f"{get_language()}.html"
+        guide = folder / "en.html"
         if not guide.is_file():
             guide = folder / "index.html"
         if guide.is_file():
@@ -3230,6 +3291,26 @@ def _align_forms(*forms: QtWidgets.QFormLayout) -> None:
             label.setMinimumWidth(width)
 
     QtCore.QTimer.singleShot(0, labels[0], align)
+
+
+def _center_form_labels(form: QtWidgets.QFormLayout) -> None:
+    """Make each label as tall as its laid-out field, so the text sits on the field's middle, not its top.
+
+    QFormLayout gives a label its own height at the top of the row; a 34 px spin box then leaves the
+    label text a few pixels above the value. Fields not laid out yet are skipped.
+    """
+    for row in range(form.rowCount()):
+        label = form.itemAt(row, QtWidgets.QFormLayout.ItemRole.LabelRole)
+        field = form.itemAt(row, QtWidgets.QFormLayout.ItemRole.FieldRole)
+        if label is None or field is None or not isinstance(label.widget(), QtWidgets.QLabel):
+            continue
+        widget = field.widget()
+        if widget is None:
+            continue
+        height = widget.height() if widget.isVisible() else 0
+        if height > label.widget().minimumHeight():
+            label.widget().setMinimumHeight(height)
+            label.widget().setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
 
 
 def _wrap_label(text: str, name: str) -> _WrappingLabel:

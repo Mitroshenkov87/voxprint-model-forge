@@ -1,4 +1,4 @@
-"""The PDF user guide: both languages, more than 10 pages, screenshots, extractable Cyrillic, neutral wording.
+"""The PDF user guide (English): more than 10 pages, screenshots, neutral wording.
 
 The installer workflow builds the PDFs and runs this with VOXPRINT_PDF_GUIDE_DIR set. Elsewhere it builds them
 into a temporary folder when WeasyPrint and the DejaVu fonts are available, and skips otherwise.
@@ -40,7 +40,7 @@ def pdfs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
             pytest.skip("WeasyPrint or the DejaVu fonts are not installed")
         folder = tmp_path_factory.mktemp("pdf")
         build_pdf_guide.build(folder)
-    return {lang: folder / build_pdf_guide.NAME.format(lang=lang) for lang in ("en", "ru")}
+    return {lang: folder / build_pdf_guide.NAME.format(lang=lang) for lang in ("en",)}
 
 
 def _text(path: Path) -> str:
@@ -49,7 +49,7 @@ def _text(path: Path) -> str:
     return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
 
 
-def test_both_exist_with_more_than_ten_pages(pdfs: dict[str, Path]) -> None:
+def test_it_exists_with_more_than_ten_pages(pdfs: dict[str, Path]) -> None:
     from pypdf import PdfReader
 
     for lang, path in pdfs.items():
@@ -64,19 +64,11 @@ def test_screenshots_are_embedded(pdfs: dict[str, Path]) -> None:
         assert len(listing.stdout.strip().splitlines()) - 2 > 0, lang
 
 
-def test_russian_text_is_extractable_cyrillic(pdfs: dict[str, Path]) -> None:
-    text = _text(pdfs["ru"])
-    assert len(re.findall(r"[А-Яа-яЁё]", text)) > 2000
-    for word in ("Установка", "Обучение", "Предустановки", "Содержание"):
-        assert word in text, word
-
-
 def test_cover_toc_and_sections(pdfs: dict[str, Path]) -> None:
     from pypdf import PdfReader
 
     version = build_pdf_guide.version()
-    for lang, words in (("en", ("Install", "Training", "Presets", "Contents", "User guide")),
-                        ("ru", ("Установка", "Обучение", "Предустановки", "Содержание", "Руководство пользователя"))):
+    for lang, words in (("en", ("Install", "Training", "Presets", "Contents", "User guide")),):
         first = PdfReader(pdfs[lang]).pages[0].extract_text()
         assert version in first, lang
         text = _text(pdfs[lang])

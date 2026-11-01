@@ -1,4 +1,4 @@
-"""Grab each Model Forge step (Simple and Expert, en and ru) with a stub engine.
+"""Grab each Model Forge step (Simple and Expert, English) with a stub engine.
 
 Usage: QT_QPA_PLATFORM=offscreen python scripts/forge_app_shots.py OUT_DIR [--manual] [--photos DIR]
 Photos are generated neutral placeholders (no people), or the first 14 pictures in ``--photos DIR`` by file name,
@@ -119,7 +119,7 @@ def shot_downloader(out: Path, lang: str) -> None:
     from voxprint_common.ui.mdl_window import grab_view
 
     items = [
-        QueueItem(key, {"en": name, "ru": name}, name, size, int(size * share), ItemState(state), "huggingface",
+        QueueItem(key, {"en": name}, name, size, int(size * share), ItemState(state), "huggingface",
                   42_000_000.0 if state == "downloading" else 0.0, 600.0 if state == "downloading" else None,
                   ["model-forge"])
         for key, name, size, share, state in MDL_ROWS
@@ -130,7 +130,7 @@ def shot_downloader(out: Path, lang: str) -> None:
 
 
 def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
-    """1280 px grabs: the photos switch on (ru) and a review with mixed marks (en and ru)."""
+    """1280 px grabs: the photos switch on and a review with mixed marks."""
     import json
 
     from PySide6 import QtCore, QtGui, QtTest, QtWidgets
@@ -223,7 +223,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         QtWidgets.QToolTip.hideText()
         application.processEvents()
 
-    for lang in ("ru", "en"):
+    for lang in ("en",):
         set_language(lang)
         forge = ForgeApp(
             runner=StubRunner(), home=home / f"review-{lang}", commands=ALL_COMMANDS,
@@ -232,13 +232,13 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
         forge.window.setFixedSize(1280, 800)
         forge.window.show()
         app.processEvents()
-        if lang == "ru":
+        if lang == "en":
             forge.draft.kind = "object"
             forge.draft.add_photos(chosen)
             forge.repaint()
             forge.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
             app.processEvents()
-            forge.window.grab().save(str(out / "ru-simple-1-photos-extend.png"))
+            forge.window.grab().save(str(out / "en-simple-1-photos-extend.png"))
         seed(forge.project)
         forge.layout.sections._index = STEPS.index("train")
         forge.repaint()
@@ -253,11 +253,11 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
                 area.ensureWidgetVisible(heading, 0, 16)
             app.processEvents()
         finish = forge.window.findChild(QtWidgets.QPushButton, "forge.review.finish")
-        if lang == "ru" and finish is not None and finish.menu() is not None:
+        if lang == "en" and finish is not None and finish.menu() is not None:
             image = forge.window.grab()
             if image.width() != 1280 or image.height() != 800:
                 raise SystemExit(f"review grab is {image.width()}x{image.height()}, want 1280x800")
-            image.save(str(out / "ru-simple-5-review.png"))
+            image.save(str(out / "en-simple-5-review.png"))
             combo = forge.window.findChild(QtWidgets.QComboBox, "forge.review.attire")
             if combo is None:
                 raise SystemExit("review attire combo is missing")
@@ -273,13 +273,13 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             painter = QtGui.QPainter(listed)
             painter.drawPixmap(point, popup.grab())
             painter.end()
-            listed.save(str(out / "ru-simple-5-review-attire.png"))
+            listed.save(str(out / "en-simple-5-review-attire.png"))
             combo.hidePopup()
             app.processEvents()
             _save_button_tooltip(
                 forge.window,
                 forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue"),
-                out / "ru-simple-5-review-tip.png",
+                out / "en-simple-5-review-tip.png",
                 app,
             )
             menu = finish.menu()
@@ -292,7 +292,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             painter = QtGui.QPainter(image)
             painter.drawPixmap(point, popup)
             painter.end()
-            image.save(str(out / "ru-simple-5-finish-menu.png"))
+            image.save(str(out / "en-simple-5-finish-menu.png"))
             menu.close()
             app.processEvents()
             chevron = forge.window.findChild(QtWidgets.QPushButton, "forge.review.continue.chevron")
@@ -305,7 +305,7 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             plain = forge.window.grab()
             if plain.width() != 1280 or plain.height() != 800:
                 raise SystemExit(f"plain grab is {plain.width()}x{plain.height()}, want 1280x800")
-            plain.save(str(out / "ru-simple-5-review-plain.png"))
+            plain.save(str(out / "en-simple-5-review-plain.png"))
             if chevron is not None:
                 chevron.click()
                 QtTest.QTest.qWait(200)
@@ -329,10 +329,10 @@ def shot_review_rounds(out: Path, home: Path, photos: list[Path]) -> None:
             discard = next(
                 item for item in finish.menu().actions() if item.objectName() == "forge.review.finish.discard"
             )
-            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-discard.png")))
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "en-simple-5-finish-discard.png")))
             discard.trigger()
             app.processEvents()
-            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "ru-simple-5-finish-confirm.png")))
+            QtCore.QTimer.singleShot(0, lambda: grab_dialog(str(out / "en-simple-5-finish-confirm.png")))
             forge.finish_review()
             app.processEvents()
         else:
@@ -353,13 +353,13 @@ def shot_train_live(out: Path, home: Path) -> None:
     from tests.forge_app_stub import ALL_COMMANDS, StubRunner
     from voxprint_common.i18n import set_language
 
-    from voxprint_forge.app.draft import Prepared, STEPS
+    from voxprint_forge.app.draft import STEPS, Prepared
     from voxprint_forge.app.window import ForgeApp
     from voxprint_forge.lora.project import Project
     from voxprint_forge.lora.review import save_state, transition
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    set_language("ru")
+    set_language("en")
     photos = placeholder_photos(home / "live-photos", 12)
     runner = StubRunner()
     runner.busy = True
@@ -400,7 +400,7 @@ def shot_train_live(out: Path, home: Path) -> None:
     forge.layout.sections._index = STEPS.index("train")
     forge.repaint()
     app.processEvents()
-    forge.window.grab().save(str(out / "ru-simple-5-train-live.png"))
+    forge.window.grab().save(str(out / "en-simple-5-train-live.png"))
     forge.window.close()
     shot_result_export(out, home)
 
@@ -416,7 +416,7 @@ def shot_result_export(out: Path, home: Path) -> None:
     from voxprint_forge.lora.project import Project
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    set_language("ru")
+    set_language("en")
     forge = ForgeApp(
         runner=StubRunner(), home=home / "result-export", commands=ALL_COMMANDS,
         open_path=lambda _p: None, launch=lambda _a: None,
@@ -444,7 +444,7 @@ def shot_result_export(out: Path, home: Path) -> None:
     forge.layout.sections._index = STEPS.index("result")
     forge.repaint()
     app.processEvents()
-    forge.window.grab().save(str(out / "ru-simple-6-result.png"))
+    forge.window.grab().save(str(out / "en-simple-6-result.png"))
     forge.window.close()
     set_language("en")
 
@@ -468,7 +468,7 @@ def main(out: Path, manual: bool = False, samples: Path | None = None) -> None:
         photos = placeholder_photos(home / "photos", 14)
     else:
         photos = make_photos(home / "photos", 14)
-    for lang in ("en", "ru"):
+    for lang in ("en",):
         for expert in (False, True):
             set_language(lang)
             runner = StubRunner({

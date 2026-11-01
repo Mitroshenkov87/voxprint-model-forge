@@ -10,11 +10,24 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtWidgets  # noqa: E402
 
+from voxprint_forge.ui import check_gate  # noqa: E402
 from voxprint_forge.ui.check_gate import CancelToken, CheckGate, CheckItem, GateState, ItemResult  # noqa: E402
 
 
 def _gate(job, items, *, unload=None, on_deactivate=None) -> CheckGate:
     return CheckGate(job, items=lambda: items, unload=unload, on_deactivate=on_deactivate)
+
+
+def _run(gate: CheckGate) -> None:
+    """Start, join the worker with no deadline, then deliver its queued signals: no wall-clock race on slow runners."""
+    ended: list[object] = []
+    gate.finished.connect(ended.append)
+    gate.start()
+    assert gate._worker is not None
+    gate._worker.wait()
+    while not ended:
+        QtWidgets.QApplication.sendPostedEvents()
+        QtWidgets.QApplication.processEvents()
 
 
 def test_mark_dirty_does_not_run_the_job(qtbot) -> None:
@@ -46,15 +59,7 @@ def test_the_job_and_unload_run_off_the_ui_thread(qtbot) -> None:
 
     gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b", active=False)], unload=unload)
     qtbot.addWidget(gate)
-    ended: list[object] = []
-    gate.finished.connect(ended.append)
-    gate.start()
-    # Join the worker with no deadline, then deliver its queued signals: no wall-clock race on slow runners.
-    assert gate._worker is not None
-    gate._worker.wait()
-    while not ended:
-        QtWidgets.QApplication.sendPostedEvents()
-        QtWidgets.QApplication.processEvents()
+    _run(gate)
     assert threads == [threads[0]]
     assert threads[0] != threading.get_ident()
     assert unloaded == [threads[0]]
@@ -74,8 +79,7 @@ def test_cancel_stops_after_the_current_item_and_unloads(qtbot) -> None:
 
     gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=lambda: unloaded.append(True))
     qtbot.addWidget(gate)
-    with qtbot.waitSignal(gate.finished, timeout=5000):
-        gate.start()
+    _run(gate)
     assert seen == ["a"]
     assert unloaded == [True]
     assert gate.state is GateState.CANCELLED
@@ -94,13 +98,12 @@ def test_deactivation_with_a_pass_ends_passed(qtbot) -> None:
         on_deactivate=lambda ids: dropped.append(tuple(ids)),
     )
     qtbot.addWidget(gate)
-    with qtbot.waitSignal(gate.finished, timeout=5000):
-        gate.start()
+    _run(gate)
     assert dropped == [("bad",)]
     assert gate.state is GateState.PASSED
     assert gate.can_proceed
     assert gate.deactivated == ("bad",)
-    assert gate.findChild(QtWidgets.QLabel, "forgeCheckMark").text() == "→"
+    assert gate.findChild(QtWidgets.QLabel, "forgeCheckMark").text() == "✓"
 
 
 def test_no_pass_ends_failed_even_after_deactivation(qtbot) -> None:
@@ -110,8 +113,7 @@ def test_no_pass_ends_failed_even_after_deactivation(qtbot) -> None:
         on_deactivate=lambda _ids: None,
     )
     qtbot.addWidget(gate)
-    with qtbot.waitSignal(gate.finished, timeout=5000):
-        gate.start()
+    _run(gate)
     assert gate.state is GateState.FAILED
     assert not gate.can_proceed
     assert gate.deactivated == ("a", "b")
@@ -124,8 +126,7 @@ def test_failed_when_deactivation_is_missing_or_raises(qtbot) -> None:
     items = [CheckItem("ok", "ok"), CheckItem("bad", "bad")]
     missing = _gate(job, items, on_deactivate=None)
     qtbot.addWidget(missing)
-    with qtbot.waitSignal(missing.finished, timeout=5000):
-        missing.start()
+    _run(missing)
     assert missing.state is GateState.FAILED
     assert missing.deactivated == ()
 
@@ -134,8 +135,7 @@ def test_failed_when_deactivation_is_missing_or_raises(qtbot) -> None:
 
     raised = _gate(job, items, on_deactivate=boom)
     qtbot.addWidget(raised)
-    with qtbot.waitSignal(raised.finished, timeout=5000):
-        raised.start()
+    _run(raised)
     assert raised.state is GateState.FAILED
     assert not raised.can_proceed
 
@@ -148,8 +148,7 @@ def test_a_job_error_unloads_and_fails(qtbot) -> None:
 
     gate = _gate(job, [CheckItem("a", "a")], unload=lambda: unloaded.append(True))
     qtbot.addWidget(gate)
-    with qtbot.waitSignal(gate.finished, timeout=5000):
-        gate.start()
+    _run(gate)
     assert unloaded == [True]
     assert gate.state is GateState.FAILED
 
@@ -171,7 +170,7 @@ def test_mark_dirty_during_a_run_stays_dirty(qtbot) -> None:
     gate.mark_dirty()
     release.set()
     qtbot.waitUntil(worker.isFinished, timeout=5000)
-    assert gate.shutdown()
+    gate.shutdown()
     QtWidgets.QApplication.processEvents()
     assert gate.state is GateState.DIRTY
     assert not gate.can_proceed
@@ -198,23 +197,32 @@ def test_check_pressed_while_a_stale_run_ends_starts_a_new_run(qtbot) -> None:
     release.set()
     qtbot.waitUntil(lambda: gate.state is GateState.PASSED, timeout=5000)
     assert seen == ["a", "a"]
-    assert gate.shutdown()
+    gate.shutdown()
 
 
-def test_shutdown_cancels_and_joins_a_running_check(qtbot) -> None:
+def test_shutdown_cancels_and_waits_until_the_worker_has_finished(qtbot) -> None:
     started = threading.Event()
+    seen: list[str] = []
     unloaded: list[bool] = []
 
     def job(item: CheckItem, token: CancelToken) -> ItemResult:
+        seen.append(item.id)
         started.set()
         while not token.is_cancelled:
             threading.Event().wait(0.01)
         return ItemResult(item.id, True)
 
-    gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=lambda: unloaded.append(True))
+    def unload() -> None:
+        threading.Event().wait(0.3)
+        unloaded.append(True)
+
+    gate = _gate(job, [CheckItem("a", "a"), CheckItem("b", "b")], unload=unload)
     qtbot.addWidget(gate)
     gate.start()
     assert started.wait(2)
-    assert gate.shutdown(5000)
-    assert not gate._worker.isRunning()
+    worker = gate._worker
+    assert gate.shutdown() is None
+    assert worker.isFinished()
+    assert seen == ["a"]
     assert unloaded == [True]
+    assert worker not in check_gate._LIVE
