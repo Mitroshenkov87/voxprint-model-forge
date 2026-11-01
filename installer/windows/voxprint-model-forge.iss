@@ -17,6 +17,7 @@
 ; A silent install does not close the app. If the launcher or the app Python is
 ; still running, InitializeSetup and PrepareToInstall exit 20 before any file is
 ; deleted or copied. Exit 20 is not an Inno Setup code (those are 0 through 8).
+; Exit 30: install.ps1 could not download PyTorch. An interactive setup offers Retry first.
 
 #define MyAppName "VOXPrint AI Model Forge"
 #define MySuiteName "VOXPrint AI Suite"
@@ -138,6 +139,8 @@ const
   PwshMsiSha256 = 'ec575cef9ec56fcd905de0d5eeac9cb7f81a0a65abb87bb5cd0e87fdfe2b8cc0';
   // Silent setup exit when the app is running. Outside Inno Setup's 0..8.
   AppBusyExitCode = 20;
+  // install.ps1 exit when torch or torchvision could not be downloaded.
+  TorchDownloadExitCode = 30;
 
 var
   DownloadPage: TDownloadWizardPage;
@@ -430,6 +433,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  TorchError: AnsiString;
 begin
   if CurStep <> ssPostInstall then
     Exit;
@@ -438,11 +442,20 @@ begin
     SuppressibleMsgBox('The new wheels could not be installed. The previous wheels were left in place.', mbError, MB_OK, IDOK);
     ExitProcess(1);
   end;
-  if not Exec(
-    ScriptHost,
-    ScriptArgs(ExpandConstant('{app}\install.ps1')),
-    ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    ResultCode := 1;
+  // Exit 30: PyTorch could not be downloaded. Retry runs install.ps1 again with its uv cache kept;
+  // a silent setup gets IDCANCEL and exits 30.
+  repeat
+    if not Exec(
+      ScriptHost,
+      ScriptArgs(ExpandConstant('{app}\install.ps1')) + ' -NoPrompt',
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      ResultCode := 1;
+    if ResultCode <> TorchDownloadExitCode then
+      Break;
+    if not LoadStringFromFile(ExpandConstant('{app}\setup-work\torch-download-error.txt'), TorchError) then
+      TorchError := 'Could not download PyTorch from download.pytorch.org. Check the network connection, firewall and proxy, then retry.';
+    Log('install.ps1: ' + TorchError);
+  until SuppressibleMsgBox(TorchError, mbError, MB_RETRYCANCEL, IDCANCEL) <> IDRETRY;
   if ResultCode <> 0 then
   begin
     SuppressibleMsgBox('VOXPrint AI Model Forge setup failed. The log is ' + ExpandConstant('{app}\setup-work\install.log') + '.', mbError, MB_OK, IDOK);
