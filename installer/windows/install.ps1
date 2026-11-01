@@ -5,6 +5,10 @@
 # Nothing is written outside <app>. Models are not downloaded here; the app
 # asks for them on first launch. Log: <app>\setup-work\install.log
 # Each run deletes that log first, so a reader never sees the previous run.
+# torch and torchvision downloads are retried (see Install-Torch). If they still fail, the
+# script exits 30 and writes the message to setup-work\torch-download-error.txt; the setup
+# passes -NoPrompt and offers Retry itself. Run by hand, the script asks Retry/Cancel.
+param([switch]$NoPrompt)
 $ErrorActionPreference = "Stop"
 $App = Split-Path -Parent $PSCommandPath
 $Work = Join-Path $App "setup-work"
@@ -16,6 +20,49 @@ Start-Transcript -Path $LogPath -Force | Out-Null
 function Invoke-Uv([string[]]$ArgList) {
     & $script:Uv @ArgList
     if ($LASTEXITCODE -ne 0) { throw "uv $($ArgList[0..1] -join ' ') failed ($LASTEXITCODE)" }
+}
+
+# Exit code when torch or torchvision could not be downloaded. Read by voxprint-model-forge.iss.
+$TorchDownloadExitCode = 30
+$TorchErrorPath = Join-Path $Work "torch-download-error.txt"
+if (Test-Path -LiteralPath $TorchErrorPath) { Remove-Item -LiteralPath $TorchErrorPath -Force }
+$script:TorchError = $null
+
+function Test-CanPrompt {
+    if ($NoPrompt -or -not [Environment]::UserInteractive) { return $false }
+    return -not ([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-noni' })
+}
+
+# torch and torchvision from the PyTorch index: 5 attempts, 10s, 20s, 40s, 80s apart. uv retries
+# each request itself (UV_HTTP_RETRIES); this loop covers a longer outage. UV_CACHE_DIR is kept
+# and used by every attempt, so wheels already downloaded are not fetched again.
+# Pinned by version only: the repo has no torch hash list, so --require-hashes is not used here.
+# There is no other official source of Windows CUDA wheels (PyPI has CPU wheels only), so no mirror.
+function Install-Torch([string]$Python, [string]$Index, [string[]]$Packages) {
+    $hostName = ([uri]$Index).Host
+    while ($true) {
+        $delay = 10
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            & $script:Uv pip install --python $Python --index-url $Index @Packages
+            if ($LASTEXITCODE -eq 0) { return }
+            if ($attempt -lt 5) {
+                Write-Host "torch install attempt $attempt of 5 failed ($LASTEXITCODE); retrying in ${delay}s, uv cache kept"
+                Start-Sleep -Seconds $delay
+                $delay *= 2
+            }
+        }
+        # The index redirects wheel downloads to download-r2.pytorch.org.
+        $message = "Could not download PyTorch ($($Packages -join ', ')) from $hostName after 5 attempts. " +
+            "Check the network connection, and that a firewall or proxy allows HTTPS to $hostName " +
+            "and download-r2.pytorch.org, then retry."
+        if (-not (Test-CanPrompt)) { break }
+        Add-Type -AssemblyName System.Windows.Forms
+        $answer = [System.Windows.Forms.MessageBox]::Show($message, "VOXPrint AI Model Forge setup",
+            [System.Windows.Forms.MessageBoxButtons]::RetryCancel, [System.Windows.Forms.MessageBoxIcon]::Error)
+        if ($answer -ne [System.Windows.Forms.DialogResult]::Retry) { break }
+    }
+    $script:TorchError = $message
+    throw $message
 }
 
 function Resolve-OneWheel([string]$Directory, [string]$Label, [string]$Filter) {
@@ -63,15 +110,20 @@ function Get-PinnedCommonVersion([string]$WheelPath) {
 }
 
 try {
-    # Ignore inherited uv, pip, Python and conda settings.
+    # Ignore inherited uv, pip, Python and conda settings, except a user's HTTP timeout and retries.
+    $httpTimeout = if ($env:UV_HTTP_TIMEOUT) { $env:UV_HTTP_TIMEOUT } else { "300" }
+    $httpRetries = if ($env:UV_HTTP_RETRIES) { $env:UV_HTTP_RETRIES } else { "8" }
     foreach ($name in (Get-ChildItem env: | ForEach-Object Name)) {
         if ($name -match '^(UV_|PIP_|PYTHON|CONDA_|VIRTUAL_ENV)') { Remove-Item "env:$name" }
     }
     $env:UV_NO_CONFIG = "1"
+    $env:UV_HTTP_TIMEOUT = $httpTimeout
+    $env:UV_HTTP_RETRIES = $httpRetries
     $env:UV_MANAGED_PYTHON = "1"
     $env:UV_PYTHON_INSTALL_DIR = Join-Path $App "python"
     $env:UV_PYTHON_BIN_DIR = Join-Path $App "python\bin"
     $env:UV_PYTHON_INSTALL_REGISTRY = "0"
+    # Kept after a failed run, so Retry reuses the downloaded wheels. Removed only on success.
     $env:UV_CACHE_DIR = Join-Path $Work "uv-cache"
     $env:UV_LINK_MODE = "copy"
     $script:Uv = Join-Path $App "uv.exe"
@@ -86,7 +138,7 @@ try {
     $Venv = Join-Path $App "venv"
     $Py = Join-Path $Venv "Scripts\python.exe"
     Invoke-Uv @("venv", "--python", "3.14", "--allow-existing", $Venv)
-    Invoke-Uv @("pip", "install", "--python", $Py, "--index-url", $TorchIndex, "torch==2.14.1", "torchvision==0.29.1")
+    Install-Torch $Py $TorchIndex @("torch==2.14.1", "torchvision==0.29.1")
     $pins = Join-Path $Work "torch-pins.txt"
     & $script:Uv pip freeze --python $Py | Select-String -Pattern '^(torch|torchvision)==' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii $pins
     # Both wheels by path, so a same-named package on a public index is never used.
@@ -108,8 +160,7 @@ try {
     Invoke-Uv @("venv", "--python", "3.12", "--allow-existing", $Mivolo)
     # Two steps, one index each: torch from the PyTorch CPU index only, then the rest
     # from PyPI only with torch held at the installed pins.
-    Invoke-Uv @("pip", "install", "--python", $MPy, "--index-url", "https://download.pytorch.org/whl/cpu",
-        "torch==2.5.1", "torchvision==0.20.1")
+    Install-Torch $MPy "https://download.pytorch.org/whl/cpu" @("torch==2.5.1", "torchvision==0.20.1")
     $mpins = Join-Path $Work "mivolo-torch-pins.txt"
     & $script:Uv pip freeze --python $MPy | Select-String -Pattern '^(torch|torchvision)==' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii $mpins
     $mreq = Join-Path $Work "mivolo-rest.txt"
@@ -139,6 +190,10 @@ try {
 } catch {
     Write-Host "Model Forge setup failed: $_"
     $code = 1
+    if ($script:TorchError) {
+        Set-Content -LiteralPath $TorchErrorPath -Encoding ascii -Value $script:TorchError
+        $code = $TorchDownloadExitCode
+    }
 } finally {
     Stop-Transcript | Out-Null
 }
