@@ -9,6 +9,8 @@ from PIL import Image
 from tests.test_lora_prepare import noise, photos, run
 from voxprint_forge.lora.photos import collect
 
+# ``dup.jpg`` is a near-duplicate; it is only set aside with ``drop_near_duplicates``.
+
 
 def _ids(tmp_path) -> list[str]:
     lines = (tmp_path / "proj" / "drops.jsonl").read_text(encoding="utf-8").splitlines()
@@ -25,7 +27,7 @@ def _inputs(tmp_path):
 
 
 def test_each_dropped_photo_is_written_once(tmp_path) -> None:
-    result = run(tmp_path, _inputs(tmp_path))
+    result = run(tmp_path, _inputs(tmp_path), drop_near_duplicates=True)
     ids = _ids(tmp_path)
     assert result["set_aside"] == 4
     assert len(ids) == 4 and len(set(ids)) == 4
@@ -33,9 +35,9 @@ def test_each_dropped_photo_is_written_once(tmp_path) -> None:
 
 def test_rerun_does_not_repeat_drop_lines(tmp_path) -> None:
     files = _inputs(tmp_path)
-    run(tmp_path, files)
+    run(tmp_path, files, drop_near_duplicates=True)
     first = (tmp_path / "proj" / "drops.jsonl").read_text(encoding="utf-8")
-    run(tmp_path, files)
+    run(tmp_path, files, drop_near_duplicates=True)
     ids = _ids(tmp_path)
     assert len(ids) == 4 and len(set(ids)) == 4
     assert (tmp_path / "proj" / "drops.jsonl").read_text(encoding="utf-8") == first
@@ -43,10 +45,10 @@ def test_rerun_does_not_repeat_drop_lines(tmp_path) -> None:
 
 def test_rerun_keeps_job_rows(tmp_path) -> None:
     files = _inputs(tmp_path)
-    run(tmp_path, files)
+    run(tmp_path, files, drop_near_duplicates=True)
     path = tmp_path / "proj" / "drops.jsonl"
     job = json.dumps({"id": "job", "name": "", "reason": "lora.drop.safety", "scope": "job"})
     path.write_text(path.read_text(encoding="utf-8") + job + "\n", encoding="utf-8")
-    run(tmp_path, files)
+    run(tmp_path, files, drop_near_duplicates=True)
     ids = _ids(tmp_path)
     assert ids.count("job") == 1 and len(ids) == 5 and len(set(ids)) == 5

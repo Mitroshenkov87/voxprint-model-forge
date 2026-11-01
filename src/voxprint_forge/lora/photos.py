@@ -29,6 +29,17 @@ _COLLAGE_WORD = re.compile(r"\b(?:grids?|collages?)\b", re.IGNORECASE)
 BLUR_THRESHOLD = 60.0
 DUP_THRESHOLD = 6
 PREPARED_SIDE = 1024
+# Collage check: the picture is scaled so its long side is this many pixels, aspect kept.
+_COLLAGE_SIDE = 256
+COLLAGE_SCORE = 0.75
+_SEAM_TOLERANCE = 0.03  # a seam may sit this share of the side off the exact split
+_SEAM_MIN_STEP = 10.0
+_SEAM_RATIO = 2.5
+_SEAM_OFFSET = 3.0
+_TEXTURE_NEAR = 3
+_TEXTURE_FAR = 8
+# Drop reasons that ``lora prepare --keep FILE`` may override. Nothing else.
+KEEPABLE = frozenset({"lora.drop.collage", "lora.drop.duplicate"})
 
 
 def collect(photos_dir: Path | None, photos: Sequence[Path], exclude: Sequence[Path]) -> list[Path]:
@@ -109,35 +120,61 @@ def filter_reason(
     min_side: int = MIN_SIDE,
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
+    allow: frozenset[str] = frozenset(),
 ) -> str | None:
-    """``lora.drop.*`` key for a photo to set aside, else ``None`` (and its hash is added to ``seen``)."""
+    """``lora.drop.*`` key for a photo to set aside, else ``None`` (and its hash is added to ``seen``).
+
+    ``allow`` holds reasons that are not applied to this photo; only :data:`KEEPABLE` reasons may be in it.
+    """
+    if not allow <= KEEPABLE:
+        raise ValueError(f"only {sorted(KEEPABLE)} can be allowed")
     if image is None:
         return "lora.drop.unreadable"
     if min(image.size) < min_side:
         return "lora.drop.small"
-    if looks_like_collage(image):
+    if "lora.drop.collage" not in allow and looks_like_collage(image):
         return "lora.drop.collage"
     if sharpness(image) < blur_threshold:
         return "lora.drop.blurry"
     value = dhash(image)
-    if any(bin(value ^ other).count("1") <= dup_threshold for other in seen):
+    if "lora.drop.duplicate" not in allow and near_duplicate(value, seen, dup_threshold) is not None:
         return "lora.drop.duplicate"
     seen.append(value)
     return None
 
 
-def looks_like_collage(image: Image.Image) -> bool:
-    """True when straight interior seams divide the picture into a grid of panels.
+def near_duplicate(value: int, seen: Sequence[int], dup_threshold: int = DUP_THRESHOLD) -> int | None:
+    """Index of the first hash in ``seen`` within ``dup_threshold`` bits of ``value``, else ``None``."""
+    for index, other in enumerate(seen):
+        if bin(value ^ other).count("1") <= dup_threshold:
+            return index
+    return None
 
-    A seam is a narrow spike in the row or column gradient, well above the
-    typical edge. Plain noise and a smooth gradient have no such spike. A
-    caption that says grid or collage is a separate check.
+
+def looks_like_collage(image: Image.Image) -> bool:
+    """True when straight seams split the picture into equal panels (a grid or side-by-side shots).
+
+    See :func:`collage_score`. A caption that says grid or collage is a separate check.
     """
-    small = image.convert("L").resize((90, 90), Image.Resampling.BOX)
-    grey = np.asarray(small, dtype=np.float32)
-    vertical = _seam_count(np.abs(np.diff(grey, axis=1)).mean(axis=0))
-    horizontal = _seam_count(np.abs(np.diff(grey, axis=0)).mean(axis=1))
-    return 1 <= vertical <= 4 and 1 <= horizontal <= 4
+    return collage_score(image) >= COLLAGE_SCORE
+
+
+def collage_score(image: Image.Image) -> float:
+    """How strongly the picture splits into 2, 3 or 4 equal panels along one axis, from ``0`` to ``1``.
+
+    For each seam position of an equal split, the score is the share of rows (or
+    columns) where the colour jumps sharply across that line compared with the
+    texture next to it. A split scores the value of its weakest seam; the result
+    is the best split on either axis. A seam between panels is sharp along almost
+    its full length. Natural edges in a single photo (a person against a
+    backdrop, a wall or a floor line) cover only part of the frame or do not sit
+    on an equal split, so they stay well below :data:`COLLAGE_SCORE`.
+    """
+    width, height = image.size
+    scale = _COLLAGE_SIDE / max(width, height, 1)
+    size = (max(24, round(width * scale)), max(24, round(height * scale)))
+    rgb = np.asarray(image.convert("RGB").resize(size, Image.Resampling.BOX), dtype=np.float32)
+    return max(_split_score(rgb), _split_score(rgb.transpose(1, 0, 2)))
 
 
 def caption_marks_collage(*parts: str) -> bool:
@@ -145,26 +182,32 @@ def caption_marks_collage(*parts: str) -> bool:
     return any(_COLLAGE_WORD.search(part) for part in parts)
 
 
-def _seam_count(score: np.ndarray) -> int:
-    length = int(score.shape[0])
-    margin = max(2, length // 10)
-    if length <= margin * 2 + 2:
-        return 0
-    baseline = float(np.median(score))
-    limit = max(baseline + 18.0, baseline * 2.2, 22.0)
-    hits = 0
-    index = margin
-    while index < length - margin:
-        value = float(score[index])
-        if value >= limit:
-            left = float(score[max(0, index - 2)])
-            right = float(score[min(length - 1, index + 2)])
-            if value >= left + 10.0 and value >= right + 10.0:
-                hits += 1
-                index += 5
-                continue
-        index += 1
-    return hits
+def _split_score(rgb: np.ndarray) -> float:
+    """Best equal-split score for vertical seams (columns) of an ``H x W x 3`` array."""
+    width = int(rgb.shape[1])
+    # Colour step across two pixels, so a seam softened by the downscale still counts.
+    step = np.zeros(rgb.shape[:2], dtype=np.float32)
+    step[:, 1:-1] = np.abs(rgb[:, 2:] - rgb[:, :-2]).max(axis=2)
+    reach = max(2, round(_SEAM_TOLERANCE * width))
+    best = 0.0
+    for panels in (2, 3, 4):
+        weakest = 1.0
+        for seam in range(1, panels):
+            centre = seam * width / panels
+            lo = max(_TEXTURE_FAR + 1, int(centre - reach))
+            hi = min(width - _TEXTURE_FAR - 1, int(centre + reach) + 1)
+            weakest = min(weakest, max((_seam_cover(step, col) for col in range(lo, hi)), default=0.0))
+        best = max(best, weakest)
+    return best
+
+
+def _seam_cover(step: np.ndarray, col: int) -> float:
+    """Share of rows where ``col`` holds a sharp colour step well above the texture beside it."""
+    near = [col + o for o in range(_TEXTURE_NEAR, _TEXTURE_FAR + 1)]
+    near += [col - o for o in range(_TEXTURE_NEAR, _TEXTURE_FAR + 1)]
+    texture = np.median(step[:, near], axis=1)
+    here = step[:, col]
+    return float(((here >= _SEAM_MIN_STEP) & (here >= _SEAM_RATIO * texture + _SEAM_OFFSET)).mean())
 
 
 def crop(image: Image.Image, mode: str, side: int = PREPARED_SIDE) -> Image.Image:

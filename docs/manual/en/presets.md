@@ -8,9 +8,11 @@ On the **Train** step you choose a preset, a likeness and the graphics card memo
 
 | Preset | Steps | LoRA rank | Learning rate | Picture size | Use it for |
 | --- | --- | --- | --- | --- | --- |
-| **Quick check** | 150 | 16 | 0.0001 | 768 px | A short run of the whole path: prepare, train, samples, finish and export |
-| **Balanced** (recommended) | 1500 | 32 | 0.0001 | 1024 px | Most projects |
+| **Quick check** | 150 | 16 | 0.0001 | 768 px | A smoke test of the whole path: prepare, train, samples, finish and export. Not for a usable person LoRA |
+| **Balanced** (recommended) | 1500 | 32 | 0.0001 | 1024 px | Most projects, and every person LoRA |
 | **Best quality** | 3000 | 32 | 0.00008 | 1024 px | The final model, when time is not a concern |
+
+**For a person, use Balanced** (`--preset balanced` on the command line, the default). Quick check only shows that your setup works. On an RTX 4090 person run, 120 Quick check steps scored 1.68 out of 5 for likeness, and 1000 Balanced steps scored 3.95 out of 5.
 
 ## Likeness
 

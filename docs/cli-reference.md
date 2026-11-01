@@ -437,8 +437,8 @@ positional arguments:
     review              List or mark the samples of a paused review.
     continue            Train the next round on the liked pictures, then pause
                         for another review.
-    finish              Save the current LoRA, draw a final preview, and
-                        record the steps it got.
+    finish              Save the current LoRA, draw a final preview, record
+                        the steps it got, and write the .voxlora.
     status              Read live training progress from train.json.
 
 options:
@@ -449,7 +449,8 @@ options:
 
 ```text
 usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
-                          [--photo PHOTO] [--exclude EXCLUDE]
+                          [--photo PHOTO] [--exclude EXCLUDE] [--keep FILE]
+                          [--drop-near-duplicates]
                           [--kind {person,object,style}] [--name NAME]
                           [--stage-name STAGE_NAME] [--trigger TRIGGER]
                           [--consent-obtained] [--subject-adult]
@@ -474,6 +475,16 @@ options:
   --photos PHOTOS       Folder of JPG, PNG, WebP or AVIF photos.
   --photo PHOTO         One photo. Repeat as needed.
   --exclude EXCLUDE     Leave this photo out.
+  --keep FILE           Keep this photo even if it is set aside as a collage
+                        or (with --drop-near-duplicates) a near-duplicate. It
+                        is added to the photos if needed and still goes
+                        through every other check, the safety check included.
+                        Repeat as needed. --exclude wins over --keep.
+  --drop-near-duplicates
+                        Set aside a photo that looks like a near-duplicate of
+                        an earlier one. By default both are kept and a warning
+                        names the two files. A byte-identical copy is always
+                        skipped.
   --kind {person,object,style}
                         What the photos show.
   --name NAME           Required: the subject's name or stage name, for
@@ -568,14 +579,19 @@ usage: forge lora train [-h] --project PROJECT
                         [--samples-per-round SAMPLES_PER_ROUND]
                         [--sample-steps SAMPLE_STEPS]
                         [--sample-attire {auto,as_photos,clothed,unclothed}]
-                        [--base BASE] [--rank RANK] [--alpha ALPHA]
+                        [--sample-framing {mixed,portrait}] [--base BASE]
+                        [--rank RANK] [--alpha ALPHA]
                         [--resolution RESOLUTION] [--train-text-encoder]
+
+Train a LoRA on the prepared photos of a project.
 
 options:
   -h, --help            show this help message and exit
   --project PROJECT     Project folder.
   --preset {balanced,best,quick}
-                        Ready-made settings.
+                        Ready-made settings. Default: balanced. Use balanced
+                        for a person LoRA; quick is only a smoke test of the
+                        setup and gives weak likeness.
   --likeness {balanced,close,flexible}
                         How close to the photos.
   --vram {auto,16,24}   Graphics memory tier in GB.
@@ -631,12 +647,26 @@ options:
   --sample-attire {auto,as_photos,clothed,unclothed}
                         Attire word for review samples. Default: auto. Stored
                         on the project.
+  --sample-framing {mixed,portrait}
+                        Framing of review samples. mixed (default) rotates
+                        close-up, waist-up and full body. portrait draws every
+                        sample as a face close-up, for judging likeness.
+                        Stored on the project.
   --base BASE           Base model MDL id. Default: z-image.
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).
   --resolution RESOLUTION
                         Training picture size, a multiple of 64.
   --train-text-encoder  Also train the text encoder.
+
+For a person LoRA use --preset balanced (the default); --preset quick is a smoke test of the setup.
+
+Review pauses: with --review-rounds 1-6 (default 3) the run stops after each stage and waits for
+lora review / lora continue / lora finish. In a script, CI job or scheduled task, pass
+--review-rounds 0 to train straight through.
+
+The deliverable is the .voxlora from lora finish or lora export PROJECT. checkpoints/step-*.safetensors
+are intermediate files; Canvas does not accept them.
 ```
 
 ## `forge lora extend`
@@ -666,7 +696,9 @@ options:
   -h, --help            show this help message and exit
   --project PROJECT     Project folder.
   --preset {balanced,best,quick}
-                        Ready-made settings.
+                        Ready-made settings. Default: balanced. Use balanced
+                        for a person LoRA; quick is only a smoke test of the
+                        setup and gives weak likeness.
   --likeness {balanced,close,flexible}
                         How close to the photos.
   --vram {auto,16,24}   Graphics memory tier in GB.
@@ -818,31 +850,50 @@ options:
 ## `forge lora continue`
 
 ```text
-usage: forge lora continue [-h] [--unattended] project
+usage: forge lora continue [-h] [--unattended]
+                           [--sample-attire {auto,as_photos,clothed,unclothed}]
+                           [--sample-framing {mixed,portrait}]
+                           project
+
+positional arguments:
+  project               Project folder.
+
+options:
+  -h, --help            show this help message and exit
+  --unattended          Keep the liked pictures and train every remaining step
+                        with no more pauses.
+  --sample-attire {auto,as_photos,clothed,unclothed}
+                        Attire word for review samples. Default: auto. Stored
+                        on the project.
+  --sample-framing {mixed,portrait}
+                        Framing of review samples. mixed (default) rotates
+                        close-up, waist-up and full body. portrait draws every
+                        sample as a face close-up, for judging likeness.
+                        Stored on the project.
+```
+
+## `forge lora finish`
+
+```text
+usage: forge lora finish [-h] [--no-preview] [--discard] [--yes] project
+
+Save the current LoRA, draw a final preview, record the steps it got, and
+write <project>/export/<name>.voxlora. That .voxlora is the file to keep and
+to open in Canvas; checkpoints/step-*.safetensors are intermediate. If the
+final preview fails, a warning is printed and the LoRA is still saved and
+exported. --no-preview skips the preview.
 
 positional arguments:
   project       Project folder.
 
 options:
   -h, --help    show this help message and exit
-  --unattended  Keep the liked pictures and train every remaining step with no
-                more pauses.
-```
-
-## `forge lora finish`
-
-```text
-usage: forge lora finish [-h] [--discard] [--yes] project
-
-positional arguments:
-  project     Project folder.
-
-options:
-  -h, --help  show this help message and exit
-  --discard   Stop and remove temporary versions and samples. Photos stay.
-              Nothing is saved.
-  --yes       Confirm --discard without a prompt. Required when the terminal
-              is not interactive.
+  --no-preview  Skip the final test picture. The LoRA is still saved and
+                exported.
+  --discard     Stop and remove temporary versions and samples. Photos stay.
+                Nothing is saved.
+  --yes         Confirm --discard without a prompt. Required when the terminal
+                is not interactive.
 ```
 
 ## `forge lora status`

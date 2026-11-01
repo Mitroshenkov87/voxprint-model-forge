@@ -175,3 +175,56 @@ def test_the_cli_flag_parses_and_the_next_round_uses_the_saved_mode(tmp_path: Pa
     assert all(str(prompt).endswith(", wearing near-skin-tone underwear") for prompt in state["prompts"])
     assert sorted(path.name for path in (project.root / "review" / "round-0001").glob("*.png")) == before
     assert json.loads((project.root / "project.json").read_text(encoding="utf-8"))["sample_attire"] == "clothed"
+
+
+def test_portrait_framing_is_a_face_close_up_for_every_sample() -> None:
+    from voxprint_forge.lora.sample_prompts import PORTRAIT_FRAMING
+
+    captions = _caps(False)
+    mixed = build_sample_prompts("tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions)
+    default = build_sample_prompts(
+        "tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions, framing="mixed",
+    )
+    assert mixed == default
+    assert {framing for framing in FRAMINGS if any(framing in prompt for prompt in mixed)} == set(FRAMINGS)
+    portrait = build_sample_prompts(
+        "tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions, framing="portrait",
+    )
+    assert len(portrait) == 6
+    assert all(PORTRAIT_FRAMING in prompt and prompt.startswith("tcube") for prompt in portrait)
+    assert not any("full body" in prompt or "waist-up" in prompt for prompt in portrait)
+    with pytest.raises(ValueError):
+        build_sample_prompts("tcube", count=1, seed=0, round_no=1, mode="auto", captions=captions, framing="wide")
+
+
+def test_sample_framing_is_stored_and_used_by_train_and_continue(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
+    from voxprint_forge.cli import build_parser
+    from voxprint_forge.lora.events import Progress
+    from voxprint_forge.lora.review import save_state
+    from voxprint_forge.lora.sample_prompts import PORTRAIT_FRAMING, read_framing, store_framing
+    from voxprint_forge.lora.train import train
+
+    parsed = build_parser().parse_args(["lora", "train", "--project", "p", "--sample-framing", "portrait"])
+    assert parsed.sample_framing == "portrait" and parsed.sample_attire is None
+    assert build_parser().parse_args(["lora", "train", "--project", "p"]).sample_framing is None
+    cont = build_parser().parse_args(
+        ["lora", "continue", "p", "--sample-framing", "mixed", "--sample-attire", "clothed"],
+    )
+    assert cont.sample_framing == "mixed" and cont.sample_attire == "clothed"
+    project = make_project(tmp_path, count=10)
+    assert read_framing(project.read()) == "mixed"
+    store_framing(project, "portrait")
+    assert project.read()["sample_framing"] == "portrait"
+    first = train(
+        project, _config(steps=201), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=2,
+        first_round_steps=100, first_round_samples=2,
+    )
+    assert first["state"] == "review"
+    state = load_state(project)
+    assert state["prompts"] and all(PORTRAIT_FRAMING in str(p) for p in state["prompts"])
+    store_framing(project, "mixed")
+    save_state(project, state)
+    train(project, _config(steps=201), DrawingAdapter(), Progress(), review_continue=True)
+    later = load_state(project)
+    assert later["index"] == 2 and not any(PORTRAIT_FRAMING in str(p) for p in later["prompts"])

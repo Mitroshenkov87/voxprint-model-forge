@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from voxprint_forge.lora.captioner import DEFAULT, Captioner
+from voxprint_forge.lora.captioner import DEFAULT, Captioner, unclothed_flag
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
@@ -28,6 +28,7 @@ from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
     DUP_THRESHOLD,
+    KEEPABLE,
     MIN_SIDE,
     Drop,
     caption_marks_collage,
@@ -35,6 +36,7 @@ from voxprint_forge.lora.photos import (
     crop,
     dhash,
     filter_reason,
+    near_duplicate,
     open_photo,
     photo_id,
 )
@@ -44,6 +46,8 @@ from voxprint_forge.lora.train import MIN_PHOTOS
 from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.mdl_app import missing_id_text
 
+# Near-duplicates are kept unless ``drop_near_duplicates`` is set.
+_NEAR_DUPLICATE = frozenset({"lora.drop.duplicate"})
 # Expert mode's line per dropped or minor-flagged photo: these gate_trace.jsonl fields.
 _PRINTED = (
     "tier",
@@ -73,13 +77,32 @@ def prepare(
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
     release: Path | None = None,
+    keep: Sequence[Path] = (),
+    drop_near_duplicates: bool = False,
 ) -> dict[str, object]:
+    """Check, crop and caption ``files``.
+
+    A near-duplicate (a photo whose difference hash is within ``dup_threshold`` bits of an
+    earlier one) is kept with a ``lora.warn.near_duplicate`` warning that names both files.
+    ``drop_near_duplicates`` sets it aside as ``lora.drop.duplicate`` instead. A byte-identical
+    copy of a photo already taken is always skipped.
+
+    ``keep`` names photos (also taken as input) that stay in despite a collage or duplicate
+    drop. They still go through every other check, the safety check included.
+    """
+    files = _with_keep(files, keep)
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
     if mode == "simple" and files and outside_simple(len(files)):
         announce(
             progress,
-            scan_files(files, min_side=min_side, blur_threshold=blur_threshold, dup_threshold=dup_threshold),
+            scan_files(
+                files,
+                min_side=min_side,
+                blur_threshold=blur_threshold,
+                dup_threshold=dup_threshold,
+                drop_near_duplicates=drop_near_duplicates,
+            ),
         )
     warning = check_count(len(files), mode)
     if warning:
@@ -101,10 +124,14 @@ def prepare(
     known = {item.id for item in existing}
     round_no = max((item.round for item in existing), default=-1) + 1 if existing else 0
     seen: list[int] = []
+    # The file name behind each hash in ``seen``, for the near-duplicate warning.
+    seen_names: list[str] = []
     for item in existing:
         image = open_photo(project.root / item.file)
         if image is not None:
             seen.append(dhash(image))
+            seen_names.append(item.file)
+    keep_ids = {photo_id(path) for path in keep}
     drops: list[Drop] = []
     kept: list[tuple[str, object]] = []
     total = len(files)
@@ -121,13 +148,33 @@ def prepare(
         if pid in known or pid in {k for k, _ in kept}:
             continue
         image = open_photo(path)
+        if pid in keep_ids:
+            allow = KEEPABLE
+        elif drop_near_duplicates:
+            allow = frozenset()
+        else:
+            allow = _NEAR_DUPLICATE
         reason = filter_reason(
-            image, seen, min_side=min_side, blur_threshold=blur_threshold, dup_threshold=dup_threshold
+            image,
+            seen,
+            min_side=min_side,
+            blur_threshold=blur_threshold,
+            dup_threshold=dup_threshold,
+            allow=allow,
         )
         if reason:
             drops.append(Drop(pid, Path(path).name, reason))
-        else:
-            kept.append((pid, image))
+            continue
+        # ``filter_reason`` added this photo's hash last; compare it with the ones before it.
+        match = near_duplicate(seen[-1], seen[:-1], dup_threshold)
+        if match is not None:
+            progress.emit(
+                "prepare.check",
+                "lora.warn.near_duplicate",
+                {"file": Path(path).name, "other": seen_names[match]},
+            )
+        seen_names.append(Path(path).name)
+        kept.append((pid, image))
     names = {photo_id(p): Path(p).name for p in files}
     paths = {photo_id(p): Path(p) for p in files}
     internal = bool(getattr(gate, "internal", False))
@@ -227,13 +274,13 @@ def prepare(
                     if mode == "expert":
                         _print_caption_refusal(names.get(pid, pid), pid)
                     _refuse(project, subject, mode, progress, "caption")
-                if caption_marks_collage(long, short):
+                if caption_marks_collage(long, short) and pid not in keep_ids:
                     prepared = project.prepared / f"{pid}.png"
                     if prepared.is_file():
                         prepared.unlink()
                     caption_drops.append(Drop(pid, names.get(pid, pid), "lora.drop.collage"))
                     continue
-                flag = text.get("unclothed")
+                # The captioner's text is stored as written; the flag follows the text.
                 new_items.append(
                     Item(
                         pid,
@@ -241,7 +288,7 @@ def prepare(
                         prepend_trigger(subject.trigger, long),
                         prepend_trigger(subject.trigger, short),
                         round_no,
-                        flag if isinstance(flag, bool) else None,
+                        unclothed_flag(text.get("unclothed"), long, short),
                     )
                 )
         finally:
@@ -294,6 +341,17 @@ def prepare(
         raise LoraUsageError("lora.err.too_few", need=need)
     progress.emit("prepare.done", "lora.progress.done", state="done")
     return summary
+
+
+def _with_keep(files: Sequence[Path], keep: Sequence[Path]) -> list[Path]:
+    """``files`` plus any ``keep`` photo not already among them (same file, compared by resolved path)."""
+    out = list(files)
+    known = {Path(path).resolve() for path in out}
+    for path in keep:
+        if Path(path).resolve() not in known:
+            known.add(Path(path).resolve())
+            out.append(Path(path))
+    return out
 
 
 def _refuse(

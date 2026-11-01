@@ -1,9 +1,10 @@
 """Review-sample prompts: trigger, the subject, a framing, and one attire word.
 
 The subject is the leading phrase of the short captions (``a woman`` from
-``A woman models various stylish outfits``). Framings rotate ``close-up
-portrait``, ``waist-up``, ``full body``. The start index is
-``(seed + round number) % 3``. ``auto`` resolves to ``unclothed`` when any
+``A woman models various stylish outfits``). With the ``mixed`` framing (the
+default), framings rotate ``close-up portrait``, ``waist-up``, ``full body``;
+the start index is ``(seed + round number) % 3``. The ``portrait`` framing
+uses one face close-up for every sample, for judging likeness. ``auto`` resolves to ``unclothed`` when any
 caption sets ``unclothed``, and to ``as_photos`` otherwise. ``as_photos`` with
 clothed captions and ``clothed`` both use near-skin-tone underwear. The project
 name is never used.
@@ -30,6 +31,9 @@ _WORDS = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 ATTIRE_MODES = ("auto", "as_photos", "clothed", "unclothed")
 FRAMINGS = ("close-up portrait", "waist-up", "full body")
+FRAMING_MODES = ("mixed", "portrait")
+PORTRAIT_FRAMING = "close-up portrait, face in clear view, looking at the camera, even soft light"
+SAMPLE_FRAMING = "sample_framing"
 CLOTHED = "wearing near-skin-tone underwear"
 UNCLOTHED = "unclothed"
 SAMPLE_ATTIRE = "sample_attire"
@@ -88,18 +92,27 @@ def build_sample_prompts(
     round_no: int,
     mode: str,
     captions: Sequence[Mapping[str, object]],
+    framing: str = "mixed",
 ) -> list[str]:
-    """``count`` prompts for one round. The same seed and round repeat the list."""
+    """``count`` prompts for one round. The same seed and round repeat the list.
+
+    ``framing`` is ``mixed`` (rotate the three framings) or ``portrait`` (a face
+    close-up for every sample). Seeds still differ per sample.
+    """
+    if framing not in FRAMING_MODES:
+        raise ValueError(framing)
     word = attire_word(resolve_attire(mode, captions), captions)
     subject = subject_phrase(captions, trigger)
     total = max(0, int(count))
     if total == 0:
         return []
+    if framing == "portrait":
+        return [_compose(trigger, subject, PORTRAIT_FRAMING, word) for _ in range(total)]
     start = (int(seed) + int(round_no)) % len(FRAMINGS)
     prompts = []
     for index in range(total):
-        framing = FRAMINGS[(start + index) % len(FRAMINGS)]
-        prompts.append(_compose(trigger, subject, framing, word))
+        chosen = FRAMINGS[(start + index) % len(FRAMINGS)]
+        prompts.append(_compose(trigger, subject, chosen, word))
     return prompts
 
 
@@ -142,6 +155,24 @@ def store_attire(project: Project, mode: str) -> str:
     if data.get(SAMPLE_ATTIRE) != choice:
         project.write({**data, SAMPLE_ATTIRE: choice})
     return choice
+
+
+def read_framing(data: Mapping[str, object]) -> str:
+    """The project's sample framing, or ``mixed`` when it is missing."""
+    raw = data.get(SAMPLE_FRAMING)
+    if isinstance(raw, str) and raw in FRAMING_MODES:
+        return raw
+    return "mixed"
+
+
+def store_framing(project: Project, framing: str) -> str:
+    """Write ``sample_framing`` on ``project.json`` and return it."""
+    if framing not in FRAMING_MODES:
+        raise ValueError(framing)
+    data = project.read()
+    if data.get(SAMPLE_FRAMING) != framing:
+        project.write({**data, SAMPLE_FRAMING: framing})
+    return framing
 
 
 def caption_rows(project: Project) -> list[dict[str, object]]:

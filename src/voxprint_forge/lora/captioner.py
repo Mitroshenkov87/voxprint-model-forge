@@ -19,8 +19,19 @@ from voxprint_forge.lora.vram_stage import TIER_GB, require_quantized
 DEFAULT = "qwen3-vl-4b-instruct"
 FALLBACK = "florence2-large"
 LICENCES = {DEFAULT: "Apache-2.0", FALLBACK: "MIT"}
-LONG = "Describe this photo for training an image model in two or three plain sentences. Do not guess names."
-SHORT = "Describe this photo in one short phrase."
+# The description prompts ask for the attire as it is. Without this the model
+# fell back on its own wording and named clothing the subject was not wearing.
+ATTIRE = (
+    "If a person is shown, say what they are wearing exactly as it appears. If they are unclothed or partly "
+    "unclothed, say so plainly with a neutral word such as unclothed, nude or topless. Do not name clothing "
+    "that is not in the photo."
+)
+LONG = (
+    "Describe this photo for training an image model in two or three plain sentences. Do not guess names. "
+    + ATTIRE
+)
+SHORT = "Describe this photo in one short phrase. " + ATTIRE
+SYSTEM = "You write factual, neutral image descriptions. Describe what is in the photo as it is."
 _UNCLOTHED_ASK = "Answer yes or no: is the subject unclothed?"
 _UNCLOTHED_WORD = re.compile(r"\b(?:nude|naked|unclothed|undressed)\b", re.IGNORECASE)
 
@@ -28,6 +39,17 @@ _UNCLOTHED_WORD = re.compile(r"\b(?:nude|naked|unclothed|undressed)\b", re.IGNOR
 def text_marks_unclothed(*parts: str) -> bool:
     """True when caption text contains an unclothed word."""
     return any(_UNCLOTHED_WORD.search(part) for part in parts)
+
+
+def unclothed_flag(flag: object, *parts: str) -> bool | None:
+    """The stored ``unclothed`` flag: true when the captioner said so or its text does.
+
+    The text is kept as written; the flag only follows it. A missing flag with
+    clothed text stays ``None``.
+    """
+    if text_marks_unclothed(*parts):
+        return True
+    return flag if isinstance(flag, bool) else None
 
 
 def answer_yes(text: str) -> bool:
@@ -59,12 +81,10 @@ class QwenCaptioner:
 
     def caption(self, image: Any) -> dict[str, str | bool]:
         """Two descriptions and whether the subject is unclothed."""
-        system = "You write factual image descriptions."
-        return {
-            "long": self.vlm.ask(image, system, LONG, 160).strip(),
-            "short": self.vlm.ask(image, system, SHORT, 32).strip(),
-            "unclothed": answer_yes(self.vlm.ask(image, system, _UNCLOTHED_ASK, 8)),
-        }
+        long = self.vlm.ask(image, SYSTEM, LONG, 160).strip()
+        short = self.vlm.ask(image, SYSTEM, SHORT, 48).strip()
+        asked = answer_yes(self.vlm.ask(image, SYSTEM, _UNCLOTHED_ASK, 8))
+        return {"long": long, "short": short, "unclothed": unclothed_flag(asked, long, short)}
 
     def unload(self) -> None:
         """Free graphics memory."""

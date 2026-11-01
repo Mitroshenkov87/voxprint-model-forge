@@ -26,7 +26,7 @@ from voxprint_forge.lora.review import (
     FIRST_ROUND_STEPS_MAX,
     FIRST_ROUND_STEPS_MIN,
 )
-from voxprint_forge.lora.sample_prompts import store_attire
+from voxprint_forge.lora.sample_prompts import ATTIRE_MODES, FRAMING_MODES, store_attire, store_framing
 from voxprint_forge.lora.trigger import looks_like_words, prepend_trigger
 from voxprint_forge.mdl_app import fetch, missing_ids
 
@@ -43,6 +43,20 @@ PREPARE_EXAMPLE = (
     "--fetch-missing downloads the required models first when any are missing."
 )
 _EXPERT = "{}-{}".format(*EXPERT_RANGE)
+TRAIN_EPILOG = (
+    "For a person LoRA use --preset balanced (the default); --preset quick is a smoke test of the setup.\n\n"
+    "Review pauses: with --review-rounds 1-6 (default 3) the run stops after each stage and waits for\n"
+    "lora review / lora continue / lora finish. In a script, CI job or scheduled task, pass\n"
+    "--review-rounds 0 to train straight through.\n\n"
+    "The deliverable is the .voxlora from lora finish or lora export PROJECT. checkpoints/step-*.safetensors\n"
+    "are intermediate files; Canvas does not accept them."
+)
+FINISH_DESCRIPTION = (
+    "Save the current LoRA, draw a final preview, record the steps it got, and write\n"
+    "<project>/export/<name>.voxlora. That .voxlora is the file to keep and to open in Canvas;\n"
+    "checkpoints/step-*.safetensors are intermediate. If the final preview fails, a warning is printed\n"
+    "and the LoRA is still saved and exported. --no-preview skips the preview."
+)
 
 
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -79,7 +93,13 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         help="Also add the .safetensors file to your models for Canvas.",
     )
     export.add_argument("--tag", action="append", default=[], help="Plain-word tag for Canvas. Repeat as needed.")
-    train = lora_sub.add_parser("train", help="Train a LoRA on the prepared photos of a project.")
+    train = lora_sub.add_parser(
+        "train",
+        help="Train a LoRA on the prepared photos of a project.",
+        description="Train a LoRA on the prepared photos of a project.",
+        epilog=TRAIN_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     extend = lora_sub.add_parser("extend", help="Continue an existing LoRA with the newest photos of a project.")
     for command in (train, extend):
         _training_flags(command)
@@ -193,6 +213,17 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG, WebP or AVIF photos.")
     command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
     command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
+    command.add_argument(
+        "--keep", type=Path, action="append", default=[], metavar="FILE",
+        help="Keep this photo even if it is set aside as a collage or (with --drop-near-duplicates) a "
+        "near-duplicate. It is added to the photos if needed and still goes through every other check, the "
+        "safety check included. Repeat as needed. --exclude wins over --keep.",
+    )
+    command.add_argument(
+        "--drop-near-duplicates", action="store_true",
+        help="Set aside a photo that looks like a near-duplicate of an earlier one. By default both are kept "
+        "and a warning names the two files. A byte-identical copy is always skipped.",
+    )
     _subject_flags(command)
     command.add_argument("--mode", choices=("simple", "expert"), default="simple",
                          help=f"Photo limits: {_REC}, or {_EXPERT} in Expert.")
@@ -213,7 +244,11 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
 
 def _training_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--project", type=Path, required=True, help="Project folder.")
-    command.add_argument("--preset", choices=sorted(PRESETS), default="balanced", help="Ready-made settings.")
+    command.add_argument(
+        "--preset", choices=sorted(PRESETS), default="balanced",
+        help="Ready-made settings. Default: balanced. Use balanced for a person LoRA; quick is only a smoke test "
+        "of the setup and gives weak likeness.",
+    )
     command.add_argument("--likeness", choices=sorted(LIKENESS), default="balanced", help="How close to the photos.")
     command.add_argument("--vram", choices=("auto", "16", "24"), default="auto", help="Graphics memory tier in GB.")
     command.add_argument(
@@ -272,11 +307,23 @@ def _review_flags(train: argparse.ArgumentParser) -> None:
         "--sample-steps", type=int, default=28,
         help="Inference steps for each review picture. Default: 28.",
     )
-    train.add_argument(
+    _sample_look_flags(train)
+
+
+def _sample_look_flags(command: argparse.ArgumentParser) -> None:
+    """``--sample-attire`` and ``--sample-framing``, on ``train`` and ``continue``. Both are stored on the project."""
+    command.add_argument(
         "--sample-attire",
-        choices=("auto", "as_photos", "clothed", "unclothed"),
+        choices=ATTIRE_MODES,
         default=None,
         help="Attire word for review samples. Default: auto. Stored on the project.",
+    )
+    command.add_argument(
+        "--sample-framing",
+        choices=FRAMING_MODES,
+        default=None,
+        help="Framing of review samples. mixed (default) rotates close-up, waist-up and full body. "
+        "portrait draws every sample as a face close-up, for judging likeness. Stored on the project.",
     )
 
 
@@ -295,11 +342,17 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
         "--unattended", action="store_true",
         help="Keep the liked pictures and train every remaining step with no more pauses.",
     )
+    _sample_look_flags(cont)
     finish = lora_sub.add_parser(
         "finish",
-        help="Save the current LoRA, draw a final preview, and record the steps it got.",
+        help="Save the current LoRA, draw a final preview, record the steps it got, and write the .voxlora.",
+        description=FINISH_DESCRIPTION,
     )
     finish.add_argument("project", type=Path, help="Project folder.")
+    finish.add_argument(
+        "--no-preview", dest="preview", action="store_false",
+        help="Skip the final test picture. The LoRA is still saved and exported.",
+    )
     finish.add_argument(
         "--discard", action="store_true",
         help="Stop and remove temporary versions and samples. Photos stay. Nothing is saved.",
@@ -375,11 +428,12 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
     attire = getattr(args, "sample_attire", None)
     if isinstance(attire, str) and attire:
         store_attire(project, attire)
+    _store_framing(project, args)
     prompts = _prompts(args.preview_prompts, data)
     stop = threading.Event()
     previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
     try:
-        return train(
+        result = train(
             project,
             config,
             adapter,
@@ -398,6 +452,49 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         )
     finally:
         signal.signal(signal.SIGINT, previous)
+    _review_hint(result, project)
+    return result
+
+
+def _store_framing(project: Project, args: argparse.Namespace) -> None:
+    framing = getattr(args, "sample_framing", None)
+    if isinstance(framing, str) and framing:
+        store_framing(project, framing)
+
+
+REVIEW_HINT = (
+    "Paused for review (round {round} of {rounds}). Training waits until you act:\n"
+    "  voxprint-forge-cli lora review {project}                 list the samples\n"
+    "  voxprint-forge-cli lora review {project} --like ID --dislike ID\n"
+    "  voxprint-forge-cli lora continue {project}               train the next round\n"
+    "  voxprint-forge-cli lora continue {project} --unattended  train the rest with no more pauses\n"
+    "  voxprint-forge-cli lora finish {project}                 save and write the .voxlora now\n"
+    "For an unattended run, start lora train with --review-rounds 0."
+)
+
+
+def _review_hint(result: dict[str, object], project: Project) -> None:
+    """When a run pauses for review and nobody is at a terminal, say how to go on.
+
+    The hint goes to stderr, so ``--json`` output on stdout is unchanged.
+    """
+    if result.get("state") != "review" or sys.stdin.isatty():
+        return
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    print(
+        REVIEW_HINT.format(
+            round=review.get("round", "?"),  # type: ignore[union-attr]
+            rounds=review.get("rounds", "?"),  # type: ignore[union-attr]
+            project=_quoted(project.root),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _quoted(path: Path) -> str:
+    text = str(path)
+    return f'"{text}"' if any(ch.isspace() for ch in text) else text
 
 
 def _bad(exc: ValueError) -> Exception:
@@ -502,6 +599,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         _require_name(args)
         subject = subject_from(args)
     files = collect(args.photos, args.photo, args.exclude)
+    excluded = {path.resolve() for path in args.exclude}
+    keep = [path for path in args.keep if path.resolve() not in excluded]
     if _wants_fetch(args):
         _fetch_missing()
     mode = "expert" if args.allow_count_outside_range else args.mode
@@ -519,6 +618,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         blur_threshold=args.blur_threshold,
         dup_threshold=args.dup_threshold,
         release=args.release,
+        keep=keep,
+        drop_near_duplicates=args.drop_near_duplicates,
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)
@@ -566,10 +667,14 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
     adapter = get_adapter(str(state.get("base") or ""), training=True)
     raw_prompts = state.get("prompts")
     prompts = [str(prompt) for prompt in raw_prompts] if isinstance(raw_prompts, list) else []
+    attire = getattr(args, "sample_attire", None)
+    if isinstance(attire, str) and attire:
+        store_attire(project, attire)
+    _store_framing(project, args)
     stop = threading.Event()
     previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
     try:
-        return train(
+        result = train(
             project,
             TrainConfig(),
             adapter,
@@ -578,9 +683,12 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
             preview_prompts=prompts,
             review_continue=True,
             no_more_reviews=bool(getattr(args, "unattended", False)),
+            sample_attire=attire if isinstance(attire, str) and attire else None,
         )
     finally:
         signal.signal(signal.SIGINT, previous)
+    _review_hint(result, project)
+    return result
 
 
 def _export(args: argparse.Namespace) -> dict[str, object]:
@@ -619,12 +727,16 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
 
         return discard_run(project)
     from voxprint_forge.lora.bases import get_adapter
+    from voxprint_forge.lora.export import export_package
     from voxprint_forge.lora.review import load_state
     from voxprint_forge.lora.train import finish_review
 
     state = load_state(project)
     adapter = get_adapter(str(state.get("base") or ""))
-    return finish_review(project, adapter, Progress(printer(args.json)))
+    progress = Progress(printer(args.json))
+    result = finish_review(project, adapter, progress, preview=bool(getattr(args, "preview", True)))
+    package = export_package(project, progress)
+    return {**result, "voxlora": package["file"], "sha256": package["sha256"]}
 
 
 def _discard_confirmed(args: argparse.Namespace) -> bool:

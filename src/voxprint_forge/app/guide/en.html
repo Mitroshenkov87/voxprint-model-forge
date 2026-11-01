@@ -238,7 +238,7 @@ voxprint-forge-cli models verify --gui
 <td>16</td>
 <td>0.0001</td>
 <td>768 px</td>
-<td>A short run of the whole path: prepare, train, samples, finish and export</td>
+<td>A smoke test of the whole path: prepare, train, samples, finish and export. Not for a usable person LoRA</td>
 </tr>
 <tr>
 <td><strong>Balanced</strong> (recommended)</td>
@@ -246,7 +246,7 @@ voxprint-forge-cli models verify --gui
 <td>32</td>
 <td>0.0001</td>
 <td>1024 px</td>
-<td>Most projects</td>
+<td>Most projects, and every person LoRA</td>
 </tr>
 <tr>
 <td><strong>Best quality</strong></td>
@@ -258,6 +258,7 @@ voxprint-forge-cli models verify --gui
 </tr>
 </tbody>
 </table>
+<p><strong>For a person, use Balanced</strong> (<code>--preset balanced</code> on the command line, the default). Quick check only shows that your setup works. On an RTX 4090 person run, 120 Quick check steps scored 1.68 out of 5 for likeness, and 1000 Balanced steps scored 3.95 out of 5.</p>
 <h2 id="likeness">Likeness</h2>
 <p>Likeness changes the number of steps and how often a description is left out during training.</p>
 <table>
@@ -373,7 +374,7 @@ voxprint-forge-cli models verify --gui
 <p>The heading is <strong>Check the new pictures</strong>. Your photos stay beside the new pictures. Each new picture has <strong>Include</strong> and <strong>Leave out</strong>. A picture you include gets a gold border and a check. A picture you leave out is dimmed, with a red border and a cross. A picture with no mark stays plain.</p>
 <p><img alt="A review round" src="img/en-simple-5-review.png" /></p>
 <p><strong>Mark all 👍</strong> includes every new picture. <strong>Reset</strong> clears the marks. The footer counts pictures you included, pictures you left out, and pictures with no mark. On the action row, to the right of the help line, <strong>Sample pictures</strong> offers <strong>as in the photos</strong>, <strong>underwear</strong>, or <strong>unclothed</strong>. The choice is kept in the project and applies from the next round. Each sample uses the rare trigger token, the subject taken from the short descriptions (for example, a woman), one framing (close-up portrait, waist-up, or full body), and one attire word. The project name is not used. <strong>As in the photos</strong> gives near-skin-tone underwear when the photos are clothed, and unclothed when any caption is marked unclothed. The action row has a large button on the left and a small <strong>Finish</strong> button on the right. <strong>Continue with reinforcement</strong> is the default. It trains the next round, then pauses for another review. The <strong>▾</strong> cut into its right edge switches that same button to <strong>Just continue</strong>, in a calmer colour, with a short crossfade. <strong>Just continue</strong> keeps the pictures you liked and trains the remaining steps with no more pauses. Pressing <strong>▾</strong> again returns to reinforcement. The choice is kept in the project. <strong>Finish</strong> opens a small menu. <strong>Save</strong> asks first and shows the steps done out of the plan, then saves the model and draws a final preview. The result is a finished LoRA you can export, labelled with the steps it got (for example, finished at 450 of 1500 steps) on the result screen, in <code>train.json</code>, and in the export (<code>steps</code> and <code>steps_planned</code>). <strong>Force, without saving</strong> asks first, then stops and removes the project's temporary versions and samples. Nothing is saved. Your photos stay. If any picture has no mark, <strong>Continue with reinforcement</strong> and <strong>Just continue</strong> ask you to confirm: unmarked pictures will not join the set. One short muted line on that row, just to the right of the continue button, names the current main-button mode and changes when ▾ switches it. The full explanations are tooltips on the main button, ▾, Finish, and each menu item. You can finish before the last planned round. Back and Next stay hidden. Closing the app does not drop a paused review: open the project again and the same screen is there.</p>
-<p>On the command line, <code>lora train --review-rounds N --first-round-steps 120 --first-round-samples 6 --samples-per-round 8 --sample-steps 28 --sample-attire auto</code> pauses the same way. <code>--sample-attire</code> is <code>auto</code> (the default), <code>as_photos</code>, <code>clothed</code>, or <code>unclothed</code>, and it is stored on the project. N is from 1 to 6, and the default is 3. <code>lora review</code> lists the pictures and sets marks (<code>--like</code>, <code>--dislike</code>, or <code>--from-file</code>). <code>lora continue PROJECT</code> trains the next round, then pauses for another review. <code>lora continue PROJECT --unattended</code> trains the remaining steps with no more pauses. <code>lora finish PROJECT</code> saves the model, draws a final preview, and records the steps it got. <code>lora finish PROJECT --discard</code> stops and removes temporary versions and samples; without a terminal it also needs <code>--yes</code>. Your photos stay. <code>lora status</code> prints the same first-pictures line during round 1. <code>--review-rounds 0</code> trains straight through.</p>
+<p>On the command line, <code>lora train --review-rounds N --first-round-steps 120 --first-round-samples 6 --samples-per-round 8 --sample-steps 28 --sample-attire auto</code> pauses the same way. <code>--sample-attire</code> is <code>auto</code> (the default), <code>as_photos</code>, <code>clothed</code>, or <code>unclothed</code>, and it is stored on the project. <code>--sample-framing portrait</code> makes every sample a face close-up, which makes likeness easier to judge; <code>mixed</code> (the default) keeps the rotation. Both also work on <code>lora continue</code> and apply from the next round. N is from 1 to 6, and the default is 3. <code>lora review</code> lists the pictures and sets marks (<code>--like</code>, <code>--dislike</code>, or <code>--from-file</code>). <code>lora continue PROJECT</code> trains the next round, then pauses for another review. <code>lora continue PROJECT --unattended</code> trains the remaining steps with no more pauses. <code>lora finish PROJECT</code> saves the model, draws a final preview, records the steps it got, and writes the <code>.voxlora</code> package (<code>--no-preview</code> skips the preview). <code>lora finish PROJECT --discard</code> stops and removes temporary versions and samples; without a terminal it also needs <code>--yes</code>. Your photos stay. <code>lora status</code> prints the same first-pictures line during round 1. <code>--review-rounds 0</code> trains straight through. A run started from a script or a scheduled task still pauses at each review and waits; without a terminal it prints the next commands. Use <code>--review-rounds 0</code> for those runs.</p>
 <h2 id="expert-settings">Expert settings</h2>
 <p>In Expert mode the panel on the right shows every value: Rank, Alpha, Steps, Learning rate, Scheduler, Warm-up steps, Batch size, Gradient accumulation, Resolution, Precision, Gradient checkpointing, Train the text encoder, Descriptions, Description model, Caption dropout, Seed, Save every N steps and Test picture every N steps. The reset button next to the presets puts back the values of the chosen preset.</p>
 <p><img alt="Expert mode while training" src="img/en-expert-5-train-running.png" /></p>
@@ -389,6 +390,8 @@ voxprint-forge-cli models verify --gui
 <li><strong>Open in Canvas</strong> adds the <code>.safetensors</code> file to your models. In Canvas, choose the LoRA, type the trigger word in your prompt, and set the strength (0.8 is a good start).</li>
 </ol>
 <p>To improve a model later, press <strong>Add more photos</strong> on this step. Training continues from the model with the new photos and a share of the old ones.</p>
+<h2 id="the-file-to-keep">The file to keep</h2>
+<p>The exported <code>.voxlora</code> package is the finished LoRA: keep it, share it, and open it in Canvas. The <code>checkpoints/step-NNNNNN.safetensors</code> files in the project folder are intermediate versions saved during training. They have no description or previews, and Canvas does not accept them. To use an earlier version, choose it under <strong>Version</strong> and export it.</p>
 <h2 id="where-the-files-go">Where the files go</h2>
 <ul>
 <li>LoRAs sent with <strong>Open in Canvas</strong>: <code>%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\&lt;name&gt;\</code>.</li>
@@ -399,10 +402,11 @@ voxprint-forge-cli models verify --gui
 <p>The names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.</p>
 <h2 id="command-line">Command line</h2>
 <p>The same exports are available from the command line:</p>
-<pre><code class="language-text">voxprint-forge-cli lora export &lt;project folder&gt; [-o &lt;file.voxlora&gt;]
+<pre><code class="language-text">voxprint-forge-cli lora finish &lt;project folder&gt; [--no-preview]
+voxprint-forge-cli lora export &lt;project folder&gt; [-o &lt;file.voxlora&gt;]
 voxprint-forge-cli lora export --project &lt;project folder&gt; [--checkpoint &lt;step&gt;] [--out &lt;file.safetensors&gt;] [--install-to-mdl]
 </code></pre>
-<p>The first command writes the <code>.voxlora</code> package (uncompressed zip): <code>model.safetensors</code>, <code>voxprint-model.json</code> and previews from samples that passed the output check. The description follows <code>docs/schemas/voxprint-model-1.json</code>. It records the steps done and the steps planned. <code>--install-to-mdl</code> applies to the second command and adds the <code>.safetensors</code> file to your models for Canvas. See the <a href="https://mitroshenkov87.github.io/voxprint-model-forge/cli-reference/">CLI reference</a>.</p>
+<p><code>lora finish</code> ends a paused review, saves the LoRA and writes the <code>.voxlora</code> package to <code>&lt;project folder&gt;/export/</code>. <code>--no-preview</code> skips the final test picture; if that picture fails, a warning is printed and the package is still written. <code>lora export &lt;project folder&gt;</code> writes the <code>.voxlora</code> package (uncompressed zip): <code>model.safetensors</code>, <code>voxprint-model.json</code> and previews from samples that passed the output check. The description follows <code>docs/schemas/voxprint-model-1.json</code>. It records the steps done and the steps planned. <code>--install-to-mdl</code> applies to the second command and adds the <code>.safetensors</code> file to your models for Canvas. See the <a href="https://mitroshenkov87.github.io/voxprint-model-forge/cli-reference/">CLI reference</a>.</p>
 <p><a id="page-compression"></a></p>
 <h1 id="compression-tests">Compression tests</h1>
 <p>Some model parts can run in a compressed (quantized) form that needs less video memory. Model Forge uses a compressed part only after it has been tested against the original, and the results are published here.</p>

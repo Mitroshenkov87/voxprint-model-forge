@@ -13,7 +13,7 @@ from pathlib import Path
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.i18n import text
 from voxprint_forge.lora.limits import MIN_SIDE, RECOMMENDED_RANGE, expert_only
-from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, Drop, filter_reason, open_photo
+from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, Drop, filter_reason, open_photo, photo_id
 
 SAFETY = "lora.drop.safety"
 FIX = {
@@ -106,22 +106,34 @@ def scan_files(
     min_side: int = MIN_SIDE,
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
+    drop_near_duplicates: bool = True,
 ) -> Report:
-    """Local size, collage, blur and duplicate checks. The safety gate is not run."""
+    """Local size, collage, blur and duplicate checks. The safety gate is not run.
+
+    With ``drop_near_duplicates`` off (as ``lora prepare`` runs by default), only a
+    byte-identical copy of an earlier file counts as a duplicate.
+    """
     seen: list[int] = []
+    digests: set[str] = set()
     notes: list[Note] = []
     kept = 0
     for path in files:
+        digest = photo_id(path)
+        if not drop_near_duplicates and digest in digests:
+            notes.append(Note(Path(path).name, "lora.drop.duplicate"))
+            continue
         reason = filter_reason(
             open_photo(path),
             seen,
             min_side=min_side,
             blur_threshold=blur_threshold,
             dup_threshold=dup_threshold,
+            allow=frozenset() if drop_near_duplicates else frozenset({"lora.drop.duplicate"}),
         )
         if reason:
             notes.append(Note(Path(path).name, reason))
         else:
+            digests.add(digest)
             kept += 1
     return Report(tuple(notes), (), kept, len(files), False)
 
