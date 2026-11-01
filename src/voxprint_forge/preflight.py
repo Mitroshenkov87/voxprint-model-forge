@@ -194,7 +194,11 @@ def converter_recognises_t_lite(repo: Path) -> bool:
             return recognised(path.read_text(encoding="utf-8"))
         return False
     # Sources are applied at build time from this registration.
-    return T_LITE_HASH in (repo / "src" / "voxprint_forge" / "llama_patch.py").read_text(encoding="utf-8")
+    patch = repo / "src" / "voxprint_forge" / "llama_patch.py"
+    if not patch.is_file():
+        # Installed copy without a checkout: the registration in the installed package.
+        patch = Path(__file__).resolve().parent / "llama_patch.py"
+    return T_LITE_HASH in patch.read_text(encoding="utf-8")
 
 
 def binaries_ready() -> tuple[bool, str]:

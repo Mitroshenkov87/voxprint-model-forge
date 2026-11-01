@@ -135,7 +135,7 @@ def test_installer_shortcuts_follow_the_suite_standard() -> None:
     for name in (
         '"{group}\\Uninstall {#MyAppName}.lnk"',
         '"{group}\\Model Forge guide (EN).lnk"',
-        '"{group}\\Руководство Model Forge (RU).lnk"',
+        '"{group}\\* Model Forge (RU).lnk"',
     ):
         assert name in deleted
     assert "{group}" not in _section("UninstallDelete")

@@ -18,6 +18,8 @@
 2. The setup copies the app to `C:\Program Files\VOXPrint AI Suite\Model Forge`, then downloads Python and the libraries it needs. This takes a few minutes. Keep the computer online.
 3. When it finishes, open **VOXPrint AI Model Forge** from the Start menu folder **VOXPrint AI Suite**. The setup can also add a desktop shortcut. That choice is off unless you turn it on.
 
+The setup adds `C:\Program Files\VOXPrint AI Suite\Model Forge\venv\Scripts` to your user `Path`, so `voxprint-forge-cli` runs from any new terminal window. Removing the app removes that entry again.
+
 The guide opens from **Open guide** in the app. PDF copies are in `C:\Program Files\VOXPrint AI Suite\Model Forge\docs`.
 
 If the setup fails, it shows the path to its log: `C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log`. Check the internet connection and run the setup again.

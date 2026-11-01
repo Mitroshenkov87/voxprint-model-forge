@@ -31,6 +31,17 @@ from voxprint_forge.lora.trigger import looks_like_words, prepend_trigger
 from voxprint_forge.mdl_app import fetch, missing_ids
 
 _REC = "{}-{}".format(*RECOMMENDED_RANGE)  # lora.limits: the one source of the set-size numbers
+NAME_EXAMPLE = "--name Garnis_AI --consent-method verbal"
+NAME_REQUIRED = (
+    "--name is required: give the subject's name or stage name, for example "
+    f"{NAME_EXAMPLE}"
+)
+PREPARE_EXAMPLE = (
+    "example:\n"
+    "  voxprint-forge-cli lora prepare --project my-lora --photos my-photos --kind person "
+    "--name Garnis_AI --consent-obtained --subject-adult --consent-method verbal --fetch-missing\n\n"
+    "--fetch-missing downloads the required models first when any are missing."
+)
 _EXPERT = "{}-{}".format(*EXPERT_RANGE)
 
 
@@ -40,7 +51,15 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         "lora", help="Train a LoRA from your photos: prepare, train, extend, export, review, continue, finish, status."
     )
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
-    _prepare_flags(lora_sub.add_parser("prepare", help="Check, crop and describe photos into a project."))
+    _prepare_flags(
+        lora_sub.add_parser(
+            "prepare",
+            help="Check, crop and describe photos into a project.",
+            description="Check, crop and describe photos into a project.",
+            epilog=PREPARE_EXAMPLE,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+    )
     export = lora_sub.add_parser(
         "export",
         help="Save a .voxlora package, or a .safetensors file with voxprint-model.json.",
@@ -105,7 +124,12 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
 
 def _subject_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--kind", choices=KINDS, default=None, help="What the photos show.")
-    command.add_argument("--name", default="", help="Name of the subject.")
+    command.add_argument(
+        "--name",
+        default="",
+        help="Required: the subject's name or stage name, for example Garnis_AI. "
+        "--stage-name alone is also accepted.",
+    )
     command.add_argument("--stage-name", default="", help="Optional alias. It does not become the trigger word.")
     command.add_argument(
         "--trigger", default="", help="Word that calls the model in a prompt. Default: a rare vxp token, not the name."
@@ -124,7 +148,8 @@ def _subject_flags(command: argparse.ArgumentParser) -> None:
         "--consent-method",
         choices=CONSENT_METHODS,
         default=None,
-        help="Person: verbal (no file) or file (needs --release). Default: file with --release, else verbal.",
+        help="Person: how consent was given. verbal: in person, no file. file: a signed release, "
+        "needs --release FILE. Default: file with --release, else verbal.",
     )
     command.add_argument(
         "--adult-content", action="store_true", help="Person, 18+ only: the photos contain adult content (a label)."
@@ -438,6 +463,14 @@ def _load_captioner(choice: str):
     return load_captioner(choice)
 
 
+def _require_name(args: argparse.Namespace) -> None:
+    """The same rule as ``check_subject`` (a name or a stage name), with a one-line CLI message and an example."""
+    if not str(args.name or "").strip() and not str(args.stage_name or "").strip():
+        from voxprint_forge.errors import UsageError
+
+        raise UsageError(NAME_REQUIRED, code="lora.err.no_name")
+
+
 def subject_from(args: argparse.Namespace) -> Subject:
     """The checked :class:`Subject` from ``lora prepare`` flags (the GUI builds the same flags)."""
     return check_subject(
@@ -466,6 +499,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     if args.kind is None and isinstance(stored.get("subject"), dict):
         subject = Subject(**stored["subject"])  # type: ignore[arg-type]
     else:
+        _require_name(args)
         subject = subject_from(args)
     files = collect(args.photos, args.photo, args.exclude)
     if _wants_fetch(args):

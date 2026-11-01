@@ -6,7 +6,7 @@
 
 | Command | What it does |
 | --- | --- |
-| `lora prepare --project DIR --photos DIR --kind KIND ...` | Checks, crops and describes the photos. Photos that are unreadable, too small, blurry, near-duplicate or fail the safety check are listed in `drops.jsonl` with a reason key. Running it again on the same project adds the new photos as the next round (for `extend`). |
+| `lora prepare --project DIR --photos DIR --kind KIND ...` | Checks, crops and describes the photos. Photos that are unreadable, too small, blurry, near-duplicate or fail the safety check are listed in `drops.jsonl` with a reason key, one line per photo. Running it again on the same project adds the new photos as the next round (for `extend`); a photo set aside again keeps its single line. |
 | `lora train --project DIR` | Trains on the prepared photos of the project. `--dry-run` prints the plan and the time estimate. `--review-rounds N` (1–6, default 3; `0` trains straight through) pauses after each planned stage. The first stage is `--first-round-steps` (100–500, default 120). Later stages share the preset steps that remain; the last of them takes the remainder. The preset total does not change. `--first-round-samples` (default 6) and `--samples-per-round` (default 8) are the pictures at the first review and at later reviews. `--sample-steps` (default 28) is the inference step count for those pictures. `--sample-attire {auto,as_photos,clothed,unclothed}` (default `auto`, stored on the project) builds those prompts from the trigger, a framing, and one attire word. |
 | `lora extend --project DIR --from FILE` | Continues an existing LoRA with the newest photos of the project plus `--replay` share (default 0.25) of the older ones. A LoRA made on another base is refused (`lora.err.base_mismatch`). |
 | `lora export PROJECT` | Writes `<stage name or name>.voxlora` (`-o FILE` to choose the place): an uncompressed zip with `model.safetensors`, `voxprint-model.json` (schema `voxprint-model/1`, `docs/schemas/voxprint-model-1.json`) and previews from samples that passed the output check. Source photos are not included. `steps` and `steps_planned` are in the description. |
@@ -58,6 +58,16 @@ Simple mode (default) takes 10 to 50 photos. Expert mode (`--mode expert` or `--
 | `person` | `--name` or `--stage-name`, `--consent-obtained`, `--subject-adult`, and `--consent-method verbal` or `--consent-method file --release FILE` |
 | `object` | `--name` or `--stage-name`, `--rights-confirmed` (I own this object or have the right to use these photos) |
 | `style` | `--name` or `--stage-name`, `--rights-confirmed` (I have the right to use these images; the style is not presented as a named living artist's work) |
+
+Example for a person, from any folder once the app is installed:
+
+```text
+voxprint-forge-cli lora prepare --project my-lora --photos my-photos --kind person --name Garnis_AI --consent-obtained --subject-adult --consent-method verbal --fetch-missing
+```
+
+- `--name NAME`: the subject's name or stage name, for example `Garnis_AI`. Required for every kind (`--stage-name` alone also works). Without it, `lora prepare` stops with exit 2 and prints `--name is required: give the subject's name or stage name, for example --name Garnis_AI --consent-method verbal`. The name does not become the trigger word.
+- `--consent-method verbal|file`: how a person's consent was given. `verbal`: given in person, no file. `file`: a signed release, passed with `--release FILE`.
+- `--fetch-missing`: download any missing required models before the photos are checked. `--no-fetch` never downloads. With neither flag, models are fetched only when the command runs in an interactive terminal.
 
 `--release FILE` stays in the project folder; only `release_attached` and its sha256 are recorded. Without `--consent-method`, a person's consent is `file` when `--release` is given, else `verbal`. `--consent-method verbal` with `--release` is refused (`lora.err.consent_method`), and `--consent-method file` without it too (`lora.err.no_release`).
 

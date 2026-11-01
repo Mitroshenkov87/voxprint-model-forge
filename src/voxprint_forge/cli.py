@@ -47,6 +47,11 @@ from voxprint_forge.version import version_line
 if TYPE_CHECKING:
     from voxprint_forge.pipeline import Host
 
+# The default plan inside the installed package: a copy of the repo's plans/plan.toml (a test keeps them equal).
+PACKAGED_PLAN = Path(__file__).resolve().parent / "data" / "plan.toml"
+# A source checkout (src layout) when this file is src/voxprint_forge/cli.py.
+CHECKOUT = Path(__file__).resolve().parents[2]
+
 
 def build_parser() -> argparse.ArgumentParser:
     """The forge argument parser. The CLI reference is generated from this."""
@@ -61,9 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--root",
         type=Path,
         default=None,
-        help="Repo root. Default: search from the working directory.",
+        help="Repo root. Default: search from the working directory, else the installed package.",
     )
-    parser.add_argument("--plan", type=Path, default=None, help="Plan TOML. Default: plans/plan.toml.")
+    parser.add_argument(
+        "--plan",
+        type=Path,
+        default=None,
+        help="Plan TOML. Default: plans/plan.toml in the repo, else the plan shipped with the package.",
+    )
     parser.add_argument("--forge-out", type=Path, default=None, help="Output root. Default: the plan output directory.")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan-summary", help="Print the plan's time estimate.")
@@ -459,11 +469,11 @@ def _dispatch(args: argparse.Namespace) -> object:
                 defer_upload=bool(args.defer_upload),
             )
         raise UsageError(f"unknown canvas command {args.canvas_command}", code="usage")
-    plan_path = args.plan or (root / "plans" / "plan.toml")
+    plan_path = args.plan or default_plan(root)
     if args.command == "verify-logins":
         return verify_logins()
     if not plan_path.is_file():
-        raise PlanError(f"missing plan {plan_path}", code="plan_io")
+        raise PlanError(f"missing plan {plan_path}; pass --plan PATH to a plan TOML file", code="plan_io")
     plan = load_plan(plan_path)
     if args.command == "plan-summary":
         return format_estimates(plan)
@@ -520,10 +530,22 @@ def _repo_root(explicit: Path | None) -> Path:
     for candidate in (cwd, *cwd.parents):
         if (candidate / "plans" / "plan.toml").is_file():
             return candidate
-    packaged = Path(__file__).resolve().parents[2]
-    if (packaged / "plans" / "plan.toml").is_file():
-        return packaged
-    raise UsageError("cannot find the forge repo; pass --root", code="root")
+    if (CHECKOUT / "plans" / "plan.toml").is_file():
+        return CHECKOUT
+    # Installed copy (no checkout): the package folder, which holds the shipped default plan.
+    if PACKAGED_PLAN.is_file():
+        return PACKAGED_PLAN.parents[1]
+    raise UsageError(
+        "cannot find the forge repo or the plan shipped with the package; pass --root DIR or --plan FILE",
+        code="root",
+    )
+
+
+def default_plan(root: Path) -> Path:
+    """``plans/plan.toml`` under ``root``; the plan shipped with the package when ``root`` is the installed package."""
+    if root == PACKAGED_PLAN.parents[1]:
+        return PACKAGED_PLAN
+    return root / "plans" / "plan.toml"
 
 
 if __name__ == "__main__":

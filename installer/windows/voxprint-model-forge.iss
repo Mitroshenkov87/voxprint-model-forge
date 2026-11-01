@@ -18,6 +18,8 @@
 ; still running, InitializeSetup and PrepareToInstall exit 20 before any file is
 ; deleted or copied. Exit 20 is not an Inno Setup code (those are 0 through 8).
 ; Exit 30: install.ps1 could not download PyTorch. An interactive setup offers Retry first.
+; PATH: after a successful install, {app}\venv\Scripts (voxprint-forge-cli.exe) is appended to the
+; current user's Path (HKCU\Environment) once. Uninstall removes that one entry and nothing else.
 
 #define MyAppName "VOXPrint AI Model Forge"
 #define MySuiteName "VOXPrint AI Suite"
@@ -65,6 +67,8 @@ AppVerName={#MyAppName} {#AppVersion}
 ; Silent setup: do not close it; exit 20 while it is running (see [Code]).
 CloseApplications=force
 CloseApplicationsFilter=voxprint-model-forge.exe,voxprint-forge-cli.exe,python.exe,pythonw.exe
+; Broadcast WM_SETTINGCHANGE after the user Path changes (install and uninstall).
+ChangesEnvironment=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -98,7 +102,8 @@ Source: "migrate-home.ps1"; Flags: dontcopy
 ; Shortcuts from older builds.
 Type: files; Name: "{group}\Uninstall {#MyAppName}.lnk"
 Type: files; Name: "{group}\Model Forge guide (EN).lnk"
-Type: files; Name: "{group}\Руководство Model Forge (RU).lnk"
+; The old RU guide shortcut; matched by its ASCII suffix.
+Type: files; Name: "{group}\* Model Forge (RU).lnk"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\voxprint-model-forge.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\{#MyIcon}"; AppUserModelID: "{#MyAppId}"
@@ -418,6 +423,122 @@ begin
     DelTree(Incoming, True, True, True);
 end;
 
+// User Path entry for voxprint-forge-cli.exe. HKCU is the user running setup.
+const
+  UserEnvKey = 'Environment';
+
+function CliDir: String;
+begin
+  Result := ExpandConstant('{app}\venv\Scripts');
+end;
+
+// Case-insensitive, ignores surrounding spaces and one trailing backslash.
+function SamePathEntry(const Entry, Dir: String): Boolean;
+begin
+  Result := CompareText(RemoveBackslashUnlessRoot(Trim(Entry)), RemoveBackslashUnlessRoot(Trim(Dir))) = 0;
+end;
+
+// Next ';'-separated entry of Rest. More is False after the last entry (which may be empty).
+function NextPathEntry(var Rest: String; var More: Boolean): String;
+var
+  P: Integer;
+begin
+  P := Pos(';', Rest);
+  if P = 0 then
+  begin
+    Result := Rest;
+    Rest := '';
+    More := False;
+  end
+  else
+  begin
+    Result := Copy(Rest, 1, P - 1);
+    Delete(Rest, 1, P);
+    More := True;
+  end;
+end;
+
+function UserPathHas(const Paths, Dir: String): Boolean;
+var
+  Rest: String;
+  More: Boolean;
+begin
+  Result := False;
+  Rest := Paths;
+  More := Rest <> '';
+  while More do
+    if SamePathEntry(NextPathEntry(Rest, More), Dir) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+procedure AddCliToUserPath;
+var
+  Paths: String;
+begin
+  if not RegQueryStringValue(HKEY_CURRENT_USER, UserEnvKey, 'Path', Paths) then
+    Paths := '';
+  if UserPathHas(Paths, CliDir) then
+  begin
+    Log('user Path already has ' + CliDir);
+    Exit;
+  end;
+  if (Paths <> '') and (Paths[Length(Paths)] <> ';') then
+    Paths := Paths + ';';
+  Paths := Paths + CliDir;
+  if RegWriteExpandStringValue(HKEY_CURRENT_USER, UserEnvKey, 'Path', Paths) then
+    Log('added to user Path: ' + CliDir)
+  else
+    Log('could not add to user Path: ' + CliDir);
+end;
+
+// Removes only the entries equal to CliDir. Every other entry, and its order, stays.
+procedure RemoveCliFromUserPath;
+var
+  Paths, Rest, Entry, Kept: String;
+  More, First, Found: Boolean;
+begin
+  if not RegQueryStringValue(HKEY_CURRENT_USER, UserEnvKey, 'Path', Paths) then
+    Exit;
+  Rest := Paths;
+  Kept := '';
+  First := True;
+  Found := False;
+  More := Rest <> '';
+  while More do
+  begin
+    Entry := NextPathEntry(Rest, More);
+    if SamePathEntry(Entry, CliDir) then
+      Found := True
+    else
+    begin
+      if not First then
+        Kept := Kept + ';';
+      Kept := Kept + Entry;
+      First := False;
+    end;
+  end;
+  if not Found then
+    Exit;
+  if Kept = '' then
+  begin
+    if RegDeleteValue(HKEY_CURRENT_USER, UserEnvKey, 'Path') then
+      Log('removed user Path (it held only ' + CliDir + ')');
+  end
+  else if RegWriteExpandStringValue(HKEY_CURRENT_USER, UserEnvKey, 'Path', Kept) then
+    Log('removed from user Path: ' + CliDir)
+  else
+    Log('could not remove from user Path: ' + CliDir);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RemoveCliFromUserPath;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -449,6 +570,7 @@ begin
     SuppressibleMsgBox('VOXPrint AI Model Forge setup failed. The log is ' + ExpandConstant('{app}\setup-work\install.log') + '.', mbError, MB_OK, IDOK);
     ExitProcess(ResultCode);
   end;
+  AddCliToUserPath;
   if PrefetchPage.Values[0] then
   begin
     if not ExecAsOriginalUser(
