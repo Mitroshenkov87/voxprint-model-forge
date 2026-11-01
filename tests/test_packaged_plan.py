@@ -24,7 +24,11 @@ def test_packaged_plan_is_package_data() -> None:
     package = ROOT / "src" / "voxprint_forge"
     rel = cli.PACKAGED_PLAN.relative_to(package).as_posix()
     # setuptools expands package-data patterns with recursive glob, where ** also matches no folder.
-    assert any(rel in glob.glob(pattern, root_dir=package, recursive=True) for pattern in patterns)
+    # glob returns os.sep-separated paths (backslashes on Windows), so normalise them to POSIX form.
+    matched = {
+        Path(hit).as_posix() for pattern in patterns for hit in glob.glob(pattern, root_dir=package, recursive=True)
+    }
+    assert rel in matched
 
 
 @pytest.fixture
