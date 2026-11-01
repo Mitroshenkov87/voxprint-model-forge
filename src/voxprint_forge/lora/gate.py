@@ -223,6 +223,33 @@ _STEMS = tuple(stem.replace("ё", "е") for stem in CHILD_STEMS)
 TRI = ("present", "absent", "unsure")
 YES_NO = ("yes", "no", "unsure")
 
+# Minors-gate job policy (rc.12, approved 2026-11-01). Each checked photo gets one tier:
+#   strong: refuses the job (unless CLEAR_SHARE of the set is clear and it has no child keyword);
+#   ambiguous: dropped, counts toward the allowance;
+#   margin: 18-20 adult margin, dropped, never refuses;
+#   unchecked: the photo could not be fully read, dropped, never refuses by itself
+#   (a judge or estimator that is missing or errors, ``UNAVAILABLE``, still refuses the job: fail closed);
+#   clear: the only tier that is trained on.
+TIERS = ("clear", "margin", "unchecked", "ambiguous", "strong")
+MINOR_AGE = AVG_MIN  # below it a model says "minor"
+YOUNG_AGE = PHOTO_FLOOR  # below it a model says "clearly young"
+KEEP_AGE = AGE_MIN  # clear needs both models at or above it
+CLEAR_PERCENT = 90  # this share of clear photos makes every other photo a false flag
+ALLOWANCE_MIN = 1  # ambiguous photos allowed at ALLOWANCE_FROM photos or fewer
+ALLOWANCE_MAX = 10  # ambiguous photos allowed at ALLOWANCE_TO photos or more
+ALLOWANCE_FROM = 30
+ALLOWANCE_TO = 60
+UNCHECKED = (
+    "judge_missing",
+    "judge_error",
+    "judge_incomplete",
+    "not_attested",
+    "estimator_missing",
+    "estimator_no_face",
+    "estimator_age_missing",
+    "age_missing",
+)
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -268,6 +295,7 @@ class Decision:
     trace: dict[str, Any] = field(default_factory=dict, compare=False)
     audit: dict[str, Any] | None = field(default=None, compare=False)
     shadow: dict[str, Any] | None = field(default=None, compare=False)
+    tier: str = field(default="unchecked", compare=False)
 
     @property
     def keep(self) -> bool:
@@ -360,7 +388,8 @@ def decide(
                 "relaxed": reasons,
             }
             reasons = []
-    return Decision(tuple(reasons), minor, path, audit=audit)
+    tier = "clear" if not reasons else ("strong" if minor else "ambiguous")
+    return Decision(tuple(reasons), minor, path, audit=audit, tier=tier)
 
 
 def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bool, attested: bool) -> Decision:
@@ -385,10 +414,10 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
     if verdict.reason_code == "child_or_adolescent":
         reasons.append("markers")
         minor = True
-    marker_minor = minor
     estimate: float | None = None
+    youngest: float | None = None
+    judge_age = verdict.min_age
     if face:
-        judge_age = verdict.min_age
         if not estimator_ok or reading is None:
             reasons.append("estimator_missing")
         elif not reading.ages or reading.n_faces < 1:
@@ -406,25 +435,93 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
                 reasons.append("average_under_18")
                 minor = True
     reasons = list(dict.fromkeys(reasons))
-    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate, "minor_marker": marker_minor})
+    judge =float(judge_age) if _num(judge_age) else None  # type: ignore[arg-type]
+    tier = tier_v4(verdict, reasons, minor, judge, youngest)
+    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate}, tier=tier)
 
 
-# A check that did not run. The job is refused rather than trained on fewer photos.
+def tier_v4(
+    verdict: Verdict, reasons: Sequence[str], minor: bool, judge: float | None, youngest: float | None
+) -> str:
+    """The photo's tier under the job policy. ``youngest`` is the youngest MiVOLO age, set only on the face path."""
+    marked = "markers" in reasons
+    child = verdict.reason_code == "child_or_adolescent"
+    if judge is not None and youngest is not None:
+        low, high = min(judge, youngest), max(judge, youngest)
+        mean = (judge + youngest) / 2.0
+        says_minor = marked or judge < MINOR_AGE or youngest < MINOR_AGE
+        # Strong: two models agree it is under 18.
+        if (child and youngest < MINOR_AGE) or (youngest < YOUNG_AGE and judge < MINOR_AGE):
+            return "strong"
+        # Ambiguous: one model says minor and the other says 20 or older, or the average sits in the margin.
+        if (
+            (marked and youngest >= KEEP_AGE)
+            or (youngest < MINOR_AGE and judge >= KEEP_AGE)
+            or (low < YOUNG_AGE and high >= KEEP_AGE)
+            or (says_minor and MINOR_AGE <= mean < KEEP_AGE)
+        ):
+            return "ambiguous"
+        # Any other minor indication is not covered by the policy: fail closed, as v4 did.
+        if minor or low < MINOR_AGE:
+            return "strong"
+    elif minor or (judge is not None and judge < MINOR_AGE):
+        # Only the judge could read this photo and it says minor: fail closed.
+        return "strong"
+    elif judge is not None and judge < KEEP_AGE:
+        return "margin"
+    if marked:
+        return "ambiguous"
+    if any(reason in UNCHECKED for reason in reasons):
+        return "unchecked"
+    if not _confident(verdict.confidence):
+        return "ambiguous"
+    if reasons or (judge is not None and youngest is not None and min(judge, youngest) < KEEP_AGE):
+        return "margin"
+    return "clear"
+
+
+def _confident(value: Any) -> bool:
+    return _num(value) and float(value) >= MIN_CONFIDENCE
+
+
+def allowance(n: int) -> int:
+    """Ambiguous photos a set of ``n`` checked photos may drop and still train (1 to 10, half rounds up)."""
+    if n <= ALLOWANCE_FROM:
+        return ALLOWANCE_MIN
+    if n >= ALLOWANCE_TO:
+        return ALLOWANCE_MAX
+    span, width = ALLOWANCE_MAX - ALLOWANCE_MIN, ALLOWANCE_TO - ALLOWANCE_FROM
+    return ALLOWANCE_MIN + ((n - ALLOWANCE_FROM) * span * 2 + width) // (width * 2)
+
+
+@dataclass(frozen=True)
+class JobDecision:
+
+    refuse: bool
+    why: str
+    n: int
+    counts: dict[str, int]
+    allowance: int
+
+
+def decide_job(tiers: Sequence[str], *, keyword: bool) -> JobDecision:
+    """Whole-job verdict from the checked photos' tiers. Only clear photos are ever trained on."""
+    n = len(tiers)
+    counts = {tier: sum(1 for t in tiers if t == tier) for tier in TIERS}
+    limit = allowance(n)
+    if keyword:
+        return JobDecision(True, "child_keyword", n, counts, limit)
+    if n and counts["clear"] * 100 >= n * CLEAR_PERCENT:
+        return JobDecision(False, "clear_share", n, counts, limit)
+    if counts["strong"]:
+        return JobDecision(True, "strong", n, counts, limit)
+    if counts["ambiguous"] > limit:
+        return JobDecision(True, "over_allowance", n, counts, limit)
+    return JobDecision(False, "within_allowance", n, counts, limit)
+
+
+# A check that did not run on a photo. Whatever the tiers say, the job is refused (fail closed).
 UNAVAILABLE = ("judge_missing", "judge_error", "estimator_missing")
-
-
-def minor_signal(decision: Decision) -> bool:
-    """A sign that refuses the whole job, not one photo.
-
-    Child markers or a ``child_or_adolescent`` verdict, a reading under 16, or a
-    child keyword. ``average_under_18`` alone is left to the per-person average,
-    so an adult who looks 18-20 is not refused on one photo.
-    """
-    if decision.trace.get("minor_marker") or "single_under_16" in decision.reasons:
-        return True
-    if "child_keyword" in decision.reasons:
-        return True
-    return decision.minor and "average_under_18" not in decision.reasons
 
 
 def _num(value: Any) -> bool:
@@ -541,10 +638,9 @@ class Gate:
         decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=self.rule_for(attested), attested=attested)
         if not self.internal:
             trace["estimate"] = decision.trace.get("estimate")
-            trace["minor_marker"] = bool(decision.trace.get("minor_marker"))
-            return Decision(decision.reasons, decision.minor, decision.path, trace)
+            return Decision(decision.reasons, decision.minor, decision.path, trace, tier=decision.tier)
         shadow = shadow_record(verdict, reading, estimator_ok)
-        return Decision(decision.reasons, decision.minor, decision.path, trace, shadow=shadow)
+        return Decision(decision.reasons, decision.minor, decision.path, trace, shadow=shadow, tier=decision.tier)
 
 
 def shadow_record(verdict: Verdict | None, reading: AgeReading | None, estimator_ok: bool) -> dict[str, Any]:

@@ -4,17 +4,22 @@ Settings in `voxprint_forge/lora/gate.py`: `PRODUCT_RULE`, `INTERNAL_RULE`, `AVG
 `AGE_HARD_MIN`, `MIN_CONFIDENCE`, `INDICATORS`, `BODY_MARKERS`, `MINOR_SIGNALS`, `CHILD_WORDS`, `CHILD_STEMS`,
 `CHILD_WORDS_RU`.
 
+Job policy (rc.12): `TIERS`, `MINOR_AGE`, `YOUNG_AGE`, `KEEP_AGE`, `CLEAR_PERCENT`, `ALLOWANCE_MIN`, `ALLOWANCE_MAX`,
+`ALLOWANCE_FROM`, `ALLOWANCE_TO`, `UNCHECKED`. See docs/LORA.md, "Safety-check log".
+
 ## Job-level refusal
 
 `voxprint_forge/lora/job_gate.py` refuses the whole job, not one photo, before training starts:
 
-- any photo with a minor signal (`minor_signal()`: child markers, `child_or_adolescent`, a reading under 16,
-  a child keyword). `average_under_18` alone is left to the per-person average, so adults who look 18-20 pass;
-- `child_keyword()` on captions (after captioning and after every edit), the trigger, the project folder and
-  subject names, sample prompts and settings. It reads EN, RU (declensions, diminutives, slang),
+- the photos' tiers, by the job policy (`decide_job()`): only clear photos are trained on. At `CLEAR_PERCENT`
+  clear photos the job trains; below it a strong photo refuses, and more ambiguous photos than `allowance(n)`
+  refuse. Margin and unchecked photos are dropped and never refuse by themselves;
+- `child_keyword()` at any ratio: in a file name or photo metadata, in captions (after captioning and after
+  every edit), the trigger, the project folder and subject names, sample prompts and settings. It reads EN, RU (declensions, diminutives, slang),
   transliterated RU, leetspeak, mixed Latin/Cyrillic look-alikes, ages under 18 (`16yo`, `16 лет`), and
   school uniform plus an age;
-- a check that is missing or errors (judge, estimator, captioner, the preflight itself): `lora.err.check_unavailable`;
+- a check that is missing or errors (judge, estimator, captioner, the preflight itself), whatever the tiers:
+  `lora.err.check_unavailable`;
 - a prepared file or `captions.jsonl` that changed, was added or was removed after the gate. `pin()` writes
   `gate.json` (sha256 per file); `preflight_refuse()` verifies it: `lora.err.dataset_changed`.
 
