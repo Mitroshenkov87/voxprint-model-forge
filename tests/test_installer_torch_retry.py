@@ -15,17 +15,19 @@ def test_uv_http_timeout_and_retries_default_unless_the_user_set_them() -> None:
     """UV_HTTP_TIMEOUT 300 and UV_HTTP_RETRIES 8, read before inherited UV_ settings are cleared."""
     assert '$httpTimeout = if ($env:UV_HTTP_TIMEOUT) { $env:UV_HTTP_TIMEOUT } else { "300" }' in INSTALL
     assert '$httpRetries = if ($env:UV_HTTP_RETRIES) { $env:UV_HTTP_RETRIES } else { "8" }' in INSTALL
-    scrub = INSTALL.index("Remove-Item \"env:$name\"")
+    scrub = INSTALL.index('Remove-Item "env:$name"')
     assert INSTALL.index("$httpTimeout = ") < scrub < INSTALL.index("$env:UV_HTTP_TIMEOUT = $httpTimeout")
     assert INSTALL.index("$httpRetries = ") < scrub < INSTALL.index("$env:UV_HTTP_RETRIES = $httpRetries")
 
 
 def test_both_torch_installs_go_through_the_retry_loop() -> None:
     assert 'Install-Torch $Py $TorchIndex @("torch==2.14.1", "torchvision==0.29.1")' in INSTALL
-    assert 'Install-Torch $MPy "https://download.pytorch.org/whl/cpu" @("torch==2.5.1", "torchvision==0.20.1")' in INSTALL
+    assert (
+        'Install-Torch $MPy "https://download.pytorch.org/whl/cpu" @("torch==2.5.1", "torchvision==0.20.1")' in INSTALL
+    )
     outside = INSTALL.replace(TORCH, "")
     assert not re.search(r"Invoke-Uv[^\n]*download\.pytorch\.org", outside)
-    assert "--index-url\", $TorchIndex" not in outside
+    assert '--index-url", $TorchIndex' not in outside
 
 
 def test_retry_loop_is_five_attempts_with_doubling_backoff() -> None:
@@ -85,7 +87,9 @@ def test_setup_offers_retry_when_install_ps1_exits_30() -> None:
 def test_no_unofficial_index_or_mirror() -> None:
     """Only the official PyTorch, PyPI and GitHub URLs; no extra index."""
     urls = set(re.findall(r"https?://[^\s\"')]+", INSTALL))
-    allowed = re.compile(r"^https://(download\.pytorch\.org/whl/(cu130|cpu)|pypi\.org/simple|github\.com/WildChlamydia/)")
+    allowed = re.compile(
+        r"^https://(download\.pytorch\.org/whl/(cu130|cpu)|pypi\.org/simple|github\.com/WildChlamydia/)"
+    )
     assert urls and all(allowed.match(url) for url in urls), urls
     lowered = INSTALL.lower()
     assert "extra-index-url" not in lowered
