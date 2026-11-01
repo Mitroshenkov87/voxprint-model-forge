@@ -50,8 +50,14 @@ jobs:
           python -m pip install vendor/voxprint_common-0.5.2-py3-none-any.whl
           build="$(python -c 'import json, os; print(int(os.environ["INSTALLER_RUN"]) + int(json.load(open("BUILD.json"))["offset"] or 0))')"
           export VOXPRINT_BUILD="$build"
+          # Stamp the package as installer.yml does, so an rc tag shows its RC number.
+          python installer/stamp_build.py --catalog BUILD.json --package-dir src/voxprint_forge --stage-dir "$RUNNER_TEMP/stage" --require-build --tag "$GITHUB_REF_NAME"
           line="$(python -c 'from voxprint_forge.version import version_line; print(version_line())')"
           printf '%s\n' "$line"
-          expected="0.1.0 build ${build} \"Charash\""
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.([0-9]+)$ ]]; then
+            expected="0.1.0 RC ${BASH_REMATCH[1]} build ${build} \"Charash\""
+          else
+            expected="0.1.0 build ${build} \"Charash\""
+          fi
           test "$line" = "$expected"
           test "$build" -ge "$BUILD_FLOOR"

@@ -1,4 +1,7 @@
-"""Training project folder (plan §2): photos/, prepared/, captions.jsonl, drops.jsonl, checkpoints/, previews/."""
+"""Training project folder (plan §2).
+
+photos/, prepared/, captions.jsonl, drops.jsonl, gate_trace.jsonl, checkpoints/, previews/.
+"""
 
 from __future__ import annotations
 
@@ -52,6 +55,11 @@ class Project:
     def drops(self) -> Path:
         """``drops.jsonl``: photos set aside, with a reason key."""
         return self.root / "drops.jsonl"
+
+    @property
+    def gate_trace(self) -> Path:
+        """``gate_trace.jsonl``: per checked photo, the safety gate's codes and numbers (no image data)."""
+        return self.root / "gate_trace.jsonl"
 
     @property
     def pause(self) -> Path:
