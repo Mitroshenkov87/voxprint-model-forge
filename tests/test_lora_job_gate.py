@@ -12,7 +12,7 @@ from tests.test_lora_prepare import ADULT_FACE, FakeCaptioner, FakeEstimator, Fa
 from voxprint_forge.lora.consent import check_subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import AgeReading, Gate, child_keyword
+from voxprint_forge.lora.gate import RULE_VERSION, AgeReading, Gate, child_keyword
 from voxprint_forge.lora.job_gate import preflight_refuse, repin_captions
 from voxprint_forge.lora.prepare import prepare
 from voxprint_forge.lora.presets import build_config
@@ -306,5 +306,5 @@ def test_youthful_adult_at_20_passes_prepare_and_preflight(tmp_path, age) -> Non
     project = run_prepare(tmp_path, photos(tmp_path / "in", 10), gate=adult_gate(age, verdict))
     assert project.read()["gate_passed"] is True
     clearance = preflight_refuse(project, prompts=["vxp, a young woman, 19 years old, close-up portrait"])
-    assert clearance.rule == 4
+    assert clearance.rule == RULE_VERSION
     assert not (project.root / "refusals.jsonl").exists()

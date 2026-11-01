@@ -12,7 +12,7 @@ RULES = ("v1", "v3", "v4")
 PRODUCT_RULE = "v4"
 INTERNAL_RULE = "v1"
 DEFAULT_RULE = PRODUCT_RULE
-RULE_VERSION = 4
+RULE_VERSION = 5
 AVG_MIN = 18.0
 PHOTO_FLOOR = 16.0
 SHADOW_RULE = "v3"
@@ -249,6 +249,9 @@ UNCHECKED = (
     "estimator_age_missing",
     "age_missing",
 )
+FACE_RULES = ("all", "primary")
+PRIMARY_MIN_SCORE = 0.9
+STRAY_MAX_AREA = 0.25
 
 
 @dataclass(frozen=True)
@@ -264,10 +267,18 @@ class Verdict:
 
 
 @dataclass(frozen=True)
+class Face:
+
+    box: tuple[float, float, float, float]
+    score: float | None
+
+
+@dataclass(frozen=True)
 class AgeReading:
 
     n_faces: int
     ages: tuple[float | None, ...] = ()
+    faces: tuple[Face, ...] = ()
 
 
 class Judge(Protocol):
@@ -417,6 +428,7 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
     estimate: float | None = None
     youngest: float | None = None
     judge_age = verdict.min_age
+    select = select_faces(verdict, reading) if face else None
     if face:
         if not estimator_ok or reading is None:
             reasons.append("estimator_missing")
@@ -427,7 +439,8 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
         elif not _num(judge_age):
             reasons.append("age_missing")
         else:
-            youngest = min(float(a) for a in reading.ages)  # type: ignore[arg-type]
+            used = reading.ages if select is None else select["ages_used"]
+            youngest = min(float(a) for a in used)  # type: ignore[arg-type]
             estimate = (float(judge_age) + youngest) / 2.0  # type: ignore[arg-type]
             if min(float(judge_age), youngest) < PHOTO_FLOOR:  # type: ignore[arg-type]
                 reasons.append("single_under_16")
@@ -437,7 +450,76 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
     reasons = list(dict.fromkeys(reasons))
     judge =float(judge_age) if _num(judge_age) else None  # type: ignore[arg-type]
     tier = tier_v4(verdict, reasons, minor, judge, youngest)
-    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate}, tier=tier)
+    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate, "faces": select}, tier=tier)
+
+
+def select_faces(verdict: Verdict, reading: AgeReading | None) -> dict[str, Any] | None:
+    """Per-photo face record: ``rule`` (``FACE_RULES``), ``why``, ``faces``, ``primary``, ``stray``, ``ages_used``."""
+    if reading is None:
+        return None
+    ages = reading.ages
+    faces = reading.faces
+    rows: list[dict[str, Any]] = []
+    for index, face in enumerate(faces):
+        box = tuple(face.box) if isinstance(face.box, (tuple, list)) else ()
+        area = float(box[2]) * float(box[3]) if len(box) == 4 and all(_num(v) for v in box) else None
+        rows.append(
+            {
+                "i": index,
+                "box": [float(v) if _num(v) else None for v in box],
+                "area": area,
+                "score": float(face.score) if _num(face.score) else None,
+                "age": ages[index] if index < len(ages) else None,
+            }
+        )
+    record: dict[str, Any] = {
+        "rule": "all",
+        "why": "",
+        "faces": rows,
+        "primary": None,
+        "stray": [],
+        "ages_used": list(ages),
+    }
+
+    def keep_all(why: str) -> dict[str, Any]:
+        record["why"] = why
+        return record
+
+    if reading.n_faces < 2 or len(ages) != reading.n_faces:
+        return keep_all("n_faces")
+    if len(faces) != len(ages):
+        return keep_all("no_boxes")
+    if any(row["area"] is None or row["area"] <= 0 or row["score"] is None for row in rows):
+        return keep_all("bad_box")
+    if any(not _num(a) for a in ages):
+        return keep_all("age_missing")
+    order = sorted(rows, key=lambda row: row["area"], reverse=True)
+    top = order[0]
+    record["primary"] = top["i"]
+    if top["score"] < PRIMARY_MIN_SCORE:
+        return keep_all("low_score")
+    if any(row["area"] >= STRAY_MAX_AREA * top["area"] for row in order[1:]):
+        return keep_all("similar_size")
+    if float(top["age"]) < KEEP_AGE:
+        return keep_all("primary_age")
+    judge = verdict.min_age
+    if (
+        not _num(judge)
+        or float(judge) < KEEP_AGE  # type: ignore[arg-type]
+        or not _confident(verdict.confidence)
+        or verdict.reason_code == "child_or_adolescent"
+        or verdict.could_be_under_20 is not False
+        or set(verdict.indicators) != set(INDICATORS)
+        or any(value != "absent" for value in verdict.indicators.values())
+    ):
+        return keep_all("judge")
+    record.update(
+        rule="primary",
+        why="stray",
+        stray=[row["i"] for row in order[1:]],
+        ages_used=[top["age"]],
+    )
+    return record
 
 
 def tier_v4(
@@ -636,6 +718,7 @@ class Gate:
         else:
             trace["estimator"] = {"ok": False, "missing": True}
         decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=self.rule_for(attested), attested=attested)
+        trace["faces"] = decision.trace.get("faces")
         if not self.internal:
             trace["estimate"] = decision.trace.get("estimate")
             return Decision(decision.reasons, decision.minor, decision.path, trace, tier=decision.tier)
