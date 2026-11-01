@@ -99,3 +99,5 @@ All strings are in `src/voxprint_forge/lora/i18n/en.json` and `ru.json`; a test 
 ### Safety-check log
 
 `drops.jsonl` stays neutral: a safety drop is only `lora.drop.safety`. A failing check stage prints one generic line to stderr (stage and exception type).
+
+`gate_trace.jsonl`, beside it, has one line per photo the safety check ran on: `file` (name only), `id`, `judge` (`ok` or the error type), `reason_code`, the `markers` that were `present`, `judge_min_age`, `judge_confidence`, `mivolo_ages`, the v4 `estimate`, `decision` (`keep`, `drop` or `minor`) and the gate `reasons`. It holds no image data, paths or metadata. It is written before a refusal, so a refused run can still be measured. In Expert mode, each dropped or minor-flagged photo also prints one `safety gate:` line to stderr with the same numbers.

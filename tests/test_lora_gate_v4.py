@@ -185,7 +185,11 @@ def test_cfg_l(tmp_path, monkeypatch, capsys) -> None:
         mode="expert",
     )
     assert not (tmp_path / "proj" / "gate_v3_shadow.jsonl").exists()
+    # gate_trace.jsonl is the one place the per-photo numbers are kept (tests/test_lora_gate_trace_file.py).
+    assert (tmp_path / "proj" / "gate_trace.jsonl").is_file()
     for path in (tmp_path / "proj").rglob("*.json*"):
+        if path.name == "gate_trace.jsonl":
+            continue
         text = path.read_text()
         assert "19.0" not in text and "estimate" not in text and "audit" not in text
     assert "img" not in capsys.readouterr().err

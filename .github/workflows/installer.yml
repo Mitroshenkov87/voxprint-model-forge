@@ -80,7 +80,10 @@ jobs:
           New-Item -ItemType Directory -Force "$stage\wheels" | Out-Null
           # Resolved build and rc go into the wheel and into {app}\BUILD.json.
           # The catalogue's null build is what a laptop prints as "dev" if this is skipped.
-          python installer\stamp_build.py --catalog BUILD.json --package-dir src\voxprint_forge --stage-dir $stage --require-build
+          # A v<version>-rc.N tag build stamps rc=N; a tag version other than BUILD.json's fails here.
+          $stampArgs = @("--catalog", "BUILD.json", "--package-dir", "src\voxprint_forge", "--stage-dir", $stage, "--require-build")
+          if ($env:GITHUB_REF_TYPE -eq "tag") { $stampArgs += @("--tag", $env:GITHUB_REF_NAME) }
+          python installer\stamp_build.py @stampArgs
           if ($LASTEXITCODE -ne 0) { throw "the build stamp failed" }
           python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
           if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
