@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import math
 import os
 import random
@@ -52,7 +53,13 @@ from voxprint_forge.lora.review import (
     total_steps_of,
     transition,
 )
-from voxprint_forge.lora.sample_prompts import build_sample_prompts, caption_rows, read_attire, store_attire
+from voxprint_forge.lora.sample_prompts import (
+    build_sample_prompts,
+    caption_rows,
+    read_attire,
+    read_framing,
+    store_attire,
+)
 from voxprint_forge.lora.trigger import prepend_trigger
 from voxprint_forge.lora.vram_stage import fail_peak
 from voxprint_forge.mdl_app import missing_id_text
@@ -104,13 +111,17 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
     return result
 
 
-def finish_review(project: Project, adapter: BaseAdapter, progress: Progress) -> dict[str, object]:
+def finish_review(
+    project: Project, adapter: BaseAdapter, progress: Progress, *, preview: bool = True,
+) -> dict[str, object]:
     """Save the current LoRA, draw a final preview, and record the steps it got.
 
-    The review stays open until the checkpoint is on disk and the preview has been
-    drawn, so a failed close does not look like a finished run.
+    The review stays open until the checkpoint is found on disk, so a missing
+    checkpoint does not look like a finished run. ``preview=False`` skips the
+    final picture. A final picture that fails is a warning: the run still
+    finishes and can be exported.
     """
-    return _seal_finished(project, load_state(project), adapter, progress)
+    return _seal_finished(project, load_state(project), adapter, progress, preview=preview)
 
 
 def discard_run(project: Project) -> dict[str, object]:
@@ -674,6 +685,7 @@ def _sample_prompt_list(
         round_no=round_no,
         mode=mode,
         captions=caption_rows(project),
+        framing=read_framing(project.read()),
     )
 
 
@@ -835,9 +847,13 @@ class _PictureClock:
 
 
 def _seal_finished(
-    project: Project, state: dict[str, object], adapter: BaseAdapter, progress: Progress,
+    project: Project, state: dict[str, object], adapter: BaseAdapter, progress: Progress, *, preview: bool = True,
 ) -> dict[str, object]:
-    """Draw the final preview, then store a finished, exportable LoRA and the steps it got."""
+    """Draw the final preview, then store a finished, exportable LoRA and the steps it got.
+
+    The preview is optional (``preview=False``). When it raises, a warning is sent and
+    the LoRA is still stored as finished; the result carries ``preview: "failed"``.
+    """
     phase = state.get("phase")
     if phase != "finished" and not (phase == "review" or (phase == "training" and state.get("no_more_reviews"))):
         transition(state, "finish")
@@ -845,7 +861,9 @@ def _seal_finished(
     done_steps = steps_completed(state)
     planned = total_steps_of(state)
     config = _stored_config(project, state)
-    _final_preview(project, adapter, config, state, checkpoint, progress)
+    preview_state = "skipped"
+    if preview:
+        preview_state = _try_final_preview(project, adapter, config, state, checkpoint, progress)
     if state.get("phase") != "finished":
         state = transition(state, "finish")
         save_state(project, state)
@@ -883,7 +901,33 @@ def _seal_finished(
         "steps_planned": planned,
         "checkpoint": checkpoint.name,
         "review": summary(state),
+        "preview": preview_state,
     }
+
+
+def _try_final_preview(
+    project: Project,
+    adapter: BaseAdapter,
+    config: TrainConfig,
+    state: dict[str, object],
+    checkpoint: Path,
+    progress: Progress,
+) -> str:
+    """``drawn``, or ``failed`` after a warning. The checkpoint is never touched here."""
+    try:
+        _final_preview(project, adapter, config, state, checkpoint, progress)
+    except Exception as exc:  # noqa: BLE001 - a picture must not block saving the LoRA
+        progress.emit(
+            "train.preview",
+            "lora.warn.final_preview",
+            {"error": f"{type(exc).__name__}: {exc}"[:300]},
+        )
+        return "failed"
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return "drawn"
 
 
 def _review_checkpoint(project: Project, state: dict[str, object]) -> Path:
@@ -926,9 +970,7 @@ def _final_preview(
     if not prompts:
         prompts = [""]
     device = _device(adapter, config)
-    model = adapter.load(weights_dir(adapter.info.mdl_id), config, device)
-    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
-    load_lora_state(layers, load_file(str(checkpoint)))
+    model = _preview_model(adapter, config, device, checkpoint, prompts)
     file_step = _checkpoint_step(checkpoint.name)
     steps = sample_steps_of(state)
     progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
@@ -939,6 +981,53 @@ def _final_preview(
             continue
         project.previews.mkdir(parents=True, exist_ok=True)
         save_image(image, project.previews / f"step-{file_step:06d}-{index}.png")
+
+
+def _preview_model(
+    adapter: BaseAdapter, config: TrainConfig, device: str, checkpoint: Path, prompts: Sequence[str],
+):
+    """Load the base, add the saved LoRA, and put the transformer on ``device`` for drawing.
+
+    The same order as a training stage, with no photos: encoders up, prompts encoded,
+    encoders down, then the transformer (with its LoRA) onto the card. ``adapter.load``
+    leaves the transformer on the CPU; without :meth:`release_encoders` the VAE and the
+    embeddings went to the card while the transformer stayed behind (cuda:0 vs cpu).
+    """
+    base = weights_dir(adapter.info.mdl_id)
+    if getattr(adapter, "encodes_before_load", False):
+        adapter.load_encoders(base, config, device)
+        adapter.encode([], [], config)
+        adapter.prepare_previews(list(prompts))
+        adapter.free_text_encoder()
+        model = adapter.load(base, config, device)
+    else:
+        model = adapter.load(base, config, device)
+        # No photos: this only stages the encoders, so the prompts encode on ``device``.
+        adapter.encode([], [], config)
+        adapter.prepare_previews(list(prompts))
+    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+    load_lora_state(layers, load_file(str(checkpoint)))
+    adapter.release_encoders()
+    _one_device(model, layers, device)
+    return model
+
+
+def _one_device(model, layers, device: str) -> None:
+    """Every LoRA layer sits with its base weight, and the whole model sits on ``device``.
+
+    A LoRA layer left behind is moved next to its base weight. A model that is still
+    elsewhere stops with ``lora.err.preview_device`` instead of a mismatch deep in the pipeline.
+    """
+    for layer in layers.values():
+        home = layer.base.weight.device
+        if layer.lora_A.weight.device != home or layer.lora_B.weight.device != home:
+            layer.lora_A.to(home)
+            layer.lora_B.to(home)
+    want = torch.device(device).type
+    found = {parameter.device.type for parameter in model.parameters()}
+    stray = sorted(found - {want})
+    if stray:
+        raise LoraStageError("lora.err.preview_device", devices=f"{','.join(stray)}->{want}")
 
 
 def _checkpoint_step(name: str) -> int:

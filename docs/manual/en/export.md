@@ -11,6 +11,10 @@
 
 To improve a model later, press **Add more photos** on this step. Training continues from the model with the new photos and a share of the old ones.
 
+## The file to keep
+
+The exported `.voxlora` package is the finished LoRA: keep it, share it, and open it in Canvas. The `checkpoints/step-NNNNNN.safetensors` files in the project folder are intermediate versions saved during training. They have no description or previews, and Canvas does not accept them. To use an earlier version, choose it under **Version** and export it.
+
 ## Where the files go
 
 - LoRAs sent with **Open in Canvas**: `%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\<name>\`.
@@ -26,8 +30,9 @@ The names you entered, the trigger word, the consent and 18+ confirmations, how 
 The same exports are available from the command line:
 
 ```text
+voxprint-forge-cli lora finish <project folder> [--no-preview]
 voxprint-forge-cli lora export <project folder> [-o <file.voxlora>]
 voxprint-forge-cli lora export --project <project folder> [--checkpoint <step>] [--out <file.safetensors>] [--install-to-mdl]
 ```
 
-The first command writes the `.voxlora` package (uncompressed zip): `model.safetensors`, `voxprint-model.json` and previews from samples that passed the output check. The description follows `docs/schemas/voxprint-model-1.json`. It records the steps done and the steps planned. `--install-to-mdl` applies to the second command and adds the `.safetensors` file to your models for Canvas. See the [CLI reference](../../cli-reference.md).
+`lora finish` ends a paused review, saves the LoRA and writes the `.voxlora` package to `<project folder>/export/`. `--no-preview` skips the final test picture; if that picture fails, a warning is printed and the package is still written. `lora export <project folder>` writes the `.voxlora` package (uncompressed zip): `model.safetensors`, `voxprint-model.json` and previews from samples that passed the output check. The description follows `docs/schemas/voxprint-model-1.json`. It records the steps done and the steps planned. `--install-to-mdl` applies to the second command and adds the `.safetensors` file to your models for Canvas. See the [CLI reference](../../cli-reference.md).

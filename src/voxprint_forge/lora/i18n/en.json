@@ -241,6 +241,7 @@
  "lora.train.stop.tip": "Stop now and keep the best checkpoint so far.",
  "lora.vram": "Graphics card memory",
  "lora.warn.count": "{count} photos is outside the recommended {rec_low}–{rec_high}; results may be less predictable.",
+ "lora.warn.final_preview": "Warning: the final test picture could not be drawn ({error}). The LoRA is saved and the run is finished. Run lora finish PROJECT --no-preview to skip the picture, or lora export PROJECT to write the .voxlora again.",
  "lora.warn.trigger_word": "This trigger looks like an ordinary word, so the model may draw the word as text. A rare token such as vxp followed by consonants avoids that.",
  "lora.err.no_progress": "No training progress has been written yet.",
  "lora.err.preview_device": "The preview could not run on the graphics card (devices {devices}). Training is saved; please report this.",
