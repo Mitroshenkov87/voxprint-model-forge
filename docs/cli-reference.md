@@ -449,7 +449,7 @@ options:
 
 ```text
 usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
-                          [--photo PHOTO] [--exclude EXCLUDE]
+                          [--photo PHOTO] [--exclude EXCLUDE] [--keep FILE]
                           [--kind {person,object,style}] [--name NAME]
                           [--stage-name STAGE_NAME] [--trigger TRIGGER]
                           [--consent-obtained] [--subject-adult]
@@ -474,6 +474,11 @@ options:
   --photos PHOTOS       Folder of JPG, PNG, WebP or AVIF photos.
   --photo PHOTO         One photo. Repeat as needed.
   --exclude EXCLUDE     Leave this photo out.
+  --keep FILE           Keep this photo even if it is set aside as a collage
+                        or a near-duplicate. It is added to the photos if
+                        needed and still goes through every other check, the
+                        safety check included. Repeat as needed. --exclude
+                        wins over --keep.
   --kind {person,object,style}
                         What the photos show.
   --name NAME           Required: the subject's name or stage name, for

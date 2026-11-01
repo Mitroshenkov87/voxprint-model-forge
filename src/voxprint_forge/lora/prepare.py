@@ -28,6 +28,7 @@ from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
     BLUR_THRESHOLD,
     DUP_THRESHOLD,
+    KEEPABLE,
     MIN_SIDE,
     Drop,
     caption_marks_collage,
@@ -73,7 +74,14 @@ def prepare(
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
     release: Path | None = None,
+    keep: Sequence[Path] = (),
 ) -> dict[str, object]:
+    """Check, crop and caption ``files``.
+
+    ``keep`` names photos (also taken as input) that stay in despite a collage or duplicate
+    drop. They still go through every other check, the safety check included.
+    """
+    files = _with_keep(files, keep)
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
     if mode == "simple" and files and outside_simple(len(files)):
@@ -105,6 +113,7 @@ def prepare(
         image = open_photo(project.root / item.file)
         if image is not None:
             seen.append(dhash(image))
+    keep_ids = {photo_id(path) for path in keep}
     drops: list[Drop] = []
     kept: list[tuple[str, object]] = []
     total = len(files)
@@ -122,7 +131,12 @@ def prepare(
             continue
         image = open_photo(path)
         reason = filter_reason(
-            image, seen, min_side=min_side, blur_threshold=blur_threshold, dup_threshold=dup_threshold
+            image,
+            seen,
+            min_side=min_side,
+            blur_threshold=blur_threshold,
+            dup_threshold=dup_threshold,
+            allow=KEEPABLE if pid in keep_ids else frozenset(),
         )
         if reason:
             drops.append(Drop(pid, Path(path).name, reason))
@@ -227,7 +241,7 @@ def prepare(
                     if mode == "expert":
                         _print_caption_refusal(names.get(pid, pid), pid)
                     _refuse(project, subject, mode, progress, "caption")
-                if caption_marks_collage(long, short):
+                if caption_marks_collage(long, short) and pid not in keep_ids:
                     prepared = project.prepared / f"{pid}.png"
                     if prepared.is_file():
                         prepared.unlink()
@@ -294,6 +308,17 @@ def prepare(
         raise LoraUsageError("lora.err.too_few", need=need)
     progress.emit("prepare.done", "lora.progress.done", state="done")
     return summary
+
+
+def _with_keep(files: Sequence[Path], keep: Sequence[Path]) -> list[Path]:
+    """``files`` plus any ``keep`` photo not already among them (same file, compared by resolved path)."""
+    out = list(files)
+    known = {Path(path).resolve() for path in out}
+    for path in keep:
+        if Path(path).resolve() not in known:
+            known.add(Path(path).resolve())
+            out.append(Path(path))
+    return out
 
 
 def _refuse(

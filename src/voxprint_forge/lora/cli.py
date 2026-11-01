@@ -213,6 +213,12 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--photos", type=Path, default=None, help="Folder of JPG, PNG, WebP or AVIF photos.")
     command.add_argument("--photo", type=Path, action="append", default=[], help="One photo. Repeat as needed.")
     command.add_argument("--exclude", type=Path, action="append", default=[], help="Leave this photo out.")
+    command.add_argument(
+        "--keep", type=Path, action="append", default=[], metavar="FILE",
+        help="Keep this photo even if it is set aside as a collage or a near-duplicate. It is added to the photos "
+        "if needed and still goes through every other check, the safety check included. Repeat as needed. "
+        "--exclude wins over --keep.",
+    )
     _subject_flags(command)
     command.add_argument("--mode", choices=("simple", "expert"), default="simple",
                          help=f"Photo limits: {_REC}, or {_EXPERT} in Expert.")
@@ -588,6 +594,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         _require_name(args)
         subject = subject_from(args)
     files = collect(args.photos, args.photo, args.exclude)
+    excluded = {path.resolve() for path in args.exclude}
+    keep = [path for path in args.keep if path.resolve() not in excluded]
     if _wants_fetch(args):
         _fetch_missing()
     mode = "expert" if args.allow_count_outside_range else args.mode
@@ -605,6 +613,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         blur_threshold=args.blur_threshold,
         dup_threshold=args.dup_threshold,
         release=args.release,
+        keep=keep,
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)
