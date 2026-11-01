@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -68,10 +69,30 @@ CHILD_WORDS = (
     "cherub",
     "cherubs",
     "amorino",
+    "teenage",
+    "teenaged",
+    "teenagers",
+    "tween",
+    "tweens",
+    "kiddo",
+    "kiddie",
+    "kiddies",
+    "jailbait",
+    "schoolchild",
+    "schoolchildren",
+    "schoolgirls",
+    "schoolboys",
+    "underaged",
+    "pubescent",
+    "lolis",
+    "shotas",
+    "toddlers",
+    "infants",
+    "newborn",
+    "pedo",
 )
 CHILD_STEMS = (
     "ребен",
-    "ребён",
     "детск",
     "подрост",
     "школьн",
@@ -80,8 +101,125 @@ CHILD_STEMS = (
     "путти",
     "путто",
     "купидон",
+    # RU declensions, diminutives and slang. "мальчишник", "детектив", "девушка",
+    # "малышка" and "ребята" are adult words and must not match.
+    "девочк",
+    "девочек",
+    "девчушк",
+    "мальчик",
+    "мальчишк",
+    "мальчишек",
+    "мальчуган",
+    "мальчонк",
+    "ребятишк",
+    "ребятишек",
+    "ребятен",
+    "детишк",
+    "детишек",
+    "детвор",
+    "младен",
+    "младенч",
+    "грудничк",
+    "грудничок",
+    "карапуз",
+    "малютк",
+    "дочурк",
+    "сынишк",
+    "пацанен",
+    "школот",
+    "школяр",
+    "первоклашк",
+    "первоклассн",
+    "второклассн",
+    "третьеклассн",
+    "старшеклассн",
+    "младшеклассн",
+    "дошкол",
+    "детсад",
+    "тинейдж",
+    "отроковиц",
+    "лоли",
+    "шотакон",
+    # Transliterated RU.
+    "rebenk",
+    "rebenok",
+    "rebyon",
+    "rebjon",
+    "devochk",
+    "devochek",
+    "malchik",
+    "malchishk",
+    "shkoln",
+    "podrost",
+    "nesovershennolet",
+    "malolet",
+    "detsk",
+    "detishk",
+    "tineydzh",
+    "tinejdzh",
+    "mladen",
+    "lolicon",
+    "lolikon",
+    "shotacon",
+    "preteen",
+    "prepubescen",
+    "kindergart",
+    "preschool",
 )
-CHILD_WORDS_RU = ("дети", "детей", "амур", "амуры", "амурчик")
+CHILD_WORDS_RU = (
+    "дети",
+    "детей",
+    "детям",
+    "детьми",
+    "детях",
+    "детки",
+    "деток",
+    "дитя",
+    "дите",
+    "дитяти",
+    "отрок",
+    "отрока",
+    "шота",
+    "амур",
+    "амуры",
+    "амурчик",
+    "deti",
+    "detey",
+    "detei",
+    "detej",
+    "ditya",
+)
+_EN_NUMBERS = (
+    "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen"
+).split()
+_RU_NUMBERS = (
+    "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать",
+    "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать",
+)
+# "-летний" compounds from three up; "двухлетний" also means a two-year span.
+_RU_COMPOUND = (
+    "трех", "четырех", "пяти", "шести", "семи", "восьми", "девяти", "десяти", "одиннадцати", "двенадцати",
+    "тринадцати", "четырнадцати", "пятнадцати", "шестнадцати", "семнадцати",
+)
+_AGE_UNIT = r"(?:y\.?\s?o\b\.?|y/o|yrs?\b|years?[\s-]*old|year[\s-]*old|лет\b|летн\w*|летк\w*|годик\w*|года?\b)"
+_AGE = re.compile(
+    rf"(?<![\d.,])(\d{{1,2}})(?![\d.,])\s*-?\s*{_AGE_UNIT}"
+    rf"|(?:\baged?|\bвозраст\w*)[\s:=-]*(\d{{1,2}})(?!\d)"
+    rf"|\b({'|'.join(_EN_NUMBERS)})[\s-]*(?:years?[\s-]*old|yo\b)"
+    rf"|\b({'|'.join(_RU_NUMBERS)})\s+(?:лет|года?)\b"
+    rf"|\b({'|'.join(_RU_COMPOUND)})[\s-]*летн\w*"
+)
+# "5 лет назад", "за 10 лет", "10 лет опыта": a span of time, not an age.
+_SPAN_AFTER = re.compile(r"\s*(?:назад|спустя|тому|опыт\w*|стаж\w*|работ\w*|ago)\b")
+_SPAN_BEFORE = re.compile(r"(?:\bза|\bчерез|\bпоследн\w*|\bпосле|\bуже|\bоколо|\bболее|\bменее|\bв течение)\s*$")
+_SCHOOL_UNIFORM = re.compile(r"school[\s-]*(?:uniform|girl\s*outfit)|\bseifuku\b|школьн\w*\s+форм\w*")
+_UNDER_AGE = re.compile(r"\bunder[\s-]*(?:age|aged|18)\b|\bнесовершеннолет")
+_INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u2060\ufeff"))
+_LEET = str.maketrans("013457@$", "oieastas")
+_CYR_TO_LAT = str.maketrans("аеорсухкмтні", "aeopcyxkmthi")
+_LAT_TO_CYR = str.maketrans("aeopcyxkmthi", "аеорсухкмтні")
+_WORDS = frozenset(w.replace("ё", "е") for w in (*CHILD_WORDS, *CHILD_WORDS_RU))
+_STEMS = tuple(stem.replace("ё", "е") for stem in CHILD_STEMS)
 TRI = ("present", "absent", "unsure")
 YES_NO = ("yes", "no", "unsure")
 
@@ -247,6 +385,7 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
     if verdict.reason_code == "child_or_adolescent":
         reasons.append("markers")
         minor = True
+    marker_minor = minor
     estimate: float | None = None
     if face:
         judge_age = verdict.min_age
@@ -267,7 +406,25 @@ def _decide_v4(verdict: Verdict, reading: AgeReading | None, *, estimator_ok: bo
                 reasons.append("average_under_18")
                 minor = True
     reasons = list(dict.fromkeys(reasons))
-    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate})
+    return Decision(tuple(reasons), minor, path, trace={"estimate": estimate, "minor_marker": marker_minor})
+
+
+# A check that did not run. The job is refused rather than trained on fewer photos.
+UNAVAILABLE = ("judge_missing", "judge_error", "estimator_missing")
+
+
+def minor_signal(decision: Decision) -> bool:
+    """A sign that refuses the whole job, not one photo.
+
+    Child markers or a ``child_or_adolescent`` verdict, a reading under 16, or a
+    child keyword. ``average_under_18`` alone is left to the per-person average,
+    so an adult who looks 18-20 is not refused on one photo.
+    """
+    if decision.trace.get("minor_marker") or "single_under_16" in decision.reasons:
+        return True
+    if "child_keyword" in decision.reasons:
+        return True
+    return decision.minor and "average_under_18" not in decision.reasons
 
 
 def _num(value: Any) -> bool:
@@ -275,11 +432,61 @@ def _num(value: Any) -> bool:
 
 
 def child_keyword(*texts: str) -> bool:
+    """True when any text names a child or a minor age, in EN, RU or transliterated RU.
+
+    Text is NFKC-folded, lower-cased and ``ё`` becomes ``е``. Leetspeak (``t33n``)
+    and mixed Latin/Cyrillic look-alikes (``сhild``) are read as letters. An age
+    counts when it is under 18; ``18 лет`` and ``19yo`` pass.
+    """
     for text in texts:
-        for token in re.split(r"[^a-zа-яё]+", str(text).lower()):
-            if token in CHILD_WORDS or token in CHILD_WORDS_RU or any(token.startswith(stem) for stem in CHILD_STEMS):
+        norm = normalize_text(text)
+        if minor_age(norm) or _UNDER_AGE.search(norm):
+            return True
+        if _SCHOOL_UNIFORM.search(norm) and _ages(norm):
+            return True
+        for token in re.split(r"[^0-9a-zа-яі]+", norm):
+            if token and any(_child_token(variant) for variant in _variants(token)):
                 return True
     return False
+
+
+def normalize_text(text: object) -> str:
+    return unicodedata.normalize("NFKC", str(text)).translate(_INVISIBLE).lower().replace("ё", "е")
+
+
+def minor_age(text: str) -> bool:
+    """True when ``text`` states an age under 18 (``16yo``, ``16 лет``, ``шестнадцатилетняя``)."""
+    return any(age < AGE_HARD_MIN for age in _ages(normalize_text(text)))
+
+
+def _ages(norm: str) -> list[int]:
+    found: list[int] = []
+    for match in _AGE.finditer(norm):
+        if _SPAN_AFTER.match(norm, match.end()) or _SPAN_BEFORE.search(norm, 0, match.start()):
+            continue
+        digits = match.group(1) or match.group(2)
+        if digits:
+            found.append(int(digits))
+        elif match.group(3):
+            found.append(_EN_NUMBERS.index(match.group(3)) + 1)
+        elif match.group(4):
+            found.append(_RU_NUMBERS.index(match.group(4)) + 1)
+        elif match.group(5):
+            found.append(_RU_COMPOUND.index(match.group(5)) + 3)
+    return found
+
+
+def _variants(token: str) -> set[str]:
+    out = {token, *re.findall(r"[a-zа-яі]+", token)}
+    if re.search(r"[a-z]", token) and re.search(r"[0-9]", token):
+        out.add(token.translate(_LEET))
+    if re.search(r"[a-z]", token) and re.search(r"[а-яі]", token):
+        out |= {token.translate(_CYR_TO_LAT), token.translate(_LAT_TO_CYR)}
+    return out
+
+
+def _child_token(token: str) -> bool:
+    return token in _WORDS or any(token.startswith(stem) for stem in _STEMS)
 
 
 class Gate:
@@ -334,6 +541,7 @@ class Gate:
         decision = decide(verdict, reading, estimator_ok=estimator_ok, rule=self.rule_for(attested), attested=attested)
         if not self.internal:
             trace["estimate"] = decision.trace.get("estimate")
+            trace["minor_marker"] = bool(decision.trace.get("minor_marker"))
             return Decision(decision.reasons, decision.minor, decision.path, trace)
         shadow = shadow_record(verdict, reading, estimator_ok)
         return Decision(decision.reasons, decision.minor, decision.path, trace, shadow=shadow)

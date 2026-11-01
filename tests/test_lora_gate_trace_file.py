@@ -1,4 +1,8 @@
-"""gate_trace.jsonl: one line of codes and numbers per checked photo; the decisions do not change."""
+"""gate_trace.jsonl: one line of codes and numbers per checked photo; the decisions do not change.
+
+Any minor signal or a check that could not run refuses the whole job (``job_gate``):
+the trace is still written, and ``drops.jsonl`` ends with a ``job`` row.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from PIL.PngImagePlugin import PngInfo
 from voxprint_forge.lora.consent import check_subject
 from voxprint_forge.lora.errors import LoraBlocked
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
+from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict, minor_signal
 from voxprint_forge.lora.photos import photo_id
 from voxprint_forge.lora.prepare import prepare
 from voxprint_forge.lora.project import Project
@@ -108,8 +112,20 @@ def rows(tmp_path):
     return [json.loads(line) for line in (tmp_path / "proj" / "gate_trace.jsonl").read_text("utf-8").splitlines()]
 
 
+def drop_ids(tmp_path):
+    return [json.loads(line)["id"] for line in (tmp_path / "proj" / "drops.jsonl").read_text("utf-8").splitlines()]
+
+
 def mixed(tmp_path):
-    """Five adults, one wild MiVOLO read (drop, not minor), one judge crash (drop)."""
+    """Five adults, one photo MiVOLO finds no face in, one incomplete verdict: two drops, the job runs."""
+    files = photos(tmp_path / "in", 7)
+    judge = ScriptedJudge([ADULT] * 6 + [replace(ADULT, face_visible="")])
+    estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 5 + [AgeReading(0, ()), AgeReading(1, (31.0,))])
+    return files, judge, estimator
+
+
+def refused(tmp_path):
+    """Five adults, one MiVOLO read under 16 (minor signal), one judge crash (check unavailable)."""
     files = photos(tmp_path / "in", 7)
     judge = ScriptedJudge([ADULT] * 6 + [RuntimeError("/home/me/secret.png exploded")])
     estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 5 + [AgeReading(1, (15.0,))])
@@ -137,15 +153,50 @@ def test_one_trace_line_per_checked_photo_with_the_numbers(tmp_path) -> None:
         "decision": "keep",
         "reasons": [],
     }
+    assert trace[5]["mivolo_ages"] == [] and trace[5]["estimate"] is None
+    assert trace[5]["decision"] == "drop" and trace[5]["reasons"] == ["estimator_no_face"]
+    assert trace[6]["judge"] == "ok" and trace[6]["estimate"] == 32.5
+    assert trace[6]["decision"] == "drop" and trace[6]["reasons"] == ["judge_incomplete"]
+    assert drop_ids(tmp_path) == [photo_id(files[5]), photo_id(files[6])]
+    assert (tmp_path / "proj" / "gate.json").is_file()
+
+
+def test_refused_trace_keeps_the_numbers_of_every_photo(tmp_path) -> None:
+    files, judge, estimator = refused(tmp_path)
+    with pytest.raises(LoraBlocked) as info:
+        run(tmp_path, files, judge, estimator)
+    assert info.value.code == "lora.err.blocked"
+    trace = rows(tmp_path)
+    assert [row["file"] for row in trace] == [path.name for path in files]
+    assert [row["decision"] for row in trace[:5]] == ["keep"] * 5
     assert trace[5]["mivolo_ages"] == [15.0] and trace[5]["estimate"] == 24.5
     assert trace[5]["decision"] == "drop" and trace[5]["reasons"] == ["single_under_16"]
     assert trace[6]["judge"] == "RuntimeError" and trace[6]["decision"] == "drop"
     assert trace[6]["reasons"] == ["judge_error"] and trace[6]["mivolo_ages"] == []
+    assert drop_ids(tmp_path) == [photo_id(files[5]), photo_id(files[6]), "job"]
 
 
-def test_trace_holds_no_image_data_paths_or_metadata(tmp_path) -> None:
-    files, judge, estimator = mixed(tmp_path)
-    run(tmp_path, files, judge, estimator)
+def test_a_check_that_could_not_run_refuses_and_still_writes_the_trace(tmp_path) -> None:
+    files = photos(tmp_path / "in", 6)
+    judge = ScriptedJudge([ADULT] * 5 + [RuntimeError("judge down")])
+    estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 5)
+    with pytest.raises(LoraBlocked) as info:
+        run(tmp_path, files, judge, estimator)
+    assert info.value.code == "lora.err.check_unavailable"
+    trace = rows(tmp_path)
+    assert len(trace) == 6 and trace[5]["reasons"] == ["judge_error"]
+    assert drop_ids(tmp_path) == [photo_id(files[5]), "job"]
+    assert Project(tmp_path / "proj").read()["gate_passed"] is False
+
+
+@pytest.mark.parametrize("fixture", [mixed, refused])
+def test_trace_holds_no_image_data_paths_or_metadata(tmp_path, fixture) -> None:
+    files, judge, estimator = fixture(tmp_path)
+    if fixture is refused:
+        with pytest.raises(LoraBlocked):
+            run(tmp_path, files, judge, estimator)
+    else:
+        run(tmp_path, files, judge, estimator)
     text = (tmp_path / "proj" / "gate_trace.jsonl").read_text("utf-8")
     for leak in (str(tmp_path), "secret", "SECRET-META", "Jane", "Main St", "/", "\\"):
         assert leak not in text
@@ -171,6 +222,8 @@ def test_trace_is_written_when_the_run_is_refused(tmp_path) -> None:
     assert [row["decision"] for row in trace] == ["keep"] * 3 + ["minor"] + ["keep"] * 2
     assert trace[3]["markers"] == ["child_face"] and trace[3]["reasons"] == ["markers"]
     assert trace[3]["judge_min_age"] == 34.0 and trace[3]["mivolo_ages"] == [31.0]
+    assert drop_ids(tmp_path) == [photo_id(files[3]), "job"]
+    assert not (tmp_path / "proj" / "gate.json").exists()
 
 
 def test_expert_prints_one_line_per_dropped_photo(tmp_path, capsys) -> None:
@@ -178,10 +231,23 @@ def test_expert_prints_one_line_per_dropped_photo(tmp_path, capsys) -> None:
     run(tmp_path, files, judge, estimator)
     lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("safety gate: ")]
     assert len(lines) == 2
+    no_face, incomplete = lines
+    assert no_face.startswith(f"safety gate: img05.png ({photo_id(files[5])}) drop: reasons=estimator_no_face ")
+    for part in ("judge=ok", "reason_code=clearly_adult", "markers=-", "judge_min_age=34", "judge_confidence=0.9"):
+        assert part in no_face
+    assert "mivolo_ages=- estimate=-" in no_face
+    assert incomplete.startswith("safety gate: img06.png") and "reasons=judge_incomplete judge=ok" in incomplete
+    assert "mivolo_ages=31 estimate=32.5" in incomplete
+
+
+def test_expert_prints_the_dropped_photos_before_the_refusal(tmp_path, capsys) -> None:
+    files, judge, estimator = refused(tmp_path)
+    with pytest.raises(LoraBlocked):
+        run(tmp_path, files, judge, estimator)
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("safety gate: ")]
+    assert len(lines) == 2
     wild, crash = lines
     assert wild.startswith(f"safety gate: img05.png ({photo_id(files[5])}) drop: reasons=single_under_16 ")
-    for part in ("judge=ok", "reason_code=clearly_adult", "markers=-", "judge_min_age=34", "judge_confidence=0.9"):
-        assert part in wild
     assert "mivolo_ages=15" in wild and "estimate=24.5" in wild
     assert crash.startswith("safety gate: img06.png") and "reasons=judge_error judge=RuntimeError" in crash
 
@@ -192,6 +258,7 @@ def test_expert_prints_the_minor_flag_before_the_refusal(tmp_path, capsys) -> No
     estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 5 + [AgeReading(1, (16.5,))])
     with pytest.raises(LoraBlocked):
         run(tmp_path, files, judge, estimator)
+    assert drop_ids(tmp_path) == [photo_id(files[5]), "job"]
     lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("safety gate: ")]
     assert lines == [
         f"safety gate: img05.png ({photo_id(files[5])}) minor: reasons=average_under_18 judge=ok "
@@ -202,8 +269,9 @@ def test_expert_prints_the_minor_flag_before_the_refusal(tmp_path, capsys) -> No
 def test_simple_mode_prints_no_gate_lines_but_still_writes_the_trace(tmp_path, capsys) -> None:
     files = photos(tmp_path / "in", 12)
     judge = ScriptedJudge([ADULT] * 12)
-    estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 11 + [AgeReading(1, (15.0,))])
-    run(tmp_path, files, judge, estimator, mode="simple")
+    estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 11 + [AgeReading(0, ())])
+    summary = run(tmp_path, files, judge, estimator, mode="simple")
+    assert summary["prepared"] == 11
     assert not [line for line in capsys.readouterr().err.splitlines() if line.startswith("safety gate: ")]
     assert len(rows(tmp_path)) == 12
 
@@ -221,14 +289,18 @@ def test_simple_mode_prints_no_gate_lines_but_still_writes_the_trace(tmp_path, c
     ],
 )
 def test_gate_decisions_are_unchanged(tmp_path, verdict, reading, outcome) -> None:
-    """The v4 policy is what it was: same keep/minor per photo, and prepare follows the gate's own decision."""
+    """The v4 policy is what it was: same keep/minor per photo, and prepare follows the gate's own decision.
+
+    A minor flag or a minor signal (a read under 16) refuses the whole job and adds the ``job`` drop row.
+    """
     decision = Gate(ScriptedJudge([verdict]), ScriptedEstimator([reading])).check(object(), attested=True)
     assert (decision.keep, decision.minor) == outcome
     files = photos(tmp_path / "in", 6)
     script = [ADULT] * 5 + [verdict]
     readings = [AgeReading(1, (31.0,))] * 5 + [reading]
     keep, minor = outcome
-    if minor:
+    job_refused = minor or minor_signal(decision)
+    if job_refused:
         with pytest.raises(LoraBlocked):
             run(tmp_path, files, ScriptedJudge(script), ScriptedEstimator(readings))
     else:
@@ -237,5 +309,4 @@ def test_gate_decisions_are_unchanged(tmp_path, verdict, reading, outcome) -> No
     last = rows(tmp_path)[-1]
     assert last["decision"] == ("keep" if keep else "minor" if minor else "drop")
     assert last["reasons"] == list(decision.reasons)
-    drops = (tmp_path / "proj" / "drops.jsonl").read_text("utf-8").splitlines()
-    assert [json.loads(line)["id"] for line in drops] == ([] if keep else [photo_id(files[5])])
+    assert drop_ids(tmp_path) == ([] if keep else [photo_id(files[5])]) + (["job"] if job_refused else [])
