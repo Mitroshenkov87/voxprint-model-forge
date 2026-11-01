@@ -179,7 +179,8 @@ class RecordingJudge(FakeJudge):
     ("verdict", "outcome"),
     [
         (ADULT_FACE, "kept"),
-        (replace(ADULT_FACE, min_age=19.0, could_be_under_20=True), "kept"),  # v4: 18-20 is never refused on age
+        # The 18-20 margin is never trained on and never refuses: every photo is dropped, so the set is too short.
+        (replace(ADULT_FACE, min_age=19.0, could_be_under_20=True), "dropped"),
         (replace(ADULT_FACE, min_age=12.0, reason_code="child_or_adolescent"), "blocked"),
     ],
 )

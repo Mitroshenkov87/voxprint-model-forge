@@ -10,7 +10,7 @@ import pytest
 from tests.lora_fakes import TinyAdapter, gradient, make_project
 from tests.test_lora_prepare import ADULT_FACE, FakeCaptioner, FakeEstimator, FakeJudge, photos
 from voxprint_forge.lora.consent import check_subject
-from voxprint_forge.lora.errors import LoraBlocked
+from voxprint_forge.lora.errors import LoraBlocked, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import AgeReading, Gate, child_keyword
 from voxprint_forge.lora.job_gate import preflight_refuse, repin_captions
@@ -73,8 +73,11 @@ class BrokenCaptioner(FakeCaptioner):
 # --- photo signal -------------------------------------------------------------
 
 
-def test_one_minor_photo_refuses_the_whole_job(tmp_path) -> None:
-    files = photos(tmp_path / "in", 10)
+def one_child(age: float, margin: int = 0):
+    """A gate whose 4th photo is ``child_or_adolescent`` with MiVOLO reading ``age``.
+
+    The next ``margin`` photos read 19 on MiVOLO (18-20 adult margin); the rest are adults.
+    """
 
     class OneChild(FakeJudge):
         seen = 0
@@ -85,12 +88,32 @@ def test_one_minor_photo_refuses_the_whole_job(tmp_path) -> None:
                 return replace(ADULT_FACE, reason_code="child_or_adolescent")
             return ADULT_FACE
 
-    gate = Gate(OneChild(), FakeEstimator(AgeReading(1, (34.0,))))
+    class OneYoung(FakeEstimator):
+        seen = 0
+
+        def estimate(self, image):
+            OneYoung.seen += 1
+            if OneYoung.seen == 4:
+                return AgeReading(1, (age,))
+            return AgeReading(1, (19.0 if 4 < OneYoung.seen <= 4 + margin else 34.0,))
+
+    return Gate(OneChild(), OneYoung())
+
+
+def test_one_strong_photo_below_the_clear_share_refuses_the_whole_job(tmp_path) -> None:
+    files = photos(tmp_path / "in", 10)
     with pytest.raises(LoraBlocked) as info:
-        run_prepare(tmp_path, files, gate=gate)
+        run_prepare(tmp_path, files, gate=one_child(15.0, margin=1))
     project = Project(tmp_path / "proj")
     assert_refused(info, project, source="photo")
     assert not list(project.prepared.glob("*.png")) if project.prepared.exists() else True
+
+
+def test_one_ambiguous_photo_at_the_clear_share_is_dropped_and_the_job_trains(tmp_path) -> None:
+    files = photos(tmp_path / "in", 11)
+    project = run_prepare(tmp_path, files, gate=one_child(34.0))
+    assert len(project.items()) == 10
+    assert project.read()["gate_passed"] is True and (project.root / "gate.json").is_file()
 
 
 def test_a_single_reading_under_16_refuses_the_job(tmp_path) -> None:
@@ -265,8 +288,20 @@ def test_caption_edit_repins_only_when_images_still_match(tmp_path) -> None:
 # --- adults who look 18-20 ------------------------------------------------------
 
 
-@pytest.mark.parametrize("age", [18.5, 19.0, 20.0])
-def test_youthful_adult_18_to_20_passes_prepare_and_preflight(tmp_path, age) -> None:
+@pytest.mark.parametrize("age", [18.5, 19.0])
+def test_youthful_adult_18_to_20_is_dropped_as_margin_and_never_refuses(tmp_path, age) -> None:
+    """Job policy: the 18-20 margin is not trained on, but it never refuses the job either."""
+    verdict = replace(ADULT_FACE, reason_code="youthful_adult", could_be_under_20=True)
+    with pytest.raises(LoraUsageError) as info:
+        run_prepare(tmp_path, photos(tmp_path / "in", 10), gate=adult_gate(age, verdict))
+    assert info.value.code == "lora.err.too_few"
+    project = Project(tmp_path / "proj")
+    assert not (project.root / "refusals.jsonl").exists()
+    assert {row["tier"] for row in map(json.loads, project.gate_trace.read_text().splitlines())} == {"margin"}
+
+
+@pytest.mark.parametrize("age", [20.0])
+def test_youthful_adult_at_20_passes_prepare_and_preflight(tmp_path, age) -> None:
     verdict = replace(ADULT_FACE, reason_code="youthful_adult", could_be_under_20=True)
     project = run_prepare(tmp_path, photos(tmp_path / "in", 10), gate=adult_gate(age, verdict))
     assert project.read()["gate_passed"] is True

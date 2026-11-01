@@ -6,6 +6,7 @@ import json
 import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from voxprint_forge.lora.captioner import DEFAULT, Captioner
 from voxprint_forge.lora.consent import Subject
@@ -18,8 +19,9 @@ from voxprint_forge.lora.gate import (
     UNAVAILABLE,
     Decision,
     Gate,
+    JobDecision,
     child_keyword,
-    minor_signal,
+    decide_job,
 )
 from voxprint_forge.lora.job_gate import caption_texts, check_subject, check_texts, pin, refuse, unpin
 from voxprint_forge.lora.limits import need_more
@@ -44,6 +46,7 @@ from voxprint_forge.mdl_app import missing_id_text
 
 # Expert mode's line per dropped or minor-flagged photo: these gate_trace.jsonl fields.
 _PRINTED = (
+    "tier",
     "reasons",
     "judge",
     "reason_code",
@@ -86,6 +89,7 @@ def prepare(
         raise LoraUsageError("lora.err.no_consent")
     # Until this round passes, the project is not approved for training.
     unpin(project)
+    # A child keyword in the trigger, folder or subject names refuses before any check, at any ratio.
     check_subject(project, {"kind": subject.kind, "subject": subject.to_dict()})
     if not gate.available:
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
@@ -128,6 +132,7 @@ def prepare(
     paths = {photo_id(p): Path(p) for p in files}
     internal = bool(getattr(gate, "internal", False))
     checked: list[tuple[str, object, Decision, str | None]] = []
+    keyword = False
     for index, (pid, image) in enumerate(kept, 1):
         progress.emit(
             "prepare.safety",
@@ -146,26 +151,29 @@ def prepare(
                 decision.trace,
                 decision.audit,
                 decision.shadow,
+                tier="strong",
             )
+            keyword = True
         _log_stage_errors(decision)
         key = _identity(gate, image) if not internal else None
         checked.append((pid, image, decision, key))
+    tiers = list(_aggregate(checked, internal))
+    job = decide_job(tiers, keyword=keyword)
     safe: list[tuple[str, object]] = []
-    # One minor signal refuses the job, not just the photo.
-    minor = any(minor_signal(decision) for _, _, decision, _ in checked)
     unavailable = any(set(decision.reasons) & set(UNAVAILABLE) for _, _, decision, _ in checked)
     trace: list[dict[str, object]] = []
-    outcomes = zip(checked, _aggregate(checked, internal), strict=True)
-    for (_, _, decision, _), (pid, image, keep, is_minor) in outcomes:
-        row = _trace_row(pid, names.get(pid, pid), decision, keep, is_minor)
+    for (pid, image, decision, _), tier in zip(checked, tiers, strict=True):
+        keep = tier == "clear"
+        row = _trace_row(pid, names.get(pid, pid), decision, keep, tier)
         trace.append(row)
         if keep:
             safe.append((pid, image))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
-            minor = minor or is_minor
-        if mode == "expert" and (not keep or minor_signal(decision)):
-            _print_trace_row(row)
+            if mode == "expert":
+                _print_trace_row(row)
+    if mode == "expert" and checked:
+        _print_job(job)
     # Before the unload and before a refusal, so a refused run can still be measured.
     _write_gate_trace(project, trace)
     for backend in (gate.judge, gate.estimator):
@@ -173,12 +181,10 @@ def prepare(
         if callable(unload):
             unload()
     _write_drops(project, drops)
-    if minor or unavailable:
-        project.write({**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False})
-        progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
-        if minor:
-            refuse(project, "photo")
-        refuse(project, "check_unavailable", "lora.err.check_unavailable")
+    if job.refuse:
+        _refuse(project, subject, mode, progress, "photo")
+    if unavailable:
+        _refuse(project, subject, mode, progress, "check_unavailable", "lora.err.check_unavailable")
     project.prepared.mkdir(parents=True, exist_ok=True)
     for index, (pid, image) in enumerate(safe, 1):
         progress.emit(
@@ -213,6 +219,14 @@ def prepare(
                     refuse(project, "captioner_error", "lora.err.check_unavailable")
                 long = str(text.get("long", ""))
                 short = str(text.get("short", ""))
+                if child_keyword(long, short):
+                    # A child keyword refuses the whole job at any ratio, captions included.
+                    for done, _ in safe:
+                        (project.prepared / f"{done}.png").unlink(missing_ok=True)
+                    _write_drops(project, [Drop(pid, names.get(pid, pid), "lora.drop.safety")])
+                    if mode == "expert":
+                        _print_caption_refusal(names.get(pid, pid), pid)
+                    _refuse(project, subject, mode, progress, "caption")
                 if caption_marks_collage(long, short):
                     prepared = project.prepared / f"{pid}.png"
                     if prepared.is_file():
@@ -282,6 +296,15 @@ def prepare(
     return summary
 
 
+def _refuse(
+    project: Project, subject: Subject, mode: str, progress: Progress, source: str, key: str = "lora.err.blocked"
+) -> NoReturn:
+    """Refuse the whole job: not approved, the ``job`` drop row and the audit source (``job_gate.refuse``)."""
+    project.write({**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False})
+    progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
+    refuse(project, source, key)
+
+
 def _with_trigger(trigger: str, item: Item) -> Item:
     long = prepend_trigger(trigger, item.long)
     short = prepend_trigger(trigger, item.short)
@@ -329,21 +352,17 @@ def _identity(gate: Gate, image: object) -> str | None:
 
 
 def _aggregate(checked: list[tuple[str, object, Decision, str | None]], internal: bool):
+    """Each photo's tier. A person whose photos average under 18 makes all of their photos strong."""
     groups: dict[str, list[float]] = {}
     for _, _, decision, key in checked:
         est = decision.trace.get("estimate")
         if key is not None and isinstance(est, (int, float)):
             groups.setdefault(key, []).append(float(est))
-    for pid, image, decision, key in checked:
-        if internal or key is None or key not in groups:
-            yield pid, image, decision.keep, decision.minor
-            continue
-        mean = sum(groups[key]) / len(groups[key])
-        others = [r for r in decision.reasons if r != "average_under_18"]
-        if mean < AVG_MIN:
-            yield pid, image, False, True
+    for _, _, decision, key in checked:
+        if not internal and key in groups and sum(groups[key]) / len(groups[key]) < AVG_MIN:
+            yield "strong"
         else:
-            yield pid, image, not others, decision.minor and bool(others) and others != ["single_under_16"]
+            yield decision.tier
 
 
 def _log_stage_errors(decision: Decision) -> None:
@@ -361,7 +380,7 @@ def _number(value: object) -> float | None:
     return float(value)
 
 
-def _trace_row(pid: str, name: str, decision: Decision, keep: bool, is_minor: bool) -> dict[str, object]:
+def _trace_row(pid: str, name: str, decision: Decision, keep: bool, tier: str) -> dict[str, object]:
     """One ``gate_trace.jsonl`` row: codes and numbers only, no image data, paths or metadata."""
     judge = decision.trace.get("judge")
     judge = judge if isinstance(judge, dict) else {}
@@ -389,7 +408,8 @@ def _trace_row(pid: str, name: str, decision: Decision, keep: bool, is_minor: bo
         "judge_confidence": _number(verdict.get("confidence")),
         "mivolo_ages": [_number(age) for age in ages] if isinstance(ages, list) else [],
         "estimate": _number(decision.trace.get("estimate")),
-        "decision": "keep" if keep else ("minor" if is_minor else "drop"),
+        "tier": tier,
+        "decision": "keep" if keep else ("minor" if tier == "strong" else "drop"),
         "reasons": [str(reason) for reason in decision.reasons],
     }
 
@@ -409,6 +429,21 @@ def _print_trace_row(row: dict[str, object]) -> None:
 
     numbers = " ".join(f"{key}={show(row[key])}" for key in _PRINTED)
     print(f"safety gate: {row['file']} ({row['id']}) {row['decision']}: {numbers}", file=sys.stderr)
+
+
+def _print_job(job: JobDecision) -> None:
+    """Expert mode: the whole-job verdict and the tier counts it came from."""
+    import sys
+
+    counts = " ".join(f"{tier}={count}" for tier, count in job.counts.items())
+    outcome = "refused" if job.refuse else "trains"
+    print(f"safety gate job: {outcome} ({job.why}) n={job.n} {counts} allowance={job.allowance}", file=sys.stderr)
+
+
+def _print_caption_refusal(name: str, pid: str) -> None:
+    import sys
+
+    print(f"safety gate: {Path(name).name} ({pid}) minor: reasons=child_keyword_caption", file=sys.stderr)
 
 
 def _write_gate_trace(project: Project, rows: Sequence[dict[str, object]]) -> None:

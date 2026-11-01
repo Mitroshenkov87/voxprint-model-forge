@@ -168,13 +168,14 @@ def test_cfg_k(tmp_path) -> None:
         def estimate(self, image):
             return AgeReading(1, (next(ages),))
 
-    gate = Gate(J(replace(FACE, min_age=18.0)), Varying([]), identify=lambda image: "p1")
-    assert run(tmp_path, files, gate)["prepared"] == 6
+    # The person averages adult, so the one MiVOLO 17 read is ambiguous (judge 22): dropped, within the allowance.
+    gate = Gate(J(replace(FACE, min_age=22.0)), Varying([]), identify=lambda image: "p1")
+    assert run(tmp_path, files, gate)["prepared"] == 5
 
 
 def test_cfg_l(tmp_path, monkeypatch, capsys) -> None:
     files = photos(tmp_path / "in", 6)
-    gate = Gate(J(FACE), E([19.0]))
+    gate = Gate(J(replace(FACE, min_age=25.0)), E([25.0]))
     assert not gate.internal and gate.check(object(), attested=True).keep
     prepare(
         Project(tmp_path / "proj"),
@@ -192,7 +193,7 @@ def test_cfg_l(tmp_path, monkeypatch, capsys) -> None:
         if path.name == "gate_trace.jsonl":
             continue
         text = path.read_text()
-        assert "19.0" not in text and "estimate" not in text and "audit" not in text
+        assert "25.0" not in text and "estimate" not in text and "audit" not in text
     assert "img" not in capsys.readouterr().err
 
 
@@ -222,7 +223,8 @@ def test_cfg_n(tmp_path, monkeypatch) -> None:
 
     files = photos(tmp_path / "in", 6)
     subject = check_subject("person", name="Demo", consent_obtained=True, subject_adult=True)
-    assert run(tmp_path, files, Spy(J(FACE), E([19.0])), subject)["prepared"] == 6
+    adult = replace(FACE, min_age=25.0)
+    assert run(tmp_path, files, Spy(J(adult), E([25.0])), subject)["prepared"] == 6
     assert seen and all(seen)
     obj = check_subject("object", name="Mug", rights_confirmed=True)
     seen.clear()
