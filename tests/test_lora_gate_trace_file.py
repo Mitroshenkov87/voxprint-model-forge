@@ -119,7 +119,7 @@ def drop_ids(tmp_path):
 def mixed(tmp_path):
     """Five adults, one photo MiVOLO finds no face in, one incomplete verdict: two drops, the job runs."""
     files = photos(tmp_path / "in", 7)
-    judge = ScriptedJudge([ADULT] * 6 + [replace(ADULT, face_visible="unsure")])
+    judge = ScriptedJudge([ADULT] * 6 + [replace(ADULT, face_visible="")])
     estimator = ScriptedEstimator([AgeReading(1, (31.0,))] * 5 + [AgeReading(0, ()), AgeReading(1, (31.0,))])
     return files, judge, estimator
 
