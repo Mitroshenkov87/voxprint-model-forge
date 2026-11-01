@@ -1,7 +1,8 @@
 """MiVOLO v2 age worker, run in its own Python env (MiVOLO pins transformers 4.51).
 
 Reads one JSON object per line on stdin, ``{"path": "<png>"}``, and writes one
-per line on stdout, ``{"n_faces": N, "ages": [...]}`` or ``{"error": "..."}``.
+per line on stdout, ``{"n_faces": N, "ages": [...], "faces": [{"box": [x, y, w, h], "score": s}, ...]}``
+or ``{"error": "..."}``.
 Arguments: ``MIVOLO_DIR YUNET_ONNX DEVICE``. Imports nothing from voxprint_forge.
 """
 
@@ -46,20 +47,22 @@ def main(argv: list[str]) -> int:
             yunet.setInputSize((small.shape[1], small.shape[0]))
             _, faces = yunet.detect(small)
             crops = []
+            boxes = []
             for face in [] if faces is None else faces:
                 x, y, w, h = (int(round(v / scale)) for v in face[:4])
                 crop = image[max(0, y) : min(height, y + h), max(0, x) : min(width, x + w)]
                 if crop.size:
                     crops.append(crop)
+                    boxes.append({"box": [x, y, w, h], "score": round(float(face[-1]), 4)})
             if not crops:
-                print(json.dumps({"n_faces": 0, "ages": []}), file=reply, flush=True)
+                print(json.dumps({"n_faces": 0, "ages": [], "faces": []}), file=reply, flush=True)
                 continue
             face_px = processor(images=crops)["pixel_values"].to(device, dtype)
             body_px = processor(images=[None] * len(crops))["pixel_values"].to(device, dtype)
             with torch.inference_mode():
                 out = model(faces_input=face_px, body_input=body_px)
             ages = [round(float(a), 2) for a in out.age_output.float().flatten().tolist()]
-            print(json.dumps({"n_faces": len(crops), "ages": ages}), file=reply, flush=True)
+            print(json.dumps({"n_faces": len(crops), "ages": ages, "faces": boxes}), file=reply, flush=True)
         except Exception as exc:  # noqa: BLE001 - reported per request; the caller drops the photo
             print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}), file=reply, flush=True)
     return 0

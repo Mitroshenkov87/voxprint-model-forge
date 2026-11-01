@@ -469,6 +469,30 @@ def _trace_row(pid: str, name: str, decision: Decision, keep: bool, tier: str) -
         "tier": tier,
         "decision": "keep" if keep else ("minor" if tier == "strong" else "drop"),
         "reasons": [str(reason) for reason in decision.reasons],
+        **_face_fields(decision.trace.get("faces")),
+    }
+
+
+def _face_fields(select: object) -> dict[str, object]:
+    if not isinstance(select, dict):
+        return {"face_rule": None, "face_why": None, "faces": [], "primary": None, "stray": []}
+    faces = select.get("faces")
+    return {
+        "face_rule": select.get("rule"),
+        "face_why": select.get("why"),
+        "faces": [
+            {
+                "i": face.get("i"),
+                "box": [_number(v) for v in face.get("box") or []],
+                "area": _number(face.get("area")),
+                "score": _number(face.get("score")),
+                "age": _number(face.get("age")),
+            }
+            for face in (faces if isinstance(faces, list) else [])
+            if isinstance(face, dict)
+        ],
+        "primary": select.get("primary"),
+        "stray": list(select.get("stray") or []),
     }
 
 

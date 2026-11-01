@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from voxprint_forge.lora.errors import LoraStageError
-from voxprint_forge.lora.gate import INDICATORS, AgeReading, Gate, Verdict
+from voxprint_forge.lora.gate import INDICATORS, AgeReading, Face, Gate, Verdict
 from voxprint_forge.lora.presets import detect_vram_gb
 from voxprint_forge.lora.te_quant import check_available, quant_config
 from voxprint_forge.lora.vram_stage import (
@@ -300,7 +300,14 @@ class MivoloEstimator:
             raise WorkerError(str(reply["error"]).split(":", 1)[0][:64] or "worker_error")
         if "n_faces" not in reply:
             raise WorkerError("no_reply", "estimator.ipc")
-        return AgeReading(int(reply["n_faces"]), tuple(float(a) for a in reply["ages"]))
+        faces: tuple[Face, ...] = ()
+        raw = reply.get("faces")
+        if isinstance(raw, list):
+            try:
+                faces = tuple(Face(tuple(float(v) for v in f["box"]), float(f["score"])) for f in raw)  # type: ignore[arg-type]
+            except (KeyError, TypeError, ValueError):
+                faces = ()
+        return AgeReading(int(reply["n_faces"]), tuple(float(a) for a in reply["ages"]), faces)
 
     def unload(self) -> None:
         """Stop the worker."""

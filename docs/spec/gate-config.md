@@ -7,6 +7,8 @@ Settings in `voxprint_forge/lora/gate.py`: `PRODUCT_RULE`, `INTERNAL_RULE`, `AVG
 Job policy (rc.12): `TIERS`, `MINOR_AGE`, `YOUNG_AGE`, `KEEP_AGE`, `CLEAR_PERCENT`, `ALLOWANCE_MIN`, `ALLOWANCE_MAX`,
 `ALLOWANCE_FROM`, `ALLOWANCE_TO`, `UNCHECKED`. See docs/LORA.md, "Safety-check log".
 
+Face selection (rule 5): `FACE_RULES`, `PRIMARY_MIN_SCORE`, `STRAY_MAX_AREA`.
+
 ## Job-level refusal
 
 `voxprint_forge/lora/job_gate.py` refuses the whole job, not one photo, before training starts:

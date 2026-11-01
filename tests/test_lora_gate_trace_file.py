@@ -37,6 +37,11 @@ KEYS = {
     "tier",
     "decision",
     "reasons",
+    "face_rule",
+    "face_why",
+    "faces",
+    "primary",
+    "stray",
 }
 
 
@@ -157,6 +162,11 @@ def test_one_trace_line_per_checked_photo_with_the_numbers(tmp_path) -> None:
         "tier": "clear",
         "decision": "keep",
         "reasons": [],
+        "face_rule": "all",
+        "face_why": "n_faces",
+        "faces": [],
+        "primary": None,
+        "stray": [],
     }
     assert trace[5]["mivolo_ages"] == [] and trace[5]["estimate"] is None
     assert trace[5]["decision"] == "drop" and trace[5]["reasons"] == ["estimator_no_face"]
