@@ -454,9 +454,26 @@ def _write_gate_trace(project: Project, rows: Sequence[dict[str, object]]) -> No
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:
+    """Record ``drops`` in ``drops.jsonl``, one line per photo id.
+
+    A re-run checks photos set aside earlier again. Their old line is replaced, not repeated.
+    Rows of other ids, including ``job`` rows, stay as they are and in order.
+    """
     project.root.mkdir(parents=True, exist_ok=True)
-    with project.drops.open("a", encoding="utf-8") as handle:
-        for drop in drops:
-            handle.write(
-                json.dumps({"id": drop.id, "name": drop.name, "reason": drop.reason}, ensure_ascii=False) + "\n"
-            )
+    fresh: dict[str, str] = {}
+    for drop in drops:
+        fresh[drop.id] = json.dumps({"id": drop.id, "name": drop.name, "reason": drop.reason}, ensure_ascii=False)
+    kept: list[str] = []
+    if project.drops.is_file():
+        for line in project.drops.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                row = None
+            if isinstance(row, dict) and str(row.get("id")) in fresh and row.get("scope") != "job":
+                continue
+            kept.append(line)
+    text = "".join(line + "\n" for line in (*kept, *fresh.values()))
+    project.drops.write_text(text, encoding="utf-8", newline="\n")

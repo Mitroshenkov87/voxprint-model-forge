@@ -40,8 +40,10 @@ options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
   --json                Print one JSON object on stdout.
-  --root ROOT           Repo root. Default: search from the working directory.
-  --plan PLAN           Plan TOML. Default: plans/plan.toml.
+  --root ROOT           Repo root. Default: search from the working directory, else the
+                        installed package.
+  --plan PLAN           Plan TOML. Default: plans/plan.toml in the repo, else the plan
+                        shipped with the package.
   --forge-out FORGE_OUT
                         Output root. Default: the plan output directory.
 ```
@@ -464,6 +466,8 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--dup-threshold DUP_THRESHOLD] [--fetch-missing |
                           --no-fetch]
 
+Check, crop and describe photos into a project.
+
 options:
   -h, --help            show this help message and exit
   --project PROJECT     Project folder.
@@ -472,7 +476,9 @@ options:
   --exclude EXCLUDE     Leave this photo out.
   --kind {person,object,style}
                         What the photos show.
-  --name NAME           Name of the subject.
+  --name NAME           Required: the subject's name or stage name, for
+                        example Garnis_AI. --stage-name alone is also
+                        accepted.
   --stage-name STAGE_NAME
                         Optional alias. It does not become the trigger word.
   --trigger TRIGGER     Word that calls the model in a prompt. Default: a rare
@@ -485,7 +491,8 @@ options:
   --rights-confirmed    Object or style: you have the rights.
   --release RELEASE     Optional model release file.
   --consent-method {verbal,file}
-                        Person: verbal (no file) or file (needs --release).
+                        Person: how consent was given. verbal: in person, no
+                        file. file: a signed release, needs --release FILE.
                         Default: file with --release, else verbal.
   --adult-content       Person, 18+ only: the photos contain adult content (a
                         label).
@@ -507,6 +514,11 @@ options:
                         Duplicate limit (Expert).
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
+
+example:
+  voxprint-forge-cli lora prepare --project my-lora --photos my-photos --kind person --name Garnis_AI --consent-obtained --subject-adult --consent-method verbal --fetch-missing
+
+--fetch-missing downloads the required models first when any are missing.
 ```
 
 ## `forge lora export`
@@ -736,7 +748,9 @@ options:
   --ref REF             One reference picture. 1-10.
   --kind {person,object,style}
                         What the photos show.
-  --name NAME           Name of the subject.
+  --name NAME           Required: the subject's name or stage name, for
+                        example Garnis_AI. --stage-name alone is also
+                        accepted.
   --stage-name STAGE_NAME
                         Optional alias. It does not become the trigger word.
   --trigger TRIGGER     Word that calls the model in a prompt. Default: a rare
@@ -749,7 +763,8 @@ options:
   --rights-confirmed    Object or style: you have the rights.
   --release RELEASE     Optional model release file.
   --consent-method {verbal,file}
-                        Person: verbal (no file) or file (needs --release).
+                        Person: how consent was given. verbal: in person, no
+                        file. file: a signed release, needs --release FILE.
                         Default: file with --release, else verbal.
   --adult-content       Person, 18+ only: the photos contain adult content (a
                         label).
