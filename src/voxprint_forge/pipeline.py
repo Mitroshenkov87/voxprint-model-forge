@@ -1,4 +1,8 @@
-"""Run fetch, ablation, quantize, fit, eval, card, and upload for one model."""
+"""Run fetch, ablation, quantize, fit, eval, card, and upload for one model.
+
+``ORDER``, ``retry_stage``, and ``clear_from_stage`` live in
+:mod:`voxprint_forge.pipeline_state` and are re-exported here.
+"""
 
 from __future__ import annotations
 
@@ -58,6 +62,9 @@ from voxprint_forge.measure import (
     tier_min_vram,
 )
 from voxprint_forge.outcome import summarise
+from voxprint_forge.pipeline_state import ORDER
+from voxprint_forge.pipeline_state import clear_from_stage as clear_from_stage
+from voxprint_forge.pipeline_state import retry_stage as retry_stage
 from voxprint_forge.placement import Split, options_for, split_fits
 from voxprint_forge.plan import ModelPlan, Plan, Tier
 from voxprint_forge.preflight import memory_status
@@ -77,38 +84,6 @@ from voxprint_forge.upload import (
     repo_slug,
     selected_targets,
 )
-
-ORDER = ("fetch", "abliterate", "quantize", "fit", "eval", "card", "publish-prep", "upload")
-
-
-def retry_stage(stage: str) -> str:
-    """Stage command that restarts `stage`. `imatrix` restarts at quantize."""
-    if stage in {"", "start"}:
-        return "fetch"
-    if stage == "imatrix":
-        return "quantize"
-    if stage in ORDER:
-        return stage
-    raise UsageError(f"unknown stage {stage}", code="usage")
-
-
-def clear_from_stage(layout: Layout, model_id: str, stage: str) -> list[str]:
-    """Delete markers from `stage` through upload so the stage command runs that work again."""
-    command = retry_stage(stage)
-    start = ORDER.index(command)
-    names = list(ORDER[start:])
-    if start <= ORDER.index("quantize"):
-        names.append("imatrix")
-    if "upload" in names:
-        names.append("upload-deferred")
-    names.append("skipped")
-    removed: list[str] = []
-    for name in names:
-        path = layout.stage(model_id, name)
-        if path.is_file():
-            path.unlink()
-            removed.append(name)
-    return removed
 
 
 def _target_flags(
