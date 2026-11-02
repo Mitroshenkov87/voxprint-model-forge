@@ -344,14 +344,13 @@ def _version_tuple(text: str) -> tuple[int, ...]:
 
 
 def _probe_cuda() -> int | None:
-    """Total memory of GPU 0 in bytes, or ``None`` without CUDA."""
+    """Total memory of GPU 0 in bytes, or ``None`` when no NVIDIA GPU is visible."""
     try:
-        import torch
-    except ImportError:
+        from voxprint_forge.vram_probe import total_bytes
+
+        return total_bytes()
+    except Exception:  # noqa: BLE001 - detection is best effort
         return None
-    if not torch.cuda.is_available():
-        return None
-    return int(torch.cuda.get_device_properties(0).total_memory)
 
 
 def _mivolo_imports(python: str) -> bool:

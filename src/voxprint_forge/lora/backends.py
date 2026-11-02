@@ -19,7 +19,6 @@ from voxprint_forge.lora.vram_stage import (
     release_heavy,
     require_quantized,
 )
-from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
 JUDGE_ID = "qwen3-vl-4b-instruct"
@@ -169,6 +168,9 @@ class VlmJudge:
             raise LoraStageError("lora.err.cpu_fallback", tier=TIER_GB, reason="no CUDA device")
         if mode in ("int8", "nf4"):
             check_available(mode)
+        # Imported here so the UI can import this module without loading the park.
+        from voxprint_forge.model_park import park, stage
+
         # Before the weights exist, so the guard can subtract the CUDA context.
         baseline_gb = allocated_gb()
         key = _qwen_key(folder, mode)
@@ -221,6 +223,8 @@ class VlmJudge:
 
     def unload(self) -> None:
         """Drop the graphics copy. The parked weights stay in RAM for the next stage."""
+        from voxprint_forge.model_park import drop_vram
+
         model = getattr(self, "model", None)
         if model is not None:
             drop_vram(model, key=getattr(self, "_park_key", JUDGE_ID), stage_name="caption")

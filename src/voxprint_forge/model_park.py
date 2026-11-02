@@ -357,15 +357,14 @@ def _rss_bytes() -> int:
 
 
 def _vram_bytes() -> int:
-    # Imported here so ``voxprint-forge --version`` does not pull torch via the park.
-    import torch
-
-    if not torch.cuda.is_available():
-        return 0
+    """Bytes of VRAM in use on GPU 0, or 0 when nvidia-smi cannot see a card."""
     try:
-        return int(torch.cuda.memory_allocated())
-    except RuntimeError:
+        from voxprint_forge.vram_probe import used_bytes
+
+        used = used_bytes()
+    except Exception:  # noqa: BLE001 - the log line is best effort
         return 0
+    return 0 if used is None else used
 
 
 def _empty_cache() -> None:

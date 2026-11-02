@@ -9,13 +9,6 @@ from pathlib import Path
 
 from voxprint_forge import disk
 
-try:
-    import pynvml
-except ImportError:
-    pynvml = None
-
-_nvml_ready = False
-
 
 def _gib(amount: int) -> str:
     return f"{amount / (1024**3):.1f} GiB"
@@ -43,18 +36,12 @@ def disk_total_free(path: Path) -> tuple[int, int]:
 
 
 def vram_status() -> tuple[int, int] | None:
-    """Bytes (total, used) on GPU 0 via NVML, or None when no GPU library is available."""
-    global _nvml_ready
-    if pynvml is None:
-        return None
+    """Bytes (total, used) on GPU 0, or None when nvidia-smi cannot see a GPU."""
     try:
-        if not _nvml_ready:
-            pynvml.nvmlInit()
-            _nvml_ready = True
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return int(info.total), int(info.used)
-    except Exception:
+        from voxprint_forge.vram_probe import status
+
+        return status()
+    except Exception:  # noqa: BLE001 - the gauge is optional
         return None
 
 
