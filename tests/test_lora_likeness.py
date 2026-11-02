@@ -41,6 +41,24 @@ def _near(center: list[float], spread: float, seed: int) -> list[float]:
     return likeness.normalise([c + spread * n for c, n in zip(center, noise, strict=True)])
 
 
+def _seed(name: str) -> int:
+    """Stable across processes and platforms. ``hash(name)`` is not."""
+    return int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "little")
+
+
+def _far(center: list[float], seed: int) -> list[float]:
+    """A unit vector whose cosine with ``center`` is at most 0.
+
+    ``_near(center, 3, seed)`` sits next to the fail line (0.363). ``hash()`` then picks a
+    different direction on Windows than on Ubuntu, so the same fixture scored ``warn`` there.
+    """
+    noise = _unit(seed)
+    raw = [n - c for c, n in zip(center, noise, strict=True)]
+    if math.sqrt(sum(v * v for v in raw)) < 1e-8:
+        raw = [-c for c in center]
+    return likeness.normalise(raw)
+
+
 def _row(vector: list[float] | None) -> dict[str, object]:
     return {"embedding": vector, "face_px": 120 if vector else 0}
 
@@ -212,8 +230,9 @@ def test_evaluate_writes_rows_report_and_project_record(tmp_path: Path) -> None:
     def vector(path, center):
         if path.name.endswith("-2.png"):
             return None  # one picture per step without a face
-        spread = 0.4 if "000004" in path.name else 3.0
-        return _near(center, spread, hash(path.name) % 10_000)
+        if "000004" in path.name:
+            return _near(center, 0.4, _seed(path.name))
+        return _far(center, _seed(path.name))
 
     groups = {likeness.step_label(s): p for s, p in sorted(likeness.preview_groups(project).items())}
     report = likeness.evaluate(project, groups, embedder=_fake_embedder(project, image_vector=vector), record_step=4)
@@ -247,7 +266,7 @@ def test_a_failing_likeness_does_not_block_export_and_is_on_the_card(tmp_path: P
     config = build_config("quick", "balanced", 24, steps=2, resolution=64, save_every=1, batch=1, previews=False)
     train(project, config, TinyAdapter(), Progress())
     _previews(project, 2, 3)
-    embed = _fake_embedder(project, image_vector=lambda path, center: _unit(hash(path.name) % 10_000))
+    embed = _fake_embedder(project, image_vector=lambda path, center: _unit(_seed(path.name)))
     summary = likeness.score_after_finish(project, 2, embedder=embed)
     assert summary["status"] == "fail"
     assert likeness.warning_line(summary).startswith("Likeness fail")
@@ -274,7 +293,7 @@ def test_finish_scores_the_final_previews_and_still_exports_on_a_fail(tmp_path: 
             return gradient(seed, 64)
 
     project = make_project(tmp_path / "proj", count=10)
-    embed = _fake_embedder(project, image_vector=lambda path, center: _unit(hash(path.name) % 10_000))
+    embed = _fake_embedder(project, image_vector=lambda path, center: _unit(_seed(path.name)))
     monkeypatch.setattr(likeness, "missing_models", lambda: [])
     monkeypatch.setattr(likeness, "model_files", lambda: (Path("det.onnx"), Path("rec.onnx")))
     monkeypatch.setattr(likeness, "default_embedder", lambda det, rec: embed)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
 import os
 import random
@@ -273,10 +274,44 @@ def _caption_key(config: TrainConfig, rng: random.Random) -> str:
     return config.caption_mode
 
 
+def _write_lora_file(path: Path, layers, base: str, step: int) -> None:
+    """Write this step's LoRA file. A second write of the same weights matches byte for byte.
+
+    safetensors stores ``__metadata__`` in a hash map, so two ``save_file`` calls are not the same
+    bytes. The preview digest is the sha256 of the checkpoint file, which is only true when every
+    write of those weights produces that file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_file(lora_state(layers), str(path), metadata={"voxprint.lora.base": base, "step": str(step)})
+    _stable_safetensors_header(path)
+
+
+def _stable_safetensors_header(path: Path) -> None:
+    """Sort ``__metadata__`` and tensor names. The tensor byte buffer is left as written."""
+    raw = path.read_bytes()
+    size = int.from_bytes(raw[:8], "little")
+    header = json.loads(raw[8:8 + size])
+    meta = header.pop("__metadata__", None)
+    ordered: dict[str, object] = {}
+    if isinstance(meta, dict):
+        ordered["__metadata__"] = {key: meta[key] for key in sorted(meta)}
+    for name in sorted(header):
+        info = header[name]
+        if isinstance(info, dict):
+            preferred = ("dtype", "shape", "data_offsets")
+            stable = {key: info[key] for key in preferred if key in info}
+            stable.update({key: value for key, value in info.items() if key not in stable})
+            info = stable
+        ordered[name] = info
+    encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded += b" " * ((-len(encoded)) % 8)
+    path.write_bytes(len(encoded).to_bytes(8, "little") + encoded + raw[8 + size:])
+
+
 def _save_checkpoint(project: Project, layers, step: int, optimizer, rng: random.Random, meta: dict) -> Path:
     project.checkpoints.mkdir(parents=True, exist_ok=True)
     path = project.checkpoints / f"step-{step:06d}.safetensors"
-    save_file(lora_state(layers), str(path), metadata={"voxprint.lora.base": meta["base"], "step": str(step)})
+    _write_lora_file(path, layers, str(meta["base"]), step)
     torch.save(
         {
             "step": step,
@@ -1106,11 +1141,12 @@ def read_preview_text(path: Path) -> dict[str, str]:
 
 
 def _weights_sha256(layers, base: str, step: int, saved: Path | None = None) -> str:
-    """sha256 of this step's LoRA checkpoint file.
+    """sha256 of this step's LoRA checkpoint file, the bytes on disk.
 
-    ``saved`` is used when it is this step's checkpoint. Otherwise the same file is written to a
-    temporary folder with the same call as :func:`_save_checkpoint`, so the digest is the one
-    the checkpoint would have.
+    ``saved`` is that file when this step was just written. Otherwise :func:`_write_lora_file`
+    writes it to a temporary folder, and the digest is of that file. Re-saving with
+    ``save_file`` alone is not enough: the metadata key order is not stable, so the hash would
+    not be the checkpoint's.
     """
     if saved is not None and saved.name == f"step-{step:06d}.safetensors" and saved.is_file():
         return sha256_file(saved)
@@ -1118,7 +1154,7 @@ def _weights_sha256(layers, base: str, step: int, saved: Path | None = None) -> 
 
     with tempfile.TemporaryDirectory(prefix="vxp-lora-hash-") as folder:
         path = Path(folder) / f"step-{step:06d}.safetensors"
-        save_file(lora_state(layers), str(path), metadata={"voxprint.lora.base": base, "step": str(step)})
+        _write_lora_file(path, layers, base, step)
         return sha256_file(path)
 
 
