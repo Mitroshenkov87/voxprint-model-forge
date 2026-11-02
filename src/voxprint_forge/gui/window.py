@@ -43,7 +43,7 @@ from voxprint_forge.gui.gauges import GaugeProbes, disk_total_free, gauge_percen
 from voxprint_forge.gui.icons import load_icon
 from voxprint_forge.gui.secrets import SecretStore, open_store, token_env
 from voxprint_forge.layout import Layout
-from voxprint_forge.pipeline import clear_from_stage, retry_stage
+from voxprint_forge.pipeline_state import clear_from_stage, retry_stage
 from voxprint_forge.preflight import memory_status
 from voxprint_forge.version import version_line
 
