@@ -16,6 +16,7 @@
 | `lora review PROJECT` | Lists the samples of a paused review, with the original photos. `--like ID` and `--dislike ID` mark samples (repeat either flag). `--from-file FILE` reads `like ID` / `dislike ID` lines, or a JSON object with `like`, `dislike` and `unmarked` lists. |
 | `lora continue PROJECT` | Trains the next round from the review checkpoint, on the original photos plus the liked samples, then pauses for another review. `--unattended` keeps that liked set and trains every remaining preset step with no more pauses. Disliked samples are negatives only when the base supports them. `--sample-attire` and `--sample-framing` change the samples from this round on and are stored on the project. |
 | `lora finish PROJECT` | Saves the current LoRA, draws a final preview, records the steps it got (`steps` and `steps_planned` in `train.json` and in the export), and writes `<project>/export/<stage name or name>.voxlora` (`voxlora` in the result). `--no-preview` skips the final preview. If the preview fails, a warning is printed (`lora.warn.final_preview`), the result has `preview: "failed"`, and the LoRA is still saved, finished and exported. `--discard` removes temporary checkpoints and samples and saves nothing; photos stay. `--discard` needs `--yes` when the terminal is not interactive. |
+| `lora eval PROJECT` | Likeness score (see [Likeness score](#likeness-score)). Scores the previews of the saved LoRA's step by default; `--step N` picks another preview step, `--step all` scores every step and names the best one, `--images DIR` scores a folder of pictures. Fetches the face models with MDL when stdin is a terminal or with `--fetch-missing`. |
 | `lora status PROJECT` | Prints the latest `train.json` progress. Adds the review phase and counts when a review is saved. During round 1 it also prints `first_pictures`. |
 
 Training refuses to start unless the project was prepared and passed the safety check (`lora.err.gate_missing`). It needs at least 10 prepared photos, or 5 in Expert mode.
@@ -58,6 +59,8 @@ Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `co
 `voxprint-model.json` (`schema: voxprint-model/1`): `min_schema` 1, `id`, `kind`, `type` lora, `producer`, `file`, `sha256`, `size`, `base.mdl_id`, `base.revision`, `licence` (from the base), `default_strength` 0.8, `strength_range` [0, 1.5], `tags`, `voxprint.lora.adult_content` (JSON `true` or `false`, always present), `voxprint.subject.consent_method` (`"verbal"` or `"file"`, only for a person), and `preview` with `preview_sha256` when a test picture exists (`preview.webp`).
 
 `voxprint.lora.adult_content` is a label the user sets: the training photos contain adult content. Apps such as Canvas can use it to label, sort or filter LoRAs (for example, hide them unless the user opts in). It can be `true` only for a person confirmed as 18 or older. It is not a safety setting and changes no checks. `voxprint.subject.consent_method` says how a person's consent was given: `verbal` (no file, `release_sha256` empty) or `file` (a release is attached; only its sha256 is recorded). LoRAs exported before these fields have no `adult_content` key; treat that as `false`.
+
+Both `voxprint-model.json` files (the sidecar and the one in the `.voxlora`) also carry `likeness: {mean, median, ref_baseline, threshold, status, n, no_face}` when the likeness score was measured on the exported step. It is informational only.
 
 `--install-to-mdl` writes `<id>.safetensors`, `voxprint-model.json`, LICENSE, NOTICE and the preview to `<models dir>/user-models/lora/<id>/`, where the models dir is always `voxprint_common.paths.models_dir()` (`VOXPRINT_MODELS_DIR`, then `models_dir` in `suite.json`, then `<suite home>/models`). The id is the trigger word plus 8 hex digits of the LoRA tensors. Tensors keep the dtype they were trained in (BF16 by default; FP32 for an FP16 base); the id hashes their raw bytes.
 
@@ -114,9 +117,27 @@ During round 1, `train.json` also carries `round`, `seconds_per_step`, `first_pi
 
 All strings are in `src/voxprint_forge/lora/i18n/en.json`. The UI is English only; Russian stays a content language (captions, prompts, the safety check).
 
+## Likeness score
+
+`lora eval` and `lora finish` score how close generated pictures are to the training photos. It is a quality score only: it never refuses, never blocks export, never filters a picture, and is not part of the safety check.
+
+- Models: OpenCV YuNet (`yunet-2023mar`) finds the largest face and SFace (`sface-2021dec`, Apache-2.0) embeds it. Both come from MDL (`voxprint-forge-cli models fetch --model sface-2021dec --model yunet-2023mar`). The embedding runs in a `voxprint_common.worker` process when that module and OpenCV are available, otherwise in a subprocess under a Python that has OpenCV (this env, else the MiVOLO env).
+- Reference: the mean of the L2-normalised embeddings of the kept training photos (`prepared/`). `ref_baseline` is each photo against the mean of the others, averaged.
+- Per picture: cosine against the reference. A picture with no face counts in `no_face` and is never a pass. `mean`, `median` and `n` cover the pictures with a face.
+- Status: `fail` when the mean is below 0.363 (SFace same-person line); `warn` below 0.50, below 0.6 x `ref_baseline`, or when no picture has a face; else `pass`. `skipped` when the score could not run (for example, the models are not installed). A `warn` or `fail` prints one line to stderr; nothing else changes.
+- Files: `<project>/eval/likeness.jsonl` (one row per picture: `group`, `image`, `cos`, `face`, `face_px`, `pass`), `eval/report.json` and `eval/report.md` (the summary per step), and `likeness` in `project.json`.
+
+`lora finish` scores its final previews automatically, before writing the `.voxlora`. Without the face models it records `skipped` and goes on.
+
+## Previews
+
+Without `--preview-prompts`, training previews use one prompt that shows the subject clearly: for a person, `<trigger> woman, head-and-shoulders portrait, face clearly visible, looking at camera` (the noun comes from the captions, else `person`); for an object, a centred view on a plain background; for a style, a simple scene in that style. `lora finish` draws that prompt first, then the review prompts, unless the run used its own `--preview-prompts`. Review samples keep `--sample-framing` and `--sample-attire`.
+
+Preview PNGs in `previews/` carry text chunks: `voxprint.seed`, `voxprint.lora_scale` (1 for previews), `voxprint.base_model` (MDL id), `voxprint.lora_sha256` (sha256 of the step's checkpoint file) and `voxprint.step`. Pictures copied into a `.voxlora` are re-encoded without metadata.
+
 ## Project folder
 
-`project.json` (including `sample_attire` when a review run has stored it), `prepared/`, `captions.jsonl` (`id`, `file`, `long`, `short`, `round`, and `unclothed` when the captioner set it), `drops.jsonl`, `checkpoints/step-NNNNNN.safetensors` plus `state.pt`, `previews/`, `review/state.json` and `review/round-NNNN/*.png` while a review is in progress. Sample pictures stay in the project folder and carry no extra metadata. A train with `--review-rounds 0` does not write `review/`. Omitting the flag uses the default of 3.
+`project.json` (including `sample_attire` when a review run has stored it), `prepared/`, `captions.jsonl` (`id`, `file`, `long`, `short`, `round`, and `unclothed` when the captioner set it), `drops.jsonl`, `checkpoints/step-NNNNNN.safetensors` plus `state.pt`, `previews/`, `eval/` (likeness score), `review/state.json` and `review/round-NNNN/*.png` while a review is in progress. Sample pictures stay in the project folder and carry no extra metadata. A train with `--review-rounds 0` does not write `review/`. Omitting the flag uses the default of 3.
 
 ### Safety-check log
 

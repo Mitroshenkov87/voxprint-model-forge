@@ -23,6 +23,10 @@ MIN_SERIAL = 10
 
 # Forge ids with no index row, and the index id recorded beside each one.
 NOT_IN_INDEX = {"z-image-turbo": "mirror-z-image-turbo"}
+# Optional forge ids whose signed index row is not published yet. mdl.json still pins every
+# file by size and sha256, so a download is verified either way. Remove an id once the index
+# carries it; the check then compares it like any other row.
+PENDING_INDEX = frozenset({"sface-2021dec"})
 
 
 def _get(url: str) -> bytes:
@@ -109,6 +113,8 @@ def check(
                 problems.append(mapped)
             continue
         row = rows.get(mdl_id)
+        if row is None and mdl_id in PENDING_INDEX:
+            continue
         if row is None:
             problems.append(mdl_id)
             continue

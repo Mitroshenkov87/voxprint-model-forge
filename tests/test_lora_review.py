@@ -388,7 +388,7 @@ def test_finish_saves_the_steps_it_got_and_a_final_preview(tmp_path: Path, capsy
     assert row["step"] == 450 and row["total"] == 1500 and row["steps"] == 450 and row["steps_planned"] == 1500
     assert row["stage"] == "done" and row["loss"] == before["loss"]
     assert (project.previews / "step-000001-0.png").is_file()
-    assert DrawingAdapter.preview_steps == [28]
+    assert DrawingAdapter.preview_steps == [28, 28]  # the face-visible default, then the stored prompt
     bases.register(DrawingAdapter)
     try:
         saved = export(project, Progress(), out=tmp_path / "final" / "lora.safetensors")

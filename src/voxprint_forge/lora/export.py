@@ -176,6 +176,7 @@ def export(
     save_file(tensors, str(target), metadata=meta)
     preview = _preview(project, _step(name), target.parent)
     sidecar = sidecar_document(mid, {**data, "train": shown}, target, info, preview, tags)
+    _add_likeness(sidecar, data, _step(name))
     _write_json(target.parent / SIDECAR, sidecar)
     if info.licence.lower() == "apache-2.0":
         shutil.copyfile(_LICENCES / "Apache-2.0.txt", target.parent / "LICENSE")
@@ -235,6 +236,18 @@ def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) 
         doc["preview"] = preview.name
         doc["preview_sha256"] = hashlib.sha256(preview.read_bytes()).hexdigest()
     return doc
+
+
+def _add_likeness(doc: dict[str, object], data: dict[str, object], step: int) -> None:
+    """Copy the advisory likeness score onto the model card when it was measured on ``step``.
+
+    The score is informational. Whatever its status, export goes on unchanged.
+    """
+    from voxprint_forge.lora.likeness import card_fields
+
+    fields = card_fields(data, step)
+    if fields is not None:
+        doc["likeness"] = fields
 
 
 def _preview(project: Project, step: int, folder: Path) -> Path | None:
@@ -315,6 +328,7 @@ def export_package(
     weights = _safetensors_bytes(tensors, meta)
     pictures = _package_pictures(project)
     doc = _package_document(data, shown, info.mdl_id, hashlib.sha256(weights).hexdigest(), pictures)
+    _add_likeness(doc, data, _step(name))
     _write_package(target, weights, doc, pictures)
     progress.emit("export.done", "lora.progress.done", state="done")
     return {"state": "done", "file": str(target), "sha256": doc["weights_sha256"], "name": target.name}

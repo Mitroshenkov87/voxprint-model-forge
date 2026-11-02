@@ -36,6 +36,21 @@
     "steps": {"type": "integer", "minimum": 0},
     "steps_planned": {"type": "integer", "minimum": 0},
     "previews": {"type": "array", "items": {"type": "string"}},
+    "likeness": {
+      "description": "Optional, advisory. SFace likeness score of the final previews against the training photos. Never a gate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mean", "median", "ref_baseline", "threshold", "status", "n", "no_face"],
+      "properties": {
+        "mean": {"type": ["number", "null"]},
+        "median": {"type": ["number", "null"]},
+        "ref_baseline": {"type": ["number", "null"]},
+        "threshold": {"type": "number"},
+        "status": {"enum": ["pass", "warn", "fail"]},
+        "n": {"type": "integer", "minimum": 0},
+        "no_face": {"type": "integer", "minimum": 0}
+      }
+    },
     "attest": {
       "type": "object",
       "additionalProperties": false,
