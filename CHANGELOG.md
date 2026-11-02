@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `lora finish` after training uses the base stored on the project. A straight-through run (`--review-rounds 0`) no longer exits 2 with the base reported missing. If that base is not on disk, finish fetches it with MDL before the final preview. CLI errors name `voxprint-forge-cli models fetch` (or `accounts add` for upload tokens) instead of a window in the app.
 - `lora prepare`: large single photos (for example 4500x3000 portraits) are no longer set aside as `lora.drop.collage`. Long straight edges inside one photo, such as a person against a backdrop or a floor line, were read as panel seams. Grids and side-by-side collages, with or without gutters, are still set aside.
 - `lora prepare --keep FILE` (repeatable) keeps a photo that would be set aside as a collage or a near-duplicate. The photo still goes through every other check, the safety check included. docs/LORA.md and `--help` describe it.
 - `lora prepare` keeps near-duplicate photos by default. A warning names the photo and the earlier photo it resembles. `--drop-near-duplicates` sets them aside as `lora.drop.duplicate` as before, and `--keep FILE` overrides that for one photo. A byte-identical copy of a photo is still skipped.

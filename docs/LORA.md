@@ -47,6 +47,8 @@ Pause with Ctrl+C, or by creating an empty file named `PAUSE` in the project fol
 voxprint-forge-cli lora train --project my-lora --preset balanced --review-rounds 0
 ```
 
+`lora finish` on that project uses the base training stored in `project.json`. It does not need `review/state.json`. If those base files are missing, finish fetches that model with `voxprint-forge-cli models fetch --model <id>` before the final preview.
+
 ## Export and the Canvas hand-off
 
 The deliverable is the exported `.voxlora` package from `lora finish PROJECT` or `lora export PROJECT`. Keep, share and open that file in Canvas. `checkpoints/step-NNNNNN.safetensors` are intermediate training files: they have no description, previews or subject record, and Canvas does not accept them. To ship an earlier version, export it with `lora export PROJECT --checkpoint N`.
