@@ -28,3 +28,9 @@ Face selection (rule 5): `FACE_RULES`, `PRIMARY_MIN_SCORE`, `STRAY_MAX_AREA`.
 `train()` calls `preflight_refuse()` itself, so the CLI and the app cannot skip it. A refusal sets
 `gate_passed` to false, deletes `gate.json`, and logs the source to `drops.jsonl` and `refusals.jsonl`.
 The message shown is neutral.
+
+`lora prepare` writes `gate_run.json` before the first photo and sets it to `complete` when the run
+finishes. Each trace row and each safety drop is synced as soon as that photo is decided. If the
+marker is left `running` or `interrupted`, training will not start until prepare runs again. A photo
+with no trace row was not checked and is not treated as kept. That block does not set a photo aside
+and does not add a refusal row.

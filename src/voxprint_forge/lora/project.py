@@ -1,6 +1,6 @@
 """Training project folder (plan §2).
 
-photos/, prepared/, captions.jsonl, drops.jsonl, gate_trace.jsonl, checkpoints/, previews/.
+photos/, prepared/, captions.jsonl, drops.jsonl, gate_trace.jsonl, gate_run.json, checkpoints/, previews/.
 """
 
 from __future__ import annotations
@@ -60,6 +60,11 @@ class Project:
     def gate_trace(self) -> Path:
         """``gate_trace.jsonl``: per checked photo, the safety gate's codes and numbers (no image data)."""
         return self.root / "gate_trace.jsonl"
+
+    @property
+    def gate_run(self) -> Path:
+        """``gate_run.json``: the prepare safety-check run (``running``, ``interrupted`` or ``complete``)."""
+        return self.root / "gate_run.json"
 
     @property
     def pause(self) -> Path:

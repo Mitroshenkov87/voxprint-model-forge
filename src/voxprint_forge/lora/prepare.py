@@ -23,6 +23,15 @@ from voxprint_forge.lora.gate import (
     child_keyword,
     decide_job,
 )
+from voxprint_forge.lora.gate_run import (
+    append_drop,
+    append_trace_row,
+    atomic_text,
+    complete,
+    rewrite_trace_tail,
+    start,
+    trace_line_count,
+)
 from voxprint_forge.lora.job_gate import caption_texts, check_subject, check_texts, pin, refuse, unpin
 from voxprint_forge.lora.limits import need_more
 from voxprint_forge.lora.photos import (
@@ -120,6 +129,8 @@ def prepare(
         if not ids:
             raise LoraBlocked("lora.err.not_prepared")
         raise LoraBlocked("lora.err.gate_missing", ids=ids)
+    # Before the first photo. A crash leaves this ``running``; training will not start.
+    start(project)
     existing = project.items()
     known = {item.id for item in existing}
     round_no = max((item.round for item in existing), default=-1) + 1 if existing else 0
@@ -180,6 +191,9 @@ def prepare(
     internal = bool(getattr(gate, "internal", False))
     checked: list[tuple[str, object, Decision, str | None]] = []
     keyword = False
+    # Rows already on disk from an earlier run stay. This run appends after them.
+    trace_from = trace_line_count(project)
+    provisional: list[dict[str, object]] = []
     for index, (pid, image) in enumerate(kept, 1):
         progress.emit(
             "prepare.safety",
@@ -204,25 +218,35 @@ def prepare(
         _log_stage_errors(decision)
         key = _identity(gate, image) if not internal else None
         checked.append((pid, image, decision, key))
+        # The decision is on disk before the next photo. A crash keeps this row.
+        row = _trace_row(pid, names.get(pid, pid), decision, decision.tier == "clear", decision.tier)
+        provisional.append(row)
+        append_trace_row(project, row)
+        if decision.tier != "clear":
+            append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
     tiers = list(_aggregate(checked, internal))
     job = decide_job(tiers, keyword=keyword)
     safe: list[tuple[str, object]] = []
     unavailable = any(set(decision.reasons) & set(UNAVAILABLE) for _, _, decision, _ in checked)
-    trace: list[dict[str, object]] = []
+    final_rows: list[dict[str, object]] = []
     for (pid, image, decision, _), tier in zip(checked, tiers, strict=True):
         keep = tier == "clear"
         row = _trace_row(pid, names.get(pid, pid), decision, keep, tier)
-        trace.append(row)
+        final_rows.append(row)
         if keep:
             safe.append((pid, image))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
+            # A cross-photo average can turn a clear photo into a drop after it was written.
+            if decision.tier == "clear":
+                append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
             if mode == "expert":
                 _print_trace_row(row)
+    if final_rows != provisional:
+        rewrite_trace_tail(project, trace_from, final_rows)
     if mode == "expert" and checked:
         _print_job(job)
-    # Before the unload and before a refusal, so a refused run can still be measured.
-    _write_gate_trace(project, trace)
+    # Trace rows are already on disk, including when the job is about to be refused.
     for backend in (gate.judge, gate.estimator):
         unload = getattr(backend, "unload", None)
         if callable(unload):
@@ -263,6 +287,7 @@ def prepare(
                 try:
                     text = captioner.caption(crop(image, crop_mode))
                 except Exception:  # noqa: BLE001
+                    complete(project)
                     refuse(project, "captioner_error", "lora.err.check_unavailable")
                 long = str(text.get("long", ""))
                 short = str(text.get("short", ""))
@@ -270,7 +295,9 @@ def prepare(
                     # A child keyword refuses the whole job at any ratio, captions included.
                     for done, _ in safe:
                         (project.prepared / f"{done}.png").unlink(missing_ok=True)
-                    _write_drops(project, [Drop(pid, names.get(pid, pid), "lora.drop.safety")])
+                    drop = Drop(pid, names.get(pid, pid), "lora.drop.safety")
+                    append_drop(project, _drop_row(drop))
+                    _write_drops(project, [drop])
                     if mode == "expert":
                         _print_caption_refusal(names.get(pid, pid), pid)
                     _refuse(project, subject, mode, progress, "caption")
@@ -303,26 +330,30 @@ def prepare(
         drops.extend(caption_drops)
         _write_drops(project, caption_drops)
     items = [_with_trigger(subject.trigger, item) for item in existing + new_items]
+    # The check itself finished. A text refusal is a finished run, not an interrupted one.
+    complete(project)
     check_texts(project, {"caption": caption_texts(items)})
     project.write_items(items)
     if release is not None:
         (project.root / "release").mkdir(parents=True, exist_ok=True)
         shutil.copy2(release, project.root / "release" / Path(release).name)
     data = _base(project)
-    project.write(
-        {
-            **data,
-            "subject": subject.to_dict(),
-            "kind": subject.kind,
-            "mode": mode,
-            "crop": crop_mode,
-            "gate_passed": True,
-            "gate_rule": RULE_VERSION,
-            "captioner": caption_name or data.get("captioner", ""),
-            "rounds": round_no + 1,
-        }
-    )
+    payload = {
+        **data,
+        "subject": subject.to_dict(),
+        "kind": subject.kind,
+        "mode": mode,
+        "crop": crop_mode,
+        "gate_passed": True,
+        "gate_rule": RULE_VERSION,
+        "captioner": caption_name or data.get("captioner", ""),
+        "rounds": round_no + 1,
+    }
+    # Pin first, record its sha, then publish gate_passed. A crash cannot look approved
+    # while the run is still ``running``.
     pin(project)
+    complete(project)
+    project.write(payload)
     summary = {
         "state": "done",
         "prepared": len(items),
@@ -358,6 +389,9 @@ def _refuse(
     project: Project, subject: Subject, mode: str, progress: Progress, source: str, key: str = "lora.err.blocked"
 ) -> NoReturn:
     """Refuse the whole job: not approved, the ``job`` drop row and the audit source (``job_gate.refuse``)."""
+    # The check finished. Leaving the marker ``running`` would hide this refusal behind
+    # a re-run block the next time training starts.
+    complete(project)
     project.write({**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False})
     progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
     refuse(project, source, key)
@@ -528,11 +562,8 @@ def _print_caption_refusal(name: str, pid: str) -> None:
     print(f"safety gate: {Path(name).name} ({pid}) minor: reasons=child_keyword_caption", file=sys.stderr)
 
 
-def _write_gate_trace(project: Project, rows: Sequence[dict[str, object]]) -> None:
-    project.root.mkdir(parents=True, exist_ok=True)
-    with project.gate_trace.open("a", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+def _drop_row(drop: Drop) -> dict[str, str]:
+    return {"id": drop.id, "name": drop.name, "reason": drop.reason}
 
 
 def _write_drops(project: Project, drops: Sequence[Drop]) -> None:
@@ -540,11 +571,13 @@ def _write_drops(project: Project, drops: Sequence[Drop]) -> None:
 
     A re-run checks photos set aside earlier again. Their old line is replaced, not repeated.
     Rows of other ids, including ``job`` rows, stay as they are and in order.
+    Safety rows may already have been appended; this compaction is what removes the copies.
+    The rewrite goes to a temp file and ``os.replace``, so a crash keeps the previous file.
     """
     project.root.mkdir(parents=True, exist_ok=True)
     fresh: dict[str, str] = {}
     for drop in drops:
-        fresh[drop.id] = json.dumps({"id": drop.id, "name": drop.name, "reason": drop.reason}, ensure_ascii=False)
+        fresh[drop.id] = json.dumps(_drop_row(drop), ensure_ascii=False)
     kept: list[str] = []
     if project.drops.is_file():
         for line in project.drops.read_text(encoding="utf-8").splitlines():
@@ -558,4 +591,4 @@ def _write_drops(project: Project, drops: Sequence[Drop]) -> None:
                 continue
             kept.append(line)
     text = "".join(line + "\n" for line in (*kept, *fresh.values()))
-    project.drops.write_text(text, encoding="utf-8", newline="\n")
+    atomic_text(project.drops, text)
