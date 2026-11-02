@@ -225,6 +225,129 @@ def test_headless_train_hint_goes_to_stderr_and_json_stays_clean(tmp_path: Path,
     assert "Paused for review (round 1 of 2)" in captured.err and "--review-rounds 0" in captured.err
 
 
+def test_finish_after_training_reuses_the_base_the_run_recorded(tmp_path: Path, capsys) -> None:
+    """``--review-rounds 0`` stores the base on the project and writes no review file.
+
+    Finish used to look only at that missing review base and exit 2 with
+    ``lora.err.base_missing`` even though training had just used the same base.
+    """
+    from voxprint_forge.cli import main
+
+    project = make_project(tmp_path / "proj", count=10)
+    bases.register(TinyAdapter)
+    try:
+        capsys.readouterr()
+        trained = main([
+            "--json", "lora", "train", "--project", str(project.root), "--base", "tiny-test", "--no-fetch",
+            "--review-rounds", "0", "--steps", "2", "--resolution", "64", "--batch", "1", "--save-every", "1",
+            "--no-previews", "--vram", "24",
+        ])
+        assert trained == 0
+        assert load_state(project).get("base") == ""
+        assert project.read()["train"]["base"] == "tiny-test"
+        capsys.readouterr()
+        assert main(["--json", "lora", "finish", str(project.root)]) == 0
+        result = _envelope(capsys.readouterr().out)["result"]
+    finally:
+        bases.unregister(TinyAdapter.info.mdl_id)
+    assert result["state"] == "done"
+    assert Path(str(result["voxlora"])).is_file()
+    record = project.read()["train"]
+    assert record["base"] == "tiny-test" and record["state"] == "done" and record["step"] == 2
+
+
+def test_finish_fetches_the_recorded_base_when_its_files_are_missing(tmp_path: Path, monkeypatch, capsys) -> None:
+    from voxprint_forge.cli import main
+
+    project = make_project(tmp_path / "proj", count=10)
+    bases.register(TinyAdapter)
+    calls: list[tuple[list[str], bool]] = []
+    installed = {"ready": False}
+
+    def files_for(mdl_id: str, manifest: object = None) -> dict[str, tuple[str, int]]:
+        return {"weights.safetensors": ("ab", 1)} if mdl_id == "tiny-test" else {}
+
+    def present(mdl_id: str) -> bool:
+        return mdl_id == "tiny-test" and installed["ready"]
+
+    def fetch(ids: list[str], gui: bool = False) -> dict[str, object]:
+        calls.append((list(ids), gui))
+        installed["ready"] = True
+        return {"ok": True, "ready": True, "ids": list(ids)}
+
+    monkeypatch.setattr("voxprint_forge.model_views.files_for", files_for)
+    monkeypatch.setattr("voxprint_forge.mdl_app.present", present)
+    monkeypatch.setattr("voxprint_forge.mdl_app.fetch", fetch)
+    try:
+        capsys.readouterr()
+        assert main([
+            "--json", "lora", "train", "--project", str(project.root), "--base", "tiny-test", "--no-fetch",
+            "--review-rounds", "0", "--steps", "1", "--resolution", "64", "--batch", "1", "--save-every", "1",
+            "--no-previews", "--vram", "24",
+        ]) == 0
+        capsys.readouterr()
+        assert main(["--json", "lora", "finish", str(project.root)]) == 0
+    finally:
+        bases.unregister(TinyAdapter.info.mdl_id)
+    assert calls == [(["tiny-test"], False)]
+    assert _envelope(capsys.readouterr().out)["result"]["state"] == "done"
+
+
+def test_a_failed_base_fetch_names_the_cli_command(monkeypatch) -> None:
+    from voxprint_forge.lora.errors import LoraUsageError
+
+    monkeypatch.setattr(
+        "voxprint_forge.model_views.files_for", lambda mdl_id, manifest=None: {"weights.safetensors": ("ab", 1)},
+    )
+    monkeypatch.setattr("voxprint_forge.mdl_app.present", lambda mdl_id: False)
+    monkeypatch.setattr("voxprint_forge.mdl_app.fetch", lambda ids, gui=False: {"ok": False, "ready": False})
+    with pytest.raises(LoraUsageError) as caught:
+        lora_cli._ensure_base_weights("z-image")
+    message = str(caught.value)
+    assert caught.value.code == "lora.err.base_missing"
+    assert "voxprint-forge-cli models fetch" in message
+    assert "Manage models" not in message
+
+
+def test_cli_errors_do_not_name_gui_screens(tmp_path: Path) -> None:
+    """Error text the CLI prints must not send someone to a window in the app."""
+    import voxprint_forge.preflight as preflight
+    from voxprint_forge.lora.i18n import catalog
+    from voxprint_forge.preflight import refset_preflight
+
+    texts: list[str] = []
+    for key, value in catalog("en").items():
+        if not str(key).startswith("lora.err"):
+            continue
+        if isinstance(value, dict):
+            texts.extend(str(part) for name, part in value.items() if name != "by")
+        else:
+            texts.append(str(value))
+    texts.extend(
+        value for name, value in vars(preflight).items() if name.startswith("_FIX_") and isinstance(value, str)
+    )
+    report = refset_preflight(
+        home=tmp_path,
+        diffusers_version=lambda: "0.41.0",
+        img2img=lambda: True,
+        installed=lambda _mdl_id: False,
+        vram=lambda: 24 * 2**30,
+        ram=lambda: 64 * 2**30,
+        mivolo=lambda _python: True,
+    )
+    texts.extend(str(row.get("fix") or "") for row in report["checks"] if isinstance(row, dict))
+    screens = (
+        "Manage models",
+        "Check this computer",
+        "Check and repair",
+        "Check images",
+        "Check photos",
+        "in the GUI",
+    )
+    leaked = [text for text in texts if any(screen in text for screen in screens)]
+    assert leaked == []
+
+
 def test_train_help_points_people_at_balanced_and_headless_runs() -> None:
     from voxprint_forge.cli import build_parser
 

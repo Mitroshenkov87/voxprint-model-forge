@@ -732,11 +732,121 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.train import finish_review
 
     state = load_state(project)
-    adapter = get_adapter(str(state.get("base") or ""))
+    train = _train_record(project)
+    # A straight-through run (--review-rounds 0) records the base on the project
+    # and does not write review/state.json. Finish must use that record.
+    base_id = _recorded_base(state, train)
+    if not base_id:
+        raise LoraUsageError("lora.err.base_missing")
+    adapter = get_adapter(base_id)
+    preview = bool(getattr(args, "preview", True))
+    if preview:
+        _ensure_base_weights(base_id)
+    _prepare_finish_state(project, state, train, base_id)
     progress = Progress(printer(args.json))
-    result = finish_review(project, adapter, progress, preview=bool(getattr(args, "preview", True)))
+    result = finish_review(project, adapter, progress, preview=preview)
     package = export_package(project, progress)
     return {**result, "voxlora": package["file"], "sha256": package["sha256"]}
+
+
+def _train_record(project: Project) -> dict[str, object]:
+    """The ``train`` object in ``project.json``, or empty when training has not written one."""
+    if not project.file.is_file():
+        return {}
+    train = project.read().get("train")
+    return dict(train) if isinstance(train, dict) else {}
+
+
+def _recorded_base(state: dict[str, object], train: dict[str, object]) -> str:
+    """Base MDL id from the open review, else the id training stored on the project."""
+    for source in (state.get("base"), train.get("base")):
+        base_id = str(source or "").strip()
+        if base_id:
+            return base_id
+    return ""
+
+
+def _whole(value: object) -> int:
+    """A non-negative int. Booleans and other types are 0."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
+
+
+def _step_from_checkpoint(name: str) -> int:
+    """The step number in a ``step-NNNNNN`` file name, or 0."""
+    stem = Path(name).stem
+    digits = stem.removeprefix("step-")
+    if stem.startswith("step-") and digits.isdigit():
+        return int(digits)
+    return 0
+
+
+def _ensure_base_weights(base_id: str) -> None:
+    """Fetch ``base_id`` through MDL when the manifest lists it and the files are absent.
+
+    A stand-in used in tests is not in the manifest, so finish does not try to download it.
+    """
+    from voxprint_forge.mdl_app import fetch, present
+    from voxprint_forge.model_views import files_for
+
+    if not files_for(base_id) or present(base_id):
+        return
+    fetch([base_id], gui=False)
+    if not present(base_id):
+        raise LoraUsageError("lora.err.base_missing")
+
+
+def _prepare_finish_state(
+    project: Project, state: dict[str, object], train: dict[str, object], base_id: str,
+) -> None:
+    """Make sure finish can see the base and checkpoint training already recorded.
+
+    An open review is left as it is, with the base filled in when the review file omitted it.
+    A straight-through run stays idle and has no review file. Finish then builds the small
+    review record ``finish_review`` expects from the project training record, so the step
+    count and the checkpoint stay the ones training wrote. Any other phase is left alone.
+    """
+    from voxprint_forge.lora.review import DEFAULT_SAMPLE_STEPS, empty_state, save_state
+
+    phase = str(state.get("phase") or "idle")
+    open_review = phase in {"review", "finished"} or (phase == "training" and state.get("no_more_reviews"))
+    if open_review:
+        if not str(state.get("base") or "").strip():
+            save_state(project, {**state, "base": base_id})
+        return
+    # Only a straight-through run is idle here. An in-progress review stays as it is.
+    if phase != "idle":
+        return
+    checkpoint = str(train.get("checkpoint") or "").strip()
+    trained = str(train.get("state") or "") in {"done", "paused", "review"}
+    if not checkpoint or not trained:
+        return
+    config = train.get("config") if isinstance(train.get("config"), dict) else {}
+    step = _whole(train.get("step")) or _step_from_checkpoint(checkpoint)
+    planned = _whole(train.get("steps_planned")) or _whole(config.get("steps")) or step
+    if planned < step:
+        planned = step
+    prompts = [str(item) for item in state.get("prompts") or [] if str(item).strip()]
+    save_state(
+        project,
+        {
+            **empty_state(),
+            "phase": "review",
+            "rounds": 1,
+            "samples_per_round": 1,
+            "first_round_steps": max(step, 1),
+            "first_round_samples": 1,
+            "sample_steps": DEFAULT_SAMPLE_STEPS,
+            "total_steps": max(planned, step, 1),
+            "index": 1,
+            "seed": _whole(config.get("seed")),
+            "base": base_id,
+            "checkpoint": checkpoint,
+            "config": dict(config),
+            "prompts": prompts,
+        },
+    )
 
 
 def _discard_confirmed(args: argparse.Namespace) -> bool:

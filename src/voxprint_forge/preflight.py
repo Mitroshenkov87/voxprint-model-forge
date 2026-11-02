@@ -82,8 +82,9 @@ _FIX_LADDER = "Add IQ3_XXS or IQ2_M to that tier, or raise its budget_gb, so wei
 _FIX_DISK = "Free disk space or remove files from the plan until the free space covers the download."
 _FIX_RAM = "Use a machine with more RAM, or leave this model out of the run."
 _FIX_TOKENS = (
-    "Enter HF_TOKEN and KAGGLE_API_TOKEN in the GUI (they are stored in the OS keyring), "
-    "or set FORGE_DEFER_UPLOAD=1."
+    "Run: voxprint-forge-cli accounts add --target hf and "
+    "voxprint-forge-cli accounts add --target kaggle "
+    "(tokens stay in the OS keyring), or set FORGE_DEFER_UPLOAD=1."
 )
 _FIX_BINARIES = (
     "Install cmake, ninja, and nvcc, or set FORGE_LLAMA_BIN to a directory with "
@@ -423,20 +424,23 @@ def refset_preflight(
     for mdl_id, label in ((refset.TEACHER_ID, "Z-Image-Turbo"), (JUDGE_ID, "judge VLM")):
         ready = present(mdl_id)
         add(f"model:{mdl_id}", ready, f"{label} ({mdl_id}) {'installed' if ready else 'missing'}",
-            "Install it in Manage models.")
+            f"Run: voxprint-forge-cli models fetch --model {mdl_id}")
     detector = model_dir(FACE_DETECTOR_ID) / "face_detection_yunet_2023mar.onnx"
     estimator_ok = (installed(ESTIMATOR_ID) if installed else model_dir(ESTIMATOR_ID).is_dir()) and (
         installed(FACE_DETECTOR_ID) if installed else detector.is_file())
     add(f"model:{ESTIMATOR_ID}", estimator_ok,
         f"estimator and face detector {'installed' if estimator_ok else 'missing'}",
-        "Install them in Manage models.")
+        "Run: voxprint-forge-cli models fetch --model mivolo-v2 --model yunet-2023mar")
     python = mivolo_python()
     worker = (mivolo or _mivolo_imports)(python)
     add("mivolo-env", worker, f"estimator worker env {'imports' if worker else 'does not import'}",
         "Repair the venv-mivolo env (installer/requirements-mivolo.txt).")
     dino = present(refset.EMBEDDER_ID)
     add(f"model:{refset.EMBEDDER_ID}", dino, f"DINOv2-base {'installed' if dino else 'missing'} (near-duplicate marks)",
-        "Install dinov2-base in Manage models; without it rounds show no near-duplicate marks.", required=False)
+        "Run: voxprint-forge-cli models fetch --model dinov2-base. "
+        "Without it, rounds show no near-duplicate marks.",
+        required=False,
+    )
     total = (vram or _probe_cuda)()
     add("cuda", total is not None and total >= (REFSET_MIN_VRAM_GB - 0.5) * 2**30,
         f"CUDA GPU {gib(total):.0f} GB" if total else "no CUDA GPU",
