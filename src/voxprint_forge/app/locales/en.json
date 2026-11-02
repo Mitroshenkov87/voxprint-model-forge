@@ -155,6 +155,8 @@
   "forge.app.photos.check.passed": "Images checked. You can continue.",
   "forge.app.photos.check.running": "Checking {done} of {total}",
   "forge.app.photos.check.tip": "Look at every photo still in the set. Unsuitable ones are switched off, with a reason.",
+  "forge.app.photos.check.worker_body": "The check could not finish. The photos were not set aside. You can check them again.",
+  "forge.app.photos.check.worker_title": "The image check stopped",
   "forge.app.photos.count": "{count} of {rec_low}–{rec_high} photos",
   "forge.app.photos.count_expert": {
     "one": "{count} photo. Recommended: {rec_low}–{rec_high}. Allowed in Expert: {expert_low}–{expert_high}",

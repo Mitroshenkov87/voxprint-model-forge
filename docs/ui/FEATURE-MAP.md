@@ -1,6 +1,6 @@
 # Model Forge GUI feature map
 
-The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.5.2 (merge commit c3a74eaa), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Training steps run `voxprint-forge-cli lora ... --json`. The Photos step checks images itself, on a background worker, and does not load a model until Check images is pressed.
+The user app `voxprint-model-forge` (`voxprint_forge.app`) runs on the shared Yitro shell, voxprint-common v0.6.0 (merge commit 7adb4af), surface `model-forge`. It is the LoRA trainer from the plan (project-notes `model-forge/LORA-TRAINER-GUI-PLAN.md`, 7b824cf with the decisions in f2104ea and the v1 ship list a0e8c0a). Training steps run `voxprint-forge-cli lora ... --json`. The Photos step sends image checks to a `voxprint_common.worker` process when Check images is pressed. The window keeps the results and does not load the checker.
 
 The pre-Yitro operator window (`forge-gui`, `voxprint_forge.gui`) is retired from the user app. It stays in the tree for internal VM work and is not shipped. Its features are CLI-only for users.
 

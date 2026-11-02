@@ -37,7 +37,7 @@ def make_app(qapp, tmp_path, monkeypatch):
 
     made = []
 
-    def build(runner=None, commands=ALL_COMMANDS, lang="en", *, default_launch=False):
+    def build(runner=None, commands=ALL_COMMANDS, lang="en", *, default_launch=False, image_checks=None):
         set_language(lang)
         app = ForgeApp(
             runner=runner or StubRunner(),
@@ -45,6 +45,7 @@ def make_app(qapp, tmp_path, monkeypatch):
             commands=commands,
             open_path=lambda _p: None,
             launch=None if default_launch else (lambda _a: None),
+            image_checks=image_checks,
         )
         app.window.show()
         qapp.processEvents()
@@ -151,8 +152,8 @@ def test_adding_or_removing_does_not_load_the_checker(make_app, tmp_path) -> Non
     from voxprint_forge.ui.check_gate import GateState
 
     app = make_app()
-    calls: list[Path] = []
-    app.checker.classify = lambda path, token: calls.append(path) or (True, "")  # type: ignore[method-assign]
+    assert not hasattr(app, "checker")
+    assert app.image_checks.host.pid is None
     app.draft.add_photos(make_photos(tmp_path / "p", 2))
     app.repaint()
     QtWidgets.QApplication.processEvents()
@@ -161,8 +162,8 @@ def test_adding_or_removing_does_not_load_the_checker(make_app, tmp_path) -> Non
     assert box is not None and box.toolTip()
     box.click()
     QtWidgets.QApplication.processEvents()
-    assert calls == []
-    assert not app.checker.loaded
+    assert app.image_checks.host.pid is None
+    assert app.image_checks.cache == {}
     assert app.photo_gate.state is GateState.DIRTY
     assert not _next(app).isEnabled()
 
@@ -870,9 +871,10 @@ def test_wrapping_label_grows_after_a_wide_measure(qapp) -> None:
 def _run_photo_check(app) -> None:
     from voxprint_forge.ui.check_gate import GateState
 
-    assert not app.checker.loaded
+    assert not hasattr(app, "checker")
     app.window.findChild(QtWidgets.QPushButton, "forge.photos.check").click()
-    for _ in range(400):
+    # The checker runs in a spawned process. Importing it there can take a while.
+    for _ in range(4500):
         QtWidgets.QApplication.processEvents()
         if app.photo_gate.state is not GateState.RUNNING:
             break
@@ -891,13 +893,15 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     app.repaint()
     QtWidgets.QApplication.processEvents()
     assert app.photo_gate.state is GateState.DIRTY
-    assert not app.checker.loaded
+    assert not hasattr(app, "checker")
+    assert app.image_checks.host.pid is None
     assert app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal") is None
     assert not _next(app).isEnabled()
     assert _status(app) == tr("forge.app.photos.check.dirty")
     _run_photo_check(app)
     assert app.photo_gate.state is GateState.PASSED
-    assert not app.checker.loaded
+    assert not hasattr(app, "checker")
+    assert app.image_checks.cache
     assert len(app.draft.active_photos()) == 6
     reasons = [w.text() for w in app.window.findChildren(QtWidgets.QLabel, "forge.photos.reason")]
     assert reasons.count(tr("lora.drop.collage")) == 3

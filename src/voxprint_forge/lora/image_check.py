@@ -1,10 +1,11 @@
 """Dataset quality check for the Photos step.
 
 The decision is :func:`voxprint_forge.lora.photos.filter_reason` (size, collage,
-blur, near-duplicate). It runs on the worker that the gate starts, and the
-weights — none, for this check — are acquired only on the first ``classify``
-of a run. A caption model is not loaded: it does not fit in the 4 GiB budget
-on a 16 GiB card that is not fully free.
+blur, near-duplicate). The app runs it in a ``voxprint_common.worker`` child
+(:mod:`voxprint_forge.lora.image_job`), not in the window. The weights — none,
+for this check — are acquired only on the first ``classify`` of a run. A
+caption model is not loaded: it does not fit in the 4 GiB budget on a 16 GiB
+card that is not fully free.
 
 Device staging, if a card is present, never holds more than
 :data:`CHECK_VRAM_BUDGET` bytes of weights plus images.
