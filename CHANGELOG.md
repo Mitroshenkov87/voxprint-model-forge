@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `lora prepare` runs in phases: safety check with only the judge and age estimator loaded, a full unload (also when the check is interrupted), then the captioner. Photos are kept as file bytes and decoded one at a time per phase instead of all held decoded, which cuts peak RAM on large sets (`scripts/bench_prepare.py` measures it with CPU stand-in models). Decisions, `gate_trace.jsonl`, `drops.jsonl`, captions and prepared PNGs are unchanged.
 - `lora eval PROJECT [--step N|all] [--images DIR]`: likeness score with OpenCV YuNet + SFace (new optional MDL id `sface-2021dec`). Reference is the mean embedding of the kept training photos; the report gives each picture's cosine, mean, median, `n`, pictures with no face, and the training photos' own leave-one-out baseline. fail below 0.363, warn below 0.50 or below 0.6 x baseline. Written to `eval/likeness.jsonl`, `eval/report.json`/`report.md`, and `likeness` in `voxprint-model.json`. `lora finish` scores its final previews before export. Quality score only: it never blocks export and does not touch the safety check.
 - Training previews without `--preview-prompts` show the subject: for a person, `<trigger> woman, head-and-shoulders portrait, face clearly visible, looking at camera` (kind-aware). `lora finish` draws this prompt first; a straight-through run no longer draws its final preview from an empty prompt.
 - Preview PNGs record `voxprint.seed`, `voxprint.lora_scale`, `voxprint.base_model`, `voxprint.lora_sha256` and `voxprint.step` as PNG text.

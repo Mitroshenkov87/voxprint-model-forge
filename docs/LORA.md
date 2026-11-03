@@ -94,7 +94,7 @@ Every photo of every kind goes through the safety check (`voxprint_forge.lora.ga
 
 ## Captions
 
-Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. The captions state the attire as it appears, in neutral words: clothing that is worn, or that the subject is unclothed, nude or topless. The caption text is stored as the captioner wrote it. `unclothed` in `captions.jsonl` is true when the captioner answered yes or its caption says unclothed, nude, naked or undressed. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
+Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. `prepare` runs in phases: the safety check runs over every photo with only the judge and the age estimator loaded, both are unloaded, and only then is the captioner loaded to describe the kept photos and unloaded again before training. Photos are decoded one at a time in each phase, so a large set does not sit in memory as decoded pictures. The captions state the attire as it appears, in neutral words: clothing that is worn, or that the subject is unclothed, nude or topless. The caption text is stored as the captioner wrote it. `unclothed` in `captions.jsonl` is true when the captioner answered yes or its caption says unclothed, nude, naked or undressed. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
 
 ## Bases
 
