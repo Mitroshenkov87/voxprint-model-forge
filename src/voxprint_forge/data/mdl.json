@@ -830,6 +830,32 @@
           ]
         }
       ]
+    },
+    {
+      "id": "sface-2021dec",
+      "version": "47534e27c9851bb1128ccc0102f1145e27f23f98",
+      "vram_tier": "any",
+      "optional": true,
+      "display_name": "SFace face recognizer (2021dec)",
+      "licence": "apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "mirrors": [
+            "https://github.com/opencv/opencv_zoo/raw/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_recognition_sface/LICENSE"
+          ]
+        },
+        {
+          "path": "face_recognition_sface_2021dec.onnx",
+          "size": 38696353,
+          "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+          "mirrors": [
+            "https://github.com/opencv/opencv_zoo/raw/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
+          ]
+        }
+      ]
     }
   ]
 }

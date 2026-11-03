@@ -27,6 +27,7 @@ OPTIONAL = {
     "moss-image-base": "1ceede80",
     "z-image-turbo": "f332072a",
     "dinov2-base": "f9e44c81",
+    "sface-2021dec": "47534e27",
 }
 
 

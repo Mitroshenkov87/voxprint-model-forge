@@ -8,6 +8,11 @@ uses one face close-up for every sample, for judging likeness. ``auto`` resolves
 caption sets ``unclothed``, and to ``as_photos`` otherwise. ``as_photos`` with
 clothed captions and ``clothed`` both use near-skin-tone underwear. The project
 name is never used.
+
+Training previews (``--previews``) without ``--preview-prompts`` use :func:`preview_prompt`:
+for a person, ``<trigger> woman, head-and-shoulders portrait, face clearly visible, looking at
+camera`` (the noun comes from the captions, else ``person``), so every preview shows the face;
+for an object or a style, a plain, centred view of the subject.
 """
 
 from __future__ import annotations
@@ -37,6 +42,10 @@ SAMPLE_FRAMING = "sample_framing"
 CLOTHED = "wearing near-skin-tone underwear"
 UNCLOTHED = "unclothed"
 SAMPLE_ATTIRE = "sample_attire"
+PERSON_PREVIEW = "head-and-shoulders portrait, face clearly visible, looking at camera"
+OBJECT_PREVIEW = "centered, whole subject in clear view, plain background, even soft light"
+STYLE_PREVIEW = "a simple scene in this style, clear composition"
+_ARTICLES = frozenset({"a", "an", "the"})
 
 AttireMode = Literal["auto", "as_photos", "clothed", "unclothed"]
 ResolvedAttire = Literal["as_photos", "clothed", "unclothed"]
@@ -114,6 +123,22 @@ def build_sample_prompts(
         chosen = FRAMINGS[(start + index) % len(FRAMINGS)]
         prompts.append(_compose(trigger, subject, chosen, word))
     return prompts
+
+
+def preview_prompt(trigger: str, kind: str, captions: Sequence[Mapping[str, object]]) -> str:
+    """The default training-preview prompt, by kind (``person``, ``object``, ``style``)."""
+    noun = " ".join(w for w in subject_phrase(captions, trigger).split() if w not in _ARTICLES)
+    if kind == "person":
+        return _compose(f"{trigger} {noun or 'person'}".strip(), "", PERSON_PREVIEW, "")
+    if kind == "style":
+        return _compose(f"{trigger} style".strip(), "", STYLE_PREVIEW, "")
+    return _compose(f"{trigger} {noun or 'object'}".strip(), "", OBJECT_PREVIEW, "")
+
+
+def project_kind(data: Mapping[str, object]) -> str:
+    """``subject.kind`` from ``project.json``, else the top-level ``kind``."""
+    subject = data.get("subject") if isinstance(data.get("subject"), dict) else {}
+    return str(subject.get("kind") or data.get("kind") or "")  # type: ignore[union-attr]
 
 
 def subject_phrase(captions: Sequence[Mapping[str, object]], trigger: str = "") -> str:

@@ -422,10 +422,10 @@ options:
 
 ```text
 usage: forge lora [-h]
-                  {prepare,export,train,extend,refset,review,continue,finish,status} ...
+                  {prepare,export,train,extend,refset,review,continue,finish,status,eval} ...
 
 positional arguments:
-  {prepare,export,train,extend,refset,review,continue,finish,status}
+  {prepare,export,train,extend,refset,review,continue,finish,status,eval}
     prepare             Check, crop and describe photos into a project.
     export              Save a .voxlora package, or a .safetensors file with
                         voxprint-model.json.
@@ -440,6 +440,8 @@ positional arguments:
     finish              Save the current LoRA, draw a final preview, record
                         the steps it got, and write the .voxlora.
     status              Read live training progress from train.json.
+    eval                Likeness score of the previews (or --images) against
+                        the training photos.
 
 options:
   -h, --help            show this help message and exit
@@ -881,7 +883,10 @@ Save the current LoRA, draw a final preview, record the steps it got, and
 write <project>/export/<name>.voxlora. That .voxlora is the file to keep and
 to open in Canvas; checkpoints/step-*.safetensors are intermediate. If the
 final preview fails, a warning is printed and the LoRA is still saved and
-exported. --no-preview skips the preview.
+exported. --no-preview skips the preview. When the face models are installed,
+the final previews get a likeness score (SFace) in <project>/eval/ and on the
+model card. The score is advisory: a low score is a warning and never stops
+saving or export.
 
 positional arguments:
   project       Project folder.
@@ -906,6 +911,31 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+```
+
+## `forge lora eval`
+
+```text
+usage: forge lora eval [-h] [--step N|all] [--images IMAGES]
+                       [--fetch-missing | --no-fetch]
+                       project
+
+Likeness score: SFace cosine between generated pictures and the project's training photos.
+Writes <project>/eval/likeness.jsonl (one row per picture) and eval/report.json / report.md, and
+records the summary for the model card. fail: mean < 0.363; warn: mean < 0.50 or < 0.6 x the
+training photos' own baseline. Pictures without a face are counted apart and never pass.
+This is a quality score only: it never blocks export and is not a safety check.
+
+positional arguments:
+  project          Project folder.
+
+options:
+  -h, --help       show this help message and exit
+  --step N|all     Preview step to score, or all steps. Default: the step of
+                   the saved LoRA, else the latest previews.
+  --images IMAGES  Score the pictures in this folder instead.
+  --fetch-missing  Fetch missing model ids before this command.
+  --no-fetch       Do not fetch model ids.
 ```
 
 ## `forge models`

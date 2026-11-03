@@ -60,6 +60,16 @@ YUNET = {
     "license": "mit",
     "files": ["LICENSE", "face_detection_yunet_2023mar.onnx"],
 }
+# SFace (Apache-2.0) is the likeness score's face embedder (``lora eval``). Same pinned opencv_zoo commit.
+SFACE = {
+    "role": "optional",
+    "id": "sface-2021dec",
+    "display_name": "SFace face recognizer (2021dec)",
+    "url": "https://github.com/opencv/opencv_zoo/raw/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_recognition_sface/",
+    "revision": "47534e27c9851bb1128ccc0102f1145e27f23f98",
+    "license": "apache-2.0",
+    "files": ["LICENSE", "face_recognition_sface_2021dec.onnx"],
+}
 SKIP = ("README.md", ".gitattributes", ".gitignore", "assets/*", "*.jpg", "*.png", "*.webp", "*.ipynb",
         "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "requirements.txt")
 
@@ -190,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     api = HfApi()
     entries = [hf_entry(api, *spec) for spec in HF_ENTRIES]
     entries.insert(3, url_entry(YUNET))
+    entries.append(url_entry(SFACE))
     document = app_document(entries)
     text = _dump(document)
     for path in (OUT, PACKAGED):

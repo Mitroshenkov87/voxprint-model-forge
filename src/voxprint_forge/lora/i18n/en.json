@@ -28,6 +28,8 @@
  "lora.err.encoders_stuck": "The text encoder did not leave the graphics card ({gb} GB still in use), so training stopped before it could run out of memory. Please report this.",
  "lora.err.export_project": "Give the project folder once: the .voxlora package, or --project for the .safetensors file.",
  "lora.err.gate_missing": "Models not installed: {ids}. Run: voxprint-forge-cli models fetch --required",
+ "lora.err.likeness_models": "The likeness score needs: {ids}. Run: voxprint-forge-cli models fetch --model sface-2021dec --model yunet-2023mar",
+ "lora.err.likeness_unavailable": "The likeness score could not run: {reason}",
  "lora.err.no_checkpoint": "There is no saved version to continue from.",
  "lora.err.no_consent": "Confirm consent and that the person is 18 or older.",
  "lora.err.no_gpu": "Training needs a supported graphics card.",

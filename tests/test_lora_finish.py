@@ -107,7 +107,7 @@ def test_final_preview_puts_the_transformer_and_lora_on_one_device(tmp_path: Pat
     project = _paused_project(tmp_path)
     result = finish_review(project, CardAdapter(), Progress())
     assert result["state"] == "done" and result["preview"] == "drawn"
-    assert card.seen == [{CARD}]
+    assert card.seen == [{CARD}, {CARD}]  # the face-visible default, then the stored prompt
     # Same order as a training stage: encoders, prompts, then the transformer to the card, then draw.
     assert card.order.index("release_encoders") < card.order.index("preview")
     assert card.order.index("prepare_previews") < card.order.index("release_encoders")

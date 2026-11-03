@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
 import os
 import random
@@ -18,6 +19,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
+from voxprint_forge.hashing import sha256_file
 from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
@@ -56,6 +58,8 @@ from voxprint_forge.lora.review import (
 from voxprint_forge.lora.sample_prompts import (
     build_sample_prompts,
     caption_rows,
+    preview_prompt,
+    project_kind,
     read_attire,
     read_framing,
     store_attire,
@@ -67,6 +71,8 @@ from voxprint_forge.model_park import events
 
 MIN_PHOTOS = {mode: min_photos(mode) for mode in ("simple", "expert")}
 STATE_FILE = "state.pt"
+# Previews draw with the full LoRA (strength 1.0; alpha / rank is applied inside each layer).
+PREVIEW_LORA_SCALE = 1.0
 
 
 def _check_gate(project: Project) -> dict[str, object]:
@@ -268,10 +274,44 @@ def _caption_key(config: TrainConfig, rng: random.Random) -> str:
     return config.caption_mode
 
 
+def _write_lora_file(path: Path, layers, base: str, step: int) -> None:
+    """Write this step's LoRA file. A second write of the same weights matches byte for byte.
+
+    safetensors stores ``__metadata__`` in a hash map, so two ``save_file`` calls are not the same
+    bytes. The preview digest is the sha256 of the checkpoint file, which is only true when every
+    write of those weights produces that file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_file(lora_state(layers), str(path), metadata={"voxprint.lora.base": base, "step": str(step)})
+    _stable_safetensors_header(path)
+
+
+def _stable_safetensors_header(path: Path) -> None:
+    """Sort ``__metadata__`` and tensor names. The tensor byte buffer is left as written."""
+    raw = path.read_bytes()
+    size = int.from_bytes(raw[:8], "little")
+    header = json.loads(raw[8:8 + size])
+    meta = header.pop("__metadata__", None)
+    ordered: dict[str, object] = {}
+    if isinstance(meta, dict):
+        ordered["__metadata__"] = {key: meta[key] for key in sorted(meta)}
+    for name in sorted(header):
+        info = header[name]
+        if isinstance(info, dict):
+            preferred = ("dtype", "shape", "data_offsets")
+            stable = {key: info[key] for key in preferred if key in info}
+            stable.update({key: value for key, value in info.items() if key not in stable})
+            info = stable
+        ordered[name] = info
+    encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded += b" " * ((-len(encoded)) % 8)
+    path.write_bytes(len(encoded).to_bytes(8, "little") + encoded + raw[8 + size:])
+
+
 def _save_checkpoint(project: Project, layers, step: int, optimizer, rng: random.Random, meta: dict) -> Path:
     project.checkpoints.mkdir(parents=True, exist_ok=True)
     path = project.checkpoints / f"step-{step:06d}.safetensors"
-    save_file(lora_state(layers), str(path), metadata={"voxprint.lora.base": meta["base"], "step": str(step)})
+    _write_lora_file(path, layers, str(meta["base"]), step)
     torch.save(
         {
             "step": step,
@@ -353,6 +393,7 @@ def train(
         rank = int(meta.get("voxprint.lora.rank", config.rank))
         alpha = int(meta.get("voxprint.lora.alpha", config.alpha))
         config = TrainConfig.from_dict({**config.to_dict(), "rank": rank, "alpha": alpha})
+    given_prompts = _explicit_prompts(preview_prompts, data)
     review_state = _review_plan(
         project,
         config,
@@ -383,7 +424,11 @@ def train(
             return _seal_finished(project, review_state, adapter, progress)
         config = replace(config, steps=max(1, stage) if stage > 0 else 0)
     if config.previews and _explicit_prompts(preview_prompts, data) is None:
-        preview_prompts = _sample_prompt_list(project, data, config.seed, 1, 1, sample_attire)
+        preview_prompts = default_preview_prompts(project, data)
+    # Training previews draw the --preview-prompts lines, else the face-visible default. Review
+    # prompts stay in ``preview_prompts`` so they are encoded with them and checked with them.
+    drawn = given_prompts if given_prompts is not None else default_preview_prompts(project, data)
+    preview_prompts = list(dict.fromkeys([*drawn, *preview_prompts])) if config.previews else preview_prompts
     check_run(project, preview_prompts, config.to_dict())
     rng = random.Random(config.seed)
     torch.manual_seed(config.seed)
@@ -422,6 +467,7 @@ def train(
             phases,
             negatives,
             review_state,
+            drawn,
         )
     except torch.OutOfMemoryError as exc:
         phases.mark(phases.phase, phases.phase)
@@ -446,6 +492,7 @@ def _train(
     phases: VramPhases,
     negatives: Sequence[Item],
     review_state: dict[str, object] | None,
+    drawn_previews: Sequence[str] = (),
 ) -> dict[str, object]:
     writer = ProgressWriter(project.root)
     clock = _PictureClock(review_state, adapter, config)
@@ -551,9 +598,11 @@ def _train(
             last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
             _report(writer, stage="checkpoint", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
                     extra=step_extra)
-        if config.previews and preview_prompts and step % config.preview_every == 0:
+        if config.previews and drawn_previews and step % config.preview_every == 0:
             phases.mark("step", "preview")
-            _previews(project, adapter, model, preview_prompts, step, config, progress)
+            digest = _weights_sha256(layers, adapter.info.mdl_id, step, last_good)
+            stamp = PreviewStamp(adapter.info.mdl_id, digest, step)
+            _previews(project, adapter, model, drawn_previews, step, config, progress, stamp)
             _report(writer, stage="preview", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
                     extra=step_extra)
             phases.mark("preview", "step")
@@ -652,6 +701,11 @@ def _review_plan(
     )
     save_state(project, state)
     return state
+
+
+def default_preview_prompts(project: Project, data: dict[str, object]) -> list[str]:
+    """The face-visible (person) or clear-view (object, style) default preview prompt."""
+    return [preview_prompt(_subject_trigger(data), project_kind(data), caption_rows(project))]
 
 
 def _explicit_prompts(preview_prompts: Sequence[str], data: dict[str, object]) -> list[str] | None:
@@ -965,14 +1019,19 @@ def _final_preview(
     checkpoint: Path,
     progress: Progress,
 ) -> None:
-    """Draw the result pictures from the saved LoRA. The name matches the checkpoint step."""
+    """Draw the result pictures from the saved LoRA. The name matches the checkpoint step.
+
+    Unless the run used its own ``--preview-prompts``, the face-visible default comes first, so the
+    final previews (and the likeness score drawn from them) always include a clear view of the subject.
+    """
     prompts = [str(prompt) for prompt in state.get("prompts") or [] if str(prompt).strip()]
-    if not prompts:
-        prompts = [""]
+    if state.get("custom_prompts") is not True:
+        prompts = list(dict.fromkeys([*default_preview_prompts(project, project.read()), *prompts]))
     device = _device(adapter, config)
     model = _preview_model(adapter, config, device, checkpoint, prompts)
     file_step = _checkpoint_step(checkpoint.name)
     steps = sample_steps_of(state)
+    stamp = PreviewStamp(adapter.info.mdl_id, sha256_file(checkpoint), file_step)
     progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
     model.eval()
     for index, prompt in enumerate(prompts):
@@ -980,7 +1039,7 @@ def _final_preview(
         if not passes_output_check(image):
             continue
         project.previews.mkdir(parents=True, exist_ok=True)
-        save_image(image, project.previews / f"step-{file_step:06d}-{index}.png")
+        save_preview(image, project.previews / f"step-{file_step:06d}-{index}.png", stamp.text(config.seed + index))
 
 
 def _preview_model(
@@ -1038,15 +1097,80 @@ def _checkpoint_step(name: str) -> int:
     return 0
 
 
-def _previews(project, adapter, model, prompts, step, config, progress) -> None:
+class PreviewStamp:
+    """What a preview PNG records about how it was drawn (PNG text chunks, no paths or user data)."""
+
+    def __init__(self, base: str, lora_sha256: str, step: int, scale: float = PREVIEW_LORA_SCALE) -> None:
+        self.base = base
+        self.lora_sha256 = lora_sha256
+        self.step = step
+        self.scale = scale
+
+    def text(self, seed: int) -> dict[str, str]:
+        """``voxprint.*`` text chunks for one picture drawn with ``seed``."""
+        return {
+            "voxprint.seed": str(int(seed)),
+            "voxprint.lora_scale": f"{self.scale:g}",
+            "voxprint.base_model": self.base,
+            "voxprint.lora_sha256": self.lora_sha256,
+            "voxprint.step": str(int(self.step)),
+        }
+
+
+def save_preview(image, path: Path, text: dict[str, str]) -> None:
+    """Write one RGB preview PNG carrying only ``text`` as metadata."""
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+
+    rgb = image.convert("RGB")
+    clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
+    info = PngInfo()
+    for key, value in text.items():
+        info.add_text(key, value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clean.save(path, format="PNG", pnginfo=info)
+
+
+def read_preview_text(path: Path) -> dict[str, str]:
+    """The ``voxprint.*`` text chunks of a preview PNG."""
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image.load()
+        return {str(k): str(v) for k, v in getattr(image, "text", {}).items() if str(k).startswith("voxprint.")}
+
+
+def _weights_sha256(layers, base: str, step: int, saved: Path | None = None) -> str:
+    """sha256 of this step's LoRA checkpoint file, the bytes on disk.
+
+    ``saved`` is that file when this step was just written. Otherwise :func:`_write_lora_file`
+    writes it to a temporary folder, and the digest is of that file. Re-saving with
+    ``save_file`` alone is not enough: the metadata key order is not stable, so the hash would
+    not be the checkpoint's.
+    """
+    if saved is not None and saved.name == f"step-{step:06d}.safetensors" and saved.is_file():
+        return sha256_file(saved)
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="vxp-lora-hash-") as folder:
+        path = Path(folder) / f"step-{step:06d}.safetensors"
+        _write_lora_file(path, layers, base, step)
+        return sha256_file(path)
+
+
+def _previews(project, adapter, model, prompts, step, config, progress, stamp: PreviewStamp | None = None) -> None:
     progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
     model.eval()
     try:
         for index, prompt in enumerate(prompts):
             image = adapter.preview(model, prompt, config.seed + index, config)
             if image is not None:
-                project.previews.mkdir(parents=True, exist_ok=True)
-                image.save(project.previews / f"step-{step:06d}-{index}.png")
+                path = project.previews / f"step-{step:06d}-{index}.png"
+                if stamp is None:
+                    project.previews.mkdir(parents=True, exist_ok=True)
+                    image.save(path)
+                else:
+                    save_preview(image, path, stamp.text(config.seed + index))
     finally:
         model.train()
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `lora eval PROJECT [--step N|all] [--images DIR]`: likeness score with OpenCV YuNet + SFace (new optional MDL id `sface-2021dec`). Reference is the mean embedding of the kept training photos; the report gives each picture's cosine, mean, median, `n`, pictures with no face, and the training photos' own leave-one-out baseline. fail below 0.363, warn below 0.50 or below 0.6 x baseline. Written to `eval/likeness.jsonl`, `eval/report.json`/`report.md`, and `likeness` in `voxprint-model.json`. `lora finish` scores its final previews before export. Quality score only: it never blocks export and does not touch the safety check.
+- Training previews without `--preview-prompts` show the subject: for a person, `<trigger> woman, head-and-shoulders portrait, face clearly visible, looking at camera` (kind-aware). `lora finish` draws this prompt first; a straight-through run no longer draws its final preview from an empty prompt.
+- Preview PNGs record `voxprint.seed`, `voxprint.lora_scale`, `voxprint.base_model`, `voxprint.lora_sha256` and `voxprint.step` as PNG text.
+
 - `lora finish` after training uses the base stored on the project. A straight-through run (`--review-rounds 0`) no longer exits 2 with the base reported missing. If that base is not on disk, finish fetches it with MDL before the final preview. CLI errors name `voxprint-forge-cli models fetch` (or `accounts add` for upload tokens) instead of a window in the app.
 - `lora prepare`: large single photos (for example 4500x3000 portraits) are no longer set aside as `lora.drop.collage`. Long straight edges inside one photo, such as a person against a backdrop or a floor line, were read as panel seams. Grids and side-by-side collages, with or without gutters, are still set aside.
 - `lora prepare --keep FILE` (repeatable) keeps a photo that would be set aside as a collage or a near-duplicate. The photo still goes through every other check, the safety check included. docs/LORA.md and `--help` describe it.

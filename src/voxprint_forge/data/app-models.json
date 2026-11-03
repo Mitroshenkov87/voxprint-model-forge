@@ -11,7 +11,8 @@
     "florence2-large",
     "moss-image-base",
     "z-image-turbo",
-    "dinov2-base"
+    "dinov2-base",
+    "sface-2021dec"
   ],
   "models": [
     {
@@ -556,6 +557,26 @@
           "path": "preprocessor_config.json",
           "size": 436,
           "sha256": "14e780d86fa1861f8751f868d7f45425b5feb55c38ca26f152ca5097ab30f828"
+        }
+      ]
+    },
+    {
+      "id": "sface-2021dec",
+      "display_name": "SFace face recognizer (2021dec)",
+      "url": "https://github.com/opencv/opencv_zoo/raw/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_recognition_sface/",
+      "revision": "47534e27c9851bb1128ccc0102f1145e27f23f98",
+      "license": "apache-2.0",
+      "size": 38707711,
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "face_recognition_sface_2021dec.onnx",
+          "size": 38696353,
+          "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
         }
       ]
     }

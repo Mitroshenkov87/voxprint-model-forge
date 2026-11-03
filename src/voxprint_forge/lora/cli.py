@@ -1,4 +1,4 @@
-"""``forge lora prepare|train|extend|export|review|continue|finish|status``: the LoRA trainer without the GUI."""
+"""``forge lora prepare|train|extend|export|review|continue|finish|status|eval``: the LoRA trainer without the GUI."""
 
 from __future__ import annotations
 
@@ -55,7 +55,17 @@ FINISH_DESCRIPTION = (
     "Save the current LoRA, draw a final preview, record the steps it got, and write\n"
     "<project>/export/<name>.voxlora. That .voxlora is the file to keep and to open in Canvas;\n"
     "checkpoints/step-*.safetensors are intermediate. If the final preview fails, a warning is printed\n"
-    "and the LoRA is still saved and exported. --no-preview skips the preview."
+    "and the LoRA is still saved and exported. --no-preview skips the preview.\n"
+    "When the face models are installed, the final previews get a likeness score (SFace) in\n"
+    "<project>/eval/ and on the model card. The score is advisory: a low score is a warning and never\n"
+    "stops saving or export."
+)
+EVAL_DESCRIPTION = (
+    "Likeness score: SFace cosine between generated pictures and the project's training photos.\n"
+    "Writes <project>/eval/likeness.jsonl (one row per picture) and eval/report.json / report.md, and\n"
+    "records the summary for the model card. fail: mean < 0.363; warn: mean < 0.50 or < 0.6 x the\n"
+    "training photos' own baseline. Pictures without a face are counted apart and never pass.\n"
+    "This is a quality score only: it never blocks export and is not a safety check."
 )
 
 
@@ -363,6 +373,17 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
     )
     status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
     status.add_argument("project", type=Path, help="Project folder.")
+    evaluate = lora_sub.add_parser(
+        "eval", help="Likeness score of the previews (or --images) against the training photos.",
+        description=EVAL_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    evaluate.add_argument("project", type=Path, help="Project folder.")
+    evaluate.add_argument(
+        "--step", default=None, metavar="N|all",
+        help="Preview step to score, or all steps. Default: the step of the saved LoRA, else the latest previews.",
+    )
+    evaluate.add_argument("--images", type=Path, default=None, help="Score the pictures in this folder instead.")
+    _fetch_flags(evaluate)
 
 
 _CONFIG_FLAGS = (
@@ -389,6 +410,8 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         return _finish_review(args)
     if args.lora_command == "status":
         return _status(args)
+    if args.lora_command == "eval":
+        return _eval(args)
     raise LoraUsageError("lora.err.not_prepared")
 
 
@@ -745,8 +768,76 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
     _prepare_finish_state(project, state, train, base_id)
     progress = Progress(printer(args.json))
     result = finish_review(project, adapter, progress, preview=preview)
+    likeness = _finish_likeness(project, result)
     package = export_package(project, progress)
-    return {**result, "voxlora": package["file"], "sha256": package["sha256"]}
+    return {**result, "likeness": likeness, "voxlora": package["file"], "sha256": package["sha256"]}
+
+
+def _finish_likeness(project: Project, result: dict[str, object]) -> dict[str, object]:
+    """Advisory likeness score of the final previews. It never raises and never blocks export."""
+    from voxprint_forge.lora import likeness
+
+    if result.get("preview") != "drawn":
+        return likeness.record_skipped(project, f"final preview {result.get('preview')}")
+    step = _step_from_checkpoint(str(result.get("checkpoint") or ""))
+    try:
+        if likeness.missing_models():
+            return likeness.record_skipped(
+                project, "models missing; run: voxprint-forge-cli models fetch --model sface-2021dec",
+            )
+        summary = likeness.score_after_finish(project, step)
+    except Exception as exc:  # noqa: BLE001 - a quality score must never stop finish or export
+        summary = likeness.record_skipped(project, f"{type(exc).__name__}: {exc}")
+    line = likeness.warning_line(summary)
+    if line:
+        print(line, file=sys.stderr, flush=True)
+    return summary
+
+
+def _eval(args: argparse.Namespace) -> dict[str, object]:
+    """``lora eval``: score previews or a folder. A low score is reported, never an error."""
+    from voxprint_forge.lora import likeness
+
+    project = Project(args.project)
+    data = project.read()
+    if _wants_fetch(args) and likeness.missing_models():
+        fetch(likeness.missing_models(), gui=False)
+    missing = likeness.missing_models()
+    if missing:
+        raise LoraUsageError("lora.err.likeness_models", ids=", ".join(missing))
+    train = data.get("train") if isinstance(data.get("train"), dict) else {}
+    final_step = _step_from_checkpoint(str(train.get("checkpoint") or "")) or None  # type: ignore[union-attr]
+    if args.images is not None:
+        groups = {"images": likeness.folder_images(args.images)}
+        record_step = None
+    else:
+        by_step = likeness.preview_groups(project)
+        groups = _eval_groups(by_step, args.step, final_step)
+        record_step = final_step
+    try:
+        report = likeness.evaluate(project, groups, record_step=record_step)
+    except likeness.LikenessUnavailable as exc:
+        raise LoraUsageError("lora.err.likeness_unavailable", reason=str(exc)) from exc
+    line = likeness.warning_line(report["summary"])  # type: ignore[arg-type]
+    if line:
+        print(line, file=sys.stderr, flush=True)
+    return {"state": "done", "likeness": report, "report": str(project.root / likeness.EVAL_DIR / likeness.REPORT_MD)}
+
+
+def _eval_groups(by_step: dict[int, list[Path]], choice: str | None, final_step: int | None) -> dict[str, list[Path]]:
+    from voxprint_forge.lora.likeness import step_label
+
+    if not by_step:
+        raise LoraUsageError("lora.err.likeness_unavailable", reason="no previews; pass --images DIR")
+    if choice == "all":
+        return {step_label(step): by_step[step] for step in sorted(by_step)}
+    if choice is not None:
+        if not choice.isdigit() or int(choice) not in by_step:
+            raise LoraUsageError("lora.err.likeness_unavailable", reason=f"no previews for step {choice}")
+        step = int(choice)
+    else:
+        step = final_step if final_step in by_step else max(by_step)
+    return {step_label(step): by_step[step]}
 
 
 def _train_record(project: Project) -> dict[str, object]:
