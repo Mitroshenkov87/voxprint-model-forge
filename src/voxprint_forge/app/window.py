@@ -29,11 +29,14 @@ from voxprint_common.ui.simple_image import SimpleImageWidget, SimpleLayout
 from voxprint_common.ui.theme import build_shell_style
 from voxprint_common.ui.tokens import load as load_tokens
 from voxprint_common.ui.variants import state_names, surface_for
+from voxprint_common.worker import EventKind, WorkerEvent
+from voxprint_common.worker.qt import QtWorkerHost, install_crash_bar
 
 from voxprint_forge.app import basepicker, engine
 from voxprint_forge.app.details import Details
 from voxprint_forge.app.draft import KINDS, STEPS, Draft, Prepared, photo_key
 from voxprint_forge.app.flow import FlowRow
+from voxprint_forge.app.image_checks import ImageChecks, image_check_host
 from voxprint_forge.app.settings import PRESET_GROUP, SECTION, WIZARD, config_values, lora_settings, preset_file
 from voxprint_forge.app.text import tr
 from voxprint_forge.app.thumbs import ThumbService
@@ -41,7 +44,6 @@ from voxprint_forge.lora import refset
 from voxprint_forge.lora import review as rounds
 from voxprint_forge.lora.attr import HIGH, LOW, accepted
 from voxprint_forge.lora.errors import LoraUsageError
-from voxprint_forge.lora.image_check import ImageChecker
 from voxprint_forge.lora.limits import expert_only, expert_range_differs, need_more
 from voxprint_forge.lora.photos import MIN_SIDE
 from voxprint_forge.lora.progress_log import read_progress
@@ -460,6 +462,21 @@ def launch_detached(argv: list[str]) -> None:
     spawn(argv)
 
 
+class _ShutdownOnClose(QtCore.QObject):
+    """Run a callback when the watched window closes. The window still closes."""
+
+    def __init__(self, callback: Callable[[], None]) -> None:
+        super().__init__()
+        self._callback = callback
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
+        """Shut the image check down before the window goes away."""
+        del watched
+        if event.type() == QtCore.QEvent.Type.Close:
+            self._callback()
+        return False
+
+
 class ForgeApp:
     """Builds the window and runs the steps. ``runner`` runs CLI jobs (a stub in tests)."""
 
@@ -471,6 +488,7 @@ class ForgeApp:
         commands: frozenset[str] | None = None,
         open_path: Callable[[Path], None] | None = None,
         launch: Callable[[list[str]], None] | None = None,
+        image_checks: ImageChecks | None = None,
     ) -> None:
         from voxprint_forge.app.runner import ProcessRunner
 
@@ -522,15 +540,33 @@ class ForgeApp:
         self.window.setAttribute(QtCore.Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self.window.setCentralWidget(self.widget.root)
         self.window.resize(1200, 900)
-        self.checker = ImageChecker()
+        self._shut_down = False
+        self.image_checks = image_checks if image_checks is not None else ImageChecks(
+            image_check_host(self.home / "image-check-worker")
+        )
+        self._image_adapter = QtWorkerHost(self.image_checks.host)
+        self._image_adapter.progress.connect(self._on_image_progress)
+        self._image_adapter.finished.connect(self._on_image_event)
+        self._image_adapter.failed.connect(self._on_image_event)
+        self._image_adapter.crashed.connect(self._on_image_event)
+        self._image_bar = install_crash_bar(
+            self.window,
+            self._image_adapter,
+            title=tr("forge.app.photos.check.worker_title"),
+            body=tr("forge.app.photos.check.worker_body"),
+        )
         self.thumbs = ThumbService(self.window)
         self.photo_gate = CheckGate(
             self._check_job,
             items=self._check_items,
-            unload=self.checker.unload,
+            unload=lambda: None,
             on_deactivate=self._deactivate_failed,
             parent=self.window,
         )
+        self._bind_photo_gate()
+        closer = _ShutdownOnClose(self.shutdown)
+        closer.setParent(self.window)
+        self.window.installEventFilter(closer)
         self.photo_gate.canProceedChanged.connect(lambda _ok: self._gate())
         self.photo_gate.stateChanged.connect(lambda _state: self._gate())
         self.photo_gate.finished.connect(lambda _state: self.repaint())
@@ -733,13 +769,83 @@ class ForgeApp:
             for path in self.draft.photos
         ]
 
+    def _bind_photo_gate(self) -> None:
+        """Queue the real image check on the UI thread. A test that replaced the job is left alone."""
+        gate = self.photo_gate
+        original_start = gate.start
+        original_cancel = gate.cancel
+
+        def start() -> None:
+            if gate._job == self._check_job:
+                self._submit_image_check()
+            original_start()
+
+        def cancel() -> None:
+            original_cancel()
+            if gate._job == self._check_job:
+                self.image_checks.cancel()
+
+        gate.start = start  # type: ignore[method-assign]
+        gate.cancel = cancel  # type: ignore[method-assign]
+
+    def _submit_image_check(self) -> None:
+        """Queue one check for the active photos. The gate thread only reads the cache."""
+        widget = self._image_bar.widget
+        if isinstance(widget, QtWidgets.QWidget):
+            widget.hide()
+        items: list[tuple[str, str]] = []
+        for item in self._check_items():
+            if not item.active:
+                continue
+            path = self._photo_by_key(item.id)
+            if path is None:
+                continue
+            items.append((item.id, str(path.resolve())))
+        self.image_checks.submit(items)
+
     def _check_job(self, item: CheckItem, token: object) -> ItemResult:
-        """Classify one photo on the worker. The checker loads itself on the first call of a run."""
+        """Read one cached row. A worker failure raises and is not stored as a photo result."""
         path = self._photo_by_key(item.id)
         if path is None:
             return ItemResult(item.id, False, "lora.drop.unreadable")
-        ok, message = self.checker.classify(path, token)  # type: ignore[arg-type]
+        ok, message = self.image_checks.wait(item.id, token)
         return ItemResult(item.id, ok, message)
+
+    def _on_image_progress(self, event: WorkerEvent) -> None:
+        """Move the photo-check bar with the worker. The gate still owns the final count."""
+        if self.photo_gate.state is not GateState.RUNNING:
+            return
+        step = event.step
+        total = event.total_steps
+        if isinstance(step, bool) or isinstance(total, bool):
+            return
+        if isinstance(step, int) and isinstance(total, int) and total > 0:
+            self.photo_gate._done = step
+            self.photo_gate._total = total
+            self.photo_gate._paint()
+
+    def _on_image_event(self, event: WorkerEvent) -> None:
+        """Keep the result cache. A failed check shows the bar and does not set photos aside."""
+        self.image_checks.observe(event)
+        if event.kind is EventKind.FAILED:
+            self._image_bar.present()
+
+    def shutdown(self) -> None:
+        """Stop the image check and the photo gate. A second call does nothing."""
+        if getattr(self, "_shut_down", False):
+            return
+        self._shut_down = True
+        gate = getattr(self, "photo_gate", None)
+        if gate is not None:
+            gate.cancel()
+        checks = getattr(self, "image_checks", None)
+        if checks is not None:
+            checks.wake_for_shutdown()
+        adapter = getattr(self, "_image_adapter", None)
+        if adapter is not None:
+            adapter.shutdown(timeout=2.0)
+        if gate is not None:
+            gate.shutdown()
 
     def _deactivate_failed(self, ids: Sequence[str]) -> None:
         """Switch off photos the check refused, and clear the note on photos that passed."""

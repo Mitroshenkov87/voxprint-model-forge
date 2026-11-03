@@ -1,6 +1,6 @@
-"""Calls into voxprint-common 0.5.2 for check, repair, and RAM staging.
+"""Calls into voxprint-common 0.6.0 for check, repair, and RAM staging.
 
-The vendored pin is 0.5.2. This module is the only forge code that names
+The vendored pin is 0.6.0. This module is the only forge code that names
 that surface:
 
 * ``voxprint-mdl verify --app model-forge --gui --repair`` opens the
@@ -43,7 +43,7 @@ MANIFEST_NAME = "voxprint-model.json"
 USER_DATA_DIRS = frozenset({"user-models", "projects", "lora"})
 WALK_SKIP = USER_DATA_DIRS | frozenset({BLOBS_DIR, APP_DIR})
 MISSING_MDL = (
-    "voxprint-common 0.5.2 is required for models verify "
+    "voxprint-common 0.6.0 is required for models verify "
     "(voxprint-mdl verify --gui). The installed package does not provide it."
 )
 _OK_STATES = frozenset({"ok", "repaired", "verified"})
@@ -52,7 +52,7 @@ _DAMAGED_STATES = frozenset({"corrupt", "damaged", "failed", "stale"})
 
 
 class MdlAdapterError(ForgeError):
-    """The installed voxprint-common does not provide a 0.5.2 name this command needs."""
+    """The installed voxprint-common does not provide a 0.6.0 name this command needs."""
 
     exit_code = EXIT_TOOL
 
@@ -173,7 +173,7 @@ def stage(name: str, models: Sequence[str], *, device: object = "cuda") -> objec
     fn = getattr(park, "stage", None)
     if not callable(fn):
         raise MdlAdapterError(
-            "voxprint-common 0.5.2 is required to stage a model "
+            "voxprint-common 0.6.0 is required to stage a model "
             "(voxprint_common.model_park.stage). The installed package does not provide it."
         )
     return fn(name, models, device=device)
