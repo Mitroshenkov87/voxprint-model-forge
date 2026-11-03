@@ -293,6 +293,100 @@ def test_finish_fetches_the_recorded_base_when_its_files_are_missing(tmp_path: P
     assert _envelope(capsys.readouterr().out)["result"]["state"] == "done"
 
 
+def _straight_through(root: Path, capsys) -> Project:
+    """A ``--review-rounds 0`` run: the base and checkpoint live on the project, no review file."""
+    from voxprint_forge.cli import main
+
+    project = make_project(root, count=10)
+    capsys.readouterr()
+    assert main([
+        "--json", "lora", "train", "--project", str(project.root), "--base", "tiny-test", "--no-fetch",
+        "--review-rounds", "0", "--steps", "2", "--resolution", "64", "--batch", "1", "--save-every", "1",
+        "--no-previews", "--vram", "24",
+    ]) == 0
+    capsys.readouterr()
+    return project
+
+
+def _not_stuck(project: Project) -> None:
+    """Finish left no review behind, so ``lora train`` and ``lora continue`` still work."""
+    from voxprint_forge.lora.review import state_path
+
+    assert not state_path(project).exists()
+    assert not state_path(project).with_suffix(".json.tmp").exists()
+    assert load_state(project)["phase"] == "idle"
+    assert project.read()["train"]["state"] == "done"
+
+
+def test_finish_with_a_missing_checkpoint_writes_no_review(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A straight-through run whose checkpoint is gone must not be left waiting in review.
+
+    Finish used to write a review/state.json with phase ``review`` before it looked for the file,
+    so ``lora train`` then stopped on ``lora.err.review_pending``. The base is not fetched either.
+    """
+    from voxprint_forge.cli import main
+
+    fetched: list[list[str]] = []
+    monkeypatch.setattr("voxprint_forge.model_views.files_for", lambda mdl_id, manifest=None: {"w": ("ab", 1)})
+    monkeypatch.setattr("voxprint_forge.mdl_app.present", lambda mdl_id: False)
+    monkeypatch.setattr("voxprint_forge.mdl_app.fetch", lambda ids, gui=False: fetched.append(list(ids)) or {})
+    bases.register(TinyAdapter)
+    try:
+        project = _straight_through(tmp_path / "proj", capsys)
+        checkpoint = project.checkpoints / str(project.read()["train"]["checkpoint"])
+        moved = checkpoint.rename(tmp_path / checkpoint.name)
+        assert main(["--json", "lora", "finish", str(project.root)]) != 0
+        assert "lora.err.no_checkpoint" in capsys.readouterr().out
+        _not_stuck(project)
+        assert fetched == []
+        moved.rename(checkpoint)
+        monkeypatch.setattr("voxprint_forge.model_views.files_for", lambda mdl_id, manifest=None: {})
+        assert main(["--json", "lora", "finish", str(project.root), "--no-preview"]) == 0
+    finally:
+        bases.unregister(TinyAdapter.info.mdl_id)
+    assert _envelope(capsys.readouterr().out)["result"]["state"] == "done"
+    assert load_state(project)["phase"] == "finished"
+
+
+@pytest.mark.parametrize("error", [RuntimeError("disk full"), KeyboardInterrupt()])
+def test_a_finish_that_fails_midway_leaves_no_review(tmp_path: Path, monkeypatch, capsys, error) -> None:
+    """An error or Ctrl+C inside finish must not leave a straight-through run stuck in review."""
+    from voxprint_forge.cli import main
+
+    def broken(*args, **kwargs):
+        raise error
+
+    bases.register(TinyAdapter)
+    try:
+        project = _straight_through(tmp_path / "proj", capsys)
+        with monkeypatch.context() as patch:
+            patch.setattr(train_mod, "_stored_config", broken)
+            try:
+                main(["--json", "lora", "finish", str(project.root), "--no-preview"])
+            except (RuntimeError, KeyboardInterrupt) as raised:
+                assert raised is error
+        _not_stuck(project)
+        capsys.readouterr()
+        assert main(["--json", "lora", "finish", str(project.root), "--no-preview"]) == 0
+    finally:
+        bases.unregister(TinyAdapter.info.mdl_id)
+    assert _envelope(capsys.readouterr().out)["result"]["state"] == "done"
+
+
+def test_an_open_review_without_its_checkpoint_stays_as_it_was(tmp_path: Path, card, capsys) -> None:
+    """A review file that omits the base is not rewritten when finish cannot go on."""
+    from voxprint_forge.cli import main
+    from voxprint_forge.lora.review import state_path
+
+    project = _paused_project(tmp_path / "proj")
+    save_state(project, {**load_state(project), "base": "", "checkpoint": "checkpoints/step-999999.safetensors"})
+    before = state_path(project).read_bytes()
+    capsys.readouterr()
+    assert main(["--json", "lora", "finish", str(project.root)]) != 0
+    assert "lora.err.no_checkpoint" in capsys.readouterr().out
+    assert state_path(project).read_bytes() == before
+
+
 def test_a_failed_base_fetch_names_the_cli_command(monkeypatch) -> None:
     from voxprint_forge.lora.errors import LoraUsageError
 

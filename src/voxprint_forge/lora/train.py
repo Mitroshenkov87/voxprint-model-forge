@@ -127,16 +127,23 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
 
 
 def finish_review(
-    project: Project, adapter: BaseAdapter, progress: Progress, *, preview: bool = True,
+    project: Project,
+    adapter: BaseAdapter,
+    progress: Progress,
+    *,
+    preview: bool = True,
+    state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Save the current LoRA, draw a final preview, and record the steps it got.
 
     The review stays open until the checkpoint is found on disk, so a missing
     checkpoint does not look like a finished run. ``preview=False`` skips the
     final picture. A final picture that fails is a warning: the run still
-    finishes and can be exported.
+    finishes and can be exported. ``state`` replaces the saved review; it is
+    written only as the finished state, after the checkpoint is found.
     """
-    return _seal_finished(project, load_state(project), adapter, progress, preview=preview)
+    current = load_state(project) if state is None else state
+    return _seal_finished(project, current, adapter, progress, preview=preview)
 
 
 def discard_run(project: Project) -> dict[str, object]:
