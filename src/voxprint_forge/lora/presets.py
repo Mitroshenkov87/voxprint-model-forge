@@ -114,16 +114,16 @@ class TrainConfig:
 
 
 def detect_vram_gb() -> int:
-    """16 or 24: the tier for the first CUDA card. No card picks 16."""
-    try:
-        import torch
+    """16 or 24: the tier for the first NVIDIA GPU. No card picks 16.
 
-        if torch.cuda.is_available():
-            total = torch.cuda.get_device_properties(0).total_memory / 2**30
-            return 16 if total < 20 else 24
+    Under 20 GiB is 16, the same cut the CUDA total-memory probe used.
+    """
+    try:
+        from voxprint_forge.vram_probe import tier_gb
+
+        return tier_gb()
     except Exception:  # noqa: BLE001 - detection is best effort
-        pass
-    return 16
+        return 16
 
 
 TE_QUANT_MODES = ("auto", "none", "int8", "nf4")

@@ -49,7 +49,6 @@ from voxprint_forge.lora.vram_stage import (
     require_quantized,
 )
 from voxprint_forge.mdl_app import missing_id_text
-from voxprint_forge.model_park import drop_vram, park, stage
 from voxprint_forge.model_views import ensure_view
 
 SCHEMA = "voxprint-refset/1"
@@ -751,6 +750,8 @@ class TurboImg2Img:
         import torch
         from diffusers import ZImageImg2ImgPipeline
 
+        from voxprint_forge.model_park import park
+
         self.device = device
         self._vram = detect_vram_gb()
         if self._vram == TIER_GB and not str(device).startswith("cuda"):
@@ -781,6 +782,8 @@ class TurboImg2Img:
         """One candidate at the reference's aspect, long side 1024."""
         # Imported here so ``voxprint-forge --version`` does not pull torch.
         import torch
+
+        from voxprint_forge.model_park import drop_vram, stage
 
         width, height = target_size(image.size)
         source = image.convert("RGB").resize((width, height))
@@ -821,6 +824,8 @@ class TurboImg2Img:
 
     def unload(self) -> None:
         """Drop the graphics copy. The parked pipeline stays in RAM."""
+        from voxprint_forge.model_park import drop_vram
+
         pipe = getattr(self, "pipe", None)
         if pipe is None:
             return
