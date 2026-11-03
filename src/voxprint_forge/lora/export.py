@@ -169,7 +169,7 @@ def export(
     mid = model_id(data, tensors_digest(tensors))
     shown = _export_train(train, name, checkpoint is None)
     meta = header_metadata({**data, "train": shown}, tensors)
-    target = Path(out) if out is not None else project.root / "export" / f"{mid}.safetensors"
+    target = Path(out) if out is not None else project.export / f"{mid}.safetensors"
     if target.suffix != ".safetensors":
         raise LoraUsageError("lora.err.no_checkpoint")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -359,7 +359,7 @@ def _package_target(project: Project, data: dict[str, object], out: Path | None)
     """Default ``<project>/export/<stem>.voxlora``, or ``out`` with that suffix."""
     stem = package_stem(data)
     if out is None:
-        return project.root / "export" / f"{stem}.voxlora"
+        return project.export / f"{stem}.voxlora"
     path = Path(out)
     if path.exists() and path.is_dir():
         return path / f"{stem}.voxlora"
@@ -433,7 +433,7 @@ def _generated_samples(project: Project) -> list[Path]:
             relative = path.resolve().relative_to(project.root.resolve())
         except ValueError:
             return
-        if not relative.parts or relative.parts[0] not in {"previews", "review"}:
+        if not relative.parts or relative.parts[0] not in {project.previews.name, project.review.name}:
             return
         key = path.resolve()
         if key in seen:
@@ -450,7 +450,7 @@ def _generated_samples(project: Project) -> list[Path]:
     if isinstance(samples, list):
         for sample in samples:
             if isinstance(sample, dict) and sample.get("file"):
-                add(project.root / str(sample["file"]))
+                add(project.resolve(str(sample["file"])))
     return found
 
 

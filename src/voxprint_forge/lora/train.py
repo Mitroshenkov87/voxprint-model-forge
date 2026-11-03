@@ -140,10 +140,10 @@ def discard_run(project: Project) -> dict[str, object]:
     for path in (
         project.checkpoints,
         project.previews,
-        project.root / "review",
-        project.root / "train.json",
-        project.root / "train.log",
-        project.root / "vram.csv",
+        project.review,
+        project.train_state,
+        project.train_log,
+        project.vram_log,
         project.pause,
     ):
         _remove_inside(root, path)
@@ -258,7 +258,7 @@ def _images(project: Project, items: Sequence[Item], resolution: int) -> list[ob
 
     out = []
     for item in items:
-        with Image.open(project.root / item.file) as image:
+        with Image.open(project.resolve(item.file)) as image:
             image = image.convert("RGB")
             if image.size != (resolution, resolution):
                 image = image.resize((resolution, resolution), Image.Resampling.LANCZOS)
@@ -382,7 +382,7 @@ def train(
         checkpoint = str(pending.get("checkpoint") or "")
         if not checkpoint:
             raise LoraUsageError("lora.err.no_checkpoint")
-        from_lora = project.root / checkpoint
+        from_lora = project.resolve(checkpoint)
         saved_config = pending.get("config")
         if isinstance(saved_config, dict) and saved_config:
             config = TrainConfig.from_dict(saved_config)
@@ -790,7 +790,7 @@ def _open_review(
             )
             if not passes_output_check(image):
                 continue
-            path = project.root / str(spec["file"])
+            path = project.resolve(str(spec["file"]))
             save_image(image, path)
             saved.append(spec)
     finally:
@@ -989,9 +989,7 @@ def _review_checkpoint(project: Project, state: dict[str, object]) -> Path:
     raw = str(state.get("checkpoint") or "")
     if not raw:
         raise LoraUsageError("lora.err.no_checkpoint")
-    path = Path(raw)
-    if not path.is_absolute():
-        path = project.root / path
+    path = project.resolve(raw)
     if not path.is_file():
         alt = project.checkpoints / Path(raw).name
         path = alt if alt.is_file() else path

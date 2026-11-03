@@ -136,8 +136,8 @@ def check_settings(count: int, strength: float, steps: int, seed: int | None = N
 # ----- files ---------------------------------------------------------------------------------------
 def folder(project: Project | Path) -> Path:
     """``<project>/refset``."""
-    root = project.root if isinstance(project, Project) else Path(project)
-    return root / "refset"
+    proj = project if isinstance(project, Project) else Project(project)
+    return proj.refset
 
 
 def state_file(project: Project | Path) -> Path:

@@ -127,7 +127,7 @@ def prepare(
     # The file name behind each hash in ``seen``, for the near-duplicate warning.
     seen_names: list[str] = []
     for item in existing:
-        image = open_photo(project.root / item.file)
+        image = open_photo(project.resolve(item.file))
         if image is not None:
             seen.append(dhash(image))
             seen_names.append(item.file)
@@ -284,7 +284,7 @@ def prepare(
                 new_items.append(
                     Item(
                         pid,
-                        f"prepared/{pid}.png",
+                        f"{project.prepared.name}/{pid}.png",
                         prepend_trigger(subject.trigger, long),
                         prepend_trigger(subject.trigger, short),
                         round_no,
@@ -306,8 +306,8 @@ def prepare(
     check_texts(project, {"caption": caption_texts(items)})
     project.write_items(items)
     if release is not None:
-        (project.root / "release").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(release, project.root / "release" / Path(release).name)
+        project.release.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(release, project.release / Path(release).name)
     data = _base(project)
     project.write(
         {
