@@ -23,6 +23,7 @@ from voxprint_forge.hashing import sha256_file
 from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.gate_run import open_gate_run
 from voxprint_forge.lora.job_gate import check_run, preflight_refuse
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
 from voxprint_forge.lora.limits import min_photos, need_more
@@ -76,6 +77,14 @@ PREVIEW_LORA_SCALE = 1.0
 
 
 def _check_gate(project: Project) -> dict[str, object]:
+    """Block training when the photos were not prepared, or the last prepare did not finish.
+
+    An open ``gate_run.json`` means at least one photo has no trace row. That photo was
+    not checked and is not kept. Prepare again. Nothing is written: this is not a refusal
+    of the photos.
+    """
+    if open_gate_run(project):
+        raise LoraUsageError("lora.err.not_prepared")
     data = project.read()
     if data.get("gate_passed") is not True:
         ids = missing_id_text()
