@@ -294,7 +294,7 @@ def prepared_from(project: Path) -> tuple[list[dict[str, object]], list[dict[str
 
     folder = Project(project)
     kept = [
-        {"id": item.id, "file": str(project / item.file), "long": item.long, "short": item.short}
+        {"id": item.id, "file": str(folder.resolve(item.file)), "long": item.long, "short": item.short}
         for item in folder.items()
     ]
     drops: dict[str, dict[str, object]] = {}

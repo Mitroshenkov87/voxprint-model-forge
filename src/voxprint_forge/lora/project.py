@@ -1,6 +1,29 @@
 """Training project folder (plan §2).
 
-photos/, prepared/, captions.jsonl, drops.jsonl, gate_trace.jsonl, gate_run.json, checkpoints/, previews/.
+Fixed layout, documented in docs/LORA.md ("Project folder")::
+
+    project.json           subject, settings, train and likeness records
+    prepared/              cropped training photos (one PNG per photo id)
+    captions.jsonl         one prepared photo per line: id, file, captions
+    drops.jsonl            photos set aside, with a reason key
+    gate_trace.jsonl       per checked photo, the safety gate's codes and numbers
+    gate_run.json          state of the last safety-check run (running, complete, interrupted)
+    checkpoints/           intermediate LoRA versions and training state
+    previews/              test pictures drawn during training
+    review/                review-round state and samples
+    eval/                  likeness score rows and reports
+    export/                finished .voxlora packages and .safetensors exports
+    release/               an attached consent release file
+    refset/                reference-set rounds built for training
+    train.json             latest training progress (step, loss, ETA)
+    train.log              one progress line per report
+    vram.csv               VRAM samples on the same cadence
+    PAUSE                  while it exists, training saves a version and stops
+
+``prepared/``, ``checkpoints/``, ``previews/``, ``review/``, ``eval/``,
+``export/``, ``release/`` and ``refset/`` are created on demand. All code
+builds these paths through the :class:`Project` properties, so the on-disk
+names stay stable for projects created by older versions.
 """
 
 from __future__ import annotations
@@ -86,6 +109,54 @@ class Project:
         """Test pictures."""
         return self.root / "previews"
 
+    @property
+    def review(self) -> Path:
+        """Review-round state and sample pictures."""
+        return self.root / "review"
+
+    @property
+    def eval(self) -> Path:
+        """Likeness score rows and reports."""
+        return self.root / "eval"
+
+    @property
+    def export(self) -> Path:
+        """Finished ``.voxlora`` packages and ``.safetensors`` exports."""
+        return self.root / "export"
+
+    @property
+    def release(self) -> Path:
+        """An attached consent release file."""
+        return self.root / "release"
+
+    @property
+    def refset(self) -> Path:
+        """Reference-set rounds built for training."""
+        return self.root / "refset"
+
+    @property
+    def train_state(self) -> Path:
+        """``train.json``: the latest training progress (step, loss, ETA)."""
+        return self.root / "train.json"
+
+    @property
+    def train_log(self) -> Path:
+        """``train.log``: one progress line per report."""
+        return self.root / "train.log"
+
+    @property
+    def vram_log(self) -> Path:
+        """``vram.csv``: VRAM samples on the progress cadence."""
+        return self.root / "vram.csv"
+
+    def resolve(self, stored: str | Path) -> Path:
+        """A path stored in a project file (``captions.jsonl``, review state) back to an absolute path.
+
+        Stored paths are relative to the project root; an absolute path is used as is.
+        """
+        path = Path(stored)
+        return path if path.is_absolute() else self.root / path
+
     def read(self) -> dict[str, object]:
         """``project.json``; a missing file means the photos were never prepared."""
         if not self.file.is_file():
@@ -118,7 +189,7 @@ class Project:
                     int(row.get("round", 0)),
                     flag if isinstance(flag, bool) else None,
                 )
-                if (self.root / item.file).is_file():
+                if self.resolve(item.file).is_file():
                     found.append(item)
         return found
 

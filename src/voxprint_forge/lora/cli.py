@@ -825,7 +825,7 @@ def _eval(args: argparse.Namespace) -> dict[str, object]:
     line = likeness.warning_line(report["summary"])  # type: ignore[arg-type]
     if line:
         print(line, file=sys.stderr, flush=True)
-    return {"state": "done", "likeness": report, "report": str(project.root / likeness.EVAL_DIR / likeness.REPORT_MD)}
+    return {"state": "done", "likeness": report, "report": str(project.eval / likeness.REPORT_MD)}
 
 
 def _eval_groups(by_step: dict[int, list[Path]], choice: str | None, final_step: int | None) -> dict[str, list[Path]]:
