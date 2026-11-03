@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -76,7 +77,18 @@ def check_count(count: int, mode: str) -> str | None:
 
 def photo_id(path: Path) -> str:
     """``sha256[:12]`` of the file bytes."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+    return bytes_id(Path(path).read_bytes())
+
+
+def read_photo(path: Path) -> tuple[str, Image.Image | None]:
+    """``(photo_id, open_photo)`` from one read of the file. Raises ``OSError`` like :func:`photo_id`."""
+    data = Path(path).read_bytes()
+    return bytes_id(data), decode_photo(io.BytesIO(data))
+
+
+def bytes_id(data: bytes) -> str:
+    """:func:`photo_id` of file bytes already read."""
+    return hashlib.sha256(data).hexdigest()[:12]
 
 
 def avif_ready() -> bool:
@@ -89,15 +101,36 @@ def avif_ready() -> bool:
 def open_photo(path: Path) -> Image.Image | None:
     """Decoded RGB image with EXIF rotation applied, or ``None`` when it is not a picture."""
     try:
-        with Image.open(path) as image:
-            return ImageOps.exif_transpose(image).convert("RGB")
+        with Path(path).open("rb") as handle:
+            return decode_photo(handle)
+    except Exception:  # noqa: BLE001 - any decode failure is an unreadable photo
+        return None
+
+
+def decode_photo(source: io.IOBase) -> Image.Image | None:
+    """RGB pixels of ``source`` after its EXIF rotation, with no extra full-size copy.
+
+    The same pixels as ``ImageOps.exif_transpose(image).convert("RGB")``: the decoded
+    image is rotated in place and converted only when it is not RGB already. Like
+    those calls, it returns a plain in-memory image that holds no file.
+    """
+    try:
+        image = Image.open(source)
+        image.load()
+        ImageOps.exif_transpose(image, in_place=True)
+        return image._new(image.im) if image.mode == "RGB" else image.convert("RGB")
     except Exception:  # noqa: BLE001 - any decode failure is an unreadable photo
         return None
 
 
 def sharpness(image: Image.Image) -> float:
     """Variance of the Laplacian on a 512 px grey copy. Lower is blurrier."""
-    grey = image.convert("L")
+    return _sharpness_of(image.convert("L"))
+
+
+def _sharpness_of(grey: Image.Image) -> float:
+    """:func:`sharpness` of an ``L`` image, which is left as it is."""
+    grey = grey.copy()
     grey.thumbnail((512, 512))
     a = np.asarray(grey, dtype=np.float32)
     lap = -4 * a[1:-1, 1:-1] + a[:-2, 1:-1] + a[2:, 1:-1] + a[1:-1, :-2] + a[1:-1, 2:]
@@ -106,11 +139,38 @@ def sharpness(image: Image.Image) -> float:
 
 def dhash(image: Image.Image) -> int:
     """64-bit difference hash for near-duplicate detection."""
-    from PIL import Image
+    return _dhash_of(image.convert("L"))
 
-    small = np.asarray(image.convert("L").resize((9, 8), Image.Resampling.LANCZOS), dtype=np.int16)
+
+def _dhash_of(grey: Image.Image) -> int:
+    """:func:`dhash` of an ``L`` image."""
+    small = np.asarray(grey.resize((9, 8), Image.Resampling.LANCZOS), dtype=np.int16)
     bits = (small[:, 1:] > small[:, :-1]).flatten()
     return int("".join("1" if b else "0" for b in bits), 2)
+
+
+@dataclass(frozen=True)
+class Measures:
+    """The numbers :func:`filter_reason` decides on, measured once per photo.
+
+    ``collage``, ``sharp`` and ``hash`` are ``None`` for a photo under the size limit.
+    They depend on the pixels only, so they can be measured on worker threads.
+    """
+
+    size: tuple[int, int]
+    collage: float | None = None
+    sharp: float | None = None
+    hash: int | None = None
+
+
+def measure(image: Image.Image | None, min_side: int = MIN_SIDE) -> Measures | None:
+    """:class:`Measures` of ``image`` (``None`` for an unreadable photo). One grey copy serves blur and hash."""
+    if image is None:
+        return None
+    if min(image.size) < min_side:
+        return Measures(image.size)
+    grey = image.convert("L")
+    return Measures(image.size, collage_score(image), _sharpness_of(grey), _dhash_of(grey))
 
 
 def filter_reason(
@@ -121,22 +181,26 @@ def filter_reason(
     blur_threshold: float = BLUR_THRESHOLD,
     dup_threshold: int = DUP_THRESHOLD,
     allow: frozenset[str] = frozenset(),
+    measures: Measures | None = None,
 ) -> str | None:
     """``lora.drop.*`` key for a photo to set aside, else ``None`` (and its hash is added to ``seen``).
 
     ``allow`` holds reasons that are not applied to this photo; only :data:`KEEPABLE` reasons may be in it.
+    ``measures`` is :func:`measure` of ``image`` with the same ``min_side`` when it was taken already.
     """
     if not allow <= KEEPABLE:
         raise ValueError(f"only {sorted(KEEPABLE)} can be allowed")
     if image is None:
         return "lora.drop.unreadable"
-    if min(image.size) < min_side:
+    if measures is None:
+        measures = measure(image, min_side)
+    if min(measures.size) < min_side:
         return "lora.drop.small"
-    if "lora.drop.collage" not in allow and looks_like_collage(image):
+    if "lora.drop.collage" not in allow and measures.collage >= COLLAGE_SCORE:
         return "lora.drop.collage"
-    if sharpness(image) < blur_threshold:
+    if measures.sharp < blur_threshold:
         return "lora.drop.blurry"
-    value = dhash(image)
+    value = measures.hash
     if "lora.drop.duplicate" not in allow and near_duplicate(value, seen, dup_threshold) is not None:
         return "lora.drop.duplicate"
     seen.append(value)
@@ -173,7 +237,8 @@ def collage_score(image: Image.Image) -> float:
     width, height = image.size
     scale = _COLLAGE_SIDE / max(width, height, 1)
     size = (max(24, round(width * scale)), max(24, round(height * scale)))
-    rgb = np.asarray(image.convert("RGB").resize(size, Image.Resampling.BOX), dtype=np.float32)
+    rgb = image if image.mode == "RGB" else image.convert("RGB")
+    rgb = np.asarray(rgb.resize(size, Image.Resampling.BOX), dtype=np.float32)
     return max(_split_score(rgb), _split_score(rgb.transpose(1, 0, 2)))
 
 

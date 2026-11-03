@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import shutil
-from collections.abc import Callable, Sequence
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import NoReturn
 
@@ -31,11 +35,15 @@ from voxprint_forge.lora.photos import (
     KEEPABLE,
     MIN_SIDE,
     Drop,
+    Measures,
+    bytes_id,
     caption_marks_collage,
     check_count,
     crop,
+    decode_photo,
     dhash,
     filter_reason,
+    measure,
     near_duplicate,
     open_photo,
     photo_id,
@@ -60,6 +68,10 @@ _PRINTED = (
     "mivolo_ages",
     "estimate",
 )
+# Photo decode, measure, crop and PNG writes run on this many threads (Pillow and numpy
+# release the GIL for the heavy parts). Results are taken in input order, so the output
+# is the same as one thread's. At most twice this many photos are decoded ahead.
+WORKERS = max(1, min(4, os.cpu_count() or 1))
 
 
 def prepare(
@@ -126,16 +138,29 @@ def prepare(
     seen: list[int] = []
     # The file name behind each hash in ``seen``, for the near-duplicate warning.
     seen_names: list[str] = []
-    for item in existing:
-        image = open_photo(project.root / item.file)
-        if image is not None:
-            seen.append(dhash(image))
+    prepared_hash = _ordered(lambda item: _hash_of(open_photo(project.root / item.file)), existing)
+    for item, value in zip(existing, prepared_hash, strict=True):
+        if value is not None:
+            seen.append(value)
             seen_names.append(item.file)
     keep_ids = {photo_id(path) for path in keep}
     drops: list[Drop] = []
-    kept: list[tuple[str, object]] = []
+    # Kept photos hold their file bytes, not their pixels: the safety pass decodes them again,
+    # a few at a time, so a large set never sits in memory fully decoded.
+    kept: list[tuple[str, bytes]] = []
+    kept_ids: set[str] = set()
+    pids: dict[Path, str] = {}
     total = len(files)
-    for index, path in enumerate(files, 1):
+
+    def load(path: Path) -> tuple[str, bytes, object, Measures | None]:
+        data = Path(path).read_bytes()
+        pid = bytes_id(data)
+        if pid in known:
+            return pid, data, None, None
+        image = decode_photo(io.BytesIO(data))
+        return pid, data, image, measure(image, min_side)
+
+    for index, (path, (pid, data, image, measures)) in enumerate(zip(files, _ordered(load, files), strict=True), 1):
         progress.emit(
             "prepare.check",
             "lora.progress.check_photos",
@@ -144,10 +169,9 @@ def prepare(
             done=index,
             total=total,
         )
-        pid = photo_id(path)
-        if pid in known or pid in {k for k, _ in kept}:
+        pids[Path(path)] = pid
+        if pid in known or pid in kept_ids:
             continue
-        image = open_photo(path)
         if pid in keep_ids:
             allow = KEEPABLE
         elif drop_near_duplicates:
@@ -161,6 +185,7 @@ def prepare(
             blur_threshold=blur_threshold,
             dup_threshold=dup_threshold,
             allow=allow,
+            measures=measures,
         )
         if reason:
             drops.append(Drop(pid, Path(path).name, reason))
@@ -174,13 +199,21 @@ def prepare(
                 {"file": Path(path).name, "other": seen_names[match]},
             )
         seen_names.append(Path(path).name)
-        kept.append((pid, image))
-    names = {photo_id(p): Path(p).name for p in files}
-    paths = {photo_id(p): Path(p) for p in files}
+        kept.append((pid, data))
+        kept_ids.add(pid)
+    image = data = None
+    names = {pid: Path(p).name for p, pid in pids.items()}
+    paths = {pid: Path(p) for p, pid in pids.items()}
     internal = bool(getattr(gate, "internal", False))
+    # ``image`` below is the photo the gate checks; only its crop (what training uses) is kept.
     checked: list[tuple[str, object, Decision, str | None]] = []
     keyword = False
-    for index, (pid, image) in enumerate(kept, 1):
+
+    def decode_and_crop(row: tuple[str, bytes]) -> tuple[object, object]:
+        image = decode_photo(io.BytesIO(row[1]))
+        return image, crop(image, crop_mode)
+
+    for index, ((pid, _), (image, cropped)) in enumerate(zip(kept, _ordered(decode_and_crop, kept), strict=True), 1):
         progress.emit(
             "prepare.safety",
             "lora.progress.safety",
@@ -203,18 +236,20 @@ def prepare(
             keyword = True
         _log_stage_errors(decision)
         key = _identity(gate, image) if not internal else None
-        checked.append((pid, image, decision, key))
+        checked.append((pid, cropped, decision, key))
+        del image
+    kept.clear()
     tiers = list(_aggregate(checked, internal))
     job = decide_job(tiers, keyword=keyword)
     safe: list[tuple[str, object]] = []
     unavailable = any(set(decision.reasons) & set(UNAVAILABLE) for _, _, decision, _ in checked)
     trace: list[dict[str, object]] = []
-    for (pid, image, decision, _), tier in zip(checked, tiers, strict=True):
+    for (pid, cropped, decision, _), tier in zip(checked, tiers, strict=True):
         keep = tier == "clear"
         row = _trace_row(pid, names.get(pid, pid), decision, keep, tier)
         trace.append(row)
         if keep:
-            safe.append((pid, image))
+            safe.append((pid, cropped))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
             if mode == "expert":
@@ -233,7 +268,8 @@ def prepare(
     if unavailable:
         _refuse(project, subject, mode, progress, "check_unavailable", "lora.err.check_unavailable")
     project.prepared.mkdir(parents=True, exist_ok=True)
-    for index, (pid, image) in enumerate(safe, 1):
+    written = _ordered(lambda row: row[1].save(project.prepared / f"{row[0]}.png"), safe)
+    for index, _ in enumerate(written, 1):
         progress.emit(
             "prepare.crop",
             "lora.progress.crop",
@@ -242,7 +278,6 @@ def prepare(
             done=index,
             total=len(safe),
         )
-        crop(image, crop_mode).save(project.prepared / f"{pid}.png")
     new_items: list[Item] = []
     caption_drops: list[Drop] = []
     if safe:
@@ -251,7 +286,7 @@ def prepare(
         if captioner is None:
             raise LoraStageError("lora.err.captioner_missing")
         try:
-            for index, (pid, image) in enumerate(safe, 1):
+            for index, (pid, cropped) in enumerate(safe, 1):
                 progress.emit(
                     "prepare.caption",
                     "lora.progress.caption",
@@ -261,7 +296,7 @@ def prepare(
                     total=len(safe),
                 )
                 try:
-                    text = captioner.caption(crop(image, crop_mode))
+                    text = captioner.caption(cropped)
                 except Exception:  # noqa: BLE001
                     refuse(project, "captioner_error", "lora.err.check_unavailable")
                 long = str(text.get("long", ""))
@@ -341,6 +376,33 @@ def prepare(
         raise LoraUsageError("lora.err.too_few", need=need)
     progress.emit("prepare.done", "lora.progress.done", state="done")
     return summary
+
+
+def _ordered[T, R](work: Callable[[T], R], items: Iterable[T], workers: int | None = None) -> Iterator[R]:
+    """``work(item)`` for each item, yielded in input order, run on up to ``workers`` threads.
+
+    At most ``2 * workers`` items are in flight, which bounds memory. Stopping early cancels the rest.
+    """
+    workers = WORKERS if workers is None else workers
+    if workers <= 1:
+        yield from map(work, items)
+        return
+    pending: deque[Future[R]] = deque()
+    with ThreadPoolExecutor(workers, thread_name_prefix="lora-prepare") as pool:
+        try:
+            for item in items:
+                pending.append(pool.submit(work, item))
+                if len(pending) >= 2 * workers:
+                    yield pending.popleft().result()
+            while pending:
+                yield pending.popleft().result()
+        finally:
+            for future in pending:
+                future.cancel()
+
+
+def _hash_of(image: object) -> int | None:
+    return None if image is None else dhash(image)
 
 
 def _with_keep(files: Sequence[Path], keep: Sequence[Path]) -> list[Path]:
