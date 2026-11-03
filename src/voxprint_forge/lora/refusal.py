@@ -13,7 +13,7 @@ from pathlib import Path
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.i18n import text
 from voxprint_forge.lora.limits import MIN_SIDE, RECOMMENDED_RANGE, expert_only
-from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, Drop, filter_reason, open_photo, photo_id
+from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, Drop, filter_reason, read_photo
 
 SAFETY = "lora.drop.safety"
 FIX = {
@@ -118,12 +118,12 @@ def scan_files(
     notes: list[Note] = []
     kept = 0
     for path in files:
-        digest = photo_id(path)
+        digest, image = read_photo(path)
         if not drop_near_duplicates and digest in digests:
             notes.append(Note(Path(path).name, "lora.drop.duplicate"))
             continue
         reason = filter_reason(
-            open_photo(path),
+            image,
             seen,
             min_side=min_side,
             blur_threshold=blur_threshold,
