@@ -272,6 +272,15 @@ def llama_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_USER", "voxprint-tests")
     monkeypatch.setenv("KAGGLE_USER", "mitroshenkov87")
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    # Tests must not fetch the pinned calibration gist from the network.
+    calib = tmp_path / "calib" / "imatrix.txt"
+    calib.parent.mkdir(parents=True, exist_ok=True)
+    calib.write_text(
+        "The quiet street led down to the harbor where the fishing boats rested at dawn. "
+        "A patient reader finds that plain prose about ordinary days still carries weight.\n" * 240,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("voxprint_forge.pipeline.ensure_calibration", lambda: calib)
     # The tiny plan declares a 50 GiB reuse that fit rejects and never writes.
     # ensure_free still requires that size plus the 5 GiB margin (~55 GiB).
     # windows-latest has about 28 GiB free, so the real check would stop the
