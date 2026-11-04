@@ -1,7 +1,9 @@
 """Base-model adapters. The engine talks only to :class:`BaseAdapter`; the base is picked by MDL id.
 
-Built in: Z-Image (``z-image``, the Canvas hand-off base, default) and
-MOSS-Image Base (``moss-image-base``). Both are Apache-2.0 and both can train.
+Built in: MOSS-Image SFT (registry id ``moss-image-base``, the default for new projects;
+weights are ``OpenMOSS-Team/MOSS-Image-SFT`` from :data:`voxprint_forge.diffusion.moss.REPOS`)
+and Z-Image (``z-image``, the base of every project and LoRA saved before MOSS existed).
+Both are Apache-2.0 and both can train.
 A restrictive base may only be an optional MDL link to its official source.
 """
 
@@ -49,6 +51,9 @@ class BaseInfo:
     revision: str
     licence: str
     display_name: str
+    sha256: str = ""  # pinned weights digest; empty until the mirror carries it
+    mirror: str = ""  # our byte-identical backup repo, empty when there is none
+    variant: str = ""  # "sft", "base", or "z-image" when this row is one of those
 
     @property
     def permissive(self) -> bool:
@@ -74,6 +79,7 @@ class BaseAdapter(ABC):
     trainable: bool = True  # False while the adapter has no training loader yet
     supports_negatives: bool = False  # True when disliked review samples can enter the loss
     lora_dtype: torch.dtype | None = None  # None: the adapter dtype follows the base weight
+    max_tokens: int | None = None  # encode-time token cap; None uses the tokenizer's own limit
 
     @abstractmethod
     def load(self, weights_dir: Path, config: TrainConfig, device: str) -> nn.Module:
@@ -82,6 +88,35 @@ class BaseAdapter(ABC):
     @abstractmethod
     def encode(self, images: Sequence[Any], captions: Sequence[dict[str, str]], config: TrainConfig) -> list[Sample]:
         """Encode prepared images and captions once, before training."""
+
+    def cap_text(self, text: str, tokenizer: Any) -> str:
+        """Cut ``text`` to this adapter's token cap. Dataset captions are left whole.
+
+        Called from :meth:`encode` (and preview encoding). A missing tokenizer
+        returns ``text`` unchanged.
+        """
+        if not text or tokenizer is None:
+            return text
+        limit = self.max_tokens if isinstance(self.max_tokens, int) and self.max_tokens > 0 else None
+        if limit is None:
+            limit = tokenizer_limit(tokenizer)
+        if limit is None:
+            return text
+        return truncate_to_tokens(text, tokenizer, limit)
+
+    def remember(self, kind: str, text: str, value: Any) -> str:
+        """Store ``value`` under a cache key that includes this adapter's base.
+
+        Latents and embeddings differ per base, so a sequential ``both`` run
+        must not reuse the other base's tensors. Returns the key.
+        """
+        cache = getattr(self, "_embed_cache", None)
+        if cache is None:
+            cache = {}
+            self._embed_cache = cache
+        key = cache_key(self.info.mdl_id, kind, text)
+        cache[key] = value
+        return key
 
     def release_encoders(self) -> None:
         """Free encoder memory after :meth:`encode`. Optional."""
@@ -151,15 +186,29 @@ def available() -> list[BaseInfo]:
     return [cls.info for cls in _REGISTRY.values()]
 
 
-# MOSS-Image Base as a LoRA base. VOXPRINT_FORGE_MOSS_LORA=0 hides it (app list and ``lora train``).
+# MOSS-Image SFT as a LoRA base, under the stable registry id moss-image-base.
+# VOXPRINT_FORGE_MOSS_LORA=0 hides it (app list and ``lora train``).
+# VOXPRINT_FORGE_ZIMAGE_LORA=0 hides Z-Image the same way. The old MOSS flag still works.
 MOSS_LORA_DEFAULT = True
+_FLAG_OFF = ("0", "false", "no", "off")
+
+
+def _flag_shown(name: str, default: bool) -> bool:
+    """True when env ``name`` leaves the base visible. Unset uses ``default``."""
+    raw = os.environ.get(name, "").strip().lower()
+    if raw == "":
+        return default
+    return raw not in _FLAG_OFF
 
 
 def hidden() -> frozenset[str]:
     """MDL ids switched off as LoRA bases in this build or by the environment."""
-    raw = os.environ.get("VOXPRINT_FORGE_MOSS_LORA", "").strip().lower()
-    shown = MOSS_LORA_DEFAULT if raw == "" else raw not in ("0", "false", "no", "off")
-    return frozenset() if shown else frozenset({"moss-image-base"})
+    off: set[str] = set()
+    if not _flag_shown("VOXPRINT_FORGE_MOSS_LORA", MOSS_LORA_DEFAULT):
+        off.add("moss-image-base")
+    if not _flag_shown("VOXPRINT_FORGE_ZIMAGE_LORA", True):
+        off.add("z-image")
+    return frozenset(off)
 
 
 def trainable() -> list[BaseInfo]:
@@ -185,6 +234,56 @@ def weights_dir(mdl_id: str) -> Path:
 
     ensure_view(mdl_id)
     return models_dir() / "model-forge" / mdl_id
+
+
+def cache_key(base_id: str, kind: str, text: str) -> str:
+    """Key for one cached latent or text embedding. The base is always in the key."""
+    return f"{base_id}\x1f{kind}\x1f{text}"
+
+
+def tokenizer_limit(tokenizer: Any) -> int | None:
+    """The tokenizer's own max length, or None when it does not say."""
+    for name in ("model_max_length", "max_length"):
+        value = getattr(tokenizer, name, None)
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        if 0 < value < 10**6:
+            return value
+    return None
+
+
+def truncate_to_tokens(text: str, tokenizer: Any, max_tokens: int) -> str:
+    """Return ``text`` cut to ``max_tokens`` tokens. The stored caption is not changed.
+
+    ``tokenizer`` needs ``encode`` (ids) and ``decode`` (text). Anything else
+    returns ``text`` unchanged so a stand-in pipe without a tokenizer still encodes.
+    """
+    if max_tokens <= 0 or not text:
+        return text
+    encode = getattr(tokenizer, "encode", None)
+    decode = getattr(tokenizer, "decode", None)
+    if not callable(encode) or not callable(decode):
+        return text
+    ids = _token_ids(encode(text))
+    if len(ids) <= max_tokens:
+        return text
+    try:
+        return str(decode(ids[:max_tokens], skip_special_tokens=True))
+    except TypeError:
+        return str(decode(ids[:max_tokens]))
+
+
+def _token_ids(value: Any) -> list[Any]:
+    """Token ids from an encode() result: a list, a tensor, or a mapping with ``input_ids``."""
+    if isinstance(value, dict):
+        value = value.get("input_ids", value.get("ids"))
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().reshape(-1).tolist()
+    if isinstance(value, (list, tuple)) and value and isinstance(value[0], (list, tuple)):
+        value = list(value[0])
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
 
 
 def _dtype(config: TrainConfig) -> torch.dtype:
@@ -258,7 +357,12 @@ class ZImageAdapter(BaseAdapter):
     """
 
     info = BaseInfo(
-        "z-image", "Tongyi-MAI/Z-Image", "04cc4abb7c5069926f75c9bfde9ef43d49423021", "Apache-2.0", "Z-Image"
+        "z-image",
+        "Tongyi-MAI/Z-Image",
+        "04cc4abb7c5069926f75c9bfde9ef43d49423021",
+        "Apache-2.0",
+        "Z-Image",
+        variant="z-image",
     )
     target_modules = (
         "attention.to_q",
@@ -269,6 +373,7 @@ class ZImageAdapter(BaseAdapter):
         "feed_forward.w2",
         "feed_forward.w3",
     )
+    max_tokens = 512  # Z-Image encode_prompt sequence length; captions stay whole until encode
 
     def __init__(self) -> None:
         self.pipe: Any = None
@@ -342,11 +447,12 @@ class ZImageAdapter(BaseAdapter):
         vae_cfg = pipe.vae.config
         samples: list[Sample] = []
         self._empty = self._embed("")
-        for image, caption in zip(images, captions, strict=True):
+        for index, (image, caption) in enumerate(zip(images, captions, strict=True)):
             array = np.asarray(image.convert("RGB"), dtype=np.float32) / 127.5 - 1.0
             pixels = torch.from_numpy(array).permute(2, 0, 1)[None].to(self.device, pipe.vae.dtype)
             latents = pipe.vae.encode(pixels).latent_dist.sample()[0]
             latents = (latents - vae_cfg.shift_factor) * vae_cfg.scaling_factor
+            self.remember("latent", str(index), latents)
             encoded = {key: self._embed(value) for key, value in caption.items() if value}
             samples.append(Sample(latents.to(_dtype(config)), encoded))
         self._samples_bytes = sum(_nbytes(s.latents) + sum(_nbytes(v) for v in s.captions.values()) for s in samples)
@@ -355,10 +461,18 @@ class ZImageAdapter(BaseAdapter):
 
     @torch.no_grad()
     def _embed(self, prompt: str) -> Any:
-        """One prompt's embedding, detached: never part of a graph (previews call this outside ``encode``)."""
-        embeds, _ = self.pipe.encode_prompt(prompt, device=self.device, do_classifier_free_guidance=False)
+        """One prompt's embedding, detached: never part of a graph (previews call this outside ``encode``).
+
+        The string is cut to ``max_tokens`` only when the pipe has a tokenizer.
+        A stand-in pipe is called with the original prompt and the same arguments.
+        """
+        tokenizer = getattr(self.pipe, "tokenizer", None)
+        text = self.cap_text(prompt, tokenizer) if tokenizer is not None else prompt
+        embeds, _ = self.pipe.encode_prompt(text, device=self.device, do_classifier_free_guidance=False)
         embed = embeds[0]
-        return embed.detach() if isinstance(embed, torch.Tensor) else embed
+        embed = embed.detach() if isinstance(embed, torch.Tensor) else embed
+        self.remember("embedding", text, embed)
+        return embed
 
     def prepare_previews(self, prompts: Sequence[str]) -> None:
         """Encode each test prompt and the empty negative once, so previews never load the text encoder again."""
@@ -636,8 +750,10 @@ def _pixels(image: Any) -> torch.Tensor:
 
 
 class MossImageAdapter(BaseAdapter):
-    """MOSS-Image Base (OpenMOSS-Team/MOSS-Image-Base, Apache-2.0).
+    """MOSS-Image SFT (OpenMOSS-Team/MOSS-Image-SFT, Apache-2.0).
 
+    The registry id stays ``moss-image-base``. Training and generation both use the
+    SFT snapshot pinned in :data:`voxprint_forge.diffusion.moss.REPOS` under ``sft``.
     The LoRA stays fp32. A 24 GB card keeps the bf16 DiT. A 16 GB card stores the DiT
     as torchao FP8 e4m3 weights (bf16 compute): ``Float8Tensor.dtype`` is still bf16,
     so the MOSS forward can cast activations to ``weight.dtype``. Raw float8 or 4-bit
@@ -651,10 +767,12 @@ class MossImageAdapter(BaseAdapter):
 
     info = BaseInfo(
         "moss-image-base",
-        "OpenMOSS-Team/MOSS-Image-Base",
-        "1ceede80badddd6a7812069619edaa5633587192",
+        moss_runtime.REPOS["sft"].repo,
+        moss_runtime.REPOS["sft"].revision,
         "Apache-2.0",
-        "MOSS-Image Base",
+        "MOSS-Image SFT",
+        mirror=moss_runtime.REPOS["sft"].mirror,
+        variant="sft",
     )
     target_modules = (
         "proj.q",
@@ -666,6 +784,7 @@ class MossImageAdapter(BaseAdapter):
     )
     trainable = True
     lora_dtype = torch.float32
+    max_tokens = 4096  # tokenizer cap; the memory-plan caption budget is a different number
 
     def __init__(self) -> None:
         self.pipe: Any = None
@@ -822,8 +941,9 @@ class MossImageAdapter(BaseAdapter):
         stage(pipe.vae, self.device, key=f"{self.info.mdl_id}:vae", stage_name="encode")
         self._empty = self._on_device(self._encode_prompt(""))
         samples: list[Sample] = []
-        for image, caption in zip(images, captions, strict=True):
+        for index, (image, caption) in enumerate(zip(images, captions, strict=True)):
             latents = moss_runtime.encode_image(pipe.vae, _pixels(image))[0].detach()
+            self.remember("latent", str(index), latents)
             encoded = {key: self._on_device(self._encode_prompt(value)) for key, value in caption.items() if value}
             samples.append(Sample(latents, encoded))
         self._samples_bytes = sum(
@@ -835,13 +955,23 @@ class MossImageAdapter(BaseAdapter):
         return samples
 
     def _encode_prompt(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
-        """One prompt's embedding and mask on the CPU. The encoder runs where it was loaded."""
+        """One prompt's embedding and mask on the CPU. The encoder runs where it was loaded.
+
+        Captions stay whole on disk. With a real tokenizer and text encoder the
+        text is cut to ``max_tokens`` here. A stand-in without a tokenizer is
+        called with the original prompt.
+        """
         pipe = self.pipe
-        if getattr(pipe, "tokenizer", None) is not None and getattr(pipe, "text_encoder", None) is not None:
-            embeds, mask = moss_runtime.encode_on_cpu(pipe, prompt)
+        tokenizer = getattr(pipe, "tokenizer", None)
+        text = self.cap_text(prompt, tokenizer) if tokenizer is not None else prompt
+        if tokenizer is not None and getattr(pipe, "text_encoder", None) is not None:
+            limit = self.max_tokens if isinstance(self.max_tokens, int) and self.max_tokens > 0 else 4096
+            embeds, mask = moss_runtime.encode_on_cpu(pipe, text, max_sequence_length=limit)
         else:
-            embeds, mask = pipe.encode_prompt(prompt)
-        return embeds[0].detach().to("cpu"), mask[0].detach().to("cpu").bool()
+            embeds, mask = pipe.encode_prompt(prompt if tokenizer is None else text)
+        pair = embeds[0].detach().to("cpu"), mask[0].detach().to("cpu").bool()
+        self.remember("embedding", text, pair)
+        return pair
 
     def _on_device(self, pair: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         emb, mask = pair

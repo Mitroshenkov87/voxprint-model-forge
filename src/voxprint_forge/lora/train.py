@@ -23,6 +23,7 @@ from voxprint_forge.hashing import sha256_file
 from voxprint_forge.lora.bases import BaseAdapter, weights_dir
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.export import base_variant, lora_base_of
 from voxprint_forge.lora.gate_run import open_gate_run
 from voxprint_forge.lora.job_gate import check_run, preflight_refuse
 from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state
@@ -30,7 +31,7 @@ from voxprint_forge.lora.limits import min_photos, need_more
 from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
 from voxprint_forge.lora.presets import TrainConfig
 from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
-from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.project import Item, Project, base_mismatch_params
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_SAMPLES,
     DEFAULT_FIRST_ROUND_STEPS,
@@ -103,6 +104,21 @@ def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, o
     return data, items
 
 
+def release_adapter(adapter: object) -> None:
+    """Free encoders before the next base in a sequential ``both`` run loads.
+
+    A real adapter sets ``pipe`` to None until ``load``. Releasing that empty
+    pipe is skipped. A stand-in with no ``pipe`` attribute still runs
+    ``release_encoders``. A second call after training is safe for these adapters.
+    """
+    raw = getattr(adapter, "__dict__", None)
+    if isinstance(raw, dict) and "pipe" in raw and raw["pipe"] is None:
+        return
+    release = getattr(adapter, "release_encoders", None)
+    if callable(release):
+        release()
+
+
 def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dict[str, object]:
     """Plan and ETA without training (``--dry-run``)."""
     _, items = _check_ready(project)
@@ -110,6 +126,7 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
     result: dict[str, object] = {
         "state": "dry-run",
         "base": adapter.info.mdl_id,
+        "base_variant": base_variant(adapter.info.mdl_id, adapter.info.variant),
         "photos": len(items),
         "steps": config.steps,
         "eta_seconds": int(round(seconds)),
@@ -153,8 +170,10 @@ def discard_run(project: Project) -> dict[str, object]:
     subject record stay. A link that points outside the project is left alone.
     """
     root = project.root.resolve()
+    # The whole checkpoints tree: every base in a multi-base project, and the
+    # same root folder a legacy project already uses.
     for path in (
-        project.checkpoints,
+        project.root / "checkpoints",
         project.previews,
         project.review,
         project.train_state,
@@ -375,6 +394,7 @@ def train(
     marks before that next stage. The default reads marks already stored by the
     GUI or ``lora review``.
     """
+    project.activate_base(adapter.info.mdl_id)
     _check_gate(project)
     # The one refusal step: minors, unavailable checks, and files changed since the gate.
     settings = {"sample_attire": sample_attire or "", **config.to_dict()}
@@ -392,7 +412,9 @@ def train(
         config = TrainConfig.from_dict(saved["config"])
         from_lora = Path(saved["from"]) if saved.get("from") else None
         if saved["base"] != adapter.info.mdl_id:
-            raise LoraUsageError("lora.err.base_mismatch")
+            raise LoraUsageError(
+                "lora.err.base_mismatch", **base_mismatch_params(str(saved["base"]), adapter.info.mdl_id)
+            )
     if review_continue:
         pending = load_state(project)
         checkpoint = str(pending.get("checkpoint") or "")
@@ -404,8 +426,10 @@ def train(
             config = TrainConfig.from_dict(saved_config)
     if from_lora is not None:
         meta = lora_base(from_lora)
-        if meta.get("voxprint.lora.base") != adapter.info.mdl_id:
-            raise LoraUsageError("lora.err.base_mismatch")
+        # A LoRA without base metadata predates MOSS: it is a Z-Image LoRA.
+        found = lora_base_of(meta)
+        if found != adapter.info.mdl_id:
+            raise LoraUsageError("lora.err.base_mismatch", **base_mismatch_params(found, adapter.info.mdl_id))
         rank = int(meta.get("voxprint.lora.rank", config.rank))
         alpha = int(meta.get("voxprint.lora.alpha", config.alpha))
         config = TrainConfig.from_dict({**config.to_dict(), "rank": rank, "alpha": alpha})
@@ -786,6 +810,7 @@ def _open_review(
     planned = plan_samples(review_state)
     steps = sample_steps_of(review_state)
     saved: list[dict[str, object]] = []
+    digest = sha256_file(last_good) if last_good is not None and Path(last_good).is_file() else None
     model.eval()
     try:
         for index, spec in enumerate(planned, 1):
@@ -807,7 +832,14 @@ def _open_review(
             if not passes_output_check(image):
                 continue
             path = project.resolve(str(spec["file"]))
-            save_image(image, path)
+            save_image(image, path, metadata={
+                "prompt": spec.get("prompt"),
+                "seed": spec.get("seed"),
+                "steps": steps,
+                "base": adapter.info.mdl_id,
+                "sha256": digest,
+                "strength": PREVIEW_LORA_SCALE,
+            })
             saved.append(spec)
     finally:
         model.train()
@@ -942,7 +974,12 @@ def _seal_finished(
     record = dict(trained) if isinstance(trained, dict) else {}
     record.update({
         "base": record.get("base") or adapter.info.mdl_id,
+        "base_variant": base_variant(
+            str(record.get("base") or adapter.info.mdl_id),
+            record.get("base_variant") or adapter.info.variant,
+        ),
         "base_revision": record.get("base_revision") or adapter.info.revision,
+        "base_sha256": str(record.get("base_sha256") or adapter.info.sha256 or ""),
         "state": "done",
         "step": done_steps,
         "steps_planned": planned,
@@ -1053,7 +1090,19 @@ def _final_preview(
         if not passes_output_check(image):
             continue
         project.previews.mkdir(parents=True, exist_ok=True)
-        save_preview(image, project.previews / f"step-{file_step:06d}-{index}.png", stamp.text(config.seed + index))
+        save_preview(
+            image,
+            project.previews / f"step-{file_step:06d}-{index}.png",
+            stamp.text(config.seed + index),
+            metadata={
+                "prompt": prompt,
+                "seed": config.seed + index,
+                "steps": steps,
+                "base": stamp.base,
+                "strength": stamp.scale,
+                "sha256": stamp.lora_sha256,
+            },
+        )
 
 
 def _preview_model(
@@ -1131,17 +1180,36 @@ class PreviewStamp:
         }
 
 
-def save_preview(image, path: Path, text: dict[str, str]) -> None:
-    """Write one RGB preview PNG carrying only ``text`` as metadata."""
+def save_preview(image, path: Path, text: dict[str, str], *, metadata: dict[str, object] | None = None) -> None:
+    """Write one RGB preview PNG.
+
+    The ``voxprint.*`` text chunks in ``text`` are always stored: likeness and
+    the preview tests read them. The shared prompt/seed/steps/base/LoRA document
+    in ``metadata`` is added only when embedding is opted in. The path stays PNG.
+    """
+    from voxprint_forge.imageio_save import save_image as write_image
+
+    written = write_image(image, path, "series", fmt="png", metadata=metadata)
+    _attach_png_text(written, text)
+
+
+def _attach_png_text(path: Path, text: dict[str, str]) -> None:
+    """Add ``voxprint.*`` text chunks, keeping an opt-in XMP packet if one was written."""
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
 
-    rgb = image.convert("RGB")
-    clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
-    info = PngInfo()
-    for key, value in text.items():
-        info.add_text(key, value)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(path) as image:
+        image.load()
+        info = PngInfo()
+        for key, value in getattr(image, "text", {}).items():
+            if str(key) == "XML:com.adobe.xmp":
+                info.add_itxt(str(key), str(value))
+            else:
+                info.add_text(str(key), str(value))
+        for key, value in text.items():
+            info.add_text(str(key), str(value))
+        rgb = image.convert("RGB")
+        clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
     clean.save(path, format="PNG", pnginfo=info)
 
 
@@ -1180,11 +1248,19 @@ def _previews(project, adapter, model, prompts, step, config, progress, stamp: P
             image = adapter.preview(model, prompt, config.seed + index, config)
             if image is not None:
                 path = project.previews / f"step-{step:06d}-{index}.png"
+                meta = None if stamp is None else {
+                    "prompt": prompt,
+                    "seed": config.seed + index,
+                    "base": stamp.base,
+                    "strength": stamp.scale,
+                    "sha256": stamp.lora_sha256,
+                }
                 if stamp is None:
-                    project.previews.mkdir(parents=True, exist_ok=True)
-                    image.save(path)
+                    from voxprint_forge.imageio_save import save_image as write_image
+
+                    write_image(image, path, "series", fmt="png")
                 else:
-                    save_preview(image, path, stamp.text(config.seed + index))
+                    save_preview(image, path, stamp.text(config.seed + index), metadata=meta)
     finally:
         model.train()
 
@@ -1195,7 +1271,9 @@ def _finish(
 ) -> dict[str, object]:
     record = {
         "base": adapter.info.mdl_id,
+        "base_variant": base_variant(adapter.info.mdl_id, adapter.info.variant),
         "base_revision": adapter.info.revision,
+        "base_sha256": str(adapter.info.sha256 or ""),
         "config": config.to_dict(),
         "step": step,
         "state": state,

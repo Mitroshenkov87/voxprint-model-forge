@@ -157,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_compare_command(sub)
     add_kl_command(sub)
     add_lora_command(sub)
+    from voxprint_forge.diffusion.moss_peak import add_command as add_moss_peak
+    from voxprint_forge.diffusion.moss_prequant import add_command as add_moss_prequant
+
+    add_moss_prequant(sub)
+    add_moss_peak(sub)
     _add_models_command(sub)
     index = sub.add_parser("index", help="Build or push the model index, or backfill voxprint-model.json.")
     index_sub = index.add_subparsers(dest="index_command", required=True)
@@ -395,6 +400,14 @@ def _dispatch(args: argparse.Namespace) -> object:
         return refset_preflight()
     if args.command == "lora":
         return execute_lora(args)
+    if args.command == "moss-prequant":
+        from voxprint_forge.diffusion.moss_prequant import execute as execute_prequant
+
+        return execute_prequant(args)
+    if args.command == "moss-peak":
+        from voxprint_forge.diffusion.moss_peak import execute as execute_peak
+
+        return execute_peak(args)
     if args.command == "models":
         from voxprint_forge.mdl_app import execute
 
@@ -438,6 +451,7 @@ def _dispatch(args: argparse.Namespace) -> object:
             make_fp8=bool(args.make_fp8),
             out=args.out,
             reclaim_cache=bool(args.reclaim_cache),
+            embed_metadata=bool(getattr(args, "embed_metadata", False)),
         )
     if args.command == "kl":
         forge_out = args.forge_out or Path(os.environ.get("FORGE_OUT", Path.home() / "forge-out"))

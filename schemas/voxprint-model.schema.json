@@ -229,6 +229,58 @@
           "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
         }
       }
+    },
+    "prequant": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional one-time MOSS pre-quant record. Absent on every other model.",
+      "required": [
+        "quant_modes",
+        "measured_peak_gb",
+        "min_sm",
+        "budget_gb",
+        "chosen"
+      ],
+      "properties": {
+        "quant_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "measured_peak_gb": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["generate", "train"],
+            "properties": {
+              "generate": {"type": "number", "minimum": 0},
+              "train": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "min_sm": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "budget_gb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "chosen": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   },
   "$defs": {

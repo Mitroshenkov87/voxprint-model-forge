@@ -19,7 +19,7 @@ from tests.test_lora_export import header, trained
 from voxprint_forge.cli import main
 from voxprint_forge.lora import bases
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.export import SCALE_DEFAULT, export_package
+from voxprint_forge.lora.export import SCALE_DEFAULT, base_short, export_package
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +57,7 @@ def test_package_round_trip_digest_and_schema(tmp_path: Path) -> None:
     wide.save(project.previews / "wide.png", pnginfo=info)
     result = export_package(project, Progress())
     target = Path(str(result["file"]))
-    assert target.name == "Mira.voxlora"
+    assert target.name == f"Mira.{base_short('tiny-test')}.voxlora"
     blob = target.read_bytes()
     assert marker not in blob
     assert b"UserPhotoMetaSecret" not in blob

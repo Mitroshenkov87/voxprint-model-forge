@@ -408,6 +408,7 @@ def generate(
     out: Path | None = None,
     te_quant: str | None = None,
     te_device: str | None = None,
+    embed_metadata: bool = False,
 ) -> object:
     """One MOSS image from a local snapshot. ``lora_path`` is optional; ``lora_scale`` multiplies it.
 
@@ -441,9 +442,40 @@ def generate(
         generator=generator,
     ).images[0]
     if out is not None:
-        Path(out).parent.mkdir(parents=True, exist_ok=True)
-        image.save(out)
+        from voxprint_forge.imageio_save import embed_metadata_enabled, format_of, save_image
+
+        # A named suffix (out.png) stays that format. A bare stem becomes WebP.
+        opted = bool(embed_metadata) or embed_metadata_enabled()
+        meta = _picture_metadata(prompt, seed, steps, lora_path, lora_scale) if opted else None
+        save_image(image, out, "regular", fmt=format_of(out), metadata=meta, embed_metadata=opted)
     return image
+
+
+def _picture_metadata(
+    prompt: str, seed: int, steps: int, lora_path: Path | None, lora_scale: float,
+) -> dict[str, object]:
+    """Prompt, seed, steps, base and, when a LoRA was applied, its strength and sha256."""
+    document: dict[str, object] = {
+        "prompt": prompt,
+        "seed": seed,
+        "steps": steps,
+        "base": "moss-image-base",
+        # Registry id stays moss-image-base. The default weights are REPOS["sft"].
+        "base_variant": "sft",
+    }
+    if lora_path is not None and Path(lora_path).is_file():
+        from voxprint_forge.hashing import sha256_file
+
+        document["lora"] = Path(lora_path).name
+        document["strength"] = lora_scale
+        document["sha256"] = sha256_file(Path(lora_path))
+        document["loras"] = [{
+            "name": Path(lora_path).name,
+            "strength": lora_scale,
+            "sha256": document["sha256"],
+            "base": "moss-image-base",
+        }]
+    return document
 
 
 def generation_parser() -> argparse.ArgumentParser:
@@ -467,6 +499,11 @@ def generation_parser() -> argparse.ArgumentParser:
         "--te-device", choices=("gpu", "cpu"), default=None,
         help="Where the text encoder runs. Default: VOXPRINT_FORGE_TE_DEVICE or gpu; cpu is slower.",
     )
+    parser.add_argument(
+        "--embed-metadata",
+        action="store_true",
+        help="Write prompt, seed, steps, base, LoRA strength and sha256 into the picture. Default: off.",
+    )
     return parser
 
 
@@ -486,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
         out=args.out,
         te_quant=args.te_quant,
         te_device=args.te_device,
+        embed_metadata=bool(args.embed_metadata),
     )
     return 0
 

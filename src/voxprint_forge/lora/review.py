@@ -4,8 +4,8 @@ A stage trains on the user's photos, saves a checkpoint and draws a fixed set of
 samples. The run then pauses. Liked samples join the next stage; disliked ones
 are negatives only when the adapter says it can use them, and are otherwise
 left out. The pause lives in ``<project>/review/state.json``, so it is still
-there after a restart. Sample pictures stay in that project folder and carry
-no extra metadata.
+there after a restart. Sample pictures stay in that project folder. They carry
+no prompt or camera metadata unless ``--embed-metadata`` is on.
 """
 
 from __future__ import annotations
@@ -285,16 +285,23 @@ def passes_output_check(image: object) -> bool:
     return image is not None
 
 
-def save_image(image: object, path: Path) -> None:
-    """Write one RGB PNG in the project folder, with no text or camera metadata."""
+def save_image(image: object, path: Path, *, metadata: Mapping[str, object] | None = None) -> None:
+    """Write one RGB picture in the project folder.
+
+    A ``.png`` path stays PNG, which is what review state and the tests read.
+    Any other path uses the shared default (WebP). Prompt, seed, steps, base,
+    LoRA strength and sha256 are written only when metadata embedding is on.
+    """
     from PIL import Image
+
+    from voxprint_forge.imageio_save import format_of
+    from voxprint_forge.imageio_save import save_image as write_image
 
     if not isinstance(image, Image.Image):
         raise LoraUsageError("lora.err.review_sample")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rgb = image.convert("RGB")
-    clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
-    clean.save(path, format="PNG")
+    # Keep the suffix the review state already recorded. New stems get WebP.
+    fmt = "png" if path.suffix.lower() == ".png" else format_of(path)
+    write_image(image, path, "series", fmt=fmt, metadata=metadata)
 
 
 def apply_file(state: dict[str, object], path: Path) -> dict[str, object]:

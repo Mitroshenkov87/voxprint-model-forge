@@ -206,9 +206,9 @@ def test_dry_run_estimates_time(tmp_path) -> None:
     assert plan["eta_seconds"] == 3 and plan["steps"] == 6 and plan["photos"] == 10
 
 
-def test_builtin_bases_are_permissive_and_zimage_is_default() -> None:
+def test_builtin_bases_are_permissive_and_moss_is_the_default() -> None:
     ids = {info.mdl_id: info for info in bases.available()}
-    assert bases.DEFAULT_BASE == "z-image"
+    assert bases.DEFAULT_BASE == "moss-image-base"
     assert ids["z-image"].permissive and ids["moss-image-base"].permissive
     with pytest.raises(LoraUsageError):
         bases.get_adapter("qwen-image-edit")

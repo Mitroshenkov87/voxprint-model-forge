@@ -46,7 +46,7 @@ HF_ENTRIES = [
     ("required", "qwen3-vl-4b-instruct", "Qwen3-VL-4B-Instruct", "Qwen/Qwen3-VL-4B-Instruct", "ebb281ec"),
     ("required", "mivolo-v2", "MiVOLO v2", "iitolstykh/mivolo_v2", "53393526"),
     ("optional", "florence2-large", "Florence-2-large", "microsoft/Florence-2-large", "21a599d4"),
-    ("optional", "moss-image-base", "MOSS-Image Base", "OpenMOSS-Team/MOSS-Image-Base", "1ceede80"),
+    ("optional", "moss-image-base", "MOSS-Image SFT", "OpenMOSS-Team/MOSS-Image-SFT", "fc5de0d5"),
     ("optional", "z-image-turbo", "Z-Image-Turbo", "Tongyi-MAI/Z-Image-Turbo", "f332072a"),
     ("optional", "dinov2-base", "DINOv2-base", "facebook/dinov2-base", "f9e44c81"),
 ]

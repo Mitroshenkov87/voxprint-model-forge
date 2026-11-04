@@ -1,5 +1,11 @@
 """FP8 e4m3 weight-only MOSS DiT, saved once and loaded from disk.
 
+The build path in this module is superseded. New MOSS compression is
+``forge moss-prequant`` (``voxprint_forge.diffusion.moss_prequant``), which
+measures fp8_e4m3, int8, and nf4 under the 13.5 GB budget and publishes the
+winner. This module still loads an existing ``dit-fp8.safetensors``. Do not
+start a new quantize from here. The loader tests stay.
+
 torchao ``Float8Tensor.dtype`` stays bf16, so the vendored MOSS block still
 casts activations to bf16 and the matmul runs in bf16. The bytes on disk are
 float8_e4m3fn with a per-row scale (torchao 0.18.0, ``Float8WeightOnlyConfig``
@@ -529,7 +535,11 @@ def quantize_module(module: object) -> object:
 
 
 def quantize_snapshot(source: Path, pin: Fp8Pin, *, verify_source: bool = True) -> object:
-    """Load the bf16 DiT and quantize it. Refuses a snapshot whose shards do not match the pin."""
+    """Load the bf16 DiT and quantize it. Refuses a snapshot whose shards do not match the pin.
+
+    Superseded for new builds by ``forge moss-prequant``. Kept so an existing
+    FP8 file can still be produced and the loader tests still pass.
+    """
     if verify_source:
         ready = source_ready(source, pin)
         if ready != "ok":

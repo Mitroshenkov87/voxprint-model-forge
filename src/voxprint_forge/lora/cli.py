@@ -1,4 +1,4 @@
-"""``forge lora prepare|train|extend|export|review|continue|finish|status|eval``: the LoRA trainer without the GUI."""
+"""``forge lora`` without the GUI: prepare, train, retrain, extend, export, review, continue, finish, status, eval."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 
-from voxprint_forge.lora import DEFAULT_BASE
+from voxprint_forge.lora import DEFAULT_BASE, legacy_base, resolve_base
 from voxprint_forge.lora.captioner import DEFAULT as CAPTION_DEFAULT
 from voxprint_forge.lora.captioner import FALLBACK as CAPTION_FALLBACK
 from voxprint_forge.lora.consent import CONSENT_METHODS, KINDS, Subject, check_subject
@@ -20,7 +20,7 @@ from voxprint_forge.lora.job_gate import repin_captions
 from voxprint_forge.lora.limits import EXPERT_RANGE, RECOMMENDED_RANGE
 from voxprint_forge.lora.photos import BLUR_THRESHOLD, DUP_THRESHOLD, MIN_SIDE, collect
 from voxprint_forge.lora.presets import CAPTION_MODES, LIKENESS, PRECISIONS, PRESETS, SCHEDULERS, build_config
-from voxprint_forge.lora.project import Item, Project
+from voxprint_forge.lora.project import Item, Project, bases_for_choice, train_bases
 from voxprint_forge.lora.review import (
     DEFAULT_FIRST_ROUND_STEPS,
     FIRST_ROUND_STEPS_MAX,
@@ -51,6 +51,14 @@ TRAIN_EPILOG = (
     "The deliverable is the .voxlora from lora finish or lora export PROJECT. checkpoints/step-*.safetensors\n"
     "are intermediate files; Canvas does not accept them."
 )
+RETRAIN_DESCRIPTION = (
+    "Train an existing project's photos for another base. The prepared dataset is reused; "
+    "crops and captions are not rebuilt, and LoRA weights are not converted. "
+    "--base is added to the project's bases, then training runs the same way as lora train. "
+    "A project that never recorded a base keeps its current one (Z-Image, when none was stored) "
+    "and gains this one. --dry-run prints the plan and leaves the project unchanged.\n\n"
+    "Example: forge lora retrain --base moss PROJECT"
+)
 FINISH_DESCRIPTION = (
     "Save the current LoRA, draw a final preview, record the steps it got, and write\n"
     "<project>/export/<name>.voxlora. That .voxlora is the file to keep and to open in Canvas;\n"
@@ -69,10 +77,32 @@ EVAL_DESCRIPTION = (
 )
 
 
+class _MarkBase(argparse.Action):
+    """Store ``--base`` and record that the user passed it.
+
+    The parsed default stays the documented value. Runtime uses ``base_explicit``
+    so an omitted flag can follow the project's own base list.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        namespace.base_explicit = True
+
+
 def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register ``lora`` and its subcommands."""
     lora = sub.add_parser(
-        "lora", help="Train a LoRA from your photos: prepare, train, extend, export, review, continue, finish, status."
+        "lora",
+        help=(
+            "Train a LoRA from your photos: prepare, train, retrain, extend, export, review, continue, "
+            "finish, status."
+        ),
     )
     lora_sub = lora.add_subparsers(dest="lora_command", required=True)
     _prepare_flags(
@@ -114,13 +144,35 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     for command in (train, extend):
         _training_flags(command)
     _review_flags(train)
-    train.add_argument("--base", default=DEFAULT_BASE, help="Base model MDL id. Default: z-image.")
-    train.add_argument("--rank", type=int, default=None, help="Adapter size (Expert).")
-    train.add_argument("--alpha", type=int, default=None, help="Adapter scale, usually equal to rank (Expert).")
-    train.add_argument("--resolution", type=int, default=None, help="Training picture size, a multiple of 64.")
-    train.add_argument("--train-text-encoder", action="store_true", default=None, help="Also train the text encoder.")
+    train.add_argument(
+        "--base",
+        default=DEFAULT_BASE,
+        action=_MarkBase,
+        help=(
+            "MDL id, moss, z-image, or both. Omitted: the project's first base "
+            f"(a legacy project stays on Z-Image). both trains each base in turn. Default: {DEFAULT_BASE}."
+        ),
+    )
+    train.set_defaults(base_explicit=False)
+    _size_flags(train)
     extend.add_argument("--from", dest="from_lora", type=Path, required=True, help="Existing LoRA .safetensors.")
     extend.add_argument("--replay", type=float, default=None, help="Share of older photos kept, 0.0-1.0.")
+    retrain = lora_sub.add_parser(
+        "retrain",
+        help="Train this project's photos for another base. The dataset is reused.",
+        description=RETRAIN_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    retrain.add_argument("project", type=Path, help="Project folder.")
+    retrain.add_argument(
+        "--base",
+        required=True,
+        choices=("moss", "z-image"),
+        help="Base to add and train: moss or z-image.",
+    )
+    _training_flags(retrain, project=False)
+    _review_flags(retrain)
+    _size_flags(retrain)
     _refset_flags(lora_sub.add_parser("refset", help="Build a photo set from 1-10 references, round by round."))
     _project_commands(lora_sub)
 
@@ -143,12 +195,13 @@ def _refset_flags(command: argparse.ArgumentParser) -> None:
                         help=f"Turbo steps, {refset.STEPS_RANGE[0]}-{refset.STEPS_RANGE[1]}. "
                         f"Default: {refset.DEFAULT_STEPS}.")
     round_.add_argument("--seed", type=int, default=None, help="First seed of the round. Default: 1000 x round.")
+    _embed_flag(round_)
     _fetch_flags(round_)
     finish = steps.add_parser("finish", help="Copy the references and kept candidates into refset/approved.")
     finish.add_argument("--project", type=Path, required=True, help="Project folder.")
     finish.add_argument("--mode", choices=("simple", "expert"), default="simple",
                         help=f"Set size: {_REC}, or {_EXPERT} in Expert.")
-    finish.add_argument("--base", default=DEFAULT_BASE, help="Base model the set is for. Default: z-image.")
+    finish.add_argument("--base", default=DEFAULT_BASE, help=f"Base model the set is for. Default: {DEFAULT_BASE}.")
     _fetch_flags(finish)
 
 
@@ -249,11 +302,29 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--min-side", type=int, default=MIN_SIDE, help="Smallest short side in pixels (Expert).")
     command.add_argument("--blur-threshold", type=float, default=BLUR_THRESHOLD, help="Blur limit (Expert).")
     command.add_argument("--dup-threshold", type=int, default=DUP_THRESHOLD, help="Duplicate limit (Expert).")
+    command.add_argument(
+        "--base",
+        choices=("moss", "z-image", "both"),
+        default="moss",
+        action=_MarkBase,
+        help="Which bases this project trains: moss, z-image, or both. Stored on the project. Default: moss.",
+    )
+    command.set_defaults(base_explicit=False)
     _fetch_flags(command)
 
 
-def _training_flags(command: argparse.ArgumentParser) -> None:
-    command.add_argument("--project", type=Path, required=True, help="Project folder.")
+def _size_flags(command: argparse.ArgumentParser) -> None:
+    """Expert size flags. ``extend`` takes rank and alpha from the LoRA file instead."""
+    command.add_argument("--rank", type=int, default=None, help="Adapter size (Expert).")
+    command.add_argument("--alpha", type=int, default=None, help="Adapter scale, usually equal to rank (Expert).")
+    command.add_argument("--resolution", type=int, default=None, help="Training picture size, a multiple of 64.")
+    command.add_argument("--train-text-encoder", action="store_true", default=None, help="Also train the text encoder.")
+
+
+def _training_flags(command: argparse.ArgumentParser, *, project: bool = True) -> None:
+    """Flags shared by ``train``, ``extend`` and ``retrain``. ``project`` adds ``--project``."""
+    if project:
+        command.add_argument("--project", type=Path, required=True, help="Project folder.")
     command.add_argument(
         "--preset", choices=sorted(PRESETS), default="balanced",
         help="Ready-made settings. Default: balanced. Use balanced for a person LoRA; quick is only a smoke test "
@@ -289,6 +360,7 @@ def _training_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--preview-prompts", type=Path, default=None, help="Text file, one test prompt per line.")
     command.add_argument("--resume", action="store_true", help="Continue a paused run from its last version.")
     command.add_argument("--dry-run", action="store_true", help="Print the plan and time estimate; train nothing.")
+    _embed_flag(command)
     _fetch_flags(command)
 
 
@@ -352,6 +424,7 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
         "--unattended", action="store_true",
         help="Keep the liked pictures and train every remaining step with no more pauses.",
     )
+    _embed_flag(cont)
     _sample_look_flags(cont)
     finish = lora_sub.add_parser(
         "finish",
@@ -371,6 +444,7 @@ def _project_commands(lora_sub: argparse._SubParsersAction[argparse.ArgumentPars
         "--yes", action="store_true",
         help="Confirm --discard without a prompt. Required when the terminal is not interactive.",
     )
+    _embed_flag(finish)
     status = lora_sub.add_parser("status", help="Read live training progress from train.json.")
     status.add_argument("project", type=Path, help="Project folder.")
     evaluate = lora_sub.add_parser(
@@ -392,12 +466,31 @@ _CONFIG_FLAGS = (
 ).split()
 
 
+def _embed_flag(command: argparse.ArgumentParser) -> None:
+    """``--embed-metadata`` on commands that write pictures. Default off."""
+    command.add_argument(
+        "--embed-metadata",
+        action="store_true",
+        help="Write prompt, seed, steps, base, LoRA strength and sha256 into saved pictures. Default: off.",
+    )
+
+
 def execute(args: argparse.Namespace) -> dict[str, object]:
     """Run one ``lora`` subcommand and return its result."""
+    from voxprint_forge.imageio_save import embed_metadata_scope
+
+    with embed_metadata_scope(bool(getattr(args, "embed_metadata", False))):
+        return _execute(args)
+
+
+def _execute(args: argparse.Namespace) -> dict[str, object]:
+    """Dispatch one ``lora`` subcommand. The metadata scope is already set."""
     if args.lora_command == "export":
         return _export(args)
     if args.lora_command == "prepare":
         return _prepare(args)
+    if args.lora_command == "retrain":
+        return _retrain(args)
     if args.lora_command in ("train", "extend"):
         return _train(args)
     if args.lora_command == "refset":
@@ -425,9 +518,31 @@ def printer(json_mode: bool, lang: str | None = None):
     return sink
 
 
+def _retrain(args: argparse.Namespace) -> dict[str, object]:
+    """Add ``--base`` to the project, then train on the prepared photos already there.
+
+    ``--dry-run`` only prints the plan. A real run records the base first, so
+    the new checkpoints land in that base's folder, and then uses ``lora train``.
+    """
+    from voxprint_forge.lora.bases import get_adapter
+    from voxprint_forge.lora.project import add_base
+
+    project = Project(args.project)
+    project.read()
+    base_id = bases_for_choice(str(args.base))[0]
+    args.base_explicit = True
+    args.lora_command = "train"
+    if args.dry_run:
+        return _train(args)
+    get_adapter(base_id, training=True)
+    add_base(project, base_id)
+    return _train(args)
+
+
 def _train(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.bases import get_adapter
-    from voxprint_forge.lora.train import estimate, lora_base, train
+    from voxprint_forge.lora.export import lora_base_of
+    from voxprint_forge.lora.train import estimate, lora_base, release_adapter, train
 
     if not args.dry_run and _wants_fetch(args):
         _fetch_missing()
@@ -442,41 +557,71 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         raise _bad(exc) from exc
     from_lora = getattr(args, "from_lora", None)
     if args.lora_command == "extend":
-        base_id = lora_base(from_lora).get("voxprint.lora.base") or ""
+        # A LoRA without base metadata predates MOSS: it is a Z-Image LoRA.
+        base_ids = [lora_base_of(lora_base(from_lora))]
     else:
-        base_id = args.base
-    adapter = get_adapter(base_id, training=True)
+        base_ids = train_bases(
+            getattr(args, "base", None),
+            project.recorded_bases(),
+            explicit=bool(getattr(args, "base_explicit", False)),
+        )
     if args.dry_run:
-        return estimate(project, config, adapter)
+        if len(base_ids) == 1:
+            return estimate(project, config, get_adapter(base_ids[0], training=True))
+        runs = [
+            {"base": base_id, **estimate(project, config, get_adapter(base_id, training=True))}
+            for base_id in base_ids
+        ]
+        return {"state": "dry-run", "bases": list(base_ids), "runs": runs}
     attire = getattr(args, "sample_attire", None)
     if isinstance(attire, str) and attire:
         store_attire(project, attire)
     _store_framing(project, args)
     prompts = _prompts(args.preview_prompts, data)
     stop = threading.Event()
-    previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
+    previous_signal = signal.signal(signal.SIGINT, lambda *_: stop.set())
+    ran: list[tuple[str, dict[str, object]]] = []
+    finished: object = None
     try:
-        result = train(
-            project,
-            config,
-            adapter,
-            Progress(printer(args.json)),
-            resume=args.resume,
-            from_lora=from_lora,
-            stop=stop,
-            preview_prompts=prompts,
-            # ``extend`` has no review flags. A missing value trains straight through.
-            review_rounds=getattr(args, "review_rounds", 0),
-            samples_per_round=getattr(args, "samples_per_round", 8),
-            first_round_steps=getattr(args, "first_round_steps", DEFAULT_FIRST_ROUND_STEPS),
-            first_round_samples=getattr(args, "first_round_samples", 6),
-            sample_steps=getattr(args, "sample_steps", 28),
-            sample_attire=attire if isinstance(attire, str) else None,
-        )
+        for base_id in base_ids:
+            if finished is not None:
+                release_adapter(finished)
+            adapter = get_adapter(base_id, training=True)
+            result = train(
+                project,
+                config,
+                adapter,
+                Progress(printer(args.json)),
+                resume=args.resume,
+                from_lora=from_lora,
+                stop=stop,
+                preview_prompts=prompts,
+                # ``extend`` has no review flags. A missing value trains straight through.
+                review_rounds=getattr(args, "review_rounds", 0),
+                samples_per_round=getattr(args, "samples_per_round", 8),
+                first_round_steps=getattr(args, "first_round_steps", DEFAULT_FIRST_ROUND_STEPS),
+                first_round_samples=getattr(args, "first_round_samples", 6),
+                sample_steps=getattr(args, "sample_steps", 28),
+                sample_attire=attire if isinstance(attire, str) else None,
+            )
+            ran.append((base_id, result))
+            # A review pause, or any other stop, ends the sequence.
+            if str(result.get("state")) != "done":
+                break
+            finished = adapter
     finally:
-        signal.signal(signal.SIGINT, previous)
-    _review_hint(result, project)
-    return result
+        signal.signal(signal.SIGINT, previous_signal)
+    if not ran:
+        raise LoraUsageError("lora.err.base_missing")
+    last = ran[-1][1]
+    _review_hint(last, project)
+    if len(ran) == 1:
+        return last
+    return {
+        "state": last.get("state"),
+        "bases": [base_id for base_id, _ in ran],
+        "runs": [{"base": base_id, **result} for base_id, result in ran],
+    }
 
 
 def _store_framing(project: Project, args: argparse.Namespace) -> None:
@@ -615,6 +760,11 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     project = Project(args.project)
     progress = Progress(printer(args.json))
     _warn_typed_trigger(args, progress)
+    # A new folder takes the flag (default moss). An existing project keeps its
+    # list unless --base was passed, so re-preparing a legacy folder does not
+    # move checkpoints/.
+    explicit = bool(getattr(args, "base_explicit", False))
+    chosen = bases_for_choice(args.base) if explicit or not project.file.is_file() else None
     stored = project.read() if project.file.is_file() else {}
     if args.kind is None and isinstance(stored.get("subject"), dict):
         subject = Subject(**stored["subject"])  # type: ignore[arg-type]
@@ -643,6 +793,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
         release=args.release,
         keep=keep,
         drop_near_duplicates=args.drop_near_duplicates,
+        bases=chosen,
     )
     if args.captions is not None:
         _apply_captions(project, args.captions)
@@ -687,7 +838,8 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
 
     project = Project(args.project)
     state = load_state(project)
-    adapter = get_adapter(str(state.get("base") or ""), training=True)
+    # A review opened before the base was recorded belongs to a Z-Image project.
+    adapter = get_adapter(resolve_base(state.get("base")), training=True)
     raw_prompts = state.get("prompts")
     prompts = [str(prompt) for prompt in raw_prompts] if isinstance(raw_prompts, list) else []
     attire = getattr(args, "sample_attire", None)
@@ -758,9 +910,8 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
     train = _train_record(project)
     # A straight-through run (--review-rounds 0) records the base on the project
     # and does not write review/state.json. Finish must use that record.
+    # Older projects record no base at all: they trained on Z-Image.
     base_id = _recorded_base(state, train)
-    if not base_id:
-        raise LoraUsageError("lora.err.base_missing")
     adapter = get_adapter(base_id)
     # Built in memory only. finish_review saves it once the LoRA is sealed, so a
     # missing checkpoint, a failure or an interrupt leaves review/state.json as it was.
@@ -853,12 +1004,16 @@ def _train_record(project: Project) -> dict[str, object]:
 
 
 def _recorded_base(state: dict[str, object], train: dict[str, object]) -> str:
-    """Base MDL id from the open review, else the id training stored on the project."""
+    """Base MDL id from the open review, else the id training stored on the project.
+
+    A project with neither recorded predates base recording and trained on
+    Z-Image (:func:`voxprint_forge.lora.legacy_base`).
+    """
     for source in (state.get("base"), train.get("base")):
         base_id = str(source or "").strip()
         if base_id:
             return base_id
-    return ""
+    return legacy_base()
 
 
 def _whole(value: object) -> int:

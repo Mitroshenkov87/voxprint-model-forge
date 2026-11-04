@@ -68,7 +68,7 @@ def run_compare(
 
     ``generate`` and ``score`` are the live GPU path when omitted. A machine
     without CUDA then exits 3 before any download. The reference arm runs
-    first and its PNGs stay on disk. Each later arm loads only after the
+    first and its pictures stay on disk. Each later arm loads only after the
     previous pipeline is released. Scorers load after that release. Weights
     under ``results/weights`` are deleted at the end. Review images stay.
     """
@@ -365,7 +365,7 @@ def _open_arm(
 
 
 def _arm_pending(arm: Arm, schedule: Schedule, images: Path) -> bool:
-    return any(not _image_file(images, arm, case).is_file() for case in schedule.cases)
+    return any(not _has_image(images, arm, case) for case in schedule.cases)
 
 
 def _release_generator(generate: GenerateFn) -> None:
@@ -443,6 +443,9 @@ def _image_for(
     path = _image_file(images, arm, case)
     reused = _reused_file(images, arm, case)
     source = reused if reused is not None else path
+    legacy = path.with_suffix(".png")
+    if not source.is_file() and reused is None and legacy.is_file():
+        source = legacy
     if source.is_file():
         image = Image.open(source).convert("RGB")
         cache[(arm.id, case.ordinal)] = image
@@ -453,8 +456,14 @@ def _image_for(
             code="compare_reuse",
         )
     image, seconds, torch_bytes, smi_bytes = _timed(arm, case, job, generate, smi, secrets)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="PNG")
+    # Prompt text stays out of the file. Compare scans picture bytes for it.
+    from voxprint_forge.imageio_save import save_image
+
+    save_image(image, path.with_suffix(""), "series", metadata={
+        "seed": case.seed,
+        "steps": job.steps,
+        "base": arm.base_repo or arm.repo,
+    })
     cache[(arm.id, case.ordinal)] = image
     return image, seconds, torch_bytes, smi_bytes
 
@@ -492,19 +501,32 @@ def assert_or_scrub(message: str, secrets: Sequence[str]) -> str:
     return cleaned
 
 
-def _image_file(images: Path, arm: Arm, case: Case) -> Path:
+def _picture_name(case: Case, suffix: str) -> str:
     control = case.control or "none"
-    name = f"{case.prompt_id}-{case.seed}-{case.width}x{case.height}-{control}.png"
-    return images / arm.id / name
+    return f"{case.prompt_id}-{case.seed}-{case.width}x{case.height}-{control}{suffix}"
+
+
+def _image_file(images: Path, arm: Arm, case: Case) -> Path:
+    """The picture this arm writes. New runs use lossless WebP."""
+    return images / arm.id / _picture_name(case, ".webp")
+
+
+def _has_image(images: Path, arm: Arm, case: Case) -> bool:
+    """True when this case was already drawn, including an older PNG run."""
+    path = _image_file(images, arm, case)
+    return path.is_file() or path.with_suffix(".png").is_file()
 
 
 def _reused_file(images: Path, arm: Arm, case: Case) -> Path | None:
     if not arm.reuse_job:
         return None
-    control = case.control or "none"
-    name = f"{case.prompt_id}-{case.seed}-{case.width}x{case.height}-{control}.png"
     arm_id = arm.reuse_arm or arm.id
-    return images.parent.parent / arm.reuse_job / "images" / arm_id / name
+    folder = images.parent.parent / arm.reuse_job / "images" / arm_id
+    webp = folder / _picture_name(case, ".webp")
+    png = folder / _picture_name(case, ".png")
+    if png.is_file() and not webp.is_file():
+        return png
+    return webp
 
 
 def _log(message: str, secrets: Sequence[str]) -> None:

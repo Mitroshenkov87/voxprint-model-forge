@@ -534,7 +534,7 @@ def test_resumed_image_does_not_include_load_time(tmp_path: Path) -> None:
     payload = json.loads(lines[-1])
     assert payload["warmup"] is False
     control = payload["control"] or "none"
-    name = f"{payload['prompt_id']}-{payload['seed']}-{payload['width']}x{payload['height']}-{control}.png"
+    name = f"{payload['prompt_id']}-{payload['seed']}-{payload['width']}x{payload['height']}-{control}.webp"
     (results / "images" / str(payload["candidate_arm"]) / name).unlink()
     (results / "pairs.jsonl").write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
 

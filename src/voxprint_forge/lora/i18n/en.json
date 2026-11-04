@@ -13,7 +13,7 @@
  "lora.drop.unreadable": "This file could not be opened as a picture.",
  "lora.err.above_cap": "At most {cap} photos can be used.",
  "lora.err.adult_content": "Adult content can only be marked for a person who is 18 or older.",
- "lora.err.base_mismatch": "This model was trained on a different base model.",
+ "lora.err.base_mismatch": "This model was trained on {base}. Retrain the same photos for {target}: forge lora retrain --base {cli} PROJECT",
  "lora.err.base_missing": "The base model is not installed. Run: voxprint-forge-cli models fetch --model <id>",
  "lora.err.base_runtime": "This base model needs newer picture libraries than this version has ({need}).",
  "lora.err.base_restrictive": "This base model's licence does not allow sharing trained models. Saving for your own use only.",

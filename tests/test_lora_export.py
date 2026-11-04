@@ -14,7 +14,7 @@ from voxprint_forge.cli import main
 from voxprint_forge.lora import bases
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.export import export, gate_like
+from voxprint_forge.lora.export import base_short, export, gate_like
 from voxprint_forge.lora.presets import build_config
 from voxprint_forge.lora.train import train
 
@@ -58,7 +58,7 @@ def header(path):
 def test_export_writes_typed_metadata_and_sidecar(tmp_path) -> None:
     project = trained(tmp_path, preview=True)
     result = export(project, Progress(), tags=("cube", "test"))
-    target = project.root / "export" / f"{result['id']}.safetensors"
+    target = project.root / "export" / f"{result['id']}.{base_short('tiny-test')}.safetensors"
     meta = header(target)
     assert meta["voxprint.lora.base"] == "tiny-test" and meta["voxprint.lora.steps"] == "4"
     assert meta["voxprint.subject.rights_confirmed"] == "true"
@@ -68,7 +68,8 @@ def test_export_writes_typed_metadata_and_sidecar(tmp_path) -> None:
     assert str(tmp_path) not in json.dumps(meta)
     sidecar = json.loads((target.parent / "voxprint-model.json").read_text())
     assert sidecar["schema"] == "voxprint-model/1" and sidecar["kind"] == "object"
-    assert sidecar["base"] == {"mdl_id": "tiny-test", "revision": "0" * 40}
+    assert sidecar["base"] == {"mdl_id": "tiny-test", "revision": "0" * 40, "sha256": "", "mirror": ""}
+    assert sidecar["compatible_bases"] == ["tiny-test"]
     assert sidecar["default_strength"] == 0.8 and sidecar["strength_range"] == [0.0, 1.5]
     assert sidecar["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
     assert sidecar["size"] == target.stat().st_size and sidecar["tags"] == ["cube", "test"]
@@ -125,7 +126,7 @@ def test_install_goes_to_user_models_lora_id(tmp_path, monkeypatch) -> None:
     folder = tmp_path / "models" / "user-models" / "lora" / result["id"]
     assert not (tmp_path / "ignored").exists()
     sidecar = json.loads((folder / "voxprint-model.json").read_text())
-    assert sidecar["file"] == f"{result['id']}.safetensors"
+    assert sidecar["file"] == f"{result['id']}.{base_short('tiny-test')}.safetensors"
     assert hashlib.sha256((folder / sidecar["file"]).read_bytes()).hexdigest() == sidecar["sha256"]
     assert json.loads((tmp_path / "keep" / "voxprint-model.json").read_text())["file"] == "mine.safetensors"
 
