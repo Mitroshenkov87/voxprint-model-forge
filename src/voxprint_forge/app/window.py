@@ -2031,7 +2031,9 @@ class ForgeApp:
         grid.setViewMode(QtWidgets.QListView.ViewMode.IconMode)
         grid.setIconSize(QtCore.QSize(160, 160))
         grid.setResizeMode(QtWidgets.QListView.ResizeMode.Adjust)
-        found = sorted((self.project / "previews").glob("*.png")) + sorted((self.project / "previews").glob("*.webp"))
+        found = sorted(Project(self.project).previews.glob("*.png")) + sorted(
+            Project(self.project).previews.glob("*.webp")
+        )
         for path in found:
             grid.addItem(_icon_item(path, self.thumbs, 160, path.stem))
         if not found:
@@ -2361,9 +2363,7 @@ class ForgeApp:
         project = Project(self.project)
         paths = []
         for item in project.items():
-            path = Path(item.file)
-            if not path.is_absolute():
-                path = project.root / path
+            path = project.resolve(item.file)
             if path.is_file():
                 paths.append(path)
         return paths or [path for path in self.draft.photos if path.is_file()]
@@ -3296,7 +3296,7 @@ class ForgeApp:
 
     def _checkpoints(self) -> list[int]:
         steps = []
-        for path in (self.project / "checkpoints").glob("*"):
+        for path in Project(self.project).checkpoints.glob("*"):
             digits = "".join(ch for ch in path.stem if ch.isdigit())
             if digits:
                 steps.append(int(digits))

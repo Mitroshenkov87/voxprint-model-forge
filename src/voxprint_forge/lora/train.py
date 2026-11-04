@@ -127,16 +127,23 @@ def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dic
 
 
 def finish_review(
-    project: Project, adapter: BaseAdapter, progress: Progress, *, preview: bool = True,
+    project: Project,
+    adapter: BaseAdapter,
+    progress: Progress,
+    *,
+    preview: bool = True,
+    state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Save the current LoRA, draw a final preview, and record the steps it got.
 
     The review stays open until the checkpoint is found on disk, so a missing
     checkpoint does not look like a finished run. ``preview=False`` skips the
     final picture. A final picture that fails is a warning: the run still
-    finishes and can be exported.
+    finishes and can be exported. ``state`` replaces the saved review; it is
+    written only as the finished state, after the checkpoint is found.
     """
-    return _seal_finished(project, load_state(project), adapter, progress, preview=preview)
+    current = load_state(project) if state is None else state
+    return _seal_finished(project, current, adapter, progress, preview=preview)
 
 
 def discard_run(project: Project) -> dict[str, object]:
@@ -149,10 +156,10 @@ def discard_run(project: Project) -> dict[str, object]:
     for path in (
         project.checkpoints,
         project.previews,
-        project.root / "review",
-        project.root / "train.json",
-        project.root / "train.log",
-        project.root / "vram.csv",
+        project.review,
+        project.train_state,
+        project.train_log,
+        project.vram_log,
         project.pause,
     ):
         _remove_inside(root, path)
@@ -267,7 +274,7 @@ def _images(project: Project, items: Sequence[Item], resolution: int) -> list[ob
 
     out = []
     for item in items:
-        with Image.open(project.root / item.file) as image:
+        with Image.open(project.resolve(item.file)) as image:
             image = image.convert("RGB")
             if image.size != (resolution, resolution):
                 image = image.resize((resolution, resolution), Image.Resampling.LANCZOS)
@@ -391,7 +398,7 @@ def train(
         checkpoint = str(pending.get("checkpoint") or "")
         if not checkpoint:
             raise LoraUsageError("lora.err.no_checkpoint")
-        from_lora = project.root / checkpoint
+        from_lora = project.resolve(checkpoint)
         saved_config = pending.get("config")
         if isinstance(saved_config, dict) and saved_config:
             config = TrainConfig.from_dict(saved_config)
@@ -799,7 +806,7 @@ def _open_review(
             )
             if not passes_output_check(image):
                 continue
-            path = project.root / str(spec["file"])
+            path = project.resolve(str(spec["file"]))
             save_image(image, path)
             saved.append(spec)
     finally:
@@ -998,9 +1005,7 @@ def _review_checkpoint(project: Project, state: dict[str, object]) -> Path:
     raw = str(state.get("checkpoint") or "")
     if not raw:
         raise LoraUsageError("lora.err.no_checkpoint")
-    path = Path(raw)
-    if not path.is_absolute():
-        path = project.root / path
+    path = project.resolve(raw)
     if not path.is_file():
         alt = project.checkpoints / Path(raw).name
         path = alt if alt.is_file() else path

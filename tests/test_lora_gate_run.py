@@ -146,7 +146,7 @@ def test_a_crash_before_the_first_photo_leaves_the_run_open(tmp_path, monkeypatc
     def boom(path):
         raise RuntimeError("crash-before-photo")
 
-    monkeypatch.setattr(prepare_mod, "open_photo", boom)
+    monkeypatch.setattr(prepare_mod, "decode_photo", boom)
     with pytest.raises(RuntimeError, match="crash-before-photo"):
         _prepare(project, files, ScriptedJudge([ADULT] * 6), ScriptedEstimator([AgeReading(1, (31.0,))] * 6))
     assert _marker(project)["state"] == "running"

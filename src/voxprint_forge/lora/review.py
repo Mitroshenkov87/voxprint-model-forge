@@ -39,7 +39,7 @@ Action = Literal["start", "pause", "continue", "train_full", "finish", "mark"]
 
 def state_path(project: Project) -> Path:
     """``review/state.json`` inside the project folder."""
-    return project.root / "review" / "state.json"
+    return project.review / "state.json"
 
 
 def empty_state() -> dict[str, object]:

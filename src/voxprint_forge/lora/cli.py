@@ -752,7 +752,7 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
     from voxprint_forge.lora.bases import get_adapter
     from voxprint_forge.lora.export import export_package
     from voxprint_forge.lora.review import load_state
-    from voxprint_forge.lora.train import finish_review
+    from voxprint_forge.lora.train import _review_checkpoint, finish_review
 
     state = load_state(project)
     train = _train_record(project)
@@ -762,12 +762,16 @@ def _finish_review(args: argparse.Namespace) -> dict[str, object]:
     if not base_id:
         raise LoraUsageError("lora.err.base_missing")
     adapter = get_adapter(base_id)
+    # Built in memory only. finish_review saves it once the LoRA is sealed, so a
+    # missing checkpoint, a failure or an interrupt leaves review/state.json as it was.
+    state = _finish_state(state, train, base_id)
+    if _finishable(state):
+        _review_checkpoint(project, state)
     preview = bool(getattr(args, "preview", True))
     if preview:
         _ensure_base_weights(base_id)
-    _prepare_finish_state(project, state, train, base_id)
     progress = Progress(printer(args.json))
-    result = finish_review(project, adapter, progress, preview=preview)
+    result = finish_review(project, adapter, progress, preview=preview, state=state)
     likeness = _finish_likeness(project, result)
     package = export_package(project, progress)
     return {**result, "likeness": likeness, "voxlora": package["file"], "sha256": package["sha256"]}
@@ -821,7 +825,7 @@ def _eval(args: argparse.Namespace) -> dict[str, object]:
     line = likeness.warning_line(report["summary"])  # type: ignore[arg-type]
     if line:
         print(line, file=sys.stderr, flush=True)
-    return {"state": "done", "likeness": report, "report": str(project.root / likeness.EVAL_DIR / likeness.REPORT_MD)}
+    return {"state": "done", "likeness": report, "report": str(project.eval / likeness.REPORT_MD)}
 
 
 def _eval_groups(by_step: dict[int, list[Path]], choice: str | None, final_step: int | None) -> dict[str, list[Path]]:
@@ -888,56 +892,56 @@ def _ensure_base_weights(base_id: str) -> None:
         raise LoraUsageError("lora.err.base_missing")
 
 
-def _prepare_finish_state(
-    project: Project, state: dict[str, object], train: dict[str, object], base_id: str,
-) -> None:
-    """Make sure finish can see the base and checkpoint training already recorded.
-
-    An open review is left as it is, with the base filled in when the review file omitted it.
-    A straight-through run stays idle and has no review file. Finish then builds the small
-    review record ``finish_review`` expects from the project training record, so the step
-    count and the checkpoint stay the ones training wrote. Any other phase is left alone.
-    """
-    from voxprint_forge.lora.review import DEFAULT_SAMPLE_STEPS, empty_state, save_state
-
+def _finishable(state: dict[str, object]) -> bool:
+    """True for a review that finish can seal: waiting, finished, or training with no more reviews."""
     phase = str(state.get("phase") or "idle")
-    open_review = phase in {"review", "finished"} or (phase == "training" and state.get("no_more_reviews"))
-    if open_review:
+    return phase in {"review", "finished"} or (phase == "training" and bool(state.get("no_more_reviews")))
+
+
+def _finish_state(state: dict[str, object], train: dict[str, object], base_id: str) -> dict[str, object]:
+    """The review state finish works from. Nothing is written here.
+
+    An open review is used as it is, with the base filled in when the review file omitted it.
+    A straight-through run stays idle and has no review file. Finish then gets the small
+    review record ``finish_review`` expects, built from the project training record, so the
+    step count and the checkpoint stay the ones training wrote. Any other phase is returned
+    unchanged.
+    """
+    from voxprint_forge.lora.review import DEFAULT_SAMPLE_STEPS, empty_state
+
+    if _finishable(state):
         if not str(state.get("base") or "").strip():
-            save_state(project, {**state, "base": base_id})
-        return
+            return {**state, "base": base_id}
+        return state
     # Only a straight-through run is idle here. An in-progress review stays as it is.
-    if phase != "idle":
-        return
+    if str(state.get("phase") or "idle") != "idle":
+        return state
     checkpoint = str(train.get("checkpoint") or "").strip()
     trained = str(train.get("state") or "") in {"done", "paused", "review"}
     if not checkpoint or not trained:
-        return
+        return state
     config = train.get("config") if isinstance(train.get("config"), dict) else {}
     step = _whole(train.get("step")) or _step_from_checkpoint(checkpoint)
     planned = _whole(train.get("steps_planned")) or _whole(config.get("steps")) or step
     if planned < step:
         planned = step
     prompts = [str(item) for item in state.get("prompts") or [] if str(item).strip()]
-    save_state(
-        project,
-        {
-            **empty_state(),
-            "phase": "review",
-            "rounds": 1,
-            "samples_per_round": 1,
-            "first_round_steps": max(step, 1),
-            "first_round_samples": 1,
-            "sample_steps": DEFAULT_SAMPLE_STEPS,
-            "total_steps": max(planned, step, 1),
-            "index": 1,
-            "seed": _whole(config.get("seed")),
-            "base": base_id,
-            "checkpoint": checkpoint,
-            "config": dict(config),
-            "prompts": prompts,
-        },
-    )
+    return {
+        **empty_state(),
+        "phase": "review",
+        "rounds": 1,
+        "samples_per_round": 1,
+        "first_round_steps": max(step, 1),
+        "first_round_samples": 1,
+        "sample_steps": DEFAULT_SAMPLE_STEPS,
+        "total_steps": max(planned, step, 1),
+        "index": 1,
+        "seed": _whole(config.get("seed")),
+        "base": base_id,
+        "checkpoint": checkpoint,
+        "config": dict(config),
+        "prompts": prompts,
+    }
 
 
 def _discard_confirmed(args: argparse.Namespace) -> bool:

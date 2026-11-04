@@ -38,6 +38,7 @@ def _bash(script: Path) -> list[str]:
     return [exe, script.as_posix()]
 
 
+@pytest.mark.real_models
 def test_pinned_calibration_meets_the_llama_requirement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tracked = subprocess.run(
         ["git", "ls-files", "src/voxprint_forge/data/imatrix.txt"],

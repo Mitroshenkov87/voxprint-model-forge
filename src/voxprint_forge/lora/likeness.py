@@ -45,7 +45,6 @@ DETECTOR_FILE = "face_detection_yunet_2023mar.onnx"
 RECOGNIZER_ID = "sface-2021dec"
 RECOGNIZER_FILE = "face_recognition_sface_2021dec.onnx"
 MODEL_IDS = (DETECTOR_ID, RECOGNIZER_ID)
-EVAL_DIR = "eval"
 ROWS_FILE = "likeness.jsonl"
 REPORT_JSON = "report.json"
 REPORT_MD = "report.md"
@@ -155,7 +154,8 @@ def _r(value: float | None) -> float | None:
 
 def reference_photos(project: Project) -> list[Path]:
     """The kept, prepared training photos of the project."""
-    return [project.root / item.file for item in project.items() if (project.root / item.file).is_file()]
+    paths = [project.resolve(item.file) for item in project.items()]
+    return [path for path in paths if path.is_file()]
 
 
 def preview_groups(project: Project) -> dict[int, list[Path]]:
@@ -361,7 +361,7 @@ def _shown(project: Project, path: Path) -> str:
 
 
 def _write(project: Project, report: Mapping[str, object], rows: Sequence[Row]) -> None:
-    folder = project.root / EVAL_DIR
+    folder = project.eval
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / ROWS_FILE).open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:

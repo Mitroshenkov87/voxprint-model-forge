@@ -94,7 +94,7 @@ Every photo of every kind goes through the safety check (`voxprint_forge.lora.ga
 
 ## Captions
 
-Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. The captioner is loaded, describes every photo, and is unloaded before training. The captions state the attire as it appears, in neutral words: clothing that is worn, or that the subject is unclothed, nude or topless. The caption text is stored as the captioner wrote it. `unclothed` in `captions.jsonl` is true when the captioner answered yes or its caption says unclothed, nude, naked or undressed. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
+Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2-large (`florence2-large`, MIT) as the fallback. `prepare` runs in phases: the safety check runs over every photo with only the judge and the age estimator loaded, both are unloaded, and only then is the captioner loaded to describe the kept photos and unloaded again before training. Photos are decoded one at a time in each phase, so a large set does not sit in memory as decoded pictures. The captions state the attire as it appears, in neutral words: clothing that is worn, or that the subject is unclothed, nude or topless. The caption text is stored as the captioner wrote it. `unclothed` in `captions.jsonl` is true when the captioner answered yes or its caption says unclothed, nude, naked or undressed. Edit captions with `--captions FILE` (JSONL `id`, `long`, `short`) on `prepare` or `train`.
 
 ## Bases
 
@@ -137,7 +137,28 @@ Preview PNGs in `previews/` carry text chunks: `voxprint.seed`, `voxprint.lora_s
 
 ## Project folder
 
-`project.json` (including `sample_attire` when a review run has stored it), `prepared/`, `captions.jsonl` (`id`, `file`, `long`, `short`, `round`, and `unclothed` when the captioner set it), `drops.jsonl`, `checkpoints/step-NNNNNN.safetensors` plus `state.pt`, `previews/`, `eval/` (likeness score), `review/state.json` and `review/round-NNNN/*.png` while a review is in progress. Sample pictures stay in the project folder and carry no extra metadata. A train with `--review-rounds 0` does not write `review/`. Omitting the flag uses the default of 3.
+A project folder has a fixed layout. Every path is built through the `Project` properties in `src/voxprint_forge/lora/project.py` (`project.prepared`, `project.checkpoints`, `project.previews`, `project.review`, `project.eval`, `project.export`, `project.release`, `project.refset`, `project.train_state`, `project.train_log`, `project.vram_log`, ...), so the on-disk names below are stable and a project created by an older version opens unchanged. Paths stored inside files (an item's `file` in `captions.jsonl`, a review sample's `file`, the review `checkpoint`) are relative to the project root; `Project.resolve()` turns them back into absolute paths and passes absolute paths through.
+
+| Entry | Content |
+| --- | --- |
+| `project.json` | Subject, settings, gate record, `train` and `likeness` records (including `sample_attire` when a review run has stored it) |
+| `prepared/` | The cropped training photos, one PNG per photo id |
+| `captions.jsonl` | One line per prepared photo: `id`, `file`, `long`, `short`, `round`, and `unclothed` when the captioner set it |
+| `drops.jsonl` | Photos set aside, one line per photo id, with a `lora.drop.*` reason key |
+| `gate_trace.jsonl` | One line per checked photo: the safety gate's codes and numbers, no image data |
+| `checkpoints/` | `step-NNNNNN.safetensors` intermediate versions plus `state.pt` training state |
+| `previews/` | Test pictures drawn during training (`step-NNNNNN-I.png`) |
+| `review/` | `state.json` and `round-NNNN/*.png` samples while a review is in progress |
+| `eval/` | Likeness score rows and `report.md` |
+| `export/` | Finished `.voxlora` packages and `.safetensors` exports |
+| `release/` | An attached consent release file |
+| `refset/` | Reference-set rounds: `state.json`, `prompts.json`, `round-N/`, `approved/`, `metadata.json` |
+| `train.json` | Latest training progress: step, total, loss, elapsed, ETA |
+| `train.log` | One progress line per report |
+| `vram.csv` | VRAM samples on the same cadence as `train.json` |
+| `PAUSE` | While this file exists, training saves a version and stops |
+
+Folders are created on demand. Sample pictures stay in the project folder and carry no extra metadata. A train with `--review-rounds 0` does not write `review/`. Omitting the flag uses the default of 3. Original source photos are not copied into the project; `lora prepare` reads them from where they are and keeps only the cropped copies in `prepared/`.
 
 ### Safety-check log
 
