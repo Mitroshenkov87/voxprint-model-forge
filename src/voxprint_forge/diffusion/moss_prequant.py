@@ -10,7 +10,9 @@ capability 8.9 (sm 89). The manifest id and the weights directory are
 
 Heavy pieces (loader, quantizer, renderer, scorer, GPU probe) are injected.
 Tests pass stand-ins. The live objects are the calibration-VM path and are
-not what the tests call.
+not what the tests call. Live quantization streams safetensors shards on CPU
+and quantizes one layer group at a time so a 13.5 GB cap never sees a single
+~16 GB allocation.
 
 Upload is out of scope. Load-time quantization stays a fallback for a card
 this file does not fit; this command is the build that publishes the file.
@@ -21,10 +23,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
+import re
 import shutil
+import struct
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -46,6 +52,14 @@ DEFAULT_BUDGET_GB = MOSS_VRAM_BUDGET_GB
 BUDGET_MIN_GB = 13.0
 BUDGET_MAX_GB = 14.0
 VRAM_CAP_ENV = "FORGE_VRAM_CAP_GB"
+BYTES_PER_GIB = 1024**3
+# CUDA context, kernels, and tensors that stay bf16 (embed/norm). 512 MiB is
+# enough that a 9B encoder at int8/fp8 still plans under a 13.5 GiB cap.
+DEFAULT_HEADROOM_BYTES = 512 * 1024 * 1024
+QUANT_RATIO = {"fp8_e4m3": 0.5, "int8": 0.5, "nf4": 0.25}
+_LAYER_GROUP = re.compile(r"^(?P<group>.*?layers\.\d+)\.")
+_KEEP_BF16_NEEDLES = ("embed", "norm", "bias", "lm_head", "wte")
+_INDEX_NAMES = ("model.safetensors.index.json", "diffusion_pytorch_model.safetensors.index.json")
 MODEL_ID = "voxprint-moss-image-sft-compact"
 DISPLAY_NAME = "MOSS-Image SFT compact 16GB"
 MIRROR_REPO = "Mitroshenkov87/voxprint-moss-image-sft-compact"
@@ -199,6 +213,236 @@ class NoQuantFits(StageError):
 
     def __init__(self, message: str, *, report: dict[str, object] | None = None) -> None:
         super().__init__(message, code="moss_prequant_none_fit", report=report)
+
+
+@dataclass(frozen=True)
+class TensorInfo:
+    """One tensor in a safetensors shard. ``nbytes`` is the on-disk payload."""
+
+    name: str
+    nbytes: int
+    shard: str = ""
+
+
+@dataclass(frozen=True)
+class ShardInfo:
+    """One safetensors shard from a ``weight_map`` index."""
+
+    name: str
+    tensors: tuple[TensorInfo, ...]
+
+    @property
+    def nbytes(self) -> int:
+        """Sum of tensor payloads in this shard."""
+        return sum(item.nbytes for item in self.tensors)
+
+
+@dataclass(frozen=True)
+class Step:
+    """One layer group in a stream plan.
+
+    The GPU holds this group's bf16 source, the accumulated quantized result,
+    and a fixed headroom. ``largest_alloc`` is the single biggest allocation
+    (one tensor moved onto the card). ``peak`` is that resident set.
+    """
+
+    name: str
+    tensors: tuple[str, ...]
+    shards: tuple[str, ...]
+    source_bytes: int
+    result_bytes: int
+    largest_alloc: int
+    peak: int
+
+
+def quant_ratio_for(mode: str) -> float:
+    """Bytes kept on the card after quantizing ``mode``, relative to bf16."""
+    try:
+        return QUANT_RATIO[mode]
+    except KeyError as exc:
+        raise StageError(f"unknown quant mode {mode!r}", code="moss_prequant_config") from exc
+
+
+def plan_stream(
+    shards: Sequence[ShardInfo],
+    budget_bytes: int,
+    *,
+    headroom_bytes: int = DEFAULT_HEADROOM_BYTES,
+    quant_ratio: float | None = None,
+    mode: str | None = None,
+) -> list[Step]:
+    """Group shard tensors by layer and order steps that fit ``budget_bytes``.
+
+    The GPU never holds more than one layer group (bf16) plus the accumulated
+    quantized result plus ``headroom_bytes``. Each step records its largest
+    single allocation and its peak. A tensor, or a group plus the result, that
+    exceeds the budget raises :class:`NoQuantFits`.
+    """
+    if budget_bytes <= 0:
+        raise StageError(f"budget_bytes must be positive, got {budget_bytes}", code="moss_prequant_budget")
+    if headroom_bytes < 0:
+        raise StageError(f"headroom_bytes must be >= 0, got {headroom_bytes}", code="moss_prequant_budget")
+    ratio = float(quant_ratio) if quant_ratio is not None else (quant_ratio_for(mode) if mode is not None else 0.5)
+    if ratio <= 0:
+        raise StageError(f"quant_ratio must be positive, got {ratio}", code="moss_prequant_budget")
+    tensors = _collect_tensors(shards)
+    if not tensors:
+        raise StageError("no tensors in shard index", code="moss_prequant_index")
+    for item in tensors:
+        if item.nbytes > budget_bytes:
+            raise NoQuantFits(
+                f"tensor {item.name} is {_fmt_bytes(item.nbytes)}; budget is {_fmt_bytes(budget_bytes)}"
+            )
+    groups = _group_tensors(tensors)
+    steps: list[Step] = []
+    result = 0
+    for key, items in groups:
+        source = sum(item.nbytes for item in items)
+        added = sum(_quant_bytes(item.nbytes, 1.0 if _kept_bf16(item.name) else ratio) for item in items)
+        new_result = result + added
+        largest = max(item.nbytes for item in items)
+        group_and_result = source + new_result
+        peak = group_and_result + headroom_bytes
+        if largest > budget_bytes:
+            raise NoQuantFits(
+                f"group {key} largest tensor is {_fmt_bytes(largest)}; budget is {_fmt_bytes(budget_bytes)}"
+            )
+        if group_and_result > budget_bytes or peak > budget_bytes:
+            raise NoQuantFits(
+                f"group {key} source {_fmt_bytes(source)} plus result {_fmt_bytes(new_result)} "
+                f"(peak {_fmt_bytes(peak)}) exceeds budget {_fmt_bytes(budget_bytes)}"
+            )
+        steps.append(
+            Step(
+                name=key,
+                tensors=tuple(item.name for item in items),
+                shards=tuple(dict.fromkeys(item.shard for item in items if item.shard)),
+                source_bytes=source,
+                result_bytes=new_result,
+                largest_alloc=largest,
+                peak=peak,
+            )
+        )
+        result = new_result
+    return steps
+
+
+def shard_infos_from_index(folder: Path) -> list[ShardInfo]:
+    """Read ``weight_map`` plus per-tensor sizes from the safetensors headers. No torch."""
+    index_path = _index_path(folder)
+    if index_path is not None:
+        document = json.loads(index_path.read_text(encoding="utf-8"))
+        weight_map = document.get("weight_map")
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise StageError(f"{index_path.name} has no weight_map", code="moss_prequant_index")
+        by_shard: dict[str, list[str]] = {}
+        order: list[str] = []
+        for name, shard in weight_map.items():
+            file_name = str(shard)
+            if file_name not in by_shard:
+                by_shard[file_name] = []
+                order.append(file_name)
+            by_shard[file_name].append(str(name))
+        return [_shard_from_header(folder / file_name, by_shard[file_name]) for file_name in order]
+    files = sorted(path for path in folder.glob("*.safetensors") if path.is_file())
+    if len(files) != 1:
+        raise StageError(f"no safetensors index in {folder}", code="moss_prequant_index")
+    header = _safetensors_header(files[0])
+    return [_shard_from_header(files[0], list(header))]
+
+
+def _collect_tensors(shards: Sequence[ShardInfo]) -> list[TensorInfo]:
+    seen: set[str] = set()
+    tensors: list[TensorInfo] = []
+    for shard in shards:
+        for item in shard.tensors:
+            if item.name in seen:
+                raise StageError(f"duplicate tensor {item.name}", code="moss_prequant_index")
+            seen.add(item.name)
+            tensors.append(item if item.shard else TensorInfo(item.name, item.nbytes, shard.name))
+    return tensors
+
+
+def _group_tensors(tensors: Sequence[TensorInfo]) -> list[tuple[str, list[TensorInfo]]]:
+    groups: dict[str, list[TensorInfo]] = {}
+    order: list[str] = []
+    for item in tensors:
+        key = _group_key(item.name)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    return [(key, groups[key]) for key in order]
+
+
+def _group_key(name: str) -> str:
+    match = _LAYER_GROUP.match(name)
+    if match:
+        return match.group("group")
+    if "." in name:
+        return name.rsplit(".", 1)[0]
+    return name
+
+
+def _kept_bf16(name: str) -> bool:
+    lower = name.lower()
+    if name.endswith(".bias") or not name.endswith(".weight"):
+        return True
+    return any(needle in lower for needle in _KEEP_BF16_NEEDLES)
+
+
+def _quant_bytes(nbytes: int, ratio: float) -> int:
+    return int(math.ceil(nbytes * ratio))
+
+
+def _fmt_bytes(nbytes: int) -> str:
+    return f"{nbytes / BYTES_PER_GIB:.2f} GiB"
+
+
+def _index_path(folder: Path) -> Path | None:
+    for name in _INDEX_NAMES:
+        path = folder / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _safetensors_header(path: Path) -> dict[str, object]:
+    with path.open("rb") as handle:
+        size = handle.read(8)
+        if len(size) != 8:
+            raise StageError(f"{path.name} is not a safetensors file", code="moss_prequant_index")
+        (n,) = struct.unpack("<Q", size)
+        payload = handle.read(n)
+    try:
+        header = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise StageError(f"{path.name} header is not JSON", code="moss_prequant_index") from exc
+    if not isinstance(header, dict):
+        raise StageError(f"{path.name} header is not an object", code="moss_prequant_index")
+    header.pop("__metadata__", None)
+    return header
+
+
+def _shard_from_header(path: Path, names: Sequence[str]) -> ShardInfo:
+    header = _safetensors_header(path)
+    tensors: list[TensorInfo] = []
+    for name in names:
+        info = header.get(name)
+        if not isinstance(info, dict):
+            raise StageError(f"{path.name} is missing {name}", code="moss_prequant_index")
+        nbytes = _header_nbytes(info, name, path.name)
+        tensors.append(TensorInfo(name, nbytes, path.name))
+    return ShardInfo(path.name, tuple(tensors))
+
+
+def _header_nbytes(info: Mapping[str, object], name: str, shard: str) -> int:
+    offsets = info.get("data_offsets")
+    if isinstance(offsets, (list, tuple)) and len(offsets) == 2:
+        start, end = int(offsets[0]), int(offsets[1])
+        if end >= start:
+            return end - start
+    raise StageError(f"{shard} tensor {name} has no data_offsets", code="moss_prequant_index")
 
 
 @dataclass(frozen=True)
@@ -651,51 +895,28 @@ class LiveLoader:
 
 
 class LiveQuantizer:
-    """Quantize with diffusers/transformers ``quantization_config``. Local files only."""
+    """Stream-quantize each component. Never materializes the full bf16 model on GPU."""
 
     def config(self, mode: str) -> Mapping[str, object]:
         """The plain spec. Objects are built in :meth:`build`."""
         return quantization_spec(mode)
 
     def build(self, mode: str, snapshots: SnapshotSet, dest: Path) -> None:
-        """Load each component with ``local_files_only`` and save it under ``dest``."""
+        """Stream shards on CPU, quantize one layer group on CUDA, save under ``dest``."""
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        configs = materialize_quantization_config(mode)
         dest.mkdir(parents=True, exist_ok=True)
         (dest / "mode.json").write_text(
             json.dumps({"mode": mode, "spec": quantization_spec(mode)}, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )
-        import torch
-
-        from voxprint_forge.diffusion.moss import import_vendored
-
-        mod = import_vendored()
-        common = {"local_files_only": True, "low_cpu_mem_usage": True}
-        sft = mod.MOSSImageTransformer.from_pretrained(
-            snapshots.sft / "transformer",
-            torch_dtype=torch.bfloat16,
-            use_safetensors=True,
-            quantization_config=configs["dit"],
-            **common,
-        )
-        sft.save_pretrained(dest / "sft", safe_serialization=True)
-        from transformers import AutoModel
-
-        encoder = AutoModel.from_pretrained(
-            snapshots.encoder,
-            dtype=torch.bfloat16,
-            use_safetensors=True,
-            trust_remote_code=False,
-            quantization_config=configs["encoder"],
-            **common,
-        )
-        encoder.save_pretrained(dest / "encoder", safe_serialization=True)
+        budget = _budget_bytes()
+        _stream_quantize_component(snapshots.sft / "transformer", dest / "sft", mode, kind="dit", budget_bytes=budget)
+        _stream_quantize_component(snapshots.encoder, dest / "encoder", mode, kind="encoder", budget_bytes=budget)
 
     def reload(self, dest: Path) -> None:
-        """Load the saved components with ``local_files_only`` to prove the files read back."""
+        """Load the saved components with ``device_map="cpu"`` so reload is not one GPU block."""
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         mode = json.loads((dest / "mode.json").read_text(encoding="utf-8"))["mode"]
@@ -705,24 +926,22 @@ class LiveQuantizer:
         from voxprint_forge.diffusion.moss import import_vendored
 
         mod = import_vendored()
-        common = {"local_files_only": True, "low_cpu_mem_usage": True}
-        mod.MOSSImageTransformer.from_pretrained(
+        transformer = _from_pretrained_offload(
+            mod.MOSSImageTransformer.from_pretrained,
             dest / "sft",
             torch_dtype=torch.bfloat16,
-            use_safetensors=True,
             quantization_config=configs["dit"],
-            **common,
         )
         from transformers import AutoModel
 
-        AutoModel.from_pretrained(
+        encoder = _from_pretrained_offload(
+            AutoModel.from_pretrained,
             dest / "encoder",
             dtype=torch.bfloat16,
-            use_safetensors=True,
             trust_remote_code=False,
             quantization_config=configs["encoder"],
-            local_files_only=True,
         )
+        _release_cuda(transformer, encoder)
 
     def train_probe(self, dest: Path) -> None:
         """One AdamW step on a rank-4 LoRA over ``video_embedder``, at a small latent."""
@@ -735,16 +954,15 @@ class LiveQuantizer:
         mode = json.loads((dest / "mode.json").read_text(encoding="utf-8"))["mode"]
         configs = materialize_quantization_config(str(mode))
         mod = import_vendored()
-        model = mod.MOSSImageTransformer.from_pretrained(
+        model = _from_pretrained_offload(
+            mod.MOSSImageTransformer.from_pretrained,
             dest / "sft",
             torch_dtype=torch.bfloat16,
-            use_safetensors=True,
             quantization_config=configs["dit"],
-            local_files_only=True,
-            low_cpu_mem_usage=True,
         )
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
+        _assert_cuda_budget("train_probe.to", _budget_bytes())
         model.train()
         layers = inject(model, ("video_embedder",), 4, 4)
         opt = torch.optim.AdamW(lora_parameters(layers), lr=1e-4)
@@ -762,7 +980,7 @@ class LiveQuantizer:
         loss = pred.float().pow(2).mean()
         loss.backward()
         opt.step()
-        del model, layers
+        _release_cuda(model, layers)
 
 
 class LiveRenderer:
@@ -789,7 +1007,7 @@ class LiveRenderer:
 
         import torch
 
-        from voxprint_forge.diffusion.moss import import_vendored
+        from voxprint_forge.diffusion.moss import encode_on_cpu, free_module, import_vendored
         from voxprint_forge.lora.layers import inject
 
         os.environ["HF_HUB_OFFLINE"] = "1"
@@ -797,43 +1015,55 @@ class LiveRenderer:
         mode = json.loads((weights / "mode.json").read_text(encoding="utf-8"))["mode"]
         configs = materialize_quantization_config(str(mode))
         mod = import_vendored()
-        common = {"local_files_only": True}
-        transformer = mod.MOSSImageTransformer.from_pretrained(
+        transformer = _from_pretrained_offload(
+            mod.MOSSImageTransformer.from_pretrained,
             weights / "sft",
             torch_dtype=torch.bfloat16,
-            use_safetensors=True,
             quantization_config=configs["dit"],
-            low_cpu_mem_usage=True,
-            **common,
         )
         if lora:
             inject(transformer, ("video_embedder",), 4, 4)
         from diffusers import AutoencoderKLFlux2
         from transformers import AutoModel, AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(self.snapshots.sft / "tokenizer", trust_remote_code=False, **common)
-        text_encoder = AutoModel.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
+            self.snapshots.sft / "tokenizer",
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+        text_encoder = _from_pretrained_offload(
+            AutoModel.from_pretrained,
             weights / "encoder",
             dtype=torch.bfloat16,
-            use_safetensors=True,
             trust_remote_code=False,
             quantization_config=configs["encoder"],
-            low_cpu_mem_usage=True,
-            **common,
         )
         vae = AutoencoderKLFlux2.from_pretrained(
-            self.snapshots.sft / "vae", torch_dtype=torch.float32, use_safetensors=True, **common
+            self.snapshots.sft / "vae", torch_dtype=torch.float32, use_safetensors=True, local_files_only=True
         )
-        scheduler = mod.MOSSImageScheduler.from_pretrained(self.snapshots.sft / "scheduler", **common)
+        scheduler = mod.MOSSImageScheduler.from_pretrained(self.snapshots.sft / "scheduler", local_files_only=True)
         pipe = mod.MOSSImagePipeline(transformer, scheduler, text_encoder, tokenizer, vae)
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        positive = encode_on_cpu(pipe, prompt)
+        negative = encode_on_cpu(pipe, "")
+        pipe.text_encoder = None
+        free_module(text_encoder)
         pipe.transformer.to(device)
         if pipe.vae is not None:
             pipe.vae.to(device)
+        _assert_cuda_budget("render.to", _budget_bytes())
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
-        image = pipe(prompt=prompt, generator=generator, num_inference_steps=self.steps).images[0]
+        image = pipe(
+            prompt_embeds=positive[0].to(device),
+            prompt_attention_mask=positive[1].to(device),
+            negative_prompt_embeds=negative[0].to(device),
+            negative_prompt_attention_mask=negative[1].to(device),
+            generator=generator,
+            num_inference_steps=self.steps,
+        ).images[0]
         buffer = BytesIO()
         image.save(buffer, format="PNG")
+        _release_cuda(pipe, transformer)
         return buffer.getvalue()
 
 
@@ -933,6 +1163,225 @@ def materialize_quantization_config(mode: str) -> dict[str, object]:
         "bnb_4bit_use_double_quant": False,
     }
     return {"dit": DiffusersBits(**kwargs), "encoder": TransformersBits(**kwargs)}
+
+
+_DIT_CONFIG_KEYS = (
+    "dim",
+    "ffn_dim",
+    "num_heads",
+    "num_layers",
+    "text_dim",
+    "freq_dim",
+    "latent_channels",
+    "rope_base",
+)
+
+
+def _budget_bytes() -> int:
+    raw = os.environ.get(VRAM_CAP_ENV)
+    gb = float(raw) if raw else DEFAULT_BUDGET_GB
+    return int(gb * BYTES_PER_GIB)
+
+
+@contextmanager
+def _without_allocator_warmup() -> Iterator[None]:
+    """Disable transformers' one-block ``torch.empty`` of the whole model size."""
+    try:
+        import transformers.modeling_utils as modeling_utils
+    except ImportError:
+        yield
+        return
+    original = getattr(modeling_utils, "caching_allocator_warmup", None)
+    if original is not None:
+        modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: None
+    try:
+        yield
+    finally:
+        if original is not None:
+            modeling_utils.caching_allocator_warmup = original
+
+
+def _offload_kwargs(**extra: object) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "local_files_only": True,
+        "low_cpu_mem_usage": True,
+        "device_map": "cpu",
+        "use_safetensors": True,
+    }
+    kwargs.update(extra)
+    return kwargs
+
+
+def _from_pretrained_offload(loader: Callable[..., object], path: Path, **kwargs: object) -> object:
+    """``from_pretrained`` onto CPU with allocator warmup patched out."""
+    with _without_allocator_warmup():
+        return loader(path, **_offload_kwargs(**kwargs))
+
+
+def _assert_cuda_budget(step_name: str, budget_bytes: int) -> None:
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    used = int(torch.cuda.memory_allocated())
+    if used > budget_bytes:
+        raise StageError(
+            f"{step_name} allocated {_fmt_bytes(used)}; budget is {_fmt_bytes(budget_bytes)}",
+            code="moss_prequant_vram",
+        )
+
+
+def _release_cuda(*_objects: object) -> None:
+    import gc
+
+    import torch
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _compute_device() -> str:
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _stream_quantize_component(source: Path, dest: Path, mode: str, *, kind: str, budget_bytes: int) -> None:
+    """Meta skeleton, CPU ``safe_open``, one layer group on CUDA, then save."""
+    import torch
+    from accelerate import init_empty_weights
+    from accelerate.utils import set_module_tensor_to_device
+    from safetensors import safe_open
+
+    shards = shard_infos_from_index(source)
+    steps = plan_stream(shards, budget_bytes, mode=mode)
+    name_to_shard = {item.name: item.shard or shard.name for shard in shards for item in shard.tensors}
+    with _without_allocator_warmup(), init_empty_weights():
+        model = _empty_component(source, kind)
+    device = _compute_device()
+    try:
+        with ExitStack() as stack:
+            handles = {
+                shard.name: stack.enter_context(safe_open(str(source / shard.name), framework="pt", device="cpu"))
+                for shard in shards
+            }
+            for step in steps:
+                for name in step.tensors:
+                    shard = name_to_shard[name]
+                    cpu = handles[shard].get_tensor(name)
+                    gpu = cpu.to(device)
+                    del cpu
+                    set_module_tensor_to_device(model, name, device, value=gpu, dtype=gpu.dtype)
+                    del gpu
+                _quantize_group(model, step.tensors, mode)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                _assert_cuda_budget(step.name, budget_bytes)
+        if mode == "int8":
+            model.is_loaded_in_8bit = True  # type: ignore[attr-defined]
+            model.is_quantized = True  # type: ignore[attr-defined]
+        elif mode == "nf4":
+            model.is_loaded_in_4bit = True  # type: ignore[attr-defined]
+            model.is_quantized = True  # type: ignore[attr-defined]
+        _fail_if_meta_parameters(model)
+        try:
+            model.to("cpu")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        dest.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(dest, safe_serialization=True)  # type: ignore[attr-defined]
+    finally:
+        del model
+        _release_cuda()
+
+
+def _empty_component(source: Path, kind: str) -> object:
+    if kind == "dit":
+        from voxprint_forge.diffusion.moss import import_vendored
+
+        cfg = json.loads((source / "config.json").read_text(encoding="utf-8"))
+        for key in ("_class_name", "_diffusers_version", "_name_or_path"):
+            cfg.pop(key, None)
+        kwargs = {key: cfg[key] for key in _DIT_CONFIG_KEYS if key in cfg}
+        return import_vendored().MOSSImageTransformer(**kwargs)
+    from transformers import AutoConfig, AutoModel
+
+    config = AutoConfig.from_pretrained(source, local_files_only=True, trust_remote_code=False)
+    return AutoModel.from_config(config, trust_remote_code=False)
+
+
+def _fail_if_meta_parameters(model: object) -> None:
+    for name, param in model.named_parameters():  # type: ignore[attr-defined]
+        device = getattr(param, "device", None)
+        if device is not None and getattr(device, "type", None) == "meta":
+            raise StageError(f"unfilled parameter {name}", code="moss_prequant_stream")
+
+
+def _quantize_group(model: object, tensor_names: Sequence[str], mode: str) -> None:
+    wanted = {name.rsplit(".", 1)[0] for name in tensor_names if "." in name}
+    for name, module in list(model.named_modules()):  # type: ignore[attr-defined]
+        if name not in wanted:
+            continue
+        quantized = _quantize_linear(module, mode)
+        if quantized is module:
+            continue
+        _set_submodule(model, name, quantized)
+
+
+def _set_submodule(model: object, qualified: str, module: object) -> None:
+    parent_name, _, child = qualified.rpartition(".")
+    parent = model.get_submodule(parent_name) if parent_name else model  # type: ignore[attr-defined]
+    parent._modules[child] = module  # type: ignore[attr-defined]
+
+
+def _quantize_linear(module: object, mode: str) -> object:
+    import torch
+    from torch import nn
+
+    if not isinstance(module, nn.Linear):
+        return module
+    if mode == "fp8_e4m3":
+        from torchao.quantization import Float8WeightOnlyConfig, quantize_
+        from torchao.quantization.granularity import PerRow
+
+        quantize_(
+            module,
+            Float8WeightOnlyConfig(
+                weight_dtype=torch.float8_e4m3fn,
+                granularity=PerRow(),
+                version=2,
+                set_inductor_config=False,
+            ),
+        )
+        return module
+    import bitsandbytes as bnb
+
+    weight = module.weight.data
+    bias = module.bias.data if module.bias is not None else None
+    device = weight.device
+    if mode == "int8":
+        quantized = bnb.nn.Linear8bitLt(
+            module.in_features, module.out_features, bias=bias is not None, has_fp16_weights=False
+        )
+        quantized.weight = bnb.nn.Int8Params(weight, requires_grad=False, has_fp16_weights=False)
+        quantized.is_loaded_in_8bit = True
+    else:
+        quantized = bnb.nn.Linear4bit(
+            module.in_features,
+            module.out_features,
+            bias=bias is not None,
+            compute_dtype=torch.bfloat16,
+            quant_type="nf4",
+        )
+        quantized.weight = bnb.nn.Params4bit(weight, requires_grad=False, quant_type="nf4")
+    if bias is not None:
+        quantized.bias = nn.Parameter(bias)
+    quantized = quantized.to(device)
+    quantized.source_cls = nn.Linear
+    return quantized
 
 
 class _Prompt:
