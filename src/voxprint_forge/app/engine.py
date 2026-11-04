@@ -121,7 +121,14 @@ def prepare_args(draft: Draft, project: Path) -> list[str]:
     return args
 
 
-def refset_round_args(draft: Draft, project: Path, *, count: int, strength: float, steps: int) -> list[str]:
+def embed_metadata_args(enabled: bool) -> list[str]:
+    """``--embed-metadata`` when picture details are on. Off sends nothing."""
+    return ["--embed-metadata"] if enabled else []
+
+
+def refset_round_args(
+    draft: Draft, project: Path, *, count: int, strength: float, steps: int, embed_metadata: bool = False,
+) -> list[str]:
     """``lora refset round``: the references, the subject and the round settings."""
     args = ["--json", "lora", "refset", "round", "--project", str(project)]
     for ref in draft.active_photos():
@@ -129,6 +136,7 @@ def refset_round_args(draft: Draft, project: Path, *, count: int, strength: floa
     args += ["--kind", draft.kind]
     args += _subject_args(draft)
     args += ["--candidates", str(int(count)), "--strength", f"{float(strength):.2f}", "--steps", str(int(steps))]
+    args += embed_metadata_args(embed_metadata)
     return args
 
 
@@ -174,6 +182,8 @@ def train_args(
                 args.append("--no-grad-checkpointing")  # on by default for both memory tiers
         if extend_from is not None and values.get("lora.mix_old") is not None:
             args += ["--replay", str(values["lora.mix_old"])]
+    # The picture-details switch is stored on its own. A saved True still sends the flag in Simple mode.
+    args += embed_metadata_args(bool(values.get("image.embed_metadata")))
     if resume:
         args.append("--resume")
     if dry_run:

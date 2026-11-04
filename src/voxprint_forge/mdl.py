@@ -24,6 +24,7 @@ from voxprint_forge.errors import StageError, UsageError
 from voxprint_forge.hashing import sha256_file
 from voxprint_forge.licence import normalize
 from voxprint_forge.llama import TAG as LLAMA_CPP_TAG
+from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.scrub import active_secrets, scrub
 from voxprint_forge.upload import Artifact
 
@@ -74,7 +75,7 @@ _TOP = (
 # sources come from voxprint-common MDL PR #15. prebuilt stays the list of
 # fallback sets. onnx_prebuilt (model or file) and post_install (app CLI only)
 # are the 0.3.0 additions; they are accepted, not interpreted.
-_TOP_OPTIONAL = ("mirror_policy", "file_groups", "prebuilt", "onnx_prebuilt", "post_install")
+_TOP_OPTIONAL = ("mirror_policy", "file_groups", "prebuilt", "onnx_prebuilt", "post_install", "prequant")
 _FILE_KEYS = ("path", "size", "sha256")
 _FILE_OPTIONAL = ("mirror_policy", "sources", "onnx_prebuilt")
 _PREBUILT_KEYS = ("id", "role", "replaces", "files")
@@ -259,6 +260,8 @@ def check_document(document: object) -> None:
         _onnx_prebuilt(document["onnx_prebuilt"])
     if "post_install" in document:
         _post_install(document["post_install"])
+    if "prequant" in document:
+        _prequant(document["prequant"])
 
 
 def hash_tree(root: Path) -> list[dict[str, object]]:
@@ -521,6 +524,24 @@ def find_manifests(root: Path) -> list[Path]:
     if not root.is_dir():
         raise UsageError(f"{root} is not a directory", code="usage")
     return sorted(path for path in root.rglob(MANIFEST_NAME) if path.is_file())
+
+
+def check_lora_base(document: Mapping[str, object], target_base: str) -> None:
+    """Raise ``LoraUsageError`` (``lora.err.base_mismatch``) when the LoRA is not for ``target_base``.
+
+    ``document`` is a ``voxprint-model/1`` LoRA descriptor: the ``voxprint-model.json``
+    sidecar next to an exported ``.safetensors``, or a package whose ``base`` is an
+    MDL id. A descriptor without base information predates MOSS and describes a
+    Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). The error names
+    ``forge lora retrain --base moss|z-image PROJECT`` as the way to train the
+    same photos for ``target_base``. Weights are not converted.
+    """
+    from voxprint_forge.lora import resolve_base
+    from voxprint_forge.lora.project import base_mismatch_params
+
+    found = resolve_base(document.get("base"))
+    if found != target_base:
+        raise LoraUsageError("lora.err.base_mismatch", **base_mismatch_params(found, target_base))
 
 
 def write_index(
@@ -1190,6 +1211,41 @@ def _post_install(value: object) -> None:
                 digest = item["sha256"]
                 if not isinstance(digest, str) or _SHA.fullmatch(digest) is None:
                     raise StageError("post_install.outputs sha256 must be 64 lowercase hex", code="mdl")
+
+
+def _prequant(value: object) -> None:
+    """The optional MOSS pre-quant record on a voxprint-model/1 document."""
+    if not isinstance(value, dict):
+        raise StageError("prequant must be an object", code="mdl")
+    _keys(value, ("quant_modes", "measured_peak_gb", "min_sm", "budget_gb", "chosen"), (), "prequant")
+    _str_list(value["quant_modes"], "prequant.quant_modes", minimum=1)
+    modes = value["quant_modes"]
+    peaks = value["measured_peak_gb"]
+    if not isinstance(peaks, dict) or not peaks:
+        raise StageError("prequant.measured_peak_gb must be an object", code="mdl")
+    for mode, row in peaks.items():
+        if not isinstance(mode, str) or mode not in modes:
+            raise StageError("prequant.measured_peak_gb keys must be quant_modes", code="mdl")
+        if not isinstance(row, dict):
+            raise StageError("prequant peak must be an object", code="mdl")
+        _keys(row, ("generate", "train"), (), f"prequant.measured_peak_gb.{mode}")
+        _number(row["generate"], f"prequant.measured_peak_gb.{mode}.generate")
+        _number(row["train"], f"prequant.measured_peak_gb.{mode}.train")
+    floors = value["min_sm"]
+    if not isinstance(floors, dict) or not floors:
+        raise StageError("prequant.min_sm must be an object", code="mdl")
+    for mode, floor in floors.items():
+        if not isinstance(mode, str) or mode not in modes:
+            raise StageError("prequant.min_sm keys must be quant_modes", code="mdl")
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor < 0:
+            raise StageError("prequant.min_sm values must be integers", code="mdl")
+    for mode in modes:
+        if mode not in floors:
+            raise StageError(f"prequant.min_sm missing {mode}", code="mdl")
+    _number(value["budget_gb"], "prequant.budget_gb")
+    chosen = value["chosen"]
+    if not isinstance(chosen, str) or chosen not in modes or chosen not in peaks:
+        raise StageError("prequant.chosen must be a measured quant mode", code="mdl")
 
 
 def _text(value: object, label: str) -> None:

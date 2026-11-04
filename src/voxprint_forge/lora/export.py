@@ -8,12 +8,12 @@ key may look like a gate or threshold setting; Canvas refuses such files.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import re
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,10 +22,11 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 
 from voxprint_forge import __version__
+from voxprint_forge.lora import legacy_base, resolve_base
 from voxprint_forge.lora.bases import get_adapter
 from voxprint_forge.lora.errors import LoraUsageError
 from voxprint_forge.lora.events import Progress
-from voxprint_forge.lora.project import Project, package_stem
+from voxprint_forge.lora.project import Item, Project, package_stem
 from voxprint_forge.lora.review import load_state, passes_output_check
 from voxprint_forge.lora.trigger import token_slug
 
@@ -43,6 +44,10 @@ SIDECAR = "voxprint-model.json"
 PRODUCER = f"voxprint-model-forge {__version__}"
 RESERVED_TOKENS = frozenset({"safety", "minor", "minors", "age", "gate", "gates", "threshold", "thresholds", "nsfw"})
 _LICENCES = Path(__file__).resolve().parent / "licences"
+# Short base tag in export file names. Unknown ids fall back to a compact slug.
+# The stored tag stays moss5b for the MOSS registry id. The SFT/Base split is base_variant.
+_BASE_SHORT = {"moss-image-base": "moss5b", "z-image": "zimg6b"}
+_VARIANTS = frozenset({"sft", "base", "z-image"})
 
 
 def gate_like(key: str) -> bool:
@@ -51,7 +56,7 @@ def gate_like(key: str) -> bool:
 
 
 def header_metadata(
-    data: dict[str, object], tensors: dict[str, torch.Tensor] | None = None
+    data: dict[str, object], tensors: dict[str, torch.Tensor] | None = None, *, dataset_id: str = ""
 ) -> dict[str, str]:
     """The ``voxprint.subject.*`` and ``voxprint.lora.*`` header for a trained project."""
     # Circular: attr.encode calls tensors_digest in this module.
@@ -61,6 +66,7 @@ def header_metadata(
     train = dict(data.get("train") or {})  # type: ignore[call-overload]
     config = dict(train.get("config") or {})
     kind = str(subject.get("kind") or data.get("kind") or "")
+    base = str(train.get("base", ""))
     meta = {
         "voxprint.subject.name": str(subject.get("name", "")),
         "voxprint.subject.stage_name": str(subject.get("stage_name", "")),
@@ -70,8 +76,12 @@ def header_metadata(
         "voxprint.subject.provenance_note": str(subject.get("provenance_note", "")),
         "voxprint.subject.release_attached": _flag(subject.get("release_attached")),
         "voxprint.subject.release_sha256": str(subject.get("release_sha256", "")),
-        "voxprint.lora.base": str(train.get("base", "")),
+        "voxprint.lora.base": base,
+        "voxprint.lora.base_family": base,
+        "voxprint.lora.base_variant": base_variant(base, train.get("base_variant")),
         "voxprint.lora.base_revision": str(train.get("base_revision", "")),
+        "voxprint.lora.base_sha256": str(train.get("base_sha256", "")),
+        "voxprint.lora.dataset_id": dataset_id,
         "voxprint.lora.rank": str(config.get("rank", "")),
         "voxprint.lora.alpha": str(config.get("alpha", "")),
         "voxprint.lora.steps": str(train.get("step", "")),
@@ -143,6 +153,76 @@ def model_id(data: dict[str, object], tensors_digest: str) -> str:
     return f"{slug[:40]}-{tensors_digest[:8]}"
 
 
+def base_variant(mdl_id: str, recorded: object = None) -> str:
+    """``sft``, ``base`` or ``z-image`` for LoRA metadata.
+
+    A stored ``voxprint.lora.base_variant`` wins when it is one of those three.
+    The MOSS registry id ``moss-image-base`` defaults to ``sft`` (the weights in
+    ``diffusion.moss.REPOS["sft"]``). A blank id is a LoRA from before any base
+    was recorded, which is Z-Image. Any other id, including a test stand-in,
+    records ``base``.
+    """
+    if isinstance(recorded, str) and recorded.strip() in _VARIANTS:
+        return recorded.strip()
+    text = mdl_id.strip()
+    if text in ("", "z-image"):
+        return "z-image"
+    if text == "moss-image-base":
+        return "sft"
+    return "base"
+
+
+def lora_variant_of(metadata: Mapping[str, object]) -> str:
+    """Variant recorded on a LoRA file. Missing metadata follows :func:`base_variant`."""
+    return base_variant(lora_base_of(metadata), metadata.get("voxprint.lora.base_variant"))
+
+
+def base_short(mdl_id: str) -> str:
+    """Short base tag for export file names: ``moss-image-base`` -> ``moss5b``, ``z-image`` -> ``zimg6b``.
+
+    An unregistered id becomes a compact lowercase slug, so stand-in adapters in tests
+    still get a file-safe tag.
+    """
+    known = _BASE_SHORT.get(mdl_id)
+    if known is not None:
+        return known
+    return re.sub(r"[^a-z0-9]+", "", mdl_id.lower()) or "base"
+
+
+def lora_base_of(metadata: Mapping[str, object]) -> str:
+    """The base MDL id recorded in safetensors header metadata.
+
+    New exports carry ``voxprint.lora.base_family``; older ones only
+    ``voxprint.lora.base``. A file with neither predates base recording, and
+    such a LoRA is a Z-Image one (the only base then). The file name is not
+    consulted: an old name without a base short tag still reads.
+    """
+    for key in ("voxprint.lora.base_family", "voxprint.lora.base"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return legacy_base()
+
+
+def _base_sha(info: object) -> str:
+    """Pinned base digest on the adapter, or empty when the adapter has none yet."""
+    return str(getattr(info, "sha256", "") or "")
+
+
+def dataset_digest(items: Sequence[Item]) -> str:
+    """sha256 of the sorted item ids and their caption text.
+
+    One value per prepared dataset: it does not change with the item order and
+    is the same no matter which base the dataset was encoded for.
+    """
+    digest = hashlib.sha256()
+    for item in sorted(items, key=lambda entry: entry.id):
+        for part in (item.id, item.long, item.short):
+            digest.update(part.encode("utf-8"))
+            digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 def export(
     project: Project,
     progress: Progress,
@@ -152,7 +232,7 @@ def export(
     install_to_mdl: bool = False,
     tags: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """Write ``<id>.safetensors`` and ``voxprint-model.json``; optionally install them for Canvas."""
+    """Write ``<id>.<base>.safetensors`` and ``voxprint-model.json``; optionally install them for Canvas."""
     data = project.read()
     train = data.get("train")
     if data.get("gate_passed") is not True or not isinstance(train, dict) or not train.get("checkpoint"):
@@ -161,15 +241,23 @@ def export(
     source = project.checkpoints / name
     if not source.is_file():
         raise LoraUsageError("lora.err.no_checkpoint")
-    info = get_adapter(str(train["base"])).info
+    # Projects saved before the base was recorded trained on Z-Image.
+    base_id = resolve_base(train.get("base"))
+    info = get_adapter(base_id).info
     progress.emit("export.write", "lora.progress.export", reason_key="lora.reason.export")
     if not info.permissive:
         progress.emit("export.licence", "lora.err.base_restrictive")
     tensors = {key: value.detach().cpu().contiguous() for key, value in load_file(str(source)).items()}
     mid = model_id(data, tensors_digest(tensors))
-    shown = _export_train(train, name, checkpoint is None)
-    meta = header_metadata({**data, "train": shown}, tensors)
-    target = Path(out) if out is not None else project.export / f"{mid}.safetensors"
+    shown = {
+        **_export_train(train, name, checkpoint is None),
+        "base": base_id,
+        "base_variant": base_variant(base_id, train.get("base_variant") or getattr(info, "variant", "")),
+        "base_sha256": _base_sha(info) or str(train.get("base_sha256", "")),
+    }
+    meta = header_metadata({**data, "train": shown}, tensors, dataset_id=dataset_digest(project.items()))
+    file_name = f"{mid}.{base_short(info.mdl_id)}.safetensors"
+    target = Path(out) if out is not None else project.export / file_name
     if target.suffix != ".safetensors":
         raise LoraUsageError("lora.err.no_checkpoint")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -191,8 +279,8 @@ def export(
         progress.emit("export.install", "lora.progress.install", reason_key="lora.reason.install")
         folder = user_models_dir() / "lora" / mid
         folder.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(target, folder / f"{mid}.safetensors")
-        _write_json(folder / SIDECAR, {**sidecar, "file": f"{mid}.safetensors"})
+        shutil.copyfile(target, folder / file_name)
+        _write_json(folder / SIDECAR, {**sidecar, "file": file_name})
         for item in ("LICENSE", "NOTICE", "preview.webp"):
             if (target.parent / item).is_file():
                 shutil.copyfile(target.parent / item, folder / item)
@@ -216,7 +304,13 @@ def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) 
         "file": target.name,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "size": len(raw),
-        "base": {"mdl_id": info.mdl_id, "revision": str(dict(data.get("train") or {}).get("base_revision", ""))},
+        "base": {
+            "mdl_id": info.mdl_id,
+            "revision": str(dict(data.get("train") or {}).get("base_revision", "")),
+            "sha256": str(getattr(info, "sha256", "")),
+            "mirror": str(getattr(info, "mirror", "")),
+        },
+        "compatible_bases": [info.mdl_id],
         "licence": info.licence,
         "default_strength": DEFAULT_STRENGTH,
         "strength_range": list(STRENGTH_RANGE),
@@ -254,10 +348,12 @@ def _preview(project: Project, step: int, folder: Path) -> Path | None:
     found = sorted(project.previews.glob(f"step-{step:06d}-*.png")) if project.previews.is_dir() else []
     if not found:
         return None
-    target = folder / "preview.webp"
+    from voxprint_forge.imageio_save import save_image
+
     with Image.open(found[0]) as image:
-        image.convert("RGB").save(target, "WEBP", quality=90)
-    return target
+        rgb = image.convert("RGB")
+    # A regular picture: lossy WebP at quality 90, with no camera or text metadata.
+    return save_image(rgb, folder / "preview", "regular")
 
 
 def _export_train(train: dict[str, object], name: str, final: bool) -> dict[str, object]:
@@ -302,7 +398,7 @@ def export_package(
     checkpoint: int | None = None,
     out: Path | None = None,
 ) -> dict[str, object]:
-    """Write ``<stage name or name>.voxlora``: the small LoRA package, and nothing merged.
+    """Write ``<stage name or name>.<base>.voxlora``: the small LoRA package, and nothing merged.
 
     The zip is stored uncompressed. It holds ``model.safetensors`` (today's
     ``voxprint.subject.*`` and ``voxprint.lora.*`` header), ``voxprint-model.json``,
@@ -318,12 +414,19 @@ def export_package(
     source = project.checkpoints / name
     if not source.is_file():
         raise LoraUsageError("lora.err.no_checkpoint")
-    info = get_adapter(str(train["base"])).info
+    # Projects saved before the base was recorded trained on Z-Image.
+    base_id = resolve_base(train.get("base"))
+    info = get_adapter(base_id).info
     progress.emit("export.write", "lora.progress.export", reason_key="lora.reason.export")
     tensors = _lora_tensors(source)
-    shown = _export_train(train, name, checkpoint is None)
-    meta = header_metadata({**data, "train": shown}, tensors)
-    target = _package_target(project, data, out)
+    shown = {
+        **_export_train(train, name, checkpoint is None),
+        "base": base_id,
+        "base_variant": base_variant(base_id, train.get("base_variant") or getattr(info, "variant", "")),
+        "base_sha256": _base_sha(info) or str(train.get("base_sha256", "")),
+    }
+    meta = header_metadata({**data, "train": shown}, tensors, dataset_id=dataset_digest(project.items()))
+    target = _package_target(project, data, out, base_short(info.mdl_id))
     target.parent.mkdir(parents=True, exist_ok=True)
     weights = _safetensors_bytes(tensors, meta)
     pictures = _package_pictures(project)
@@ -355,9 +458,9 @@ def _safetensors_bytes(tensors: dict[str, torch.Tensor], meta: dict[str, str]) -
         return path.read_bytes()
 
 
-def _package_target(project: Project, data: dict[str, object], out: Path | None) -> Path:
-    """Default ``<project>/export/<stem>.voxlora``, or ``out`` with that suffix."""
-    stem = package_stem(data)
+def _package_target(project: Project, data: dict[str, object], out: Path | None, short: str) -> Path:
+    """Default ``<project>/export/<stem>.<base>.voxlora``, or ``out`` with that suffix."""
+    stem = f"{package_stem(data)}.{short}"
     if out is None:
         return project.export / f"{stem}.voxlora"
     path = Path(out)
@@ -467,9 +570,9 @@ def _clean_webp(path: Path) -> bytes | None:
     clean = Image.frombytes("RGB", rgb.size, rgb.tobytes())
     if max(clean.size) > PREVIEW_LIMIT:
         clean.thumbnail((PREVIEW_LIMIT, PREVIEW_LIMIT), Image.Resampling.LANCZOS)
-    buffer = io.BytesIO()
-    clean.save(buffer, format="WEBP", quality=90)
-    return buffer.getvalue()
+    from voxprint_forge.imageio_save import image_bytes
+
+    return image_bytes(clean, "regular")
 
 
 def _write_package(target: Path, weights: bytes, doc: dict[str, object], pictures: list[tuple[str, bytes]]) -> None:

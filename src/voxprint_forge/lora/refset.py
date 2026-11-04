@@ -364,8 +364,11 @@ def check_refs(
         _unload_gate(gate)
     refs_dir = folder(project) / "refs"
     refs_dir.mkdir(parents=True, exist_ok=True)
+    from voxprint_forge.imageio_save import save_image
+
     for rid, image in images:
-        image.save(refs_dir / f"{rid}.png")
+        # The state records refs/<id>.png. Keep that name.
+        save_image(image, refs_dir / f"{rid}.png", "master", fmt="png")
     save_prompts(project, prompts)
     state.update(
         {
@@ -471,7 +474,15 @@ def run_round(
                 source, job["prompt"], seed=job["seed"], strength=job["strength"], steps=job["steps"]
             )
             path = pending / f"{job['index']:03d}.png"
-            image.convert("RGB").save(path)
+            from voxprint_forge.imageio_save import save_image
+
+            # The round state records this PNG name. Metadata is opt-in.
+            save_image(image.convert("RGB"), path, "series", fmt="png", metadata={
+                "prompt": job["prompt"],
+                "seed": job["seed"],
+                "steps": job["steps"],
+                "strength": job["strength"],
+            })
             made.append((job, path))
     finally:
         progress.emit("refset.unload", "lora.progress.refset_unload", reason_key="lora.reason.refset_unload")

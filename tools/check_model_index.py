@@ -27,6 +27,10 @@ NOT_IN_INDEX = {"z-image-turbo": "mirror-z-image-turbo"}
 # file by size and sha256, so a download is verified either way. Remove an id once the index
 # carries it; the check then compares it like any other row.
 PENDING_INDEX = frozenset({"sface-2021dec"})
+# Forge ids whose signed index row still describes an older snapshot. The id is skipped only
+# while mdl.json carries exactly this version; any other version is compared as usual. Remove
+# the entry once the re-signed index row points at the new snapshot.
+PENDING_REINDEX = {"moss-image-base": "fc5de0d56fc910cbca6f6625a70f5f582b26deb1"}
 
 
 def _get(url: str) -> bytes:
@@ -117,6 +121,8 @@ def check(
             continue
         if row is None:
             problems.append(mdl_id)
+            continue
+        if PENDING_REINDEX.get(mdl_id) == str(model.get("version") or ""):
             continue
         descriptor = descriptors.get(mdl_id)
         if descriptor is None:

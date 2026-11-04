@@ -312,9 +312,9 @@
     },
     {
       "id": "moss-image-base",
-      "display_name": "MOSS-Image Base",
-      "repo": "OpenMOSS-Team/MOSS-Image-Base",
-      "revision": "1ceede80badddd6a7812069619edaa5633587192",
+      "display_name": "MOSS-Image SFT",
+      "repo": "OpenMOSS-Team/MOSS-Image-SFT",
+      "revision": "fc5de0d56fc910cbca6f6625a70f5f582b26deb1",
       "license": "apache-2.0",
       "size": 27219859058,
       "files": [
@@ -396,17 +396,17 @@
         {
           "path": "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
           "size": 4991978016,
-          "sha256": "ae085fba123b6df67daf90aa9698fadee60c73e45bcaf3f3043d15f34e7a1804"
+          "sha256": "e40d3444940a0b0fd7cd45ba7959a5bd3d5efd7ddf87aae5ce4d87ce8aa03d01"
         },
         {
           "path": "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
           "size": 4983137016,
-          "sha256": "806e876d80c7fba560663a3a95580e6c7033da3f9ea3c52765245ef0e1818f75"
+          "sha256": "d106da790ec2924ffd8af04b4ffa8f8de281a974b58e55649c3ec596dc8ef033"
         },
         {
           "path": "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
           "size": 189549184,
-          "sha256": "5f319b72c40324294007c270d78112425627b537fcd8769b3c00f9f070e506a9"
+          "sha256": "11f637ab17c7093344a6110a1e87ffda8e56558dc55183d8e790222cfcdcf52d"
         },
         {
           "path": "transformer/diffusion_pytorch_model.safetensors.index.json",

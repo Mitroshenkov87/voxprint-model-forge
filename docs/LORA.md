@@ -98,12 +98,12 @@ Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2
 
 ## Bases
 
-The base is chosen by MDL id (`--base`, default `z-image`). MDL installs it in `<models dir>/model-forge/<id>`.
+The base is chosen by MDL id (`--base`, default `moss`, registry id `moss-image-base`). MDL installs it in `<models dir>/model-forge/<id>`. The default weights are MOSS-Image SFT. A project or LoRA with no base recorded stays Z-Image. The stored short tag is `moss5b` (`zimg6b` for Z-Image).
 
 | MDL id | Source | Licence | State |
 | --- | --- | --- | --- |
-| `z-image` | Tongyi-MAI/Z-Image | Apache-2.0 | Default. LoRAs are for Z-Image; loading on Z-Image-Turbo is untested until a Canvas test. |
-| `moss-image-base` | OpenMOSS-Team/MOSS-Image-Base | Apache-2.0 | fp32 LoRA. The 24 GB preset keeps the bf16 DiT. The 16 GB preset stores the DiT as FP8 e4m3 weights (torchao weight-only) and computes in bf16. |
+| `z-image` | Tongyi-MAI/Z-Image | Apache-2.0 | Optional. LoRAs are for Z-Image; loading on Z-Image-Turbo is untested until a Canvas test. A file with no base recorded is still this base. |
+| `moss-image-base` | OpenMOSS-Team/MOSS-Image-SFT | Apache-2.0 | Default (`--base moss`, variant `sft`). fp32 LoRA. The 24 GB preset keeps the bf16 DiT. The 16 GB preset stores the DiT as FP8 e4m3 weights (torchao weight-only) and computes in bf16. |
 
 A new base is a `BaseAdapter` subclass registered with `voxprint_forge.lora.bases.register`. The CLI does not change.
 

@@ -650,7 +650,9 @@ def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp
     ids = [combo.itemData(i) for i in range(combo.count())]
     assert ids == [info.mdl_id for info in bases.trainable()]
     assert ids[0] == "z-image" and "moss-image-base" in ids
-    assert combo.itemText(0) == "Z-Image" and combo.width() <= basepicker.MAX_WIDTH
+    assert combo.itemText(0) == tr("forge.app.base.optional_name", name="Z-Image")
+    assert combo.currentData() == "moss-image-base"
+    assert combo.width() <= basepicker.MAX_WIDTH
     moss = combo.itemData(ids.index("moss-image-base"), basepicker.DETAIL_ROLE)
     assert tr("forge.app.base.moss-image-base.note") in moss
     detail = combo.itemData(0, basepicker.DETAIL_ROLE)
@@ -671,7 +673,7 @@ def test_base_vram_uses_measured_peaks_only_when_present(monkeypatch) -> None:
     assert basepicker.MEASURED_PEAK_GB["moss-image-base"] == {16: 13.6, 24: 18.5}
     moss = tr("forge.app.base.vram_measured", gb="13.6")
     assert basepicker.vram_text("moss-image-base") == moss
-    assert basepicker.memory_details() == tr("forge.app.base.vram_measured.tip", vram=f"MOSS-Image Base {moss}")
+    assert basepicker.memory_details() == tr("forge.app.base.vram_measured.tip", vram=f"MOSS-Image SFT {moss}")
     monkeypatch.setattr(basepicker, "MEASURED_PEAK_GB", {})
     assert basepicker.memory_details() is None
     monkeypatch.setitem(basepicker.MEASURED_PEAK_GB, "z-image", {16: 14.5, 24: 19.0})
@@ -690,7 +692,7 @@ def test_base_details_name_only_measured_memory(make_app, tmp_path, lang) -> Non
     box = app.window.findChild(Details, "forge.details.train.base")
     texts = [label.text() for label in box.body.findChildren(QtWidgets.QLabel)]
     assert texts == [tr("forge.app.base.details"), basepicker.memory_details()]
-    assert "MOSS-Image Base" in texts[1] and "Z-Image" not in texts[1]
+    assert "MOSS-Image SFT" in texts[1] and "Z-Image" not in texts[1]
     assert all(word not in text for text in texts for word in ("Not measured",))
 
 

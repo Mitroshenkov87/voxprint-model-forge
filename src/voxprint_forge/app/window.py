@@ -504,7 +504,6 @@ class ForgeApp:
         self.expert = ExpertMode()
         self.draft = Draft(expert=self.expert.enabled())
         self.simple: dict[str, str] = {"preset": "balanced", "likeness": "balanced", "vram": "auto"}
-        self.simple["base"] = self._bases()[0][0] if self._bases() else ""
         self.previews = True
         self.first_round_steps = rounds.DEFAULT_FIRST_ROUND_STEPS
         self.review_rounds = rounds.DEFAULT_ROUNDS
@@ -512,6 +511,7 @@ class ForgeApp:
             "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS,
         }
         self.project = self.home / "lora" / "untitled"
+        self.simple["base"] = self._chosen_base()
         self.status: tuple[str, dict[str, object], bool] | None = None
         self.progress_text = ""
         self.progress_percent: float | None = None
@@ -2582,7 +2582,7 @@ class ForgeApp:
                 self.draft.trained = False
                 self.paused = False
 
-        self._run(["--json", "lora", "continue", str(self.project)], done)
+        self._run(["--json", "lora", "continue", str(self.project), *self._embed_flag()], done)
 
     def continue_unattended(self) -> None:
         """``lora continue --unattended``: the remaining steps, with no more pauses."""
@@ -2604,7 +2604,9 @@ class ForgeApp:
                 self.draft.trained = False
                 self.paused = False
 
-        self._run(["--json", "lora", "continue", str(self.project), "--unattended"], done)
+        self._run(
+            ["--json", "lora", "continue", str(self.project), "--unattended", *self._embed_flag()], done,
+        )
 
     def finish_review(self) -> None:
         """``lora finish``: confirm the steps, then save the LoRA and draw a final preview."""
@@ -2619,7 +2621,7 @@ class ForgeApp:
                 self.draft.trained = True
                 self.paused = False
 
-        self._run(["--json", "lora", "finish", str(self.project)], done)
+        self._run(["--json", "lora", "finish", str(self.project), *self._embed_flag()], done)
 
     def discard_review(self) -> None:
         """``lora finish --discard --yes``: confirm, then remove temporary files. Photos stay."""
@@ -3031,8 +3033,10 @@ class ForgeApp:
             return
         values = self.refset_settings if self.draft.expert else {
             "count": refset.DEFAULT_CANDIDATES, "strength": refset.DEFAULT_STRENGTH, "steps": refset.DEFAULT_STEPS}
-        args = engine.refset_round_args(self.draft, self.project, count=int(values["count"]),
-                                        strength=float(values["strength"]), steps=int(values["steps"]))
+        args = engine.refset_round_args(
+            self.draft, self.project, count=int(values["count"]), strength=float(values["strength"]),
+            steps=int(values["steps"]), embed_metadata=bool(self.expert_values().get("image.embed_metadata")),
+        )
 
         def done(outcome: engine.Outcome) -> None:
             self.draft.approved = []
@@ -3067,6 +3071,10 @@ class ForgeApp:
             self.draft.approved = []
             self.draft.prepared = None
         self.repaint()
+
+    def _embed_flag(self) -> list[str]:
+        """``--embed-metadata`` when the picture-details setting is on."""
+        return engine.embed_metadata_args(bool(self.expert_values().get("image.embed_metadata")))
 
     def _train_args(self, *, resume: bool = False, dry_run: bool = False) -> list[str]:
         values: dict[str, object] = dict(self.expert_values())
@@ -3262,6 +3270,7 @@ class ForgeApp:
             self.draft.add_photos([photos])
         if self._review_waiting():
             self._restore_review(subject)
+        self._sync_base()
         self.repaint()
 
     def new_model(self) -> None:
@@ -3279,6 +3288,7 @@ class ForgeApp:
         while (root / f"model-{index}").exists():
             index += 1
         self.project = root / f"model-{index}"
+        self._sync_base()
         self.layout.sections.open_wizard(WIZARD)
         self.repaint()
 
@@ -3301,6 +3311,30 @@ class ForgeApp:
             if digits:
                 steps.append(int(digits))
         return sorted(set(steps))
+
+    def _chosen_base(self) -> str:
+        """MOSS for a new project. An existing project stays on its first recorded base."""
+        ids = [item[0] for item in self._bases()]
+        project = Project(self.project)
+        if project.file.is_file():
+            recorded = project.recorded_bases()
+            if recorded and recorded[0] in ids:
+                return recorded[0]
+        return basepicker.default_mdl(ids)
+
+    def _sync_base(self) -> None:
+        """Point the train picker at :meth:`_chosen_base`."""
+        mdl_id = self._chosen_base()
+        self.simple["base"] = mdl_id
+        window = getattr(self, "window", None)
+        if window is None:
+            return
+        combo = window.findChild(QtWidgets.QComboBox, "forge.train.base")
+        if combo is None:
+            return
+        index = combo.findData(mdl_id)
+        if index >= 0:
+            combo.setCurrentIndex(index)
 
     def _bases(self) -> list[tuple[str, str, bool]]:
         try:

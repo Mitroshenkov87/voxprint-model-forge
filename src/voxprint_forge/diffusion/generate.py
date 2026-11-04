@@ -100,10 +100,10 @@ def _as_tensor(output: object) -> torch.Tensor:
 
 
 def save_avif(image: torch.Tensor, path: Path) -> None:
-    """Write an RGB image as AVIF."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    array = image.detach().clamp(0, 1).mul(255).round().to(dtype=torch.uint8).permute(1, 2, 0).cpu().numpy()
-    Image.fromarray(array, mode="RGB").save(path, format="AVIF")
+    """Write an RGB image as AVIF (lossless when Pillow can encode AVIF)."""
+    from voxprint_forge.imageio_save import save_image
+
+    save_image(_pil(image), path, "series", fmt="avif")
 
 
 def _cosine(left: torch.Tensor, right: torch.Tensor) -> float:
@@ -317,17 +317,18 @@ def _write_review(
     seeds: list[int],
 ) -> None:
     """A few full-resolution labelled frames beside the old grid path."""
+    from voxprint_forge.imageio_save import save_image
+
     directory = grid_path.parent / f"review-{grid_path.stem}"
     directory.mkdir(parents=True, exist_ok=True)
     rows: list[tuple[str, str, int, str]] = []
     kept = min(REVIEW_LIMIT, len(refs), len(cands))
     for index in range(kept):
-        ref_name = f"{index:02d}-reference.png"
-        cand_name = f"{index:02d}-candidate.png"
-        refs[index].save(directory / ref_name)
-        cands[index].save(directory / cand_name)
-        rows.append((ref_name, prompts[index], seeds[index], "reference"))
-        rows.append((cand_name, prompts[index], seeds[index], "candidate"))
+        meta = {"prompt": prompts[index], "seed": seeds[index]}
+        ref_path = save_image(refs[index], directory / f"{index:02d}-reference", "series", metadata=meta)
+        cand_path = save_image(cands[index], directory / f"{index:02d}-candidate", "series", metadata=meta)
+        rows.append((ref_path.name, prompts[index], seeds[index], "reference"))
+        rows.append((cand_path.name, prompts[index], seeds[index], "candidate"))
     (directory / "labels.md").write_text(review_document(rows), encoding="utf-8", newline="\n")
 
 

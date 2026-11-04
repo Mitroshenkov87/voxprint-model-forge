@@ -6,8 +6,10 @@ MOSS-Image (OpenMOSS, Apache-2.0) is a 5B single-stream DiT in the FLUX.2 latent
 
 | Row | Author (primary) | Our backup mirror |
 |---|---|---|
-| `moss-image-base` | `OpenMOSS-Team/MOSS-Image-Base` @ `1ceede80` | `Mitroshenkov87/voxprint-mirror-moss-image-base` @ `85cc5ca1` |
+| `moss-image-base` | `OpenMOSS-Team/MOSS-Image-SFT` @ `fc5de0d5` | `Mitroshenkov87/voxprint-mirror-moss-image-sft` @ `2d0da610` |
 | `moss-image-sft` | `OpenMOSS-Team/MOSS-Image-SFT` @ `fc5de0d5` | `Mitroshenkov87/voxprint-mirror-moss-image-sft` @ `2d0da610` |
+
+The catalog id `moss-image-base` is that SFT snapshot. MOSS-Image Base (`OpenMOSS-Team/MOSS-Image-Base` @ `1ceede80`, mirror `Mitroshenkov87/voxprint-mirror-moss-image-base` @ `85cc5ca1`) stays the source for the Base FP8 DiT only.
 
 Each repo holds 37 files, 27.23 GB. The mirrors are byte-identical to the author's files at those commits. The only difference is `README.md`, which is the mirror card. `text_encoder/`, `tokenizer/` and `vae/` are identical in Base and SFT.
 
@@ -28,7 +30,7 @@ It needs diffusers>=0.38 and transformers>=5.3. The app venv has diffusers 0.41 
 
 ## LoRA
 
-`moss-image-base` trains with the LoRA trainer (`voxprint-forge-cli lora train --base moss-image-base`). The LoRA stays fp32. The 24 GB tier keeps the bf16 DiT. The 16 GB tier stores the DiT as FP8 e4m3 weights (torchao 0.18.0 weight-only, per-row scales, bf16 compute). torchao's `Float8Tensor.dtype` stays bf16, which is what the MOSS block reads before it casts activations. Raw float8 or 4-bit storage is not used for the DiT. The text encoder runs on the card while the DiT waits in RAM; after the VAE latents and prompt embeddings are cached the encoder is freed and only then is the DiT read and moved onto the card, so the two large models are never in RAM together. The FP8 DiT is quantized once, saved under `model-forge/moss-image-{base,sft}-fp8/dit-fp8.safetensors`, and loaded from that file until the source revision, a source sha256, the torchao version or the quant config changes.
+`moss-image-base` trains and generates on MOSS-Image SFT (`OpenMOSS-Team/MOSS-Image-SFT` @ `fc5de0d5`; `voxprint-forge-cli lora train --base moss`). The registry id stays `moss-image-base`. The LoRA header records `voxprint.lora.base_variant` `sft` and `voxprint.lora.base_sha256`. The LoRA stays fp32. The 24 GB tier keeps the bf16 DiT. The 16 GB tier stores the DiT as FP8 e4m3 weights (torchao 0.18.0 weight-only, per-row scales, bf16 compute). torchao's `Float8Tensor.dtype` stays bf16, which is what the MOSS block reads before it casts activations. Raw float8 or 4-bit storage is not used for the DiT. The text encoder runs on the card while the DiT waits in RAM; after the VAE latents and prompt embeddings are cached the encoder is freed and only then is the DiT read and moved onto the card, so the two large models are never in RAM together. The FP8 DiT is quantized once, saved under `model-forge/moss-image-{base,sft}-fp8/dit-fp8.safetensors`, and loaded from that file until the source revision, a source sha256, the torchao version or the quant config changes.
 
 Text encoder options (`lora train` and `python -m voxprint_forge.diffusion.moss`):
 

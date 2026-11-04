@@ -113,6 +113,8 @@ def lora_settings() -> Settings:
         _spec("lora.preview_every", integer, base.preview_every, "train", minimum=1, maximum=20000),
         _spec("lora.mix_old", SettingType.ENUM, number_text(base.replay), "train",
               choices=_numbers("lora.mix_old", base.replay)),
+        _spec("image.embed_metadata", SettingType.BOOL, False, "train",
+              tip="forge.app.expert.embed_metadata.tip"),
     ]
     return Settings(specs)
 

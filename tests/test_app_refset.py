@@ -66,7 +66,8 @@ def _engine(app_ref: list, *, loaders_factory=Loaders) -> StubRunner:
 
     def finish(project: Path) -> None:
         args = runner.calls[-1]
-        refset.finish(project, Progress(), mode=args[args.index("--mode") + 1])
+        base = args[args.index("--base") + 1] if "--base" in args else "z-image"
+        refset.finish(project, Progress(), mode=args[args.index("--mode") + 1], base=base)
 
     runner.effects["refset.round"] = round_
     runner.effects["refset.finish"] = finish

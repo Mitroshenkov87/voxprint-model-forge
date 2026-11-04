@@ -20,6 +20,11 @@ LIKENESS: dict[str, tuple[float, float]] = {
     "close": (1.3, 0.05),
 }
 VRAM_TIERS = (16, 24)
+# Peak the published MOSS pre-quant must stay under, for generation with a LoRA
+# and for LoRA training. ``forge moss-prequant`` uses this as ``--vram-budget-gb``
+# (allowed range 13–14). The measured rows below are moss-memprobe observations,
+# not this budget.
+MOSS_VRAM_BUDGET_GB = 13.5
 
 
 @dataclass(frozen=True)

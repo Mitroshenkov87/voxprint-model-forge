@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from voxprint_forge.app.text import tr
+from voxprint_forge.lora import DEFAULT_BASE, OPTIONAL_BASES
 from voxprint_forge.lora.presets import VRAM_TIERS, measured_peaks
 
 # Peak training memory in GB per base and tier, only where the peak itself was measured
@@ -144,8 +145,19 @@ class DownwardCombo(QtWidgets.QComboBox):
             popup.move(self.mapToGlobal(QtCore.QPoint(0, self.height())))
 
 
+def default_mdl(ids: list[str]) -> str:
+    """MOSS when this build can train it, otherwise the first offered base."""
+    if DEFAULT_BASE in ids:
+        return DEFAULT_BASE
+    return ids[0] if ids else ""
+
+
 def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -> QtWidgets.QComboBox:
-    """A sane-width combo of ``(mdl_id, name, repo, licence, permissive)`` with two-line options."""
+    """A sane-width combo of ``(mdl_id, name, repo, licence, permissive)`` with two-line options.
+
+    MOSS is the selection when ``current`` is not one of the offered ids.
+    Z-Image is labelled optional. The tooltip keeps the plain display name.
+    """
     combo = DownwardCombo()
     combo.setObjectName("forge.train.base")
     combo.setToolTip(tr("lora.base.tip"))
@@ -153,8 +165,12 @@ def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -
     combo.setMinimumWidth(MIN_WIDTH)
     combo.setMaximumWidth(MAX_WIDTH)
     combo.setItemDelegate(TwoLineDelegate(combo))
+    offered = [row[0] for row in options]
+    if current not in offered:
+        current = default_mdl(offered)
     for mdl_id, name, repo, licence, permissive in options:
-        combo.addItem(name, mdl_id)
+        label = tr("forge.app.base.optional_name", name=name) if mdl_id in OPTIONAL_BASES else name
+        combo.addItem(label, mdl_id)
         row = combo.count() - 1
         combo.setItemData(row, detail_line(mdl_id), DETAIL_ROLE)
         tip = tooltip(mdl_id, name, repo, licence)

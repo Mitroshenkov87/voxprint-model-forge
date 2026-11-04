@@ -24,7 +24,7 @@ REQUIRED = {
 }
 OPTIONAL = {
     "florence2-large": "21a599d4",
-    "moss-image-base": "1ceede80",
+    "moss-image-base": "fc5de0d5",
     "z-image-turbo": "f332072a",
     "dinov2-base": "f9e44c81",
     "sface-2021dec": "47534e27",

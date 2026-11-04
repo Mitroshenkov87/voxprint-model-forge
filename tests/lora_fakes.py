@@ -41,11 +41,20 @@ class TinyAdapter(BaseAdapter):
         return TinyNet()
 
     def encode(self, images, captions, config):
+        tokenizer = getattr(self, "tokenizer", None)
         out = []
-        for image, caption in zip(images, captions, strict=True):
+        for index, (image, caption) in enumerate(zip(images, captions, strict=True)):
             small = image.convert("L").resize((4, 4))
             latents = torch.from_numpy(np.asarray(small, dtype=np.float32).reshape(-1)) / 255.0
-            encoded = {k: _embed(v) for k, v in caption.items() if v}
+            self.remember("latent", str(index), latents)
+            encoded = {}
+            for key, value in caption.items():
+                if not value:
+                    continue
+                text = self.cap_text(value, tokenizer) if tokenizer is not None else value
+                embed = _embed(text)
+                self.remember("embedding", text, embed)
+                encoded[key] = embed
             out.append(Sample(latents, encoded))
         return out
 

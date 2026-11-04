@@ -4,6 +4,7 @@ Map of the main files, generated 2026-11-04 from a `grep -n "^def \|^class "` sc
 
 ## src/voxprint_forge — core forge library (builds quantized LLMs)
 - `cli.py`, `__main__.py` — the `forge` command line; `--json` on stdout — `build_parser`, `main`.
+- `imageio_save.py` — picture writer. WebP is the default (lossless for masters, series and hand-offs; lossy quality 90 for regular pictures). PNG, JPEG and AVIF are options. Prompt, seed, steps, base, LoRA and sha256 are written only when asked — `save_image`, `embed_metadata_scope`, `format_of`.
 - `plan.py` — loads `plans/plan.toml` (`Plan`, `ModelPlan`, `Tier`, `PinnedFile`, `load_plan`); `pipeline.py`, `pipeline_state.py`, `schedule.py` — per-model stages and the GPU slot gate — `Host`, `retry_stage`, `clear_from_stage`, `Gate`.
 - `abliterate.py` — refusal-direction ablation (difference of means) — `select_direction`, `apply_orthogonalization`, `AblationResult`.
 - `evaluate.py`, `requant_check.py`, `g4r_rerun.py` — refusal/ppl probes, re-quant and G4R verification — `refusal_rate`, `perplexity`, `RemoteTensor`, `Stock`.
@@ -16,11 +17,11 @@ Map of the main files, generated 2026-11-04 from a `grep -n "^def \|^class "` sc
 - `preflight.py`, `vmcheck.py`, `vram_probe.py`, `model_park.py`, `plural.py`, `cli_reference.py` — seconds-long pre-run checks, fresh-VM probe, VRAM readings, weight residency, i18n plurals, CLI docs generator — `missing_imports`, `Probe`, `tier_gb`, `park`, `ru_plural`.
 
 ## src/voxprint_forge/lora — LoRA trainer (photos in, trained LoRA out)
-- `cli.py` — `forge lora prepare|train|extend|export|review|continue|finish|status|eval` — `add_command`.
+- `cli.py` — `forge lora prepare|train|retrain|extend|export|review|continue|finish|status|eval` — `add_command`. `retrain --base moss|z-image PROJECT` adds that base and trains the prepared dataset.
 - `prepare.py` — the `lora prepare` step — `prepare`, `open_photo`.
 - `photos.py`, `image_check.py`, `image_job.py` — photo import/filters and the dataset quality check — `collect`, `ImageChecker`, `measure_check`.
 - `train.py`, `presets.py`, `layers.py`, `memory.py`, `vram_stage.py`, `progress_log.py` — training loop, presets, LoRA layers, VRAM plan, live progress on disk — `estimate`, `TrainConfig`, `LoRALinear`, `MemoryPlan`, `ProgressWriter`.
-- `project.py`, `refset.py`, `review.py`, `export.py` — project folder, 1–10-photo reference sets, review rounds, safetensors export with metadata — `Project`, `Item`, `check_settings`, `can_continue`, `header_metadata`.
+- `project.py`, `refset.py`, `review.py`, `export.py` — project folder, 1–10-photo reference sets, review rounds, safetensors export with metadata — `Project`, `Item`, `add_base`, `check_settings`, `can_continue`, `header_metadata`.
 - `captioner.py`, `backends.py`, `bases.py` — Qwen3-VL / Florence captioners, judge workers, base-model adapters — `Captioner`, `parse_verdict`, `BaseAdapter`, `register`.
 - `consent.py`, `attr.py`, `job_gate.py`, `refusal.py` — subject/consent checks and why simple mode set a photo aside — `Subject`, `check_subject`, `Clearance`, `Report`.
 - `likeness.py`, `likeness_worker.py`, `mivolo_worker.py` — SFace likeness score vs training photos, MiVOLO age worker in its own env; `sample_prompts.py`, `trigger.py`, `te_quant.py`, `events.py`, `errors.py`, `gate_run.py`, `limits.py`, `i18n/` — review prompts, rare triggers, text-encoder plan, events, photo-count rules, crash-safe gate marker — `cosine`, `summarize`, `build_sample_prompts`, `rare_trigger`, `TePlan`, `open_gate_run`, `min_photos`.
@@ -30,6 +31,9 @@ Map of the main files, generated 2026-11-04 from a `grep -n "^def \|^class "` sc
 - `cli.py`, `job.py`, `planload.py`, `common.py` — `run PLAN`, parts in file order, stage markers — `execute`, `CanvasPlan`, `Ctx`, `run_stage`.
 - `part_base.py`, `part_control.py` — part A (BF16/FP8 tiers), part B (ControlNet Union 2.1) — `_fetch`, `_convert`, `_quality`.
 - `weights.py`, `fp8.py`, `fp8_native.py`, `moss_fp8.py` — BF16 casts, per-tensor FP8 e4m3 files; `moss.py`, `moss_fit.py`, `moss_preflight.py` — MOSS-Image loader (vendored pipeline, no `trust_remote_code`) and its VRAM/speed fit — `index_tensors`, `quantize_weight`, `Fp8Linear`, `MossRepo`, `verify_vendored`.
+- `moss_prequant.py` — `forge moss-prequant`: one-time MOSS-Image SFT pre-quant (`voxprint-moss-image-sft-compact`) from a local SFT snapshot and the Qwen3.5-9B encoder. It never downloads. Tests call it with stand-ins; the real build is not run here — `run`, `execute`, `add_command`.
+- `moss_peak.py` — `forge moss-peak`: peak VRAM and RSS for that compact build (`gen`, `train`, or `both`). Read-only load, in-memory dummy LoRA, one JSON file outside the model directories. Tests use stand-ins; the real measurement is not run here — `run`, `execute`, `add_command`.
+- `quant_select.py` — pick fp8, int8 or nf4 for one GPU and a VRAM budget. No weights and no download — `choose`, `known_gpu`, `Gpu`.
 - `policy.py`, `generate.py`, `scenes.py`, `prompts.py` — publish gates (LPIPS/CLIP), quality renders, synthetic CC0-style scenes; `cardrender.py`, `registry.py`, `names.py` — canvas model cards and MODELS.md rows — `decide_base`, `render_scene`, `render_canvas_card`, `render_models_md`.
 - `publish.py`, `release.py`, `defer.py`, `retain.py`, `deadline.py`, `sources.py` — uploads, deferred-upload release, source retention, pinned downloads; `controlnet_link.py`, `controlnet_union.py`, `nunchaku_zimage.py`, `int4/` — ControlNet swap, nunchaku INT4 stage — `release_canvas`, `defer_part`, `download_source`, `swap_controlnet`, `union_config`.
 - `alias.py`, `spec.py`, `guard.py`, `stage_free.py`, `smoke_laptop.py`, `smoke_prefetch.py` — small helpers: key aliasing, LLM-bootstrap guard, eval-stage memory release, laptop smoke and prefetch — `cmdline_is_job`, `parse_steps`, `call_with_retry`.
@@ -49,12 +53,17 @@ Map of the main files, generated 2026-11-04 from a `grep -n "^def \|^class "` sc
 - `gen_app_models.py` — regenerate `manifests/model-forge.models.json` from the Hugging Face API — `app_document`.
 - `release_assets.py` — collect installer + guide PDFs from a tag's CI run and publish the GitHub release — `choose_run`, `write_sha256sums`.
 - `*.sh` / `*.ps1` (`vm_run_*.sh`, `canvas_*.sh`, `bootstrap.sh`, `vm_setup_synth4.sh`, `windows_smoke.ps1`, …) — run the pipelines on rented GPU VMs and the Windows smoke.
+- `test-offline.sh` — run pytest inside `unshare -rn` with loopback up and no default route. A normal pytest run does not change network settings.
 
 ## tests/ — shared helpers (the rest are `test_*.py` suites)
-- `conftest.py` — offscreen Qt, per-suite temp home, blocks real model downloads unless `VOXPRINT_REAL_MODELS=1` — `REAL_MODELS`, `pytest_collection_modifyitems`.
+- `conftest.py` — offscreen Qt, per-suite temp home, blocks real model downloads unless `VOXPRINT_REAL_MODELS=1`. It does not change network settings — `REAL_MODELS`, `pytest_collection_modifyitems`.
 - `forge_app_stub.py` — procedural photos plus a stub engine runner for app tests — `make_photos`, `write_prepared`, `fake_image_checks`, `StubRunner`.
 - `image_worker_fake.py` — stand-in image-check handlers for the worker process — `load_model`, `check`.
 - `lora_fakes.py` — tiny CPU stand-ins for LoRA tests (random 2-layer model, procedural images) — `TinyNet`, `TinyAdapter`, `gradient`, `make_project`.
+- `test_lora_default_base.py`, `test_lora_prepare_bases.py`, `test_lora_export_base_tag.py`, `test_lora_encode_truncation.py`, `test_lora_train_both.py`, `test_lora_retrain.py`, `test_mdl_manifest_base.py` — MOSS as the default base, `prepare --base`, export base tags, per-base token caps, `train --base both`, `lora retrain`, and the manifest base check. TinyAdapter stand-ins only.
+- `test_image_save.py` — WebP default and metadata left out unless opted in.
+- `test_moss_prequant.py`, `test_quant_select.py` — the prequant build command and the quant choice, with stand-ins. The real prequant build is not run.
+- `test_moss_peak.py` — `forge moss-peak` with stand-ins. No weights are loaded and nothing is written into the build.
 
 ## installer/ — Windows packaging
 - `stamp_build.py` — record build number / rc into the wheel and installer payload — `resolve_build`, `rc_from_tag`, `frozen_document`.

@@ -14,6 +14,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import NoReturn
 
+from voxprint_forge.lora import DEFAULT_BASE
 from voxprint_forge.lora.captioner import DEFAULT, Captioner, unclothed_flag
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
@@ -100,6 +101,7 @@ def prepare(
     release: Path | None = None,
     keep: Sequence[Path] = (),
     drop_near_duplicates: bool = False,
+    bases: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Check, crop and caption ``files``.
 
@@ -110,7 +112,13 @@ def prepare(
 
     ``keep`` names photos (also taken as input) that stay in despite a collage or duplicate
     drop. They still go through every other check, the safety check included.
+
+    ``bases`` is the MDL id list for this project (``moss-image-base``, ``z-image``, or
+    both). It is stored on ``project.json`` only. Captions and item rows stay base-free.
+    ``None`` on a brand-new project stores MOSS. ``None`` on a legacy project does not
+    add the key, so its checkpoint folders stay where they are.
     """
+    prior = _base(project)
     files = _with_keep(files, keep)
     if mode not in MIN_PHOTOS:
         raise LoraUsageError("lora.err.not_prepared")
@@ -232,9 +240,12 @@ def prepare(
     del checked, tiers
     _write_drops(project, drops)
     if job.refuse:
-        _refuse(project, subject, mode, progress, "photo")
+        _refuse(project, subject, mode, progress, "photo", prior=prior, bases=bases)
     if unavailable:
-        _refuse(project, subject, mode, progress, "check_unavailable", "lora.err.check_unavailable")
+        _refuse(
+            project, subject, mode, progress, "check_unavailable", "lora.err.check_unavailable",
+            prior=prior, bases=bases,
+        )
     project.prepared.mkdir(parents=True, exist_ok=True)
     # The 1024 px crops, kept for the captioner so each photo is decoded and cropped once
     # here. Each photo is decoded one at a time from its kept bytes; the PNG writes then run
@@ -289,7 +300,7 @@ def prepare(
                     _write_drops(project, [drop])
                     if mode == "expert":
                         _print_caption_refusal(names.get(pid, pid), pid)
-                    _refuse(project, subject, mode, progress, "caption")
+                    _refuse(project, subject, mode, progress, "caption", prior=prior, bases=bases)
                 if caption_marks_collage(long, short) and pid not in keep_ids:
                     prepared = project.prepared / f"{pid}.png"
                     if prepared.is_file():
@@ -345,7 +356,7 @@ def prepare(
     # while the run is still ``running``.
     pin(project)
     complete(project)
-    project.write(payload)
+    project.write(_with_bases(payload, prior, bases))
     summary = {
         "state": "done",
         "prepared": len(items),
@@ -522,15 +533,47 @@ def _with_keep(files: Sequence[Path], keep: Sequence[Path]) -> list[Path]:
 
 
 def _refuse(
-    project: Project, subject: Subject, mode: str, progress: Progress, source: str, key: str = "lora.err.blocked"
+    project: Project,
+    subject: Subject,
+    mode: str,
+    progress: Progress,
+    source: str,
+    key: str = "lora.err.blocked",
+    *,
+    prior: dict[str, object] | None = None,
+    bases: Sequence[str] | None = None,
 ) -> NoReturn:
     """Refuse the whole job: not approved, the ``job`` drop row and the audit source (``job_gate.refuse``)."""
     # The check finished. Leaving the marker ``running`` would hide this refusal behind
     # a re-run block the next time training starts.
     complete(project)
-    project.write({**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False})
+    body = {**_base(project), "subject": subject.to_dict(), "mode": mode, "gate_passed": False}
+    project.write(_with_bases(body, prior or {}, bases))
     progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
     refuse(project, source, key)
+
+
+def _bases_to_store(prior: dict[str, object], bases: Sequence[str] | None) -> list[str] | None:
+    """The ``bases`` list to write, or None to leave the key as the payload already has it.
+
+    An explicit list replaces the stored one. A brand-new project (empty record)
+    stores MOSS when the caller passes no list. A legacy project is left without
+    the key unless the caller passes a list.
+    """
+    if bases is not None:
+        cleaned = [str(item).strip() for item in bases if str(item).strip()]
+        return cleaned or [DEFAULT_BASE]
+    if not prior:
+        return [DEFAULT_BASE]
+    return None
+
+
+def _with_bases(payload: dict[str, object], prior: dict[str, object], bases: Sequence[str] | None) -> dict[str, object]:
+    """``payload`` plus ``bases`` when this prepare should record them."""
+    chosen = _bases_to_store(prior, bases)
+    if chosen is None:
+        return payload
+    return {**payload, "bases": chosen}
 
 
 def _with_trigger(trigger: str, item: Item) -> Item:

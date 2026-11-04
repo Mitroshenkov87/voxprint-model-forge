@@ -40,6 +40,11 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         action="store_true",
         help="Delete every snapshot under $FORGE_OUT/compare-cache and exit.",
     )
+    command.add_argument(
+        "--embed-metadata",
+        action="store_true",
+        help="Write seed, steps and base into saved pictures. Prompt text stays out. Default: off.",
+    )
 
 
 def execute(
@@ -51,12 +56,29 @@ def execute(
     make_fp8: bool = False,
     out: Path | None = None,
     reclaim_cache: bool = False,
+    embed_metadata: bool = False,
 ) -> dict[str, object]:
     """Load the plan and run one job. Exit codes are 0, 1, 2, and 3.
 
     ``--make-fp8`` writes the local FP8 files and does not need a GPU.
     ``--reclaim-cache`` deletes the shared snapshot directory and does not run a job.
     """
+    from voxprint_forge.imageio_save import embed_metadata_scope
+
+    with embed_metadata_scope(embed_metadata):
+        return _execute(root, forge_out, job_id, plan_path, make_fp8=make_fp8, out=out, reclaim_cache=reclaim_cache)
+
+
+def _execute(
+    root: Path,
+    forge_out: Path,
+    job_id: str | None,
+    plan_path: Path | None,
+    *,
+    make_fp8: bool,
+    out: Path | None,
+    reclaim_cache: bool,
+) -> dict[str, object]:
     from voxprint_forge.compare.fp8_make import export_fp8
     from voxprint_forge.compare.run import run_compare
 
