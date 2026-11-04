@@ -12,7 +12,14 @@ pytest.importorskip("PySide6")
 from PySide6 import QtCore, QtWidgets  # noqa: E402
 from voxprint_common.i18n import set_language  # noqa: E402
 
-from tests.forge_app_stub import ALL_COMMANDS, StubRunner, make_photos, write_prepared  # noqa: E402
+from tests.forge_app_stub import (  # noqa: E402
+    ALL_COMMANDS,
+    StubRunner,
+    fake_image_check_host,
+    fake_image_checks,
+    make_photos,
+    write_prepared,
+)
 from voxprint_forge.app.draft import STEPS, Prepared  # noqa: E402
 from voxprint_forge.app.engine import EngineEvent, Outcome  # noqa: E402
 from voxprint_forge.app.text import tr  # noqa: E402
@@ -45,7 +52,11 @@ def make_app(qapp, tmp_path, monkeypatch):
             commands=commands,
             open_path=lambda _p: None,
             launch=None if default_launch else (lambda _a: None),
-            image_checks=image_checks,
+            image_checks=(
+                image_checks
+                if image_checks is not None
+                else fake_image_checks(tmp_path / f"worker-{len(made)}")
+            ),
         )
         app.window.show()
         qapp.processEvents()
@@ -548,20 +559,53 @@ def test_simple_choices_write_live_expert_values(make_app, tmp_path) -> None:
 
 def test_entry_point_builds_the_window(qapp, monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
-    from voxprint_forge.app import __main__ as entry
+    from voxprint_common.worker import WorkerHost
 
-    monkeypatch.setattr(QtWidgets.QApplication, "exec", lambda _self: 0)
+    from voxprint_forge.app import __main__ as entry
+    from voxprint_forge.app import window
+
+    shutdowns: list[WorkerHost] = []
+    real_shutdown = WorkerHost.shutdown
+
+    def recorded_shutdown(host: WorkerHost, *args: object, **kwargs: object) -> None:
+        shutdowns.append(host)
+        real_shutdown(host, *args, **kwargs)
+
+    monkeypatch.setattr(WorkerHost, "shutdown", recorded_shutdown)
+    # No real model download window and no real worker: fakes only.
+    monkeypatch.setattr(window, "image_check_host", fake_image_check_host)
+    monkeypatch.setattr(window, "missing_ids", lambda *args, **kwargs: [])
+
+    def run(app: QtWidgets.QApplication) -> int:
+        app.aboutToQuit.emit()
+        return 0
+
+    monkeypatch.setattr(QtWidgets.QApplication, "exec", run)
     assert entry.main([]) == 0
+    assert shutdowns, "quitting did not shut the image-check worker down"
 
 
 def test_quitting_the_app_shuts_the_photo_check_down(qapp, monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
+    from voxprint_common.worker import WorkerHost
+
     from voxprint_forge.app import __main__ as entry
     from voxprint_forge.app import window
     from voxprint_forge.ui.check_gate import CheckGate
 
     built: list[window.ForgeApp] = []
     calls: list[CheckGate] = []
+    shutdowns: list[WorkerHost] = []
+    real_shutdown = WorkerHost.shutdown
+
+    def recorded_shutdown(host: WorkerHost, *args: object, **kwargs: object) -> None:
+        shutdowns.append(host)
+        real_shutdown(host, *args, **kwargs)
+
+    monkeypatch.setattr(WorkerHost, "shutdown", recorded_shutdown)
+    # No real model download window and no real worker: fakes only.
+    monkeypatch.setattr(window, "image_check_host", fake_image_check_host)
+    monkeypatch.setattr(window, "missing_ids", lambda *args, **kwargs: [])
 
     class Recorded(window.ForgeApp):
         def __init__(self) -> None:
@@ -578,6 +622,7 @@ def test_quitting_the_app_shuts_the_photo_check_down(qapp, monkeypatch, tmp_path
     monkeypatch.setattr(QtWidgets.QApplication, "exec", run)
     assert entry.main([]) == 0
     assert calls.count(built[0].photo_gate) == 1
+    assert shutdowns == [built[0].image_checks.host]
 
 
 @pytest.mark.parametrize("lang", ["en"])
@@ -882,13 +927,20 @@ def _run_photo_check(app) -> None:
     QtWidgets.QApplication.processEvents()
 
 
-def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(make_app, tmp_path) -> None:
+def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
+    make_app, tmp_path, monkeypatch
+) -> None:
     from tests.test_lora_refusal import _collage, _plain
+    from voxprint_forge.app.draft import photo_key
     from voxprint_forge.ui.check_gate import GateState
 
+    plains = [_plain(tmp_path / "ok", index) for index in range(6)]
+    collages = [_collage(tmp_path / "ok", index) for index in range(3)]
+    # The worker child is faked; it marks exactly these photos as collage refusals.
+    monkeypatch.setenv("VOXPRINT_TEST_IMAGE_REFUSE", ",".join(photo_key(path) for path in collages))
     app = make_app()
-    app.draft.add_photos([_plain(tmp_path / "ok", index) for index in range(6)])
-    app.draft.add_photos([_collage(tmp_path / "ok", index) for index in range(3)])
+    app.draft.add_photos(plains)
+    app.draft.add_photos(collages)
     app.draft.kind = "object"
     app.repaint()
     QtWidgets.QApplication.processEvents()
@@ -925,9 +977,12 @@ def test_simple_refusal_names_each_photo_and_offers_expert_when_it_would_accept(
     assert app.window.findChild(QtWidgets.QLabel, "forgePhotoRefusal") is None
     app.expert.set_enabled(False)
 
+    grid_collages = [_collage(tmp_path / "grids", index) for index in range(8)]
+    grid_plain = _plain(tmp_path / "grids", 0)
+    monkeypatch.setenv("VOXPRINT_TEST_IMAGE_REFUSE", ",".join(photo_key(path) for path in grid_collages))
     grids = make_app()
-    grids.draft.add_photos([_collage(tmp_path / "grids", index) for index in range(8)])
-    grids.draft.add_photos([_plain(tmp_path / "grids", 0)])
+    grids.draft.add_photos(grid_collages)
+    grids.draft.add_photos([grid_plain])
     grids.draft.kind = "object"
     grids.repaint()
     _run_photo_check(grids)

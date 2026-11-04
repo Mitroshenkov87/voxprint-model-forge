@@ -133,6 +133,9 @@ select = ["E", "F", "I", "W"]
 testpaths = ["tests"]
 addopts = "-q"
 qt_api = "pyside6"
+markers = [
+    "real_models: downloads and loads real models; skipped unless VOXPRINT_REAL_MODELS=1",
+]
 
 [tool.interrogate]
 ignore-init-method = true

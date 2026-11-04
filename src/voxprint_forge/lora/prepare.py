@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import gc
 import io
 import json
 import os
 import shutil
+import sys
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -44,7 +46,6 @@ from voxprint_forge.lora.photos import (
     KEEPABLE,
     MIN_SIDE,
     Drop,
-    Measures,
     bytes_id,
     caption_marks_collage,
     check_count,
@@ -54,7 +55,6 @@ from voxprint_forge.lora.photos import (
     filter_reason,
     measure,
     near_duplicate,
-    open_photo,
     photo_id,
 )
 from voxprint_forge.lora.project import Item, Project
@@ -77,9 +77,9 @@ _PRINTED = (
     "mivolo_ages",
     "estimate",
 )
-# Photo decode, measure, crop and PNG writes run on this many threads (Pillow and numpy
-# release the GIL for the heavy parts). Results are taken in input order, so the output
-# is the same as one thread's. At most twice this many photos are decoded ahead.
+# The prepared-photo hash pass and the PNG writes run on this many threads (Pillow and
+# numpy release the GIL for the heavy parts). Results are taken in input order, so the
+# output is the same as one thread's. Photos themselves are decoded one at a time.
 WORKERS = max(1, min(4, os.cpu_count() or 1))
 
 
@@ -156,22 +156,17 @@ def prepare(
             seen_names.append(item.file)
     keep_ids = {photo_id(path) for path in keep}
     drops: list[Drop] = []
-    # Kept photos hold their file bytes, not their pixels: the safety pass decodes them again,
-    # a few at a time, so a large set never sits in memory fully decoded.
+    # Photos that pass the filters, as their file bytes: every phase decodes one photo at a
+    # time from these bytes, so the same pixels reach every check and the full-size decoded
+    # pictures are never all in memory together.
     kept: list[tuple[str, bytes]] = []
     kept_ids: set[str] = set()
-    pids: dict[Path, str] = {}
+    # Last file name (and path) per photo id, as ``{photo_id(p): ... for p in files}`` would give.
+    names: dict[str, str] = {}
+    paths: dict[str, Path] = {}
     total = len(files)
 
-    def load(path: Path) -> tuple[str, bytes, object, Measures | None]:
-        data = Path(path).read_bytes()
-        pid = bytes_id(data)
-        if pid in known:
-            return pid, data, None, None
-        image = decode_photo(io.BytesIO(data))
-        return pid, data, image, measure(image, min_side)
-
-    for index, (path, (pid, data, image, measures)) in enumerate(zip(files, _ordered(load, files), strict=True), 1):
+    for index, path in enumerate(files, 1):
         progress.emit(
             "prepare.check",
             "lora.progress.check_photos",
@@ -180,9 +175,14 @@ def prepare(
             done=index,
             total=total,
         )
-        pids[Path(path)] = pid
+        blob = Path(path).read_bytes()
+        pid = bytes_id(blob)
+        names[pid] = Path(path).name
+        paths[pid] = Path(path)
         if pid in known or pid in kept_ids:
             continue
+        image = open_photo(io.BytesIO(blob))
+        measures = measure(image, min_side)
         if pid in keep_ids:
             allow = KEEPABLE
         elif drop_near_duplicates:
@@ -210,114 +210,68 @@ def prepare(
                 {"file": Path(path).name, "other": seen_names[match]},
             )
         seen_names.append(Path(path).name)
-        kept.append((pid, data))
+        kept.append((pid, blob))
         kept_ids.add(pid)
-    image = data = None
-    names = {pid: Path(p).name for p, pid in pids.items()}
-    paths = {pid: Path(p) for p, pid in pids.items()}
-    internal = bool(getattr(gate, "internal", False))
-    # ``image`` below is the photo the gate checks; only its crop (what training uses) is kept.
-    checked: list[tuple[str, object, Decision, str | None]] = []
-    keyword = False
-    # Rows already on disk from an earlier run stay. This run appends after them.
-    trace_from = trace_line_count(project)
-    provisional: list[dict[str, object]] = []
-
-    def decode_and_crop(row: tuple[str, bytes]) -> tuple[object, object]:
-        image = decode_photo(io.BytesIO(row[1]))
-        return image, crop(image, crop_mode)
-
-    for index, ((pid, _), (image, cropped)) in enumerate(zip(kept, _ordered(decode_and_crop, kept), strict=True), 1):
-        progress.emit(
-            "prepare.safety",
-            "lora.progress.safety",
-            {"n": index, "total": len(kept)},
-            "lora.reason.safety",
-            done=index,
-            total=len(kept),
-        )
-        decision = gate.check(image, attested=attested)
-        if child_keyword(names.get(pid, ""), *_metadata_text(paths.get(pid))):
-            decision = Decision(
-                (*decision.reasons, "child_keyword"),
-                True,
-                decision.path,
-                decision.trace,
-                decision.audit,
-                decision.shadow,
-                tier="strong",
-            )
-            keyword = True
-        _log_stage_errors(decision)
-        key = _identity(gate, image) if not internal else None
-        checked.append((pid, cropped, decision, key))
-        # The decision is on disk before the next photo. A crash keeps this row.
-        row = _trace_row(pid, names.get(pid, pid), decision, decision.tier == "clear", decision.tier)
-        provisional.append(row)
-        append_trace_row(project, row)
-        if decision.tier != "clear":
-            append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
-        del image
+    image = None
+    # Phase 1: the safety check, with only the judge and the age estimator loaded.
+    try:
+        checked, tiers, job = _safety_phase(project, gate, kept, names, paths, mode, attested, progress)
+    except BaseException:
+        _unload_gate(gate, quiet=True)
+        raise
     kept.clear()
-    tiers = list(_aggregate(checked, internal))
-    job = decide_job(tiers, keyword=keyword)
-    safe: list[tuple[str, object]] = []
+    # Phase 2: both leave memory before anything else loads.
+    _unload_gate(gate)
+    safe: list[tuple[str, bytes]] = []
     unavailable = any(set(decision.reasons) & set(UNAVAILABLE) for _, _, decision, _ in checked)
-    final_rows: list[dict[str, object]] = []
-    for (pid, cropped, decision, _), tier in zip(checked, tiers, strict=True):
-        keep = tier == "clear"
-        row = _trace_row(pid, names.get(pid, pid), decision, keep, tier)
-        final_rows.append(row)
-        if keep:
-            safe.append((pid, cropped))
+    for (pid, blob, _, _), tier in zip(checked, tiers, strict=True):
+        if tier == "clear":
+            safe.append((pid, blob))
         else:
             drops.append(Drop(pid, names.get(pid, pid), "lora.drop.safety"))
-            # A cross-photo average can turn a clear photo into a drop after it was written.
-            if decision.tier == "clear":
-                append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
-            if mode == "expert":
-                _print_trace_row(row)
-    if final_rows != provisional:
-        rewrite_trace_tail(project, trace_from, final_rows)
-    if mode == "expert" and checked:
-        _print_job(job)
-    # Trace rows are already on disk, including when the job is about to be refused.
-    for backend in (gate.judge, gate.estimator):
-        unload = getattr(backend, "unload", None)
-        if callable(unload):
-            unload()
+    del checked, tiers
     _write_drops(project, drops)
     if job.refuse:
         _refuse(project, subject, mode, progress, "photo")
     if unavailable:
         _refuse(project, subject, mode, progress, "check_unavailable", "lora.err.check_unavailable")
     project.prepared.mkdir(parents=True, exist_ok=True)
-    written = _ordered(lambda row: row[1].save(project.prepared / f"{row[0]}.png"), safe)
+    # The 1024 px crops, kept for the captioner so each photo is decoded and cropped once
+    # here. Each photo is decoded one at a time from its kept bytes; the PNG writes then run
+    # on up to WORKERS threads, in input order.
+    crops: list[tuple[str, object]] = []
+    for pid, blob in safe:
+        image = open_photo(io.BytesIO(blob))
+        crops.append((pid, crop(image, crop_mode)))
+    del safe
+    image = None
+    written = _ordered(lambda row: row[1].save(project.prepared / f"{row[0]}.png"), crops)
     for index, _ in enumerate(written, 1):
         progress.emit(
             "prepare.crop",
             "lora.progress.crop",
-            {"n": index, "total": len(safe)},
+            {"n": index, "total": len(crops)},
             "lora.reason.crop",
             done=index,
-            total=len(safe),
+            total=len(crops),
         )
     new_items: list[Item] = []
     caption_drops: list[Drop] = []
-    if safe:
+    if crops:
+        # Phase 3: the captioner, loaded only now that the gate models are gone.
         progress.emit("prepare.load_captioner", "lora.progress.load_captioner", reason_key="lora.reason.load_captioner")
         captioner = load_captioner(caption_model)
         if captioner is None:
             raise LoraStageError("lora.err.captioner_missing")
         try:
-            for index, (pid, cropped) in enumerate(safe, 1):
+            for index, (pid, cropped) in enumerate(crops, 1):
                 progress.emit(
                     "prepare.caption",
                     "lora.progress.caption",
-                    {"n": index, "total": len(safe)},
+                    {"n": index, "total": len(crops)},
                     "lora.reason.caption",
                     done=index,
-                    total=len(safe),
+                    total=len(crops),
                 )
                 try:
                     text = captioner.caption(cropped)
@@ -328,7 +282,7 @@ def prepare(
                 short = str(text.get("short", ""))
                 if child_keyword(long, short):
                     # A child keyword refuses the whole job at any ratio, captions included.
-                    for done, _ in safe:
+                    for done, _ in crops:
                         (project.prepared / f"{done}.png").unlink(missing_ok=True)
                     drop = Drop(pid, names.get(pid, pid), "lora.drop.safety")
                     append_drop(project, _drop_row(drop))
@@ -358,7 +312,10 @@ def prepare(
                 "prepare.unload_captioner", "lora.progress.unload_captioner", reason_key="lora.reason.unload_captioner"
             )
             captioner.unload()
+            _free_memory()
         caption_name = captioner.name
+        # Phase 4: nothing of the captioner stays referenced here.
+        del captioner
     else:
         caption_name = ""
     if caption_drops:
@@ -409,6 +366,22 @@ def prepare(
     return summary
 
 
+def open_photo(source: Path | io.IOBase) -> object:
+    """The decoded photo at ``source`` — a path, or a byte stream read from one — or ``None``.
+
+    ``photos.decode_photo`` does the decoding; the wrapper keeps every decode in this module
+    on one name. A path that cannot be opened is an unreadable photo; decode errors are
+    ``decode_photo``'s own ``None``, everything else propagates.
+    """
+    if isinstance(source, io.IOBase):
+        return decode_photo(source)
+    try:
+        with Path(source).open("rb") as handle:
+            return decode_photo(handle)
+    except OSError:
+        return None
+
+
 def _ordered[T, R](work: Callable[[T], R], items: Iterable[T], workers: int | None = None) -> Iterator[R]:
     """``work(item)`` for each item, yielded in input order, run on up to ``workers`` threads.
 
@@ -434,6 +407,107 @@ def _ordered[T, R](work: Callable[[T], R], items: Iterable[T], workers: int | No
 
 def _hash_of(image: object) -> int | None:
     return None if image is None else dhash(image)
+
+
+def _safety_phase(
+    project: Project,
+    gate: Gate,
+    kept: Sequence[tuple[str, bytes]],
+    names: dict[str, str],
+    paths: dict[str, Path],
+    mode: str,
+    attested: bool,
+    progress: Progress,
+) -> tuple[list[tuple[str, bytes, Decision, str | None]], list[str], JobDecision]:
+    """Run the gate over ``kept``, one decoded photo at a time, and write ``gate_trace.jsonl``.
+
+    Returns the checked photos (as bytes), their tiers and the job decision. Each decision
+    is on disk before the next photo is checked, so a crash keeps every row written so far.
+    """
+    internal = bool(getattr(gate, "internal", False))
+    checked: list[tuple[str, bytes, Decision, str | None]] = []
+    keyword = False
+    # Rows already on disk from an earlier run stay. This run appends after them.
+    trace_from = trace_line_count(project)
+    provisional: list[dict[str, object]] = []
+    for index, (pid, blob) in enumerate(kept, 1):
+        progress.emit(
+            "prepare.safety",
+            "lora.progress.safety",
+            {"n": index, "total": len(kept)},
+            "lora.reason.safety",
+            done=index,
+            total=len(kept),
+        )
+        image = open_photo(io.BytesIO(blob))
+        decision = gate.check(image, attested=attested)
+        if child_keyword(names.get(pid, ""), *_metadata_text(paths.get(pid))):
+            decision = Decision(
+                (*decision.reasons, "child_keyword"),
+                True,
+                decision.path,
+                decision.trace,
+                decision.audit,
+                decision.shadow,
+                tier="strong",
+            )
+            keyword = True
+        _log_stage_errors(decision)
+        key = _identity(gate, image) if not internal else None
+        del image
+        checked.append((pid, blob, decision, key))
+        # The decision is on disk before the next photo. A crash keeps this row.
+        row = _trace_row(pid, names.get(pid, pid), decision, decision.tier == "clear", decision.tier)
+        provisional.append(row)
+        append_trace_row(project, row)
+        if decision.tier != "clear":
+            append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
+    tiers = list(_aggregate(checked, internal))
+    job = decide_job(tiers, keyword=keyword)
+    final_rows: list[dict[str, object]] = []
+    for (pid, _, decision, _), tier in zip(checked, tiers, strict=True):
+        keep = tier == "clear"
+        row = _trace_row(pid, names.get(pid, pid), decision, keep, tier)
+        final_rows.append(row)
+        if not keep and mode == "expert":
+            _print_trace_row(row)
+        if not keep and decision.tier == "clear":
+            # A cross-photo average can turn a clear photo into a drop after it was written.
+            append_drop(project, _drop_row(Drop(pid, names.get(pid, pid), "lora.drop.safety")))
+    if final_rows != provisional:
+        rewrite_trace_tail(project, trace_from, final_rows)
+    if mode == "expert" and checked:
+        _print_job(job)
+    return checked, tiers, job
+
+
+def _unload_gate(gate: Gate, *, quiet: bool = False) -> None:
+    """Unload the judge and the age estimator, then free what they left behind.
+
+    ``quiet`` is for the error path: an unload failure there does not hide the first error.
+    """
+    for backend in (gate.judge, gate.estimator):
+        unload = getattr(backend, "unload", None)
+        if callable(unload):
+            try:
+                unload()
+            except Exception:
+                if not quiet:
+                    raise
+    _free_memory()
+
+
+def _free_memory() -> None:
+    """Collect garbage and return cached graphics memory, without importing torch when nothing loaded it."""
+    gc.collect()
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 - freeing the cache is best effort
+        pass
 
 
 def _with_keep(files: Sequence[Path], keep: Sequence[Path]) -> list[Path]:

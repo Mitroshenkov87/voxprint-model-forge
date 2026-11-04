@@ -52,6 +52,32 @@ def _project_of(args: list[str]) -> Path:
     return Path(args[-1])
 
 
+def fake_image_check_host(state_dir: Path):
+    """Worker host whose child runs ``tests.image_worker_fake`` handlers."""
+    from voxprint_common.worker import Handlers, WorkerHost
+
+    return WorkerHost(
+        Handlers(
+            run="tests.image_worker_fake:run",
+            load_model="tests.image_worker_fake:load_model",
+            unload_model="tests.image_worker_fake:unload_model",
+            check="tests.image_worker_fake:check",
+        ),
+        state_dir=state_dir,
+    )
+
+
+def fake_image_checks(state_dir: Path):
+    """``ImageChecks`` whose worker child runs ``tests.image_worker_fake`` handlers.
+
+    The child never loads or downloads a model; it answers from
+    ``VOXPRINT_TEST_IMAGE_*`` environment variables, like the worker tests.
+    """
+    from voxprint_forge.app.image_checks import ImageChecks
+
+    return ImageChecks(fake_image_check_host(state_dir))
+
+
 class StubRunner:
     """Answers each ``lora`` command from ``script``: events, then an outcome."""
 
