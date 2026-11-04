@@ -126,11 +126,16 @@ def rss_to_bytes(raw: int, platform: str | None = None) -> int:
 
 
 def rss_bytes() -> int:
-    """Peak process RSS in bytes, or 0 when ``resource`` is unavailable (Windows)."""
+    """Peak process RSS in bytes. Windows uses psutil ``peak_wset`` when installed, else 0."""
     try:
         import resource
     except ImportError:
-        return 0
+        try:
+            import psutil
+        except ImportError:
+            return 0
+        info = psutil.Process().memory_info()
+        return int(getattr(info, "peak_wset", 0) or getattr(info, "rss", 0))
     raw = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return rss_to_bytes(raw)
 

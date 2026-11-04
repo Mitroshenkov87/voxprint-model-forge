@@ -393,6 +393,7 @@ def test_wrong_build_id_and_missing_quant_write_nothing(tmp_path: Path) -> None:
     assert _listing(build) == before
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="ru_maxrss kilobytes are Linux-only")
 def test_linux_rss_kilobytes_are_bytes() -> None:
     assert rss_to_bytes(10, "linux") == 10240
     assert rss_to_bytes(10, "darwin") == 10
