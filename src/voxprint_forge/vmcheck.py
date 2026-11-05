@@ -231,7 +231,7 @@ def check_convert_imports(probe: Probe) -> dict[str, object]:
         "convert_imports",
         not bad,
         detail,
-        'uv pip install -e "." from PyPI (sentencepiece==0.2.2, protobuf==5.29.6 are base dependencies)',
+        'uv pip install -e "." from PyPI (sentencepiece==0.2.3, protobuf==5.29.6 are base dependencies)',
     )
 
 

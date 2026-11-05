@@ -45,7 +45,7 @@ $Pins = @(
      Sha = "8bcb20c62ffc72e406d0b4db76929559dac9be2578c19ba68d7a35bb33775fcb"; Dest = "llama-src" }
 )
 # PINS end
-$PipPins = @("numpy==2.5.2", "safetensors==0.8.0", "transformers==5.20.1", "sentencepiece==0.2.2",
+$PipPins = @("numpy==2.5.2", "safetensors==0.8.0", "transformers==5.20.1", "sentencepiece==0.2.3",
              "protobuf==5.29.6", "huggingface_hub==1.33.0")
 $TorchPin = "torch==2.14.1"
 

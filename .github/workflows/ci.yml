@@ -63,6 +63,13 @@ jobs:
           }
           $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
           Write-Host ("C: free {0:N1}%" -f (100 * $disk.FreeSpace / $disk.Size))
+      # Official PyYAML has no cp315 wheels (yaml/pyyaml#951). 0 skips the
+      # libyaml extension so the Windows install does not need MSVC. The disk
+      # step above removes Visual Studio.
+      - name: PyYAML pure Python on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "PYYAML_FORCE_LIBYAML=0" >> $env:GITHUB_ENV
       - name: Install
         run: |
           python -m pip install --upgrade pip

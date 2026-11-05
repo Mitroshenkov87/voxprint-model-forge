@@ -23,7 +23,8 @@ dependencies = [
   # convert_hf_to_gguf.py at scripts/llama.rev imports these at vocab time
   # (Qwen2/Qwen3 try sentencepiece first; SentencePiece models read its protobuf).
   # Missing sentencepiece failed synth4 L1 with ModuleNotFoundError.
-  "sentencepiece==0.2.2",
+  # 0.2.3 publishes a CPython 3.15 wheel. 0.2.2 does not, and Windows CI has no compiler.
+  "sentencepiece==0.2.3",
   # protobuf 4.25.9 (what llama.cpp asks for, <5) crashes on Python 3.14 (synth4 L1/L2);
   # 5.29.6 from PyPI imports and reads the sentencepiece model there.
   "protobuf==5.29.6",
