@@ -7,6 +7,10 @@ and is freed before the DiT moves to the card. On the 24 GB tier, CPU encode is 
 ``--te-device cpu``, no CUDA, or ``auto`` with bitsandbytes missing (a warning is logged).
 On the 16 GB tier those paths raise instead of moving the encoder to the CPU. The DiT is not
 quantized here. bitsandbytes is the optional ``te-quant`` extra.
+
+:func:`compressed_te_device` is the other choice, for a model and text encoder that are already
+compressed. It puts the encoder on the GPU when both still leave about 4 GB free, and on the CPU
+otherwise. The bf16 prequant reference does not use it.
 """
 
 from __future__ import annotations
@@ -25,6 +29,10 @@ DEVICES = ("gpu", "cpu")
 ENV = "VOXPRINT_FORGE_TE_QUANT"
 ENV_DEVICE = "VOXPRINT_FORGE_TE_DEVICE"
 TIER_DEFAULT = {24: "none", 16: "int8"}
+# Free space that must remain when a compressed text encoder shares the card with a
+# compressed model. About 3–4 GB; 4 GB is the top of that range.
+COMPRESSED_TE_HEADROOM_GB = 4.0
+_GIB = 1024**3
 log = logging.getLogger(__name__)
 
 
@@ -69,6 +77,28 @@ def check_available(mode: str) -> None:
     """Raise a localized stage error when ``mode`` needs bitsandbytes and it is missing."""
     if mode in ("int8", "nf4") and not available():
         raise LoraStageError("lora.err.te_quant_missing", mode=mode)
+
+
+def compressed_te_device(
+    model_bytes: int,
+    te_bytes: int,
+    budget_gb: float,
+    *,
+    headroom_gb: float = COMPRESSED_TE_HEADROOM_GB,
+) -> str:
+    """``cuda`` when both compressed weights leave ``headroom_gb`` free, else ``cpu``.
+
+    ``model_bytes`` and ``te_bytes`` are compressed sizes, not bf16. A non-positive
+    size stays on the CPU. Full bf16 weights do not fit the 13.5 GB prequant cap
+    with this headroom, so they resolve to ``cpu`` too. The bf16 reference render
+    does not call this; it forces the text encoder onto the CPU itself.
+    """
+    if int(model_bytes) <= 0 or int(te_bytes) <= 0:
+        return "cpu"
+    need = int(model_bytes) + int(te_bytes) + int(float(headroom_gb) * _GIB)
+    if need <= int(float(budget_gb) * _GIB):
+        return "cuda"
+    return "cpu"
 
 
 def plan(quant: str | None, device: str | None, tier: int) -> TePlan:

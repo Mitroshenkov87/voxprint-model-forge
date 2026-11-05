@@ -5,7 +5,10 @@ The command reads ``voxprint-moss-image-sft-compact`` (the ``moss-prequant``
 sidecars, loads the weights read-only, and attaches a seeded dummy LoRA in
 memory. ``gen`` denoises for ``--steps`` and drops the latent. ``train`` runs
 ``--train-steps`` of AdamW on a fresh dummy LoRA over a tiny synthetic
-flow-matching batch. Nothing is saved: no image, no checkpoint, no LoRA file,
+flow-matching batch. The compressed text encoder goes on the GPU when it and
+the compressed model leave about 4 GB free under the cap (``FORGE_VRAM_CAP_GB``,
+or 13.5 GB), and stays on the CPU otherwise. Nothing is saved: no image, no
+checkpoint, no LoRA file,
 no optimizer state. The only write is the JSON report at ``--out``, and that
 path is refused when it resolves inside the build or any model directory.
 
@@ -28,8 +31,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from voxprint_forge.diffusion.moss_prequant import MODEL_ID, WEIGHTS_DIR, _assert_sidecars
+from voxprint_forge.diffusion.moss_prequant import (
+    DEFAULT_BUDGET_GB,
+    MODEL_ID,
+    VRAM_CAP_ENV,
+    WEIGHTS_DIR,
+    _assert_sidecars,
+)
 from voxprint_forge.errors import StageError, UsageError
+from voxprint_forge.lora.te_quant import compressed_te_device
 
 DEFAULT_RANK = 16
 DEFAULT_STEPS = 4
@@ -353,12 +363,57 @@ class LiveProbe:
         return str(torch.cuda.get_device_properties(0).name)
 
 
+def weight_bytes(folder: Path) -> int:
+    """Sum of ``*.safetensors`` bytes under ``folder``. A missing directory is 0."""
+    root = Path(folder)
+    if not root.is_dir():
+        return 0
+    return sum(path.stat().st_size for path in root.rglob("*.safetensors") if path.is_file())
+
+
+def placement_budget_gb() -> float:
+    """Cap for compressed text-encoder placement. ``FORGE_VRAM_CAP_GB``, else 13.5."""
+    raw = os.environ.get(VRAM_CAP_ENV)
+    if raw is None or not raw.strip():
+        return float(DEFAULT_BUDGET_GB)
+    return float(raw)
+
+
+def place_compressed_pair(
+    transformer: Any,
+    encoder: Any,
+    *,
+    model_bytes: int,
+    te_bytes: int,
+    budget_gb: float,
+    cuda: Any,
+) -> Any:
+    """Move the compressed model to ``cuda`` and return the text encoder's device.
+
+    The encoder joins it on the GPU when both weights leave the headroom in
+    :func:`voxprint_forge.lora.te_quant.compressed_te_device` free. Otherwise the
+    encoder stays on the CPU. Callers pass compressed sizes. The bf16 prequant
+    reference does not use this.
+    """
+    import torch
+
+    transformer.to(cuda)
+    if compressed_te_device(model_bytes, te_bytes, budget_gb) == "cuda":
+        encoder.to(cuda)
+        return cuda
+    cpu = torch.device("cpu")
+    encoder.to(cpu)
+    return cpu
+
+
 class LiveSession:
     """Load the compact transformer and text encoder and keep them in memory."""
 
     def __init__(self) -> None:
         self._transformer: Any = None
         self._encoder: Any = None
+        self._model_bytes = 0
+        self._te_bytes = 0
 
     def load(self, weights: Path, *, quant_mode: str) -> None:
         """Read the compact transformer and text encoder. Does not download or save."""
@@ -399,6 +454,20 @@ class LiveSession:
         )
         self._transformer = transformer
         self._encoder = encoder
+        self._model_bytes = weight_bytes(weights / "sft")
+        self._te_bytes = weight_bytes(weights / "encoder")
+
+    def _place(self, transformer: Any, encoder: Any) -> tuple[Any, Any]:
+        cuda = _cuda_device()
+        encode_on = place_compressed_pair(
+            transformer,
+            encoder,
+            model_bytes=self._model_bytes,
+            te_bytes=self._te_bytes,
+            budget_gb=placement_budget_gb(),
+            cuda=cuda,
+        )
+        return cuda, encode_on
 
     def generate(
         self,
@@ -410,16 +479,18 @@ class LiveSession:
         width: int,
         height: int,
     ) -> None:
-        """Seeded dummy LoRA, ``steps`` of denoising, latent dropped. No image file."""
+        """Seeded dummy LoRA, ``steps`` of denoising, latent dropped. No image file.
+
+        The compressed text encoder is placed on the GPU when it fits under the
+        cap with headroom, and on the CPU otherwise.
+        """
         transformer, encoder = self._ready()
-        device = _cuda_device()
-        transformer.to(device)
-        encoder.to(device)
+        device, encode_on = self._place(transformer, encoder)
         # A is seeded kaiming and B is zero. Both stay in memory.
         layers = _attach_lora(transformer, rank, seed)
         transformer.eval()
         try:
-            embeds, mask = _encode_caption(encoder, prompt, device)
+            embeds, mask = _encode_caption(encoder, prompt, encode_on)
             _denoise(
                 transformer,
                 embeds,
@@ -434,15 +505,17 @@ class LiveSession:
             _detach_lora(transformer, layers)
 
     def train(self, *, steps: int, seed: int, rank: int, prompt: str) -> None:
-        """Fresh seeded dummy LoRA and ``steps`` AdamW updates. No checkpoint and no LoRA file."""
+        """Fresh seeded dummy LoRA and ``steps`` AdamW updates. No checkpoint and no LoRA file.
+
+        Text-encoder placement matches :meth:`generate`: GPU when the compressed
+        pair leaves headroom, CPU when it does not.
+        """
         transformer, encoder = self._ready()
-        device = _cuda_device()
-        transformer.to(device)
-        encoder.to(device)
+        device, encode_on = self._place(transformer, encoder)
         layers = _attach_lora(transformer, rank, seed)
         transformer.train()
         try:
-            embeds, mask = _encode_caption(encoder, prompt, device)
+            embeds, mask = _encode_caption(encoder, prompt, encode_on)
             _train_steps(transformer, embeds, mask, layers, steps=steps, seed=seed, device=device)
         finally:
             _detach_lora(transformer, layers)
