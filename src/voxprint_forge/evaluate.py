@@ -83,9 +83,10 @@ def refusal_rate(runner: Runner, model: Path, prompts: list[str], *, cache: str)
 
 
 def perplexity(runner: Runner, model: Path, corpus: Path, *, chunks: int, cache: str) -> float:
-    """Perplexity of the corpus from llama-perplexity."""
+    """Perplexity of the corpus from llama-perplexity, measured with the tier's KV cache."""
     done = runner.run(
-        perplexity_argv(tool("llama-perplexity"), model, corpus, chunks=chunks, ctx=512)
+        perplexity_argv(tool("llama-perplexity"), model, corpus, chunks=chunks, ctx=512,
+                        cache_k=cache, cache_v=cache)
     )
     return parse_ppl(done.stdout + done.stderr)
 
