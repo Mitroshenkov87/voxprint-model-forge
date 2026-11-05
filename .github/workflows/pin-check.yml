@@ -8,7 +8,7 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: Wanted voxprint-common tag, such as v0.6.3
+        description: Wanted voxprint-common tag, such as v0.6.4
         required: true
         type: string
       pyproject:
@@ -34,7 +34,7 @@ jobs:
           path: .voxprint-pin
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Fail when the pin disagrees with the tag's wheel sha256
         env:
           WANTED_TAG: ${{ inputs.tag }}

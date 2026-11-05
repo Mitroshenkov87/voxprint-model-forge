@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # VOXPrint AI Model Forge: post-install step, run elevated by the setup.
-# Builds <app>\venv (Python 3.14, the app) and <app>\venv-mivolo (Python 3.12,
+# Builds <app>\venv (Python 3.15.2, the app) and <app>\venv-mivolo (Python 3.12,
 # the MiVOLO age check, which pins transformers 4.51) with the bundled uv.exe.
 # Nothing is written outside <app>. Models are not downloaded here; the app
 # asks for them on first launch. Log: <app>\setup-work\install.log
@@ -137,7 +137,7 @@ try {
 
     $Venv = Join-Path $App "venv"
     $Py = Join-Path $Venv "Scripts\python.exe"
-    Invoke-Uv @("venv", "--python", "3.14", "--allow-existing", $Venv)
+    Invoke-Uv @("venv", "--python", "3.15.2", "--allow-existing", $Venv)
     Install-Torch $Py $TorchIndex @("torch==2.14.1", "torchvision==0.29.1")
     $pins = Join-Path $Work "torch-pins.txt"
     & $script:Uv pip freeze --python $Py | Select-String -Pattern '^(torch|torchvision)==' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii $pins
@@ -145,10 +145,8 @@ try {
     $forgeWheel = Resolve-OneWheel $Wheels "voxprint_forge" "voxprint_forge-$Version-*.whl"
     $commonVersion = Get-PinnedCommonVersion $forgeWheel
     $commonWheel = Resolve-OneWheel $Wheels "voxprint_common" "voxprint_common-${commonVersion}-*.whl"
-    # AVIF photos (Canvas). Install the bundled wheel first so the forge install does not fetch another build.
-    $avifReq = Join-Path $App "requirements-avif.txt"
-    Invoke-Uv @("pip", "install", "--python", $Py, "--no-deps", "--require-hashes", "--no-index",
-        "--find-links", $Wheels, "-r", $avifReq)
+    # AVIF comes from Pillow 13 (libavif in the official wheel). pillow-avif-plugin 1.6.0
+    # has no CPython 3.15 wheel, so it is not bundled.
     Invoke-Uv @("pip", "install", "--python", $Py, "--constraint", $pins, "$commonWheel", "$forgeWheel[gui,compare]")
     # te-quant extra: the bundled PyPI win_amd64 wheel, hash-checked. No extra index.
     $teReq = Join-Path $App "requirements-te-quant.txt"
@@ -171,12 +169,12 @@ try {
     Invoke-Uv @("pip", "install", "--python", $MPy, "--no-deps", "--no-build-isolation",
         "mivolo @ https://github.com/WildChlamydia/MiVOLO/archive/37475e3f8818b5f22448003feec3e64b01bfb188.zip")
 
-    & $Py -c "import voxprint_forge, torch, bitsandbytes, pillow_avif; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' else 1)"
+    & $Py -c "import voxprint_forge, torch, bitsandbytes; from PIL import features; print('forge', voxprint_forge.__name__, 'torch', torch.__version__, 'bitsandbytes', bitsandbytes.__version__, 'avif', features.check('avif')); raise SystemExit(0 if bitsandbytes.__version__ == '0.50.2' and features.check('avif') else 1)"
     if ($LASTEXITCODE -ne 0) { throw "the app environment does not import" }
     & $MPy -c "import mivolo, transformers, cv2; print('mivolo env ok', transformers.__version__)"
     if ($LASTEXITCODE -ne 0) { throw "the MiVOLO environment does not import" }
     # Program Files is read-only for the signed-in user, so bytecode is written at install time.
-    # Skip the uv Python trees (Tcl ships a file 3.14 cannot compile), the uv cache, wheels, and
+    # Skip the uv Python trees (Tcl ships a file this CPython cannot compile), the uv cache, wheels, and
     # venv-mivolo, which is compiled with its own interpreter below.
     $site = Join-Path $Venv "Lib\site-packages"
     $skip = '\\python\\cpython-|\\setup-work\\|\\venv-mivolo\\|\\wheels\\'

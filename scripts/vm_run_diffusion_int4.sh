@@ -2,7 +2,7 @@
 # One resumable Wan 2.2 diffusion-int4 run for a fresh Ubuntu A100 or H100 80GB.
 # sm_80 is an A100. sm_90 is an H100. llama.cpp uses FORGE_CUDA_ARCHS (default 80;89;90;120).
 # The forge interpreter is FORGE_PYTHON. When that is unset, the live path
-# creates $FORGE_OUT/venv-forge (Python 3.14) before the first disk-floor check.
+# creates $FORGE_OUT/venv-forge (Python 3.15.2) before the first disk-floor check.
 # Torch comes from the cu130 index when the driver is 580 or newer, else cu128.
 # FORGE_HOST_KIND=local (default) keeps tokens in the process only.
 # FORGE_HOST_KIND=rented-vm logs in once and leaves the logins for the rental.
@@ -138,8 +138,8 @@ ensure_forge_python() {
   export FORGE_TORCH_INDEX="$index"
   VENV_FORGE="$FORGE_OUT/venv-forge"
   if [[ ! -x "$VENV_FORGE/bin/python" ]]; then
-    uv python install 3.14
-    uv venv --python 3.14 "$VENV_FORGE"
+    uv python install 3.15.2
+    uv venv --python 3.15.2 "$VENV_FORGE"
   fi
   uv pip install --python "$VENV_FORGE" torch --index-url "$index"
   uv pip install --python "$VENV_FORGE" \
@@ -147,8 +147,8 @@ ensure_forge_python() {
     "huggingface_hub>=0.26" \
     "gguf" \
     "jinja2>=3.1"
-  if [[ -f "$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl" ]]; then
-    uv pip install --python "$VENV_FORGE" "$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl"
+  if [[ -f "$ROOT/vendor/voxprint_common-0.6.4-py3-none-any.whl" ]]; then
+    uv pip install --python "$VENV_FORGE" "$ROOT/vendor/voxprint_common-0.6.4-py3-none-any.whl"
   fi
   uv pip install --python "$VENV_FORGE" -e "$ROOT" --extra-index-url "$index"
   export FORGE_PYTHON="$VENV_FORGE/bin/python"

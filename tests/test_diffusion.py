@@ -321,7 +321,9 @@ def test_overlay_and_scripts_stay_off_the_running_llm_job() -> None:
     assert "diffusers==0.41.0" in job
     assert "torchao==0.18.0" in job
     assert "lpips==0.1.4" in job
-    assert "pillow-avif-plugin==1.6.0" in job
+    assert 'features.check("avif")' in job
+    assert "pillow-avif-plugin==1.6.0" not in job
+    assert "pillow>=13" in job
     assert "torchvision==0.29.1" in job
     assert "--no-deps" in job
     assert '"$VENV/bin/python" -m voxprint_forge.diffusion' in job

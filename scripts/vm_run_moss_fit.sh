@@ -24,15 +24,15 @@ PREFLIGHT_ONLY=0 TE_ONLY=0
 
 mkdir -p "$OUT" "$HF_HOME"
 if [[ ! -x "$VENV/bin/python" ]]; then
-  uv venv -q -p 3.14 "$VENV"
+  uv venv -q -p 3.15.2 "$VENV"
 fi
 # Same torch as the forge venv (scripts/vm_setup_synth4.sh).
 uv pip install -q --python "$VENV" "torch==2.14.1" --index-url "$TORCH_INDEX"
 VIRTUAL_ENV="$VENV" uv pip install -q "diffusers==0.41.0" "transformers==5.20.1" \
   "accelerate>=1.0" "safetensors>=0.4" Pillow "huggingface_hub>=0.26" tomli-w
 # voxprint_common (sha256 vs vendor/pins.txt) plus its Requires-Dist: cryptography, jeepney.
-WHEEL="$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl"
-grep -E 'voxprint_common-0.6.3-py3-none-any.whl$' "$ROOT/vendor/pins.txt" \
+WHEEL="$ROOT/vendor/voxprint_common-0.6.4-py3-none-any.whl"
+grep -E 'voxprint_common-0.6.4-py3-none-any.whl$' "$ROOT/vendor/pins.txt" \
   | (cd "$ROOT/vendor" && sha256sum -c --strict -)
 VIRTUAL_ENV="$VENV" uv pip install -q "$WHEEL" "cryptography>=44" "jeepney>=0.8"
 # Fast GDN kernels for the Qwen3.5 text encoder; optional (preflight warns when missing).
@@ -74,6 +74,7 @@ if [[ ! -d "$COMFY/.git" ]]; then
 fi
 git -C "$COMFY" fetch -q origin a639f187a9f6abfecbda9673034f2045148b6d85
 git -C "$COMFY" checkout -q a639f187a9f6abfecbda9673034f2045148b6d85
+# ComfyUI at a639f187 keeps its own Python 3.14 venv. The forge fit venv above is 3.15.2.
 [[ -x "$COMFY/venv/bin/python" ]] || uv venv -q -p 3.14 "$COMFY/venv"
 uv pip install -q --python "$COMFY/venv" "torch==2.14.1" torchvision torchaudio --index-url "$TORCH_INDEX"
 VIRTUAL_ENV="$COMFY/venv" uv pip install -q -r "$COMFY/requirements.txt" "comfy-kitchen==0.2.38"

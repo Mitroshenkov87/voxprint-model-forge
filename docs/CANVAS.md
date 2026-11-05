@@ -60,9 +60,10 @@ Canvas packages are installed with `--no-deps` so the shared venv keeps its curr
 diffusers==0.41.0
 torchao==0.18.0
 lpips==0.1.4
-pillow-avif-plugin==1.6.0
 torchvision==0.29.1
 ```
+
+`pillow>=13` is installed with the other PyPI packages. Official Pillow 13 wheels include AVIF. pillow-avif-plugin 1.6.0 has no CPython 3.15 wheel.
 
 `torchvision` is the CUDA 13.0 build that matches `torch==2.14.1`. It is installed with `--no-deps` so it does not replace torch. `lpips` imports it.
 
