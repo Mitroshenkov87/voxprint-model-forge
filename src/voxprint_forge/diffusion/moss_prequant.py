@@ -991,12 +991,24 @@ class LiveRenderer:
         self.steps = steps
 
     def render_reference(self, snapshots: SnapshotSet, prompt: str, seed: int) -> bytes:
-        """One bf16 image from the local SFT snapshot."""
+        """One bf16 image from the local SFT snapshot.
+
+        The cap is 13.5–14 GB and the bf16 text encoder is about 16 GB, so this
+        step encodes on the CPU (``te_quant="none"``) and frees the encoder
+        before the DiT is read. It is the only prequant step that forces that.
+        """
         from io import BytesIO
 
         from voxprint_forge.diffusion.moss import generate
 
-        image = generate(snapshots.sft, prompt, seed=seed, steps=self.steps)
+        image = generate(
+            snapshots.sft,
+            prompt,
+            seed=seed,
+            steps=self.steps,
+            te_device="cpu",
+            te_quant="none",
+        )
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
