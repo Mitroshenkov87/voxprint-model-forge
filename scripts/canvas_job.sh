@@ -145,13 +145,13 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 9
 fi
 
-uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl"
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.6.4-py3-none-any.whl"
 uv pip install --python "$VENV" -e "$ROOT" --no-deps
+# Pillow 13 encodes AVIF. pillow-avif-plugin 1.6.0 has no CPython 3.15 wheel.
 uv pip install --python "$VENV" --no-deps \
   "diffusers==0.41.0" \
   "torchao==0.18.0" \
-  "lpips==0.1.4" \
-  "pillow-avif-plugin==1.6.0"
+  "lpips==0.1.4"
 # lpips imports torchvision. Pin the build that matches torch==2.14.1 and do not replace torch.
 uv pip install --python "$VENV" --no-deps \
   "torchvision==0.29.1" \
@@ -160,7 +160,7 @@ uv pip install --python "$VENV" \
   "safetensors>=0.8" \
   "numpy" \
   "regex" \
-  "pillow" \
+  "pillow>=13" \
   "importlib-metadata" \
   "filelock" \
   "tqdm" \
@@ -169,7 +169,7 @@ uv pip install --python "$VENV" \
   "sentencepiece" \
   "protobuf==5.29.6"
 
-if ! "$VENV/bin/python" -c 'import torchao, lpips, pillow_avif; from diffusers import ZImagePipeline, ZImageControlNetPipeline, ZImageControlNetInpaintPipeline'; then
+if ! "$VENV/bin/python" -c 'import torchao, lpips; from PIL import features; from diffusers import ZImagePipeline, ZImageControlNetPipeline, ZImageControlNetInpaintPipeline; raise SystemExit(0 if features.check("avif") else 1)'; then
   printf 'ZImagePipeline or a canvas extra is missing. diffusers==0.41.0 did not import.\n' >&2
   exit 9
 fi

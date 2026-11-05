@@ -1,5 +1,5 @@
 # PDF user guide build and check (scripts/build_pdf_guide.py, tests/test_pdf_guide.py) on the Linux runner.
-# uv pip compile --generate-hashes, Python 3.14, linux x86_64.
+# uv pip compile --generate-hashes. The hash list includes the CPython 3.15 manylinux x86_64 wheels.
 brotli==1.2.0 \
     --hash=sha256:022426c9e99fd65d9475dce5c195526f04bb8be8907607e27e747893f6ee3e24 \
     --hash=sha256:072e7624b1fc4d601036ab3f4f27942ef772887e876beff0301d261210bca97f \

@@ -31,12 +31,12 @@ On failure the object also has `error.code` and `error.message`.
 
 ## Install
 
-Python 3.14 or newer. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.14 and a CUDA torch wheel. Local tests can use a CPU wheel.
+Python 3.15 or newer. CI and the installers use 3.15.2. The shared library `voxprint-common` requires 3.14. The A100 bootstrap installs 3.15.2 and a CUDA torch wheel. Local tests can use a CPU wheel.
 
-`voxprint-common` is not on PyPI yet. The wheel v0.6.3 is the official release asset (https://github.com/Mitroshenkov87/voxprint-common/releases/download/v0.6.3/voxprint_common-0.6.3-py3-none-any.whl, merge commit 10fb281771bb75b9e0e595ad84fb556581086726) vendored at `vendor/voxprint_common-0.6.3-py3-none-any.whl` (sha256 `a18e5760863e34042c6eb16dd25d37d28055b9eb90a460c62407cdc2a09b43e4`). Install that wheel, then the project. The core pin is `voxprint-common==0.6.3`; the `gui` extra needs `voxprint-common[ui]==0.6.3`.
+`voxprint-common` is not on PyPI yet. The wheel v0.6.4 is the official release asset (https://github.com/Mitroshenkov87/voxprint-common/releases/download/v0.6.4/voxprint_common-0.6.4-py3-none-any.whl, merge commit e47f3dccf84f04102b11c5eab87fdaa16de1655b) vendored at `vendor/voxprint_common-0.6.4-py3-none-any.whl` (sha256 `1b7abcc99530d6f155b4be41fba26f3f27b8b54789d49282b936430c53a4314b`). Install that wheel, then the project. The core pin is `voxprint-common==0.6.4`; the `gui` extra needs `voxprint-common[ui]==0.6.4`.
 
 ```bash
-pip install vendor/voxprint_common-0.6.3-py3-none-any.whl
+pip install vendor/voxprint_common-0.6.4-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 

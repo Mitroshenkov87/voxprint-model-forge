@@ -563,11 +563,11 @@ def test_moss_venv_installs_pinned_voxprint_common() -> None:
     root = Path(__file__).resolve().parents[1]
     script = (root / "scripts" / "vm_run_moss_fit.sh").read_text(encoding="utf-8")
     pins = (root / "vendor" / "pins.txt").read_text(encoding="utf-8")
-    assert "vendor/voxprint_common-0.6.3-py3-none-any.whl" in script
+    assert "vendor/voxprint_common-0.6.4-py3-none-any.whl" in script
     assert "vendor/pins.txt" in script
     assert "sha256sum -c" in script
     assert "cryptography>=44" in script
     assert "jeepney>=0.8" in script
-    assert "voxprint_common-0.6.3-py3-none-any.whl" in pins
+    assert "voxprint_common-0.6.4-py3-none-any.whl" in pins
     assert "MOSS_VENV" in script
     assert "moss-venv" in script

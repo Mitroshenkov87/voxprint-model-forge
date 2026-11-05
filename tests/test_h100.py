@@ -376,7 +376,7 @@ def test_vm_setup_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FORGE_CUDA_ARCHS", "90-real")
     done = subprocess.run([_bash(), str(script), "--dry-run"], check=False, capture_output=True, text=True)
     assert done.returncode == 0
-    assert "python_fallback: 3.14 3.13 3.12" in done.stdout
+    assert "python: 3.15.2" in done.stdout
     assert "extra: compare" in done.stdout
     assert "cuda_archs: 90-real" in done.stdout
     assert "FORGE_LLAMA_BIN" in done.stdout

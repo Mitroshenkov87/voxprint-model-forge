@@ -163,7 +163,7 @@ def test_missing_sentencepiece_fails_default_scope(tmp_path) -> None:
     assert not report["ok"]
     assert not line["ok"]
     assert "sentencepiece (ModuleNotFoundError" in line["detail"]
-    assert "sentencepiece==0.2.2" in line["fix"]
+    assert "sentencepiece==0.2.3" in line["fix"]
     assert "FAIL convert_imports" in report["text"]
 
 
@@ -188,7 +188,7 @@ def test_real_import_probe() -> None:
 
 def test_base_dependencies_carry_the_converter_modules() -> None:
     names = " ".join(vmcheck.requirements(Path(__file__).resolve().parents[1]))
-    assert "sentencepiece==0.2.2" in names
+    assert "sentencepiece==0.2.3" in names
     assert "protobuf==5.29.6" in names
 
 

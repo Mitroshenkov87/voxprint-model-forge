@@ -47,7 +47,7 @@ cuda_archs() {
 }
 
 if [[ "$dry" == 1 ]]; then
-  printf 'python_fallback: 3.14 3.13 3.12\n'
+  printf 'python: 3.15.2\n'
   printf 'torch_index: %s\n' "$(torch_index)"
   printf 'extra: compare\n'
   printf 'cuda_archs: %s\n' "$(cuda_archs)"
@@ -110,12 +110,8 @@ install_torch() {
   uv pip install --python "$VENV" "torch==2.14.1" torchvision --index-url "$INDEX"
 }
 
-if ! install_torch 3.14; then
-  if ! install_torch 3.13; then
-    install_torch 3.12
-  fi
-fi
-uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl"
+install_torch 3.15.2
+uv pip install --python "$VENV" "$ROOT/vendor/voxprint_common-0.6.4-py3-none-any.whl"
 # Step 2: everything else from PyPI only. Mixing the torch index in makes uv
 # resolve index-first and pick old packages (torchmetrics 1.0.3). The constraint
 # keeps the CUDA torch and torchvision from step 1.

@@ -114,10 +114,13 @@ def _line(name: str, ok: bool, detail: str, fix: str = "") -> dict[str, object]:
 
 
 def check_python(probe: Probe) -> dict[str, object]:
-    """Python 3.12 or newer (the setup tries 3.14, 3.13, 3.12)."""
+    """Python 3.12 or newer (the setup installs 3.15.2)."""
     major, minor = probe.python
     return _line(
-        "python", (major, minor) >= MIN_PYTHON, f"{major}.{minor}", "run scripts/vm_setup_synth4.sh (uv installs 3.14)"
+        "python",
+        (major, minor) >= MIN_PYTHON,
+        f"{major}.{minor}",
+        "run scripts/vm_setup_synth4.sh (uv installs 3.15.2)",
     )
 
 
@@ -228,7 +231,7 @@ def check_convert_imports(probe: Probe) -> dict[str, object]:
         "convert_imports",
         not bad,
         detail,
-        'uv pip install -e "." from PyPI (sentencepiece==0.2.2, protobuf==5.29.6 are base dependencies)',
+        'uv pip install -e "." from PyPI (sentencepiece==0.2.3, protobuf==5.29.6 are base dependencies)',
     )
 
 

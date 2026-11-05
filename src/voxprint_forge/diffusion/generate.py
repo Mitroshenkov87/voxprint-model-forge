@@ -10,7 +10,6 @@ from typing import TypeVar
 
 import lpips
 import numpy as np
-import pillow_avif  # noqa: F401
 import torch
 from diffusers import (
     ZImageControlNetInpaintPipeline,
@@ -19,6 +18,12 @@ from diffusers import (
     ZImagePipeline,
 )
 from PIL import Image
+
+try:
+    import pillow_avif  # noqa: F401 - registers AVIF when this Pillow build has none
+except ImportError:
+    pass
+
 from safetensors import safe_open
 from transformers import CLIPModel, CLIPProcessor
 

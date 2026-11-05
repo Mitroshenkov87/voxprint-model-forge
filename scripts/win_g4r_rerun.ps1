@@ -45,7 +45,7 @@ $Pins = @(
      Sha = "8bcb20c62ffc72e406d0b4db76929559dac9be2578c19ba68d7a35bb33775fcb"; Dest = "llama-src" }
 )
 # PINS end
-$PipPins = @("numpy==2.5.2", "safetensors==0.8.0", "transformers==5.20.1", "sentencepiece==0.2.2",
+$PipPins = @("numpy==2.5.2", "safetensors==0.8.0", "transformers==5.20.1", "sentencepiece==0.2.3",
              "protobuf==5.29.6", "huggingface_hub==1.33.0")
 $TorchPin = "torch==2.14.1"
 
@@ -99,7 +99,7 @@ if (-not (Test-Path $VenvStamp)) {
   if ($LASTEXITCODE -ne 0) { Stop-Run "pip install torch" 6 }
   & $Py -m pip install -q @PipPins; if ($LASTEXITCODE -ne 0) { Stop-Run "pip install pins" 6 }
   & $Py -m pip install -q (Join-Path $LlamaSrc "gguf-py"); if ($LASTEXITCODE -ne 0) { Stop-Run "pip install gguf-py" 6 }
-  & $Py -m pip install -q (Join-Path $Root "vendor\voxprint_common-0.6.3-py3-none-any.whl")
+  & $Py -m pip install -q (Join-Path $Root "vendor\voxprint_common-0.6.4-py3-none-any.whl")
   if ($LASTEXITCODE -ne 0) { Stop-Run "pip install voxprint_common" 6 }
   & $Py -m pip install -q $Root; if ($LASTEXITCODE -ne 0) { Stop-Run "pip install forge tree" 6 }
   Set-Content -Path $VenvStamp -Value (Get-Date).ToUniversalTime().ToString("o")
