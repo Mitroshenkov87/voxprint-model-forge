@@ -1,4 +1,4 @@
-"""New projects default to MOSS-Image. A record with no base is still Z-Image."""
+"""New projects default to Z-Image. A record with no base is still Z-Image."""
 
 from __future__ import annotations
 
@@ -28,21 +28,24 @@ def _quick(**overrides):
     return build_config("quick", "balanced", 24, **values)
 
 
-def test_new_commands_default_to_moss(tmp_path) -> None:
-    assert DEFAULT_BASE == "moss-image-base"
-    assert OPTIONAL_BASES == ("z-image",)
+def test_new_commands_default_to_z_image(tmp_path) -> None:
+    assert DEFAULT_BASE == "z-image"
+    assert OPTIONAL_BASES == ("moss-image-base",)
     assert legacy_base() == "z-image"
     info = bases.get_adapter(DEFAULT_BASE).info
-    assert info.display_name == "MOSS-Image SFT"
-    assert info.repo == "OpenMOSS-Team/MOSS-Image-SFT"
-    assert info.revision == "fc5de0d56fc910cbca6f6625a70f5f582b26deb1"
-    assert info.mirror == "Mitroshenkov87/voxprint-mirror-moss-image-sft"
-    assert info.variant == "sft"
-    assert bases.get_adapter("z-image").info.variant == "z-image"
+    assert info.repo == "Tongyi-MAI/Z-Image"
+    assert info.variant == "z-image"
+    moss = bases.get_adapter("moss-image-base").info
+    assert moss.display_name == "MOSS-Image SFT"
+    assert moss.repo == "OpenMOSS-Team/MOSS-Image-SFT"
+    assert moss.revision == "fc5de0d56fc910cbca6f6625a70f5f582b26deb1"
+    assert moss.mirror == "Mitroshenkov87/voxprint-mirror-moss-image-sft"
+    assert moss.variant == "sft"
     train_args = build_parser().parse_args(["lora", "train", "--project", str(tmp_path)])
     finish_args = build_parser().parse_args(["lora", "refset", "finish", "--project", str(tmp_path)])
-    assert train_args.base == "moss-image-base"
-    assert finish_args.base == "moss-image-base"
+    assert train_args.base == "z-image"
+    assert finish_args.base == "z-image"
+
 
 
 def test_a_record_without_base_information_resolves_to_z_image(tmp_path) -> None:
@@ -68,17 +71,29 @@ def test_a_record_without_base_information_resolves_to_z_image(tmp_path) -> None
 
 def test_hiding_moss_does_not_relabel_legacy_loras(monkeypatch) -> None:
     monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
-    assert DEFAULT_BASE == "moss-image-base"
+    monkeypatch.delenv("VOXPRINT_FORGE_ZIMAGE_LORA", raising=False)
+    assert DEFAULT_BASE == "z-image"
     assert "moss-image-base" in {info.mdl_id for info in bases.trainable()}
     monkeypatch.setenv("VOXPRINT_FORGE_MOSS_LORA", "0")
     assert bases.hidden() == frozenset({"moss-image-base"})
     assert [info.mdl_id for info in bases.trainable()] == ["z-image"]
     assert "moss-image-base" in {info.mdl_id for info in bases.available()}
+    # The default stays trainable. A hidden optional base is still readable.
+    assert bases.get_adapter(DEFAULT_BASE, training=True).info.mdl_id == "z-image"
+    assert bases.get_adapter("moss-image-base").info.mdl_id == "moss-image-base"
+    assert resolve_base(None) == legacy_base() == "z-image"
+
+
+def test_hiding_z_image_blocks_training_the_default(monkeypatch) -> None:
+    monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
+    monkeypatch.setenv("VOXPRINT_FORGE_ZIMAGE_LORA", "0")
+    assert bases.hidden() == frozenset({"z-image"})
+    assert [info.mdl_id for info in bases.trainable()] == ["moss-image-base"]
     with pytest.raises(LoraUsageError) as caught:
         bases.get_adapter(DEFAULT_BASE, training=True)
     assert caught.value.key == "lora.err.base_missing"
-    # Export and other reads of an existing run still see the hidden base.
-    assert bases.get_adapter(DEFAULT_BASE).info.mdl_id == "moss-image-base"
+    # Export and other reads of an existing run still see the hidden default.
+    assert bases.get_adapter(DEFAULT_BASE).info.mdl_id == "z-image"
     assert resolve_base(None) == legacy_base() == "z-image"
 
 

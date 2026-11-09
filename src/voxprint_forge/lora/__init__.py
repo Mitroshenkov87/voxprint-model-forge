@@ -8,9 +8,9 @@ package. Every step reports plain-words progress events (see
 from collections.abc import Mapping
 
 # Default MDL id for new projects. Lives here so the CLI parser can name it without loading adapters.
-DEFAULT_BASE = "moss-image-base"
+DEFAULT_BASE = "z-image"
 # Bases a build may also train on, besides the default (what the app offers as optional).
-OPTIONAL_BASES = ("z-image",)
+OPTIONAL_BASES = ("moss-image-base",)
 
 
 def legacy_base() -> str:

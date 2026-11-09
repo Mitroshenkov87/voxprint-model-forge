@@ -16,11 +16,14 @@ from voxprint_forge.lora.bases import BaseInfo
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.export import (
     base_short,
+    compatible_bases_json,
+    compatible_bases_list,
     dataset_digest,
     export,
     export_package,
     lora_base_of,
     lora_variant_of,
+    trained_base_tag,
 )
 from voxprint_forge.lora.project import Item, package_stem
 from voxprint_forge.lora.train import lora_base
@@ -69,13 +72,17 @@ def test_safetensors_and_voxlora_names_carry_the_base(tmp_path) -> None:
     assert z_meta["voxprint.lora.base_variant"] == "z-image"
     assert z_meta["voxprint.lora.base_sha256"] == ""
     assert z_meta["voxprint.lora.base_revision"] == "a" * 40
+    assert z_meta["voxprint.lora.trained_base"] == "z-image@" + "a" * 8
+    assert z_meta["voxprint.lora.compatible_bases"] == '["z-image","z-image-turbo"]'
     assert z_meta["voxprint.lora.dataset_id"] == digest
     assert lora_base_of(z_meta) == "z-image"
     sidecar = json.loads((z_path.parent / "voxprint-model.json").read_text(encoding="utf-8"))
     assert sidecar["base"] == {"mdl_id": "z-image", "revision": "a" * 40, "sha256": "", "mirror": ""}
-    assert sidecar["compatible_bases"] == ["z-image"]
+    assert sidecar["trained_base"] == "z-image@" + "a" * 8
+    assert sidecar["compatible_bases"] == ["z-image", "z-image-turbo"]
     assert sidecar["file"] == z_path.name
     check_lora_base(sidecar, "z-image")
+    check_lora_base(sidecar, "z-image-turbo")
 
     _set_base(project, "moss-image-base", "b" * 40)
     moss = export(project, Progress(), out=tmp_path / "picked.safetensors")
@@ -93,6 +100,9 @@ def test_safetensors_and_voxlora_names_carry_the_base(tmp_path) -> None:
         "sha256": info.sha256,
         "mirror": info.mirror,
     }
+    assert moss_meta["voxprint.lora.trained_base"] == "moss-image-base@" + "b" * 8
+    assert moss_meta["voxprint.lora.compatible_bases"] == '["moss-image-base"]'
+    assert moss_side["trained_base"] == "moss-image-base@" + "b" * 8
     assert moss_side["compatible_bases"] == ["moss-image-base"]
     assert info.mirror == "Mitroshenkov87/voxprint-mirror-moss-image-sft"
     assert info.repo == "OpenMOSS-Team/MOSS-Image-SFT"
@@ -151,6 +161,9 @@ def test_adapter_sha_is_copied_and_a_missing_project_base_exports_as_z_image(tmp
         assert sidecar["base"]["sha256"] == "ab" * 32
         assert sidecar["base"]["mirror"] == "example/mirror-sha"
         assert sidecar["compatible_bases"] == ["sha-base"]
+        assert sidecar["trained_base"] == "sha-base@" + "c" * 8
+        assert meta["voxprint.lora.trained_base"] == "sha-base@" + "c" * 8
+        assert meta["voxprint.lora.compatible_bases"] == '["sha-base"]'
     finally:
         bases.unregister("sha-base")
 
@@ -173,8 +186,14 @@ def test_adapter_sha_is_copied_and_a_missing_project_base_exports_as_z_image(tmp
     assert lora_variant_of(meta) == "z-image"
     side = json.loads((project.root / "export" / "voxprint-model.json").read_text(encoding="utf-8"))
     assert side["base"]["mdl_id"] == "z-image"
-    assert side["compatible_bases"] == ["z-image"]
+    assert side["trained_base"] == "z-image@04cc4abb"
+    assert side["compatible_bases"] == ["z-image", "z-image-turbo"]
+    assert meta["voxprint.lora.trained_base"] == "z-image@04cc4abb"
+    assert meta["voxprint.lora.compatible_bases"] == '["z-image","z-image-turbo"]'
+    # Legacy voxprint.lora.base and the short tag stay unchanged.
+    assert meta["voxprint.lora.base"] == "z-image"
     check_lora_base(side, "z-image")
+    check_lora_base(side, "z-image-turbo")
 
 
 def test_a_file_with_no_base_metadata_reads_as_z_image(tmp_path) -> None:
@@ -187,3 +206,14 @@ def test_a_file_with_no_base_metadata_reads_as_z_image(tmp_path) -> None:
     assert lora_base_of(lora_base(family)) == "moss-image-base"
     assert lora_variant_of(lora_base(family)) == "sft"
     assert b"voxprint.lora.base" not in path.read_bytes()
+
+
+def test_canvas_metadata_contract_strings() -> None:
+    """Verbatim Canvas keys for a full Z-Image@04cc4abb run and a MOSS run."""
+    assert trained_base_tag("z-image", "04cc4abb7c5069926f75c9bfde9ef43d49423021") == "z-image@04cc4abb"
+    assert compatible_bases_json("z-image") == '["z-image","z-image-turbo"]'
+    assert compatible_bases_list("z-image") == ["z-image", "z-image-turbo"]
+    assert trained_base_tag("moss-image-base", "fc5de0d56fc910cbca6f6625a70f5f582b26deb1") == "moss-image-base@fc5de0d5"
+    assert compatible_bases_json("moss-image-base") == '["moss-image-base"]'
+    assert base_short("z-image") == "zimg6b"
+    assert base_short("moss-image-base") == "moss5b"

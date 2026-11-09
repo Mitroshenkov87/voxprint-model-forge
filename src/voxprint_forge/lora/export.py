@@ -48,6 +48,37 @@ _LICENCES = Path(__file__).resolve().parent / "licences"
 # The stored tag stays moss5b for the MOSS registry id. The SFT/Base split is base_variant.
 _BASE_SHORT = {"moss-image-base": "moss5b", "z-image": "zimg6b"}
 _VARIANTS = frozenset({"sft", "base", "z-image"})
+# Canvas contract: trained_base is "<mdl_id>@<first 8 of the revision>".
+_ZIMAGE_COMPATIBLE = ("z-image", "z-image-turbo")
+_MOSS_COMPATIBLE = ("moss-image-base",)
+
+
+def trained_base_tag(mdl_id: str, revision: str = "") -> str:
+    """``z-image@04cc4abb`` or ``moss-image-base@fc5de0d5`` for header metadata."""
+    ident = (mdl_id or "").strip() or "z-image"
+    short = (revision or "").strip()[:8]
+    if not short:
+        try:
+            short = str(get_adapter(ident).info.revision).strip()[:8]
+        except (LoraUsageError, KeyError, AttributeError):
+            short = ""
+    return f"{ident}@{short}" if short else ident
+
+
+def compatible_bases_list(mdl_id: str) -> list[str]:
+    """Sidecar ``compatible_bases``: Z-Image LoRAs also load on Z-Image-Turbo."""
+    ident = (mdl_id or "").strip() or "z-image"
+    if ident == "z-image":
+        return list(_ZIMAGE_COMPATIBLE)
+    if ident == "moss-image-base":
+        return list(_MOSS_COMPATIBLE)
+    return [ident]
+
+
+def compatible_bases_json(mdl_id: str) -> str:
+    """Safetensors ``voxprint.lora.compatible_bases``: compact JSON, no spaces."""
+    return json.dumps(compatible_bases_list(mdl_id), separators=(",", ":"))
+
 
 
 def gate_like(key: str) -> bool:
@@ -81,6 +112,8 @@ def header_metadata(
         "voxprint.lora.base_variant": base_variant(base, train.get("base_variant")),
         "voxprint.lora.base_revision": str(train.get("base_revision", "")),
         "voxprint.lora.base_sha256": str(train.get("base_sha256", "")),
+        "voxprint.lora.trained_base": trained_base_tag(resolve_base(base), str(train.get("base_revision", ""))),
+        "voxprint.lora.compatible_bases": compatible_bases_json(resolve_base(base)),
         "voxprint.lora.dataset_id": dataset_id,
         "voxprint.lora.rank": str(config.get("rank", "")),
         "voxprint.lora.alpha": str(config.get("alpha", "")),
@@ -310,7 +343,10 @@ def sidecar_document(mid, data, target: Path, info, preview: Path | None, tags) 
             "sha256": str(getattr(info, "sha256", "")),
             "mirror": str(getattr(info, "mirror", "")),
         },
-        "compatible_bases": [info.mdl_id],
+        "trained_base": trained_base_tag(
+            info.mdl_id, str(dict(data.get("train") or {}).get("base_revision", ""))
+        ),
+        "compatible_bases": compatible_bases_list(info.mdl_id),
         "licence": info.licence,
         "default_strength": DEFAULT_STRENGTH,
         "strength_range": list(STRENGTH_RANGE),

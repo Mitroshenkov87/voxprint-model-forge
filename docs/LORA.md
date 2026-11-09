@@ -21,7 +21,21 @@
 
 Training refuses to start unless the project was prepared and passed the safety check (`lora.err.gate_missing`). It needs at least 10 prepared photos, or 5 in Expert mode.
 
-Presets: `--preset quick|balanced|best`, `--likeness flexible|balanced|close`, `--vram auto|16|24`. `quick` is 150 steps and uses the same pipeline as the other presets. **Train a person LoRA with `--preset balanced` (the default).** `quick` is a smoke test of the setup, not a usable likeness: on an RTX 4090 person run, 120 quick steps scored 1.68/5 for likeness and 1000 balanced steps scored 3.95/5. Z-Image on the 16 GB tier uses the measured 9.7 s/step at 1024 px. The 24 GB Z-Image time, 1.6 s/step at 1024 px, has not been measured. Other preset values are not final until the GPU calibration run. Expert flags (`--rank`, `--alpha`, `--steps`, `--lr`, `--scheduler`, `--warmup`, `--batch`, `--grad-accum`, `--resolution`, `--precision`, `--grad-checkpointing`, `--caption-mode`, `--caption-dropout`, `--seed`, `--save-every`, `--preview-every`) override single values. There are no safety settings.
+Presets: `--preset quick|balanced|best`, `--likeness flexible|balanced|close`, `--vram auto|16|24`. `quick` is 150 steps and uses the same pipeline as the other presets. **Train a person LoRA with `--preset balanced` (the default).** `quick` is a smoke test of the setup, not a usable likeness: on an RTX 4090 person run, 120 quick steps scored 1.68/5 for likeness and 1000 balanced steps scored 3.95/5. Z-Image on the 16 GB tier uses the measured 9.7 s/step at 1024 px. The 24 GB Z-Image time, 1.6 s/step at 1024 px, has not been measured. Other preset values are not final until the GPU calibration run.
+
+### Z-Image 16 GB recipe (release path)
+
+This is the default training path on full Z-Image (`Tongyi-MAI/Z-Image@04cc4abb`). Z-Image-Turbo is the generation default and is not trained. Use `--base z-image` or omit `--base` on a new project. Pass `--vram 16` (or `--vram auto` on a card under 20 GiB). The 16 GB tier stores the Z-Image DiT as FP8; gradient checkpointing is on. CLI preset names stay `quick`, `balanced` and `best` (`fast` / `quality` in prose map to `quick` / `best`).
+
+| Preset | Steps | Rank / alpha | lr | Resolution | batch × accum | Planned peak | Need (plan + 1 GiB) | Seconds / optimizer step | Reserved peak |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `quick` (fast; smoke test) | 150 | 16 / 16 | 1e-4 | 768 | 1 × 1 | 9.03 GiB | 10.0 GiB | 5.46 s, scaled from the 9.7 s/step at 1024 px | unmeasured |
+| `balanced` (recommended) | 1500 | 32 / 32 | 1e-4 | 1024 | 1 × 2 | 10.08 GiB | 11.1 GiB | 19.4 s, the measured 9.7 s/step at 1024 px × accum 2 | unmeasured |
+| `best` (quality) | 3000 | 32 / 32 | 8e-5 | 1024 | 1 × 2 | 10.08 GiB | 11.1 GiB | 19.4 s, same scaling as `balanced` | unmeasured |
+
+Figures: planned peaks are from `ZImageAdapter.memory_plan` (no GPU, pinned shapes) at rank and resolution above. The only measured Z-Image time is 9.7 s/step on a 16 GB RTX 4090 laptop at 1024 px, batch 1, accum 1 (`presets.MEASURED`, peak not recorded). `seconds_per_step` scales that by `(resolution/1024)² × batch × grad_accum`. The reserved peak on the 16 GB tier is **unmeasured**; a short VM train with `--dry-run` then a few steps is needed to fill it in. The 24 GB Z-Image plan is about 14.87 GiB (`quick`) and 16.27 GiB (`balanced`/`best`); its 1.6 s/step time and reserved peak are unmeasured.
+
+ Expert flags (`--rank`, `--alpha`, `--steps`, `--lr`, `--scheduler`, `--warmup`, `--batch`, `--grad-accum`, `--resolution`, `--precision`, `--grad-checkpointing`, `--caption-mode`, `--caption-dropout`, `--seed`, `--save-every`, `--preview-every`) override single values. There are no safety settings.
 
 Memory tiers: both tiers train with gradient checkpointing on (`--no-grad-checkpointing` turns it off in Expert). Without it, a Balanced 1024 px batch of 2 kept every block's activations and reached 79.3 GB on the synth4 calibration run, so the 24 GB tier could not fit. The 24 GB tier keeps the base in BF16; the 16 GB tier also stores it in FP8. The transformer moves to the card only after the text encoder and VAE have left it, and the test prompts are encoded once up front, so previews never load the text encoder next to the transformer.
 
@@ -54,7 +68,7 @@ voxprint-forge-cli lora train --project my-lora --preset balanced --review-round
 
 The deliverable is the exported `.voxlora` package from `lora finish PROJECT` or `lora export PROJECT`. Keep, share and open that file in Canvas. `checkpoints/step-NNNNNN.safetensors` are intermediate training files: they have no description, previews or subject record, and Canvas does not accept them. To ship an earlier version, export it with `lora export PROJECT --checkpoint N`.
 
-Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `consent_obtained`, `adult_confirmed`, `provenance_note`, `release_attached`, `release_sha256`, `consent_method` (`verbal` or `file`) for a person, and `rights_confirmed` for objects and styles; `voxprint.lora.base`, `base_revision`, `rank`, `alpha`, `steps`, `kind`, `trained_on`, `adult_content` (`true` or `false`, always present). Nothing else: no paths, usernames, machine ids or EXIF, and no key that reads like a gate or threshold setting.
+Header metadata (strings): `voxprint.subject.name`, `stage_name`, `trigger`, `consent_obtained`, `adult_confirmed`, `provenance_note`, `release_attached`, `release_sha256`, `consent_method` (`verbal` or `file`) for a person, and `rights_confirmed` for objects and styles; `voxprint.lora.base` (legacy MDL id, unchanged), `voxprint.lora.trained_base` (`z-image@04cc4abb` or `moss-image-base@` plus the first eight characters of the pin), `voxprint.lora.compatible_bases` (compact JSON: `["z-image","z-image-turbo"]` for Z-Image, `["moss-image-base"]` for MOSS), `base_revision`, `rank`, `alpha`, `steps`, `kind`, `trained_on`, `adult_content` (`true` or `false`, always present). Nothing else: no paths, usernames, machine ids or EXIF, and no key that reads like a gate or threshold setting. Short export tags stay `zimg6b` and `moss5b`. A LoRA trained on full Z-Image is accepted on Z-Image-Turbo; strength and likeness on Turbo are unmeasured until a VM check. Z-Image-Turbo is not a training base (fine-tuning N/A).
 
 `voxprint-model.json` (`schema: voxprint-model/1`): `min_schema` 1, `id`, `kind`, `type` lora, `producer`, `file`, `sha256`, `size`, `base.mdl_id`, `base.revision`, `licence` (from the base), `default_strength` 0.8, `strength_range` [0, 1.5], `tags`, `voxprint.lora.adult_content` (JSON `true` or `false`, always present), `voxprint.subject.consent_method` (`"verbal"` or `"file"`, only for a person), and `preview` with `preview_sha256` when a test picture exists (`preview.webp`).
 
@@ -98,12 +112,12 @@ Qwen3-VL-4B-Instruct (`qwen3-vl-4b-instruct`, Apache-2.0) by default, Florence-2
 
 ## Bases
 
-The base is chosen by MDL id (`--base`, default `moss`, registry id `moss-image-base`). MDL installs it in `<models dir>/model-forge/<id>`. The default weights are MOSS-Image SFT. A project or LoRA with no base recorded stays Z-Image. The stored short tag is `moss5b` (`zimg6b` for Z-Image).
+The base is chosen by MDL id (`--base`, default `z-image`, registry id `z-image`). MDL installs it in `<models dir>/model-forge/<id>`. The default weights are Z-Image. A project or LoRA with no base recorded stays Z-Image. The stored short tag is `zimg6b` (`moss5b` for MOSS).
 
 | MDL id | Source | Licence | State |
 | --- | --- | --- | --- |
-| `z-image` | Tongyi-MAI/Z-Image | Apache-2.0 | Optional. LoRAs are for Z-Image; loading on Z-Image-Turbo is untested until a Canvas test. A file with no base recorded is still this base. |
-| `moss-image-base` | OpenMOSS-Team/MOSS-Image-SFT | Apache-2.0 | Default (`--base moss`, variant `sft`). fp32 LoRA. The 24 GB preset keeps the bf16 DiT. The 16 GB preset stores the DiT as FP8 e4m3 weights (torchao weight-only) and computes in bf16. |
+| `z-image` | Tongyi-MAI/Z-Image | Apache-2.0 | Default (`--base z-image`, Tongyi-MAI/Z-Image@04cc4abb). A Z-Image LoRA is accepted on Z-Image-Turbo; strength and likeness on Turbo are unmeasured until a VM check. Fine-tuning Turbo is not offered. A file with no base recorded is still this base. The 16 GB preset stores the DiT as FP8; the 24 GB preset keeps bf16. |
+| `moss-image-base` | OpenMOSS-Team/MOSS-Image-SFT | Apache-2.0 | Optional (`--base moss`, variant `sft`). fp32 LoRA. The 24 GB preset keeps the bf16 DiT. The 16 GB preset stores the DiT as FP8 e4m3 weights (torchao weight-only) and computes in bf16. |
 
 A new base is a `BaseAdapter` subclass registered with `voxprint_forge.lora.bases.register`. The CLI does not change.
 

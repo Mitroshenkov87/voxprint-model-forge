@@ -536,7 +536,7 @@ options:
                         Duplicate limit (Expert).
   --base {moss,z-image,both}
                         Which bases this project trains: moss, z-image, or
-                        both. Stored on the project. Default: moss.
+                        both. Stored on the project. Default: z-image.
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
 
@@ -670,7 +670,7 @@ options:
                         Stored on the project.
   --base BASE           MDL id, moss, z-image, or both. Omitted: the project's
                         first base (a legacy project stays on Z-Image). both
-                        trains each base in turn. Default: moss-image-base.
+                        trains each base in turn. Default: z-image.
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).
   --resolution RESOLUTION
@@ -963,7 +963,7 @@ options:
   --project PROJECT     Project folder.
   --mode {simple,expert}
                         Set size: 10-50, or 5-60 in Expert.
-  --base BASE           Base model the set is for. Default: moss-image-base.
+  --base BASE           Base model the set is for. Default: z-image.
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
 ```

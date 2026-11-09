@@ -532,15 +532,25 @@ def check_lora_base(document: Mapping[str, object], target_base: str) -> None:
     ``document`` is a ``voxprint-model/1`` LoRA descriptor: the ``voxprint-model.json``
     sidecar next to an exported ``.safetensors``, or a package whose ``base`` is an
     MDL id. A descriptor without base information predates MOSS and describes a
-    Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). The error names
+    Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). A Z-Image LoRA is also accepted on ``z-image-turbo``. The error names
     ``forge lora retrain --base moss|z-image PROJECT`` as the way to train the
     same photos for ``target_base``. Weights are not converted.
     """
     from voxprint_forge.lora import resolve_base
+    from voxprint_forge.lora.export import compatible_bases_list
     from voxprint_forge.lora.project import base_mismatch_params
 
     found = resolve_base(document.get("base"))
-    if found != target_base:
+    allowed = {found, *compatible_bases_list(found)}
+    listed = document.get("compatible_bases")
+    if isinstance(listed, str):
+        try:
+            listed = json.loads(listed)
+        except json.JSONDecodeError:
+            listed = []
+    if isinstance(listed, list):
+        allowed.update(str(item).strip() for item in listed if str(item).strip())
+    if target_base not in allowed:
         raise LoraUsageError("lora.err.base_mismatch", **base_mismatch_params(found, target_base))
 
 
@@ -620,11 +630,23 @@ def check_index(document: object) -> None:
     for row in models:
         if not isinstance(row, dict):
             raise StageError("index row is not an object", code="mdl")
-        _exact_keys(row, ("id", "repo", "revision", "sha256"), "index row")
+        _keys(row, ("id", "repo", "revision", "sha256"), ("note", "size", "license", "default", "optional"), "index row")
         if not isinstance(row["revision"], str) or _COMMIT.fullmatch(row["revision"]) is None:
             raise StageError("index row revision must be a 40-hex commit", code="mdl")
         if not isinstance(row["sha256"], str) or _SHA.fullmatch(row["sha256"]) is None:
             raise StageError("index row sha256 must be 64 lowercase hex characters", code="mdl")
+        if "note" in row and not isinstance(row["note"], str):
+            raise StageError("index row note must be a string", code="mdl")
+        if "size" in row:
+            size = row["size"]
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                raise StageError("index row size must be a non-negative integer", code="mdl")
+        if "license" in row and not isinstance(row["license"], str):
+            raise StageError("index row license must be a string", code="mdl")
+        if "default" in row and not isinstance(row["default"], bool):
+            raise StageError("index row default must be a boolean", code="mdl")
+        if "optional" in row and not isinstance(row["optional"], bool):
+            raise StageError("index row optional must be a boolean", code="mdl")
 
 
 def per_file_sources(

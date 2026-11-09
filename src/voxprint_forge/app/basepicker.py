@@ -146,7 +146,7 @@ class DownwardCombo(QtWidgets.QComboBox):
 
 
 def default_mdl(ids: list[str]) -> str:
-    """MOSS when this build can train it, otherwise the first offered base."""
+    """The default LoRA base when this build can train it, otherwise the first offered base."""
     if DEFAULT_BASE in ids:
         return DEFAULT_BASE
     return ids[0] if ids else ""
@@ -155,8 +155,8 @@ def default_mdl(ids: list[str]) -> str:
 def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -> QtWidgets.QComboBox:
     """A sane-width combo of ``(mdl_id, name, repo, licence, permissive)`` with two-line options.
 
-    MOSS is the selection when ``current`` is not one of the offered ids.
-    Z-Image is labelled optional. The tooltip keeps the plain display name.
+    The default LoRA base is the selection when ``current`` is not one of the offered ids.
+    Optional bases are labelled as such. The tooltip keeps the plain display name.
     """
     combo = DownwardCombo()
     combo.setObjectName("forge.train.base")

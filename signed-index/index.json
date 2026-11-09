@@ -1,0 +1,198 @@
+{
+  "head": "15edeab0f7a874c27d2b38ef6ecb69106ff94df8",
+  "serial": 10,
+  "generated_at": "2026-11-09T23:09:06Z",
+  "models": [
+    {
+      "id": "dinov2-base",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "d21fa50d478ad747b9e00979ca1376e4e6b288f5",
+      "sha256": "5d34e67a046e3a8c70beaf98c198784ee7ff89409ceb415fb9bea16511b39947"
+    },
+    {
+      "id": "florence2-large",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "5b7bdb4062d5bbc080b406c6bb3cb0a724438003",
+      "sha256": "66477ec891ec0a76b702ca6fd15455c6a1eb5be1a7488830bf483b9ec5e1dfb3"
+    },
+    {
+      "id": "gemma4-31b",
+      "repo": "Mitroshenkov87/voxprint-gemma4-31b",
+      "revision": "5eb9214a2e65423412c70a53be94df439f80fb29",
+      "sha256": "4e39e00e205e2afe64b26570f560fa84a726e28dd4805e414e45126c78c5a966"
+    },
+    {
+      "id": "huihui-qwen36-27b",
+      "repo": "Mitroshenkov87/voxprint-huihui-qwen36-27b",
+      "revision": "742e95d5c64f63442e0b624513d50fbcee53867e",
+      "sha256": "3cc6351a0e917e53e87476a58903440aeadf0ca27adcdd28691d9380abca92c8"
+    },
+    {
+      "id": "mirror-fairface-age-image-detection",
+      "repo": "Mitroshenkov87/voxprint-mirror-fairface-age-image-detection",
+      "revision": "1a7a974a9ae30892d5bb4f938ae0cfba2439f760",
+      "sha256": "a000d3e39dae29ebd2045af59d7c843ae69987d67111bc44378fb90d419af6bc"
+    },
+    {
+      "id": "mirror-nsfw-image-detection",
+      "repo": "Mitroshenkov87/voxprint-mirror-nsfw-image-detection",
+      "revision": "b6a9cc1201e48b2abdc4b742d36ff9f5c83f2a91",
+      "sha256": "579163b0d3e60a2d6a0eef347be1ce6ab883e18ec5d01e91e4f5faa8321e2252"
+    },
+    {
+      "id": "mirror-opus-mt-de-en",
+      "repo": "Mitroshenkov87/voxprint-mirror-opus-mt-de-en",
+      "revision": "da9e54eab09631452bd88a7b2cac2f87abf7ab8b",
+      "sha256": "ddd31e45d5248287b5ebac86b185fbb037dc73671c213bd4c5da9549f0c0063e"
+    },
+    {
+      "id": "mirror-opus-mt-en-de",
+      "repo": "Mitroshenkov87/voxprint-mirror-opus-mt-en-de",
+      "revision": "e2a63e0c4a7f0fe712723b3c06fee4c63f5e0bdf",
+      "sha256": "c16c25211ec56db9592e6e07332442dd6ab0a4af7ab496ec8c92162e751d102c"
+    },
+    {
+      "id": "mirror-opus-mt-en-ru",
+      "repo": "Mitroshenkov87/voxprint-mirror-opus-mt-en-ru",
+      "revision": "b0078ff68639490ff4f5ff69ebab1b6e296e447e",
+      "sha256": "dde3af62a19522776058443b2885259d950befec7e597f78eddaa8cb7ba476fe"
+    },
+    {
+      "id": "mirror-opus-mt-ru-en",
+      "repo": "Mitroshenkov87/voxprint-mirror-opus-mt-ru-en",
+      "revision": "228bd442cc7d58f8a6aca897ac1965b7cb99e074",
+      "sha256": "793ddf72b49a930a07a7155a78b9c1aeb19c3ce28a479abe86435849a009e744"
+    },
+    {
+      "id": "mirror-qwen3-asr-0.6b",
+      "repo": "Mitroshenkov87/voxprint-mirror-qwen3-asr-0.6b",
+      "revision": "995e8f310375505c37ed1ceae09e228c265be23c",
+      "sha256": "52bda305983fe667d303bcaf8cb4e3492f0d2a61d2ec1a1ea2d42af0ecce3393"
+    },
+    {
+      "id": "mirror-qwen3-forcedaligner-0.6b",
+      "repo": "Mitroshenkov87/voxprint-mirror-qwen3-forcedaligner-0.6b",
+      "revision": "c5c7b9ffcf863c374b92c75e4ec08f602c72cf2d",
+      "sha256": "0993255c60e0d6660eb12398a6849f49abba0919901e4bb8a8604122b90f3c6b"
+    },
+    {
+      "id": "mirror-qwen3-tts-12hz-0.6b-base",
+      "repo": "Mitroshenkov87/voxprint-mirror-qwen3-tts-12hz-0.6b-base",
+      "revision": "a0bb9d7991e5336778e4acffd9c04f7ccdad455f",
+      "sha256": "a4a4f6fbd501c74cf66bb77202c2360744233bd3c3b225bccb6938a024e66328"
+    },
+    {
+      "id": "mirror-qwen3-tts-12hz-1.7b-base",
+      "repo": "Mitroshenkov87/voxprint-mirror-qwen3-tts-12hz-1.7b-base",
+      "revision": "7df59f3d5f20e09d61a42867a071d99858c45d4c",
+      "sha256": "b4c3f3f7b8b3dc2843029fcfcbffe050aa7d2429cae4395b0698b5475e5e4fc0"
+    },
+    {
+      "id": "mirror-qwen3guard-gen-0.6b",
+      "repo": "Mitroshenkov87/voxprint-mirror-qwen3guard-gen-0.6b",
+      "revision": "9ecab8347cf2f1e39e88b9ca4b1ffd2e20567d36",
+      "sha256": "f70079a9a841dfe564ae6087d5cb070d544312aee68c25cac9a1dd133d7b0084"
+    },
+    {
+      "id": "mirror-sage-fredt5-distilled-95m",
+      "repo": "Mitroshenkov87/voxprint-mirror-sage-fredt5-distilled-95m",
+      "revision": "7f092b6ee83a7217272180e1753f46d23919beda",
+      "sha256": "d397aa59e2aa171febbfaa1fa1e23e1c34b108e983cbf3c29cf83291cedea94f"
+    },
+    {
+      "id": "mirror-siglip2-so400m-patch14-384",
+      "repo": "Mitroshenkov87/voxprint-mirror-siglip2-so400m-patch14-384",
+      "revision": "0cf90bda0d8b71e502458818efbfa2d3c7e9ed9d",
+      "sha256": "f7827c5f9c1843a9d4677a62636ead0545ccb4b557c677df75dd0718dad70127"
+    },
+    {
+      "id": "mirror-z-image-turbo-controlnet-union-2.1",
+      "repo": "Mitroshenkov87/voxprint-mirror-z-image-turbo-controlnet-union-2.1",
+      "revision": "a00c5bea0cd05548c88680bef88ce41414a31307",
+      "sha256": "b58529d222393339c3ffbb02808114e7d7a6940e24e87088a07a1f6022c19beb"
+    },
+    {
+      "id": "mivolo-v2",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "5b7bdb4062d5bbc080b406c6bb3cb0a724438003",
+      "sha256": "58b597f66351b8f0846505482281476123f942b98efc0123ed37859d2615e5e3"
+    },
+    {
+      "id": "moss-image-base",
+      "repo": "Mitroshenkov87/voxprint-mirror-moss-image-base",
+      "revision": "be1a49ef970ec5859a934b794e8adbc95997f74f",
+      "sha256": "d6fd691e4c4e0f1b9b6ee8852364686f3f11abcbd8adf1d13e8d4bf439e65549",
+      "size": 20128,
+      "default": false,
+      "optional": true,
+      "note": "Optional download, not the default model."
+    },
+    {
+      "id": "moss-image-sft",
+      "repo": "Mitroshenkov87/voxprint-mirror-moss-image-sft",
+      "revision": "6db2a69abfefb6ddba4dfb597bf340ee63eeafa6",
+      "sha256": "580087427f17f6dd4922d80f2138c280a5636a9f1b3182b4a8a696216030ca96",
+      "size": 20051,
+      "default": false,
+      "optional": true,
+      "note": "Optional download, not the default model."
+    },
+    {
+      "id": "pyannote-embedding",
+      "repo": "Mitroshenkov87/voxprint-pyannote-embedding",
+      "revision": "b18e120a294de96f09f31096f19059d8d46e6fd7",
+      "sha256": "5427c29f88bd3a987f722a17e1f5363a91ebf3cd1316e58b8439a37356abf13c"
+    },
+    {
+      "id": "pyannote-speaker-diarization-community-1",
+      "repo": "Mitroshenkov87/voxprint-pyannote-speaker-diarization-community-1",
+      "revision": "8ad517b1fb0cabf61c8fc1ff0bc457ae8dc28abd",
+      "sha256": "5a6844108a3bcfd69baa80b4b9e5ecb6ead10b443c33dc53a5d4be31311b99a6"
+    },
+    {
+      "id": "qwen3-vl-4b-instruct",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "5b7bdb4062d5bbc080b406c6bb3cb0a724438003",
+      "sha256": "aeaf070f92b99226414b7f7e900538f91310d88388be3800c1c192afcd6fa13a"
+    },
+    {
+      "id": "t-lite-it-2.1",
+      "repo": "Mitroshenkov87/voxprint-t-lite-it-2.1",
+      "revision": "d85d9393d3368ce6daecfd382ab958eb7bd0269a",
+      "sha256": "321d40561d209379adcb2112a9b6e14d3679dad60681ac3e305ddd5076167f87"
+    },
+    {
+      "id": "voices-ru",
+      "repo": "Mitroshenkov87/voxprint-voices-ru",
+      "revision": "6ba1e83f8cfdda4260fd4a17f11adc79fc98a540",
+      "sha256": "1796d14f7a4c27fa4b715359b2b1a82fbe2c528d40e211ace482cd0c02f248e4"
+    },
+    {
+      "id": "yunet-2023mar",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "15edeab0f7a874c27d2b38ef6ecb69106ff94df8",
+      "sha256": "6ca8d00542140b54d7acf2e9455eacc1f9d9dcef97373b5c46289f6dddfd190b"
+    },
+    {
+      "id": "z-image",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "5b7bdb4062d5bbc080b406c6bb3cb0a724438003",
+      "sha256": "06c2c55b02c511a9b63a006e0847ad2e152b92cc4564809f1880f604f5d6d6c8",
+      "size": 4275,
+      "default": false,
+      "optional": true,
+      "note": "Optional download, not the default model. Full Z-Image (Tongyi-MAI/Z-Image), the LoRA training base."
+    },
+    {
+      "id": "z-image-turbo",
+      "repo": "Mitroshenkov87/voxprint-mirror-z-image-turbo",
+      "revision": "a853c26eb946b9010b4bd142a2ad1439d83e7896",
+      "sha256": "fefa994cbef9d62201089f61d0bde2914ba0e826650f323816ec9b562965168e",
+      "size": 11047,
+      "license": "Apache-2.0",
+      "default": true,
+      "optional": false,
+      "note": "Default generation model: Z-Image-Turbo (Tongyi-MAI/Z-Image-Turbo@f332072aa78be7aecdf3ee76d5c247082da564a6, Apache-2.0). Descriptor is voxprint-model.json on Mitroshenkov87/voxprint-mirror-z-image-turbo @a853c26eb946b9010b4bd142a2ad1439d83e7896; author weights are already on that mirror. sha256 and size are of the descriptor."
+    }
+  ]
+}
