@@ -8,19 +8,17 @@ import os
 import struct
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import nullcontext
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
-import accelerate
-import diffusers
 import jsonschema
 import pytest
 import safetensors
 import torch
 from PIL import Image
-from transformers import AutoModel, AutoTokenizer
 
 import voxprint_forge.diffusion.moss as moss
 import voxprint_forge.diffusion.moss_prequant as prequant
@@ -706,14 +704,35 @@ class _Placement:
         )
 
 
-def test_capped_prequant_run_keeps_full_bf16_off_cuda(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.fixture
+def _restore_sys_modules() -> Iterator[None]:
+    """Drop every module a test imports lazily so heavy ML libs never leak between tests."""
+    before = set(sys.modules)
+    yield
+    for name in set(sys.modules) - before:
+        del sys.modules[name]
+
+
+def test_capped_prequant_run_keeps_full_bf16_off_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _restore_sys_modules: None,
+) -> None:
     """Every live ``run()`` step stays off a full bf16 CUDA text encoder or weight load.
 
     CUDA is reported as available, so the 24 GB plan would otherwise map the bf16
     text encoder onto the card in one block. The reference DiT is still allowed
     on the card: its pinned weights plus the VAE fit the 13.5 GiB cap, and the
     encoder for that step is not on CUDA with them.
+
+    ``accelerate``/``diffusers``/``transformers`` are imported lazily here;
+    ``_restore_sys_modules`` rolls them and every transitive import back out of
+    ``sys.modules`` so import-isolation guards in other test files keep passing.
     """
+    import accelerate
+    import diffusers
+    from transformers import AutoModel, AutoTokenizer
+
     te_bytes = _pinned_bytes("text_encoder/")
     dit_bytes = _pinned_bytes("transformer/diffusion_pytorch_model-")
     vae_bytes = _pinned_bytes("vae/")
