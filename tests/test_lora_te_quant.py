@@ -13,6 +13,7 @@ from torch import nn
 from tests import test_lora_moss as tiny
 from tests.lora_fakes import make_project
 from voxprint_forge.diffusion import moss
+from voxprint_forge.diffusion.moss_prequant import default_pins
 from voxprint_forge.lora import bases, te_quant
 from voxprint_forge.lora.cli import add_command
 from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
@@ -187,6 +188,26 @@ def test_generate_encodes_before_reading_the_dit(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(moss, "load_pipeline", pipeline)
     assert moss.generate(tmp_path, "a cube", te_quant="int8") == "img"
     assert order == ["encode:int8@cuda", "dit:te=False"]
+
+
+def test_compressed_te_stays_on_gpu_only_when_headroom_remains() -> None:
+    gib = 1024**3
+    budget = int(13.5 * gib)
+    headroom = int(te_quant.COMPRESSED_TE_HEADROOM_GB * gib)
+    room = budget - headroom
+    assert te_quant.compressed_te_device(room - 10, 10, 13.5) == "cuda"
+    assert te_quant.compressed_te_device(room - 10, 11, 13.5) == "cpu"
+    assert te_quant.compressed_te_device(0, room, 13.5) == "cpu"
+    assert te_quant.compressed_te_device(room, 0, 13.5) == "cpu"
+
+
+def test_bf16_sizes_do_not_share_the_prequant_cap() -> None:
+    pins = default_pins()["sft"]
+    te = sum(item.size for item in pins if item.path.startswith("text_encoder/") and item.path.endswith(".safetensors"))
+    dit = sum(item.size for item in pins if "diffusion_pytorch_model-" in item.path)
+    assert te_quant.compressed_te_device(dit, te, 13.5) == "cpu"
+    assert te_quant.compressed_te_device(dit // 2, te // 2, 13.5) == "cpu"
+    assert te_quant.compressed_te_device(dit // 4, te // 4, 13.5) == "cuda"
 
 
 def test_quant_config_kinds(monkeypatch) -> None:

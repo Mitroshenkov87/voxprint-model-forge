@@ -5,21 +5,36 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import nullcontext
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
+import safetensors
 import torch
+from PIL import Image
 
+import voxprint_forge.diffusion.moss as moss
+import voxprint_forge.diffusion.moss_prequant as prequant
 from tests.lora_fakes import TinyNet
+from voxprint_forge.diffusion.moss import import_vendored
 from voxprint_forge.diffusion.moss_prequant import (
     DEFAULT_BUDGET_GB,
     DEFAULT_HEADROOM_BYTES,
     MODEL_ID,
     VRAM_CAP_ENV,
     WEIGHTS_DIR,
+    LiveLoader,
+    LiveProbe,
+    LiveQuantizer,
+    LiveRenderer,
+    LiveScorer,
     NoQuantFits,
     PinnedFile,
     PromptCase,
@@ -31,6 +46,7 @@ from voxprint_forge.diffusion.moss_prequant import (
     TensorInfo,
     check_budget,
     default_pins,
+    live_services,
     plan_stream,
     quantization_spec,
     run,
@@ -571,3 +587,400 @@ def test_moss_venv_installs_pinned_voxprint_common() -> None:
     assert "voxprint_common-0.6.3-py3-none-any.whl" in pins
     assert "MOSS_VENV" in script
     assert "moss-venv" in script
+
+
+def _pinned_bytes(prefix: str) -> int:
+    return sum(
+        item.size
+        for item in default_pins()["sft"]
+        if item.path.startswith(prefix) and item.path.endswith(".safetensors")
+    )
+
+
+def _targets_cuda(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value == "cuda" or value.startswith("cuda:")
+    if isinstance(value, dict):
+        return any(_targets_cuda(item) for item in value.values())
+    device_type = getattr(value, "type", None)
+    return str(device_type) == "cuda" if device_type is not None else False
+
+
+def _write_shard(folder: Path) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    header = {"embed.weight": {"dtype": "BF16", "shape": [2, 2], "data_offsets": [0, 8]}}
+    blob = json.dumps(header).encode()
+    (folder / "model.safetensors").write_bytes(struct.pack("<Q", len(blob)) + blob + b"\x00" * 8)
+    index = {"weight_map": {"embed.weight": "model.safetensors"}}
+    (folder / "model.safetensors.index.json").write_text(json.dumps(index), encoding="utf-8")
+
+
+def _one_png() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), (10, 20, 30)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class _Picture:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def save(self, buffer: object, format: str = "PNG") -> None:
+        assert format == "PNG"
+        buffer.write(self._payload)  # type: ignore[attr-defined]
+
+
+class _Skeleton(torch.nn.Module):
+    """Stand-in for an unquantized component. ``.to("cuda")`` on this is a full bf16 load."""
+
+    def __init__(self, role: str, nbytes: int) -> None:
+        super().__init__()
+        self.embed = torch.nn.Parameter(torch.zeros(2, 2))
+        self._placement_role = role
+        self._placement_bytes = nbytes
+        self._placement_quantized = False
+        self._placement_skeleton = True
+        self._placement_bf16_te = role == "encoder"
+
+    def save_pretrained(self, dest: Path, safe_serialization: bool = True) -> None:
+        del safe_serialization
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "config.json").write_text(
+            json.dumps({"latent_channels": 4, "text_dim": 4}),
+            encoding="utf-8",
+        )
+
+
+class _FakeDiT(torch.nn.Module):
+    def __init__(self, *, quantized: bool, nbytes: int) -> None:
+        super().__init__()
+        self.video_embedder = torch.nn.Linear(4, 4)
+        self._placement_role = "dit"
+        self._placement_bytes = 0 if quantized else nbytes
+        self._placement_quantized = quantized
+        self._placement_skeleton = False
+        self._placement_bf16_te = False
+
+    def forward(self, hidden: torch.Tensor, step: torch.Tensor, text: torch.Tensor, mask: torch.Tensor) -> object:
+        del step, text, mask
+        layer = self.video_embedder
+        if hasattr(layer, "lora_A"):
+            value = layer.lora_A.weight.float().sum() + layer.lora_B.weight.float().sum()
+        else:
+            value = layer.weight.float().sum()
+        return SimpleNamespace(sample=hidden.float() * 0 + value)
+
+
+class _Placement:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def record_module(self, module: torch.nn.Module) -> None:
+        self.events.append(
+            {
+                "kind": "module",
+                "role": getattr(module, "_placement_role", type(module).__name__),
+                "cuda": True,
+                "quantized": bool(getattr(module, "_placement_quantized", False)),
+                "skeleton": bool(getattr(module, "_placement_skeleton", False)),
+                "bf16_te": bool(getattr(module, "_placement_bf16_te", False)),
+                "nbytes": int(getattr(module, "_placement_bytes", 0)),
+            }
+        )
+
+    def record_pretrained(self, role: str, device_map: object, quantized: bool) -> None:
+        self.events.append(
+            {
+                "kind": "pretrained",
+                "role": role,
+                "cuda": _targets_cuda(device_map),
+                "quantized": quantized,
+                "skeleton": False,
+                "bf16_te": role == "text_encoder" and not quantized,
+                "nbytes": 0,
+            }
+        )
+
+
+@pytest.fixture
+def _restore_sys_modules() -> Iterator[None]:
+    """Drop every module a test imports lazily so heavy ML libs never leak between tests."""
+    before = set(sys.modules)
+    yield
+    for name in set(sys.modules) - before:
+        del sys.modules[name]
+
+
+def test_capped_prequant_run_keeps_full_bf16_off_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _restore_sys_modules: None,
+) -> None:
+    """Every live ``run()`` step stays off a full bf16 CUDA text encoder or weight load.
+
+    CUDA is reported as available, so the 24 GB plan would otherwise map the bf16
+    text encoder onto the card in one block. The reference DiT is still allowed
+    on the card: its pinned weights plus the VAE fit the 13.5 GiB cap, and the
+    encoder for that step is not on CUDA with them.
+
+    ``accelerate``/``diffusers``/``transformers`` are imported lazily here;
+    ``_restore_sys_modules`` rolls them and every transitive import back out of
+    ``sys.modules`` so import-isolation guards in other test files keep passing.
+    """
+    import accelerate
+    import diffusers
+    from transformers import AutoModel, AutoTokenizer
+
+    te_bytes = _pinned_bytes("text_encoder/")
+    dit_bytes = _pinned_bytes("transformer/diffusion_pytorch_model-")
+    vae_bytes = _pinned_bytes("vae/")
+    budget = int(DEFAULT_BUDGET_GB * 1024**3)
+    assert te_bytes > budget
+    assert dit_bytes + vae_bytes <= budget
+
+    placement = _Placement()
+    steps: list[str] = []
+    png = _one_png()
+    monkeypatch.delenv("VOXPRINT_FORGE_TE_QUANT", raising=False)
+    monkeypatch.delenv("VOXPRINT_FORGE_TE_DEVICE", raising=False)
+    monkeypatch.setenv(VRAM_CAP_ENV, "13.5")
+    monkeypatch.setattr("voxprint_forge.lora.presets.detect_vram_gb", lambda: 24)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    class _Props:
+        name = "NVIDIA GeForce RTX 4090"
+        major = 8
+        minor = 9
+        total_memory = 24 * 1024**3
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda index=0: _Props())
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(torch.cuda, "max_memory_reserved", lambda *args, **kwargs: 8 * 1024**3)
+
+    original_module_to = torch.nn.Module.to
+    original_tensor_to = torch.Tensor.to
+
+    def module_to(self: torch.nn.Module, *args: object, **kwargs: object) -> torch.nn.Module:
+        device = kwargs.get("device", args[0] if args else None)
+        if _targets_cuda(device):
+            placement.record_module(self)
+            return self
+        return original_module_to(self, *args, **kwargs)
+
+    def tensor_to(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+        device = kwargs.get("device", args[0] if args else None)
+        if _targets_cuda(device):
+            placement.events.append(
+                {
+                    "kind": "tensor",
+                    "role": "tensor",
+                    "cuda": True,
+                    "quantized": False,
+                    "skeleton": False,
+                    "bf16_te": False,
+                    "nbytes": int(self.numel() * self.element_size()),
+                }
+            )
+            return self
+        return original_tensor_to(self, *args, **kwargs)
+
+    def factory(fn: object) -> object:
+        def wrapped(*args: object, **kwargs: object) -> object:
+            if _targets_cuda(kwargs.get("device")):
+                kwargs["device"] = "cpu"
+            return fn(*args, **kwargs)  # type: ignore[operator]
+
+        return wrapped
+
+    monkeypatch.setattr(torch.nn.Module, "to", module_to)
+    monkeypatch.setattr(torch.Tensor, "to", tensor_to)
+    for name in ("tensor", "zeros", "ones", "empty", "randn", "rand"):
+        monkeypatch.setattr(torch, name, factory(getattr(torch, name)))
+
+    def tokenizer_from_pretrained(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        return object()
+
+    def automodel_from_pretrained(*args: object, **kwargs: object) -> _Skeleton:
+        del args
+        quantized = kwargs.get("quantization_config") is not None
+        placement.record_pretrained("text_encoder", kwargs.get("device_map"), quantized)
+        module = _Skeleton("encoder", te_bytes)
+        module._placement_quantized = quantized
+        module._placement_bf16_te = not quantized
+        module._placement_skeleton = False
+        return module
+
+    def dit_from_pretrained(*args: object, **kwargs: object) -> _FakeDiT:
+        del args
+        quantized = kwargs.get("quantization_config") is not None
+        placement.record_pretrained("dit", kwargs.get("device_map"), quantized)
+        return _FakeDiT(quantized=quantized, nbytes=dit_bytes)
+
+    def vae_from_pretrained(*args: object, **kwargs: object) -> _Skeleton:
+        del args
+        placement.record_pretrained("vae", kwargs.get("device_map"), False)
+        module = _Skeleton("vae", vae_bytes)
+        module._placement_bf16_te = False
+        module._placement_skeleton = False
+        return module
+
+    class _Pipe:
+        def __init__(
+            self,
+            transformer: torch.nn.Module,
+            scheduler: object,
+            text_encoder: object,
+            tokenizer: object,
+            vae: object,
+        ) -> None:
+            del scheduler, tokenizer
+            self.transformer = transformer
+            self.text_encoder = text_encoder
+            self.vae = vae
+
+        def __call__(self, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            return SimpleNamespace(images=[_Picture(png)])
+
+    def load_pipeline(root: Path, **kwargs: object) -> _Pipe:
+        del root
+        placement.events.append(
+            {
+                "kind": "pipeline",
+                "role": "pipeline",
+                "cuda": False,
+                "quantized": False,
+                "skeleton": False,
+                "bf16_te": False,
+                "nbytes": 0,
+                "with_text_encoder": kwargs.get("with_text_encoder"),
+            }
+        )
+        dit = _FakeDiT(quantized=False, nbytes=dit_bytes)
+        vae = _Skeleton("vae", vae_bytes)
+        vae._placement_bf16_te = False
+        vae._placement_skeleton = False
+        return _Pipe(dit, object(), None, None, vae)
+
+    def encode_on_cpu(pipe: object, prompt: str, max_sequence_length: int = 4096) -> tuple[torch.Tensor, torch.Tensor]:
+        del pipe, prompt, max_sequence_length
+        return torch.zeros(1, 2, 4), torch.ones(1, 2, dtype=torch.bool)
+
+    class _Shard:
+        def __enter__(self) -> _Shard:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            del args
+            return False
+
+        def get_tensor(self, name: str) -> torch.Tensor:
+            del name
+            return torch.zeros(2, 2, dtype=torch.bfloat16)
+
+    vendored = import_vendored()
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", tokenizer_from_pretrained)
+    monkeypatch.setattr(AutoModel, "from_pretrained", automodel_from_pretrained)
+    monkeypatch.setattr(vendored.MOSSImageTransformer, "from_pretrained", dit_from_pretrained)
+    monkeypatch.setattr(vendored.MOSSImageScheduler, "from_pretrained", lambda *args, **kwargs: object())
+    monkeypatch.setattr(vendored, "MOSSImagePipeline", _Pipe)
+    monkeypatch.setattr(diffusers.AutoencoderKLFlux2, "from_pretrained", vae_from_pretrained)
+    monkeypatch.setattr(moss, "load_pipeline", load_pipeline)
+    monkeypatch.setattr(moss, "encode_on_cpu", encode_on_cpu)
+    def materialize(mode: str) -> dict[str, dict[str, str]]:
+        return {"dit": {"mode": mode}, "encoder": {"mode": mode}}
+
+    def empty_component(source: object, kind: str) -> _Skeleton:
+        del source
+        nbytes = te_bytes if kind == "encoder" else dit_bytes
+        return _Skeleton(kind, nbytes)
+
+    def score_pair(*args: object, **kwargs: object) -> dict[str, float]:
+        del args, kwargs
+        return {"lpips": 0.2, "clip_i": 0.8}
+
+    monkeypatch.setattr(prequant, "materialize_quantization_config", materialize)
+    monkeypatch.setattr(prequant, "_empty_component", empty_component)
+    monkeypatch.setattr(accelerate, "init_empty_weights", nullcontext)
+    monkeypatch.setattr(accelerate.utils, "set_module_tensor_to_device", lambda *args, **kwargs: None)
+    monkeypatch.setattr(safetensors, "safe_open", lambda *args, **kwargs: _Shard())
+    monkeypatch.setattr("voxprint_forge.compare.score.make_scorer", lambda: score_pair)
+
+    def watch(name: str, fn: object) -> object:
+        def wrapped(*args: object, **kwargs: object) -> object:
+            steps.append(name)
+            return fn(*args, **kwargs)  # type: ignore[operator]
+
+        return wrapped
+
+    monkeypatch.setattr(LiveProbe, "cap", watch("cap", LiveProbe.cap))
+    monkeypatch.setattr(LiveLoader, "open", watch("open", LiveLoader.open))
+    monkeypatch.setattr(LiveRenderer, "render_reference", watch("render_reference", LiveRenderer.render_reference))
+    monkeypatch.setattr(LiveQuantizer, "build", watch("build", LiveQuantizer.build))
+    monkeypatch.setattr(LiveRenderer, "render", watch("render", LiveRenderer.render))
+    monkeypatch.setattr(LiveQuantizer, "train_probe", watch("train_probe", LiveQuantizer.train_probe))
+    monkeypatch.setattr(LiveQuantizer, "reload", watch("reload", LiveQuantizer.reload))
+    monkeypatch.setattr(LiveScorer, "score", watch("score", LiveScorer.score))
+
+    sft = tmp_path / "sft"
+    encoder = tmp_path / "encoder"
+    sft.mkdir()
+    encoder.mkdir()
+    (sft / "weights.bin").write_bytes(b"sft-bytes")
+    (encoder / "weights.bin").write_bytes(b"enc-bytes")
+    _write_shard(sft / "transformer")
+    _write_shard(encoder)
+    pins: dict[str, tuple[PinnedFile, ...]] = {}
+    for role, folder in (("sft", sft), ("encoder", encoder)):
+        payload = (folder / "weights.bin").read_bytes()
+        pins[role] = (PinnedFile("weights.bin", hashlib.sha256(payload).hexdigest(), len(payload)),)
+    snapshots = SnapshotSet(sft, encoder)
+
+    run(
+        snapshots,
+        tmp_path / "out",
+        budget_gb=13.5,
+        pins=pins,
+        cases=(PromptCase("a red cup", 0),),
+        services=live_services(snapshots),
+    )
+
+    for name in ("cap", "open", "render_reference", "build", "render", "train_probe", "score", "reload"):
+        assert name in steps, steps
+    assert steps.index("render_reference") < steps.index("build")
+    pipelines = [event for event in placement.events if event.get("kind") == "pipeline"]
+    assert pipelines and all(event.get("with_text_encoder") is False for event in pipelines)
+    bare_te = [
+        event
+        for event in placement.events
+        if event["kind"] == "pretrained" and event["role"] == "text_encoder" and not event["quantized"]
+    ]
+    assert bare_te, "the bf16 reference never loaded a text encoder"
+    assert all(not event["cuda"] for event in bare_te)
+    assert not any(event["kind"] == "pretrained" and event["cuda"] for event in placement.events)
+    assert not any(event["kind"] == "module" and event["cuda"] and event["bf16_te"] for event in placement.events)
+    assert not any(event["kind"] == "module" and event["cuda"] and event["skeleton"] for event in placement.events)
+    assert not any(
+        event["kind"] == "module" and event["cuda"] and not event["quantized"] and int(event["nbytes"]) > budget
+        for event in placement.events
+    )
+    huge_tensors = [
+        event
+        for event in placement.events
+        if event["kind"] == "tensor" and event["cuda"] and int(event["nbytes"]) > budget
+    ]
+    assert not huge_tensors
+    reference_dit = [
+        event
+        for event in placement.events
+        if event["kind"] == "module" and event["role"] == "dit" and event["cuda"] and not event["quantized"]
+    ]
+    assert reference_dit
+    assert all(int(event["nbytes"]) <= budget for event in reference_dit)

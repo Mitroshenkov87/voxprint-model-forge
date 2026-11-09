@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
+import voxprint_forge.diffusion.moss_peak as moss_peak
 from voxprint_forge.cli import build_parser
 from voxprint_forge.diffusion.moss_peak import (
     DEFAULT_HEIGHT,
@@ -19,14 +21,17 @@ from voxprint_forge.diffusion.moss_peak import (
     DEFAULT_STEPS,
     DEFAULT_TRAIN_STEPS,
     DEFAULT_WIDTH,
+    LiveSession,
     MemorySample,
     Services,
     locate_build,
+    placement_budget_gb,
     rss_bytes,
     rss_to_bytes,
     run,
+    weight_bytes,
 )
-from voxprint_forge.diffusion.moss_prequant import MODEL_ID, WEIGHTS_DIR
+from voxprint_forge.diffusion.moss_prequant import MODEL_ID, VRAM_CAP_ENV, WEIGHTS_DIR
 from voxprint_forge.errors import StageError
 
 PHASE_KEYS = {
@@ -417,6 +422,72 @@ def test_import_does_not_pull_ml_libraries() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == ""
+
+
+class _Recorder(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.p = torch.nn.Parameter(torch.zeros(1))
+        self.moves: list[str] = []
+
+    def to(self, device: object, *args: object, **kwargs: object) -> _Recorder:
+        del args, kwargs
+        self.moves.append(str(getattr(device, "type", device)))
+        return self
+
+
+def test_weight_bytes_and_budget_follow_the_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "a.safetensors").write_bytes(b"1234")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "b.safetensors").write_bytes(b"12")
+    (tmp_path / "skip.txt").write_bytes(b"nope")
+    assert weight_bytes(tmp_path) == 6
+    assert weight_bytes(tmp_path / "missing") == 0
+    monkeypatch.delenv(VRAM_CAP_ENV, raising=False)
+    assert placement_budget_gb() == 13.5
+    monkeypatch.setenv(VRAM_CAP_ENV, "14")
+    assert placement_budget_gb() == 14.0
+
+
+def test_live_session_places_compressed_te_from_headroom(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def encode(encoder: object, prompt: str, device: object) -> tuple[torch.Tensor, torch.Tensor]:
+        del encoder, prompt
+        seen.append(str(getattr(device, "type", device)))
+        return torch.zeros(1, 2, 4), torch.ones(1, 2, dtype=torch.bool)
+
+    monkeypatch.setattr(moss_peak, "_cuda_device", lambda: "cuda")
+    monkeypatch.setattr(moss_peak, "_attach_lora", lambda *args, **kwargs: {})
+    monkeypatch.setattr(moss_peak, "_detach_lora", lambda *args, **kwargs: None)
+    monkeypatch.setattr(moss_peak, "_encode_caption", encode)
+    monkeypatch.setattr(moss_peak, "_denoise", lambda *args, **kwargs: None)
+    monkeypatch.setattr(moss_peak, "_train_steps", lambda *args, **kwargs: None)
+    monkeypatch.setenv(VRAM_CAP_ENV, "13.5")
+
+    session = LiveSession()
+    gib = 1024**3
+    dit, enc = _Recorder(), _Recorder()
+    session._transformer = dit
+    session._encoder = enc
+    session._model_bytes = int(2.4 * gib)
+    session._te_bytes = int(3.9 * gib)
+    session.generate(steps=1, seed=0, rank=4, prompt="cup", width=8, height=8)
+    assert dit.moves == ["cuda"]
+    assert enc.moves == ["cuda"]
+    assert seen == ["cuda"]
+
+    dit, enc = _Recorder(), _Recorder()
+    session._transformer = dit
+    session._encoder = enc
+    session._model_bytes = int(4.8 * gib)
+    session._te_bytes = int(7.8 * gib)
+    seen.clear()
+    session.train(steps=1, seed=0, rank=4, prompt="cup")
+    assert dit.moves == ["cuda"]
+    assert enc.moves == ["cpu"]
+    assert seen == ["cpu"]
 
 
 def test_live_path_does_not_save_or_download() -> None:
