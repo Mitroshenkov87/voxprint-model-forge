@@ -1,7 +1,7 @@
 {
   "head": "15edeab0f7a874c27d2b38ef6ecb69106ff94df8",
-  "serial": 11,
-  "generated_at": "2026-11-10T00:09:45Z",
+  "serial": 12,
+  "generated_at": "2026-11-10T05:06:43Z",
   "models": [
     {
       "id": "dinov2-base",
@@ -193,6 +193,28 @@
       "default": true,
       "optional": false,
       "note": "Default generation model: Z-Image-Turbo (Tongyi-MAI/Z-Image-Turbo@f332072aa78be7aecdf3ee76d5c247082da564a6, Apache-2.0). Descriptor is voxprint-model.json on Mitroshenkov87/voxprint-mirror-z-image-turbo @a853c26eb946b9010b4bd142a2ad1439d83e7896; author weights are already on that mirror. sha256 and size are of the descriptor."
+    },
+    {
+      "id": "z-image-turbo-bf16",
+      "repo": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+      "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+      "sha256": "1181c063c2f35385f4973f5c7af51405c01b9cf5f5b9192ba672c4253e7ed2be",
+      "size": 2067,
+      "license": "Apache-2.0",
+      "default": false,
+      "optional": true,
+      "note": "Optional 24 GB pack: BF16 transformer shards already on Mitroshenkov87/voxprint-z-image-turbo-bf16@b6a12e018b150c9790626286daeaa1149d1ae598 (converted from Tongyi-MAI/Z-Image-Turbo@f332072aa78be7aecdf3ee76d5c247082da564a6). Uses that repo's existing voxprint-model.json. Not the index default."
+    },
+    {
+      "id": "z-image-turbo-bf16-16gb",
+      "repo": "datasets/Mitroshenkov87/voxprint-model-index",
+      "revision": "e2f91a87ae5dd77efc8e85f045974e5ec6844e15",
+      "sha256": "68e724a998dff7a0807c704d09dc082c7578a7d4d82c2de5e9d033db9ef07e5f",
+      "size": 2951,
+      "license": "Apache-2.0",
+      "default": false,
+      "optional": false,
+      "note": "Required 16 GB pack: the same BF16 transformer shards as z-image-turbo-bf16, with min and recommended VRAM 15.5 GiB. Descriptor is hosted in this index dataset. Not the index default; z-image-turbo remains the FP32 default generation model."
     }
   ]
 }
