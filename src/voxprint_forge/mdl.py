@@ -532,7 +532,8 @@ def check_lora_base(document: Mapping[str, object], target_base: str) -> None:
     ``document`` is a ``voxprint-model/1`` LoRA descriptor: the ``voxprint-model.json``
     sidecar next to an exported ``.safetensors``, or a package whose ``base`` is an
     MDL id. A descriptor without base information predates MOSS and describes a
-    Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). A Z-Image LoRA is also accepted on ``z-image-turbo``. The error names
+    Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). A Z-Image LoRA is also
+    accepted on ``z-image-turbo``. The error names
     ``forge lora retrain --base moss|z-image PROJECT`` as the way to train the
     same photos for ``target_base``. Weights are not converted.
     """
@@ -630,7 +631,12 @@ def check_index(document: object) -> None:
     for row in models:
         if not isinstance(row, dict):
             raise StageError("index row is not an object", code="mdl")
-        _keys(row, ("id", "repo", "revision", "sha256"), ("note", "size", "license", "default", "optional"), "index row")
+        _keys(
+            row,
+            ("id", "repo", "revision", "sha256"),
+            ("note", "size", "license", "default", "optional"),
+            "index row",
+        )
         if not isinstance(row["revision"], str) or _COMMIT.fullmatch(row["revision"]) is None:
             raise StageError("index row revision must be a 40-hex commit", code="mdl")
         if not isinstance(row["sha256"], str) or _SHA.fullmatch(row["sha256"]) is None:
