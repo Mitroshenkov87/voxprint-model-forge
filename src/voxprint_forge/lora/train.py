@@ -557,11 +557,13 @@ def _train(
         layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
         if from_lora is not None:
             load_lora_state(layers, load_file(str(from_lora)))
+        _attach_training_adapter(adapter, model, layers)
     else:
         model = adapter.load(base, config, device)
         layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
         if from_lora is not None:
             load_lora_state(layers, load_file(str(from_lora)))
+        _attach_training_adapter(adapter, model, layers)
         images = _images(project, bundle, config.resolution)
         phases.mark("load", "encode")
         samples, neg_samples = _split_encoded(adapter.encode(images, captions, config), len(chosen))
@@ -1105,6 +1107,14 @@ def _final_preview(
         )
 
 
+
+def _attach_training_adapter(adapter, model, layers) -> None:
+    """Load a frozen Turbo training adapter when the base provides one. No-op otherwise."""
+    attach = getattr(adapter, "attach_training_adapter", None)
+    if callable(attach):
+        attach(model, layers)
+
+
 def _preview_model(
     adapter: BaseAdapter, config: TrainConfig, device: str, checkpoint: Path, prompts: Sequence[str],
 ):
@@ -1145,6 +1155,9 @@ def _one_device(model, layers, device: str) -> None:
         if layer.lora_A.weight.device != home or layer.lora_B.weight.device != home:
             layer.lora_A.to(home)
             layer.lora_B.to(home)
+        if layer.has_training_adapter:
+            layer.training_A.to(home)
+            layer.training_B.to(home)
     want = torch.device(device).type
     found = {parameter.device.type for parameter in model.parameters()}
     stray = sorted(found - {want})

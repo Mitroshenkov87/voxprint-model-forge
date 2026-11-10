@@ -44,7 +44,7 @@ def test_hiding_z_image_leaves_moss(monkeypatch) -> None:
     monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
     monkeypatch.delenv("VOXPRINT_FORGE_ZIMAGE_LORA", raising=False)
     monkeypatch.setenv("VOXPRINT_FORGE_ZIMAGE_LORA", "0")
-    assert bases.hidden() == frozenset({"z-image"})
+    assert bases.hidden() == frozenset({"z-image", "z-image-turbo"})
     assert [info.mdl_id for info in bases.trainable()] == ["moss-image-base"]
     assert bases.get_adapter("z-image").info.mdl_id == "z-image"
 

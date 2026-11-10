@@ -369,7 +369,7 @@ def test_moss_lora_can_be_hidden(monkeypatch) -> None:
     monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
     assert "moss-image-base" in {info.mdl_id for info in bases.trainable()}
     monkeypatch.setenv("VOXPRINT_FORGE_MOSS_LORA", "0")
-    assert [info.mdl_id for info in bases.trainable()] == ["z-image"]
+    assert [info.mdl_id for info in bases.trainable()] == ["z-image", "z-image-turbo"]
     assert "moss-image-base" in {info.mdl_id for info in bases.available()}
     with pytest.raises(LoraUsageError) as caught:
         bases.get_adapter("moss-image-base", training=True)

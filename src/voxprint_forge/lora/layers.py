@@ -28,15 +28,53 @@ class LoRALinear(nn.Module):
             dtype = dtype or (torch.float32 if weight.dtype == torch.float16 else torch.bfloat16)
         self.lora_A.to(device=weight.device, dtype=dtype)
         self.lora_B.to(device=weight.device, dtype=self.lora_A.weight.dtype)
+        # Frozen de-distillation adapter (Turbo only). Never trained, never saved.
+        self.training_A: nn.Linear | None = None
+        self.training_B: nn.Linear | None = None
+        self.training_lora_scale = 1.0
+        self.training_adapter_scale = 0.0
+
+    @property
+    def has_training_adapter(self) -> bool:
+        """True when a frozen training adapter is attached to this layer."""
+        return self.training_A is not None and self.training_B is not None
 
     @property
     def weight(self) -> torch.Tensor:
         """The frozen base weight. Callers that read ``linear.weight`` keep working."""
         return self.base.weight
 
+    def set_training_adapter(
+        self,
+        a_weight: torch.Tensor,
+        b_weight: torch.Tensor,
+        *,
+        scale: float = 1.0,
+        lora_scale: float = 1.0,
+    ) -> None:
+        """Attach a frozen LoRA (A, B) used only while training. Gradients stay off."""
+        a_weight, b_weight = _orient(a_weight, b_weight, self.base.in_features, self.base.out_features)
+        self.training_A = nn.Linear(self.base.in_features, a_weight.shape[0], bias=False)
+        self.training_B = nn.Linear(a_weight.shape[0], self.base.out_features, bias=False)
+        with torch.no_grad():
+            self.training_A.weight.copy_(a_weight.to(dtype=self.training_A.weight.dtype))
+            self.training_B.weight.copy_(b_weight.to(dtype=self.training_B.weight.dtype))
+        device = self.base.weight.device
+        dtype = self.lora_A.weight.dtype
+        self.training_A.to(device=device, dtype=dtype)
+        self.training_B.to(device=device, dtype=dtype)
+        self.training_A.requires_grad_(False)
+        self.training_B.requires_grad_(False)
+        self.training_lora_scale = float(lora_scale)
+        self.training_adapter_scale = float(scale)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Base output plus the scaled low-rank update."""
+        """Base output plus the scaled low-rank update (and a frozen training adapter, if any)."""
         out = self.base(x)
+        if self.has_training_adapter and self.training_adapter_scale:
+            assert self.training_A is not None and self.training_B is not None
+            frozen = self.training_B(self.training_A(x.to(self.training_A.weight.dtype)))
+            out = out + (frozen * self.training_lora_scale * self.training_adapter_scale).to(out.dtype)
         delta = self.lora_B(self.lora_A(x.to(self.lora_A.weight.dtype))) * self.scale
         return out + delta.to(out.dtype)
 
@@ -95,3 +133,17 @@ def load_lora_state(layers: Mapping[str, LoRALinear], state: Mapping[str, torch.
                 raise ValueError("LoRA tensors do not match this base model")
             with torch.no_grad():
                 target.copy_(source.to(target.dtype))
+
+
+
+def _orient(
+    a_weight: torch.Tensor, b_weight: torch.Tensor, in_features: int, out_features: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return ``(A, B)`` as ``[rank, in]`` and ``[out, rank]``. Some files store A transposed."""
+    if a_weight.ndim != 2 or b_weight.ndim != 2:
+        raise ValueError("LoRA tensors do not match this base model")
+    if a_weight.shape[1] == in_features and b_weight.shape[0] == out_features:
+        return a_weight, b_weight
+    if a_weight.shape[0] == in_features and b_weight.shape[1] == out_features:
+        return a_weight.T.contiguous(), b_weight.T.contiguous()
+    raise ValueError("LoRA tensors do not match this base model")

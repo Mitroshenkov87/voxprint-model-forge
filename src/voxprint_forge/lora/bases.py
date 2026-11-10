@@ -1,10 +1,11 @@
 """Base-model adapters. The engine talks only to :class:`BaseAdapter`; the base is picked by MDL id.
 
-Built in: Z-Image (registry id ``z-image``, the default for new projects)
-and MOSS-Image SFT (``moss-image-base``, optional; weights are
+Built in: Z-Image (registry id ``z-image``, the default for new projects),
+Z-Image-Turbo (``z-image-turbo``, optional; trains only with a de-distillation
+adapter) and MOSS-Image SFT (``moss-image-base``, optional; weights are
 ``OpenMOSS-Team/MOSS-Image-SFT`` from :data:`voxprint_forge.diffusion.moss.REPOS`).
 A project or LoRA saved with no base recorded is still Z-Image.
-Both are Apache-2.0 and both can train.
+All three are Apache-2.0 and can train.
 A restrictive base may only be an optional MDL link to its official source.
 """
 
@@ -209,6 +210,9 @@ def hidden() -> frozenset[str]:
         off.add("moss-image-base")
     if not _flag_shown("VOXPRINT_FORGE_ZIMAGE_LORA", True):
         off.add("z-image")
+        off.add("z-image-turbo")
+    if not _flag_shown("VOXPRINT_FORGE_TURBO_LORA", True):
+        off.add("z-image-turbo")
     return frozenset(off)
 
 
@@ -354,8 +358,10 @@ class ZImageAdapter(BaseAdapter):
 
     LoRAs trained here are for full Z-Image (Tongyi-MAI/Z-Image@04cc4abb) and
     are also accepted on Z-Image-Turbo. Strength and likeness on Turbo are
-    unmeasured until a VM check. Z-Image-Turbo itself is not a training base.
-    The real path needs a CUDA GPU; CI covers the engine with a tiny stand-in.
+    unmeasured until a VM check. Training on Turbo itself is
+    :class:`ZImageTurboAdapter`, which needs the de-distillation training
+    adapter. The real path needs a CUDA GPU; CI covers the engine with a tiny
+    stand-in.
     """
 
     info = BaseInfo(
@@ -1118,5 +1124,110 @@ class MossImageAdapter(BaseAdapter):
         )
 
 
+class ZImageTurboAdapter(ZImageAdapter):
+    """Z-Image-Turbo (Tongyi-MAI/Z-Image-Turbo@f332072a, Apache-2.0).
+
+    Trainable only with a frozen de-distillation training adapter (default:
+    ostris/zimage_turbo_training_adapter v2). The adapter is on during the
+    train step and off for previews, checkpoints, export and inference, so
+    the published LoRA runs on plain Turbo. Compatible bases are Turbo only.
+    The 16 GB path stores the DiT as FP8 (bf16 compute), same as full Z-Image;
+    official FP32 shards are not left in VRAM.
+    """
+
+    info = BaseInfo(
+        "z-image-turbo",
+        "Tongyi-MAI/Z-Image-Turbo",
+        "f332072aa78be7aecdf3ee76d5c247082da564a6",
+        "Apache-2.0",
+        "Z-Image Turbo",
+        variant="z-image",
+    )
+    preview_steps = 8  # distilled default when the caller does not pass a count
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.training_adapter = None
+
+    def memory_plan(
+        self, config: TrainConfig, samples: int = 0, weights_dir: Path | None = None
+    ) -> memory.MemoryPlan:
+        """Same shapes as full Z-Image. Official Turbo DiT is often FP32 on disk."""
+        folder = weights_dir if weights_dir is not None else _turbo_installed()
+        dim, blocks, t_bytes, te_bytes, vae_bytes = _z_shapes(folder)
+        t_bytes = _dit_plan_bytes(t_bytes)
+        ffn = int(dim / 3 * 8)
+        attn = ((dim, dim),) * 4
+        mlp = ((dim, ffn), (dim, ffn), (ffn, dim))
+        adapter = memory.lora_params(blocks, attn + mlp, config.rank)
+        side = config.resolution // 16
+        tokens = config.batch * (side * side + _Z_CAPTION_TOKENS)
+        unit = tokens * dim * 2 / memory.GIB
+        if config.grad_checkpointing:
+            act = blocks * unit + _Z_BLOCK_BACKWARD * unit
+        else:
+            act = blocks * _Z_BLOCK_SAVED * unit
+        weights = t_bytes / 2 + 0.1 * memory.GIB if config.base_fp8 else float(t_bytes)
+        scale = (config.resolution / 1024) ** 2
+        sample = 16 * (2 * side) ** 2 * 2 + 3 * _Z_CAPTION_TOKENS * 2560 * 2
+        return memory.MemoryPlan(
+            encoders_gb=(te_bytes + vae_bytes) / memory.GIB,
+            encode_activations_gb=_Z_ENCODE_ACT_GB * max(scale, 0.25),
+            transformer_gb=weights / memory.GIB,
+            lora_gb=memory.lora_bytes(adapter, 2 if config.precision == "bf16" else 4) / memory.GIB,
+            activations_gb=act,
+            samples_gb=max(samples, 30) * sample / memory.GIB,
+        )
+
+    def attach_training_adapter(self, model: nn.Module, layers: dict[str, LoRALinear]) -> int:
+        """Load the frozen adapter onto ``layers`` at scale 1.0. Call after inject()."""
+        from voxprint_forge.lora.training_adapter import attach_frozen, ensure_local
+
+        spec = self.training_adapter
+        if spec is None:
+            raise LoraUsageError("lora.err.training_adapter_required")
+        return attach_frozen(layers, ensure_local(spec), scale=1.0)
+
+    def preview(
+        self,
+        model: nn.Module,
+        prompt: str,
+        seed: int,
+        config: TrainConfig,
+        steps: int | None = None,
+    ) -> Any | None:
+        """Draw on plain Turbo: the training adapter is disabled for this call."""
+        from voxprint_forge.lora.training_adapter import set_enabled
+
+        if steps is None:
+            steps = self.preview_steps
+        set_enabled(model, False)
+        try:
+            return super().preview(model, prompt, seed, config, steps=steps)
+        finally:
+            set_enabled(model, True)
+
+
+def _turbo_installed() -> Path | None:
+    try:
+        folder = weights_dir(ZImageTurboAdapter.info.mdl_id)
+    except Exception:  # noqa: BLE001 - no models dir configured: use the pinned shapes
+        return None
+    return folder if folder.is_dir() else None
+
+
+def _dit_plan_bytes(t_bytes: int) -> int:
+    """Normalise on-disk transformer bytes to the BF16 size the FP8 plan expects.
+
+    Official Diffusers Turbo shards are FP32 (about 2x the BF16 index). The 16 GB
+    path still stores the DiT as FP8, so the plan must not treat 24.6 GB of FP32
+    as 12.3 GB of FP8.
+    """
+    if t_bytes >= int(1.5 * _Z_TRANSFORMER_BYTES):
+        return t_bytes // 2
+    return t_bytes
+
+
 register(ZImageAdapter)
+register(ZImageTurboAdapter)
 register(MossImageAdapter)

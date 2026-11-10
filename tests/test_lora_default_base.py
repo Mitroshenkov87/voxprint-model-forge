@@ -30,7 +30,7 @@ def _quick(**overrides):
 
 def test_new_commands_default_to_z_image(tmp_path) -> None:
     assert DEFAULT_BASE == "z-image"
-    assert OPTIONAL_BASES == ("moss-image-base",)
+    assert OPTIONAL_BASES == ("moss-image-base", "z-image-turbo")
     assert legacy_base() == "z-image"
     info = bases.get_adapter(DEFAULT_BASE).info
     assert info.repo == "Tongyi-MAI/Z-Image"
@@ -76,7 +76,7 @@ def test_hiding_moss_does_not_relabel_legacy_loras(monkeypatch) -> None:
     assert "moss-image-base" in {info.mdl_id for info in bases.trainable()}
     monkeypatch.setenv("VOXPRINT_FORGE_MOSS_LORA", "0")
     assert bases.hidden() == frozenset({"moss-image-base"})
-    assert [info.mdl_id for info in bases.trainable()] == ["z-image"]
+    assert [info.mdl_id for info in bases.trainable()] == ["z-image", "z-image-turbo"]
     assert "moss-image-base" in {info.mdl_id for info in bases.available()}
     # The default stays trainable. A hidden optional base is still readable.
     assert bases.get_adapter(DEFAULT_BASE, training=True).info.mdl_id == "z-image"
@@ -87,7 +87,7 @@ def test_hiding_moss_does_not_relabel_legacy_loras(monkeypatch) -> None:
 def test_hiding_z_image_blocks_training_the_default(monkeypatch) -> None:
     monkeypatch.delenv("VOXPRINT_FORGE_MOSS_LORA", raising=False)
     monkeypatch.setenv("VOXPRINT_FORGE_ZIMAGE_LORA", "0")
-    assert bases.hidden() == frozenset({"z-image"})
+    assert bases.hidden() == frozenset({"z-image", "z-image-turbo"})
     assert [info.mdl_id for info in bases.trainable()] == ["moss-image-base"]
     with pytest.raises(LoraUsageError) as caught:
         bases.get_adapter(DEFAULT_BASE, training=True)

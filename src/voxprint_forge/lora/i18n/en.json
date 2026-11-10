@@ -263,5 +263,10 @@
  "lora.err.vram_quant": "On a 16 GB card, {model} has to load in FP8 or another quantized form.",
  "lora.err.vram_one": "Only one heavy model can be on the card. {stage} is already there, so {model} stayed off.",
  "lora.err.vram_peak": "Stage {stage} used {gb} GB of graphics memory. The limit on a 16 GB card is {limit} GB.",
- "lora.err.vram_held": "Stage {stage} finished with {gb} GB still on the graphics card."
+ "lora.err.vram_held": "Stage {stage} finished with {gb} GB still on the graphics card.",
+ "lora.err.training_adapter_base": "The de-distillation training adapter is only used when training on Z-Image-Turbo.",
+ "lora.err.training_adapter_required": "Training on Z-Image-Turbo needs a de-distillation training adapter. Pass --training-adapter, or use the default Ostris v2 pin.",
+ "lora.err.training_adapter_missing": "The training adapter was not found ({path}). Fetch it from its official source on the training machine.",
+ "lora.err.training_adapter_hash": "The training adapter at {path} does not match the pinned sha256. Fetch the official file again.",
+ "lora.err.training_adapter_keys": "The training adapter at {path} has no LoRA tensors that match this base model."
 }

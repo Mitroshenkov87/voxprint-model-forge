@@ -352,5 +352,6 @@
   "forge.app.train.stop": "Stop",
   "forge.app.wizard.title": "New model from your photos",
   "simple.preset.reset": "Reset to the “{name}” preset",
-  "wizard.step_count": "Step {current} of {total}"
+  "wizard.step_count": "Step {current} of {total}",
+  "forge.app.base.z-image-turbo.note": "Trains on Turbo with a training adapter; the LoRA runs on plain Turbo"
 }

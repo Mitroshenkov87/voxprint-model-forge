@@ -49,6 +49,7 @@ from voxprint_forge.lora.errors import LoraUsageError
 _PREPARE_CHOICES = {
     "moss": ("moss-image-base",),
     "z-image": ("z-image",),
+    "z-image-turbo": ("z-image-turbo",),
     "both": ("z-image", "moss-image-base"),
 }
 # ``lora retrain --base`` spellings. The reverse of the single-base prepare names.
@@ -75,7 +76,7 @@ PAUSE_FILE = "PAUSE"
 def bases_for_choice(choice: str) -> list[str]:
     """MDL ids for a ``--base`` value.
 
-    ``moss``, ``z-image`` and ``both`` are the prepare names. Any other
+    ``moss``, ``z-image``, ``z-image-turbo`` and ``both`` are the prepare names. Any other
     string is an MDL id (``lora train --base tiny-test``) and is kept as given.
     """
     text = choice.strip()
