@@ -10,7 +10,7 @@ from collections.abc import Mapping
 # Default MDL id for new projects. Lives here so the CLI parser can name it without loading adapters.
 DEFAULT_BASE = "z-image"
 # Bases a build may also train on, besides the default (what the app offers as optional).
-OPTIONAL_BASES = ("moss-image-base",)
+OPTIONAL_BASES = ("moss-image-base", "z-image-turbo")
 
 
 def legacy_base() -> str:

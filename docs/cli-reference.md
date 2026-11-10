@@ -475,8 +475,8 @@ usage: forge lora prepare [-h] --project PROJECT [--photos PHOTOS]
                           [--min-side MIN_SIDE]
                           [--blur-threshold BLUR_THRESHOLD]
                           [--dup-threshold DUP_THRESHOLD]
-                          [--base {moss,z-image,both}] [--fetch-missing |
-                          --no-fetch]
+                          [--base {moss,z-image,z-image-turbo,both}]
+                          [--fetch-missing | --no-fetch]
 
 Check, crop and describe photos into a project.
 
@@ -534,9 +534,11 @@ options:
                         Blur limit (Expert).
   --dup-threshold DUP_THRESHOLD
                         Duplicate limit (Expert).
-  --base {moss,z-image,both}
-                        Which bases this project trains: moss, z-image, or
-                        both. Stored on the project. Default: z-image.
+  --base {moss,z-image,z-image-turbo,both}
+                        Which bases this project trains: moss, z-image,
+                        z-image-turbo, or both. Stored on the project.
+                        Default: z-image. z-image-turbo trains with a de-
+                        distillation adapter.
   --fetch-missing       Fetch missing model ids before this command.
   --no-fetch            Do not fetch model ids.
 
@@ -586,8 +588,11 @@ usage: forge lora train [-h] --project PROJECT
                         [--save-every SAVE_EVERY] [--previews | --no-previews]
                         [--preview-every PREVIEW_EVERY]
                         [--preview-prompts PREVIEW_PROMPTS] [--resume]
-                        [--dry-run] [--embed-metadata] [--fetch-missing |
-                        --no-fetch] [--review-rounds REVIEW_ROUNDS]
+                        [--dry-run] [--training-adapter TRAINING_ADAPTER]
+                        [--training-adapter-revision TRAINING_ADAPTER_REVISION]
+                        [--training-adapter-file TRAINING_ADAPTER_FILE]
+                        [--embed-metadata] [--fetch-missing | --no-fetch]
+                        [--review-rounds REVIEW_ROUNDS]
                         [--first-round-steps FIRST_ROUND_STEPS]
                         [--first-round-samples FIRST_ROUND_SAMPLES]
                         [--samples-per-round SAMPLES_PER_ROUND]
@@ -643,6 +648,19 @@ options:
                         Text file, one test prompt per line.
   --resume              Continue a paused run from its last version.
   --dry-run             Print the plan and time estimate; train nothing.
+  --training-adapter TRAINING_ADAPTER
+                        De-distillation adapter for --base z-image-turbo: a
+                        local .safetensors path, a folder, or a Hugging Face
+                        repo (default: ostris/zimage_turbo_training_adapter).
+                        Loaded at scale 1.0 and frozen during training;
+                        removed from checkpoints, export and previews.
+  --training-adapter-revision TRAINING_ADAPTER_REVISION
+                        Git revision of --training-adapter when it is a
+                        Hugging Face repo. Default:
+                        654cd1bf8b3589d9442cb1c5e35221879e1af4f3.
+  --training-adapter-file TRAINING_ADAPTER_FILE
+                        Filename inside the repo or folder (default:
+                        zimage_turbo_training_adapter_v2.safetensors).
   --embed-metadata      Write prompt, seed, steps, base, LoRA strength and
                         sha256 into saved pictures. Default: off.
   --fetch-missing       Fetch missing model ids before this command.
@@ -668,9 +686,11 @@ options:
                         close-up, waist-up and full body. portrait draws every
                         sample as a face close-up, for judging likeness.
                         Stored on the project.
-  --base BASE           MDL id, moss, z-image, or both. Omitted: the project's
-                        first base (a legacy project stays on Z-Image). both
-                        trains each base in turn. Default: z-image.
+  --base BASE           MDL id, moss, z-image, z-image-turbo, or both.
+                        Omitted: the project's first base (a legacy project
+                        stays on Z-Image). both trains each base in turn.
+                        Default: z-image. z-image-turbo needs the training
+                        adapter (default: Ostris v2).
   --rank RANK           Adapter size (Expert).
   --alpha ALPHA         Adapter scale, usually equal to rank (Expert).
   --resolution RESOLUTION
@@ -707,8 +727,11 @@ usage: forge lora extend [-h] --project PROJECT
                          [--previews | --no-previews]
                          [--preview-every PREVIEW_EVERY]
                          [--preview-prompts PREVIEW_PROMPTS] [--resume]
-                         [--dry-run] [--embed-metadata] [--fetch-missing |
-                         --no-fetch] --from FROM_LORA [--replay REPLAY]
+                         [--dry-run] [--training-adapter TRAINING_ADAPTER]
+                         [--training-adapter-revision TRAINING_ADAPTER_REVISION]
+                         [--training-adapter-file TRAINING_ADAPTER_FILE]
+                         [--embed-metadata] [--fetch-missing | --no-fetch]
+                         --from FROM_LORA [--replay REPLAY]
 
 options:
   -h, --help            show this help message and exit
@@ -754,6 +777,19 @@ options:
                         Text file, one test prompt per line.
   --resume              Continue a paused run from its last version.
   --dry-run             Print the plan and time estimate; train nothing.
+  --training-adapter TRAINING_ADAPTER
+                        De-distillation adapter for --base z-image-turbo: a
+                        local .safetensors path, a folder, or a Hugging Face
+                        repo (default: ostris/zimage_turbo_training_adapter).
+                        Loaded at scale 1.0 and frozen during training;
+                        removed from checkpoints, export and previews.
+  --training-adapter-revision TRAINING_ADAPTER_REVISION
+                        Git revision of --training-adapter when it is a
+                        Hugging Face repo. Default:
+                        654cd1bf8b3589d9442cb1c5e35221879e1af4f3.
+  --training-adapter-file TRAINING_ADAPTER_FILE
+                        Filename inside the repo or folder (default:
+                        zimage_turbo_training_adapter_v2.safetensors).
   --embed-metadata      Write prompt, seed, steps, base, LoRA strength and
                         sha256 into saved pictures. Default: off.
   --fetch-missing       Fetch missing model ids before this command.
@@ -765,7 +801,7 @@ options:
 ## `forge lora retrain`
 
 ```text
-usage: forge lora retrain [-h] --base {moss,z-image}
+usage: forge lora retrain [-h] --base {moss,z-image,z-image-turbo}
                           [--preset {balanced,best,quick}]
                           [--likeness {balanced,close,flexible}]
                           [--vram {auto,16,24}]
@@ -782,8 +818,11 @@ usage: forge lora retrain [-h] --base {moss,z-image}
                           [--previews | --no-previews]
                           [--preview-every PREVIEW_EVERY]
                           [--preview-prompts PREVIEW_PROMPTS] [--resume]
-                          [--dry-run] [--embed-metadata] [--fetch-missing |
-                          --no-fetch] [--review-rounds REVIEW_ROUNDS]
+                          [--dry-run] [--training-adapter TRAINING_ADAPTER]
+                          [--training-adapter-revision TRAINING_ADAPTER_REVISION]
+                          [--training-adapter-file TRAINING_ADAPTER_FILE]
+                          [--embed-metadata] [--fetch-missing | --no-fetch]
+                          [--review-rounds REVIEW_ROUNDS]
                           [--first-round-steps FIRST_ROUND_STEPS]
                           [--first-round-samples FIRST_ROUND_SAMPLES]
                           [--samples-per-round SAMPLES_PER_ROUND]
@@ -803,8 +842,9 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --base {moss,z-image}
-                        Base to add and train: moss or z-image.
+  --base {moss,z-image,z-image-turbo}
+                        Base to add and train: moss, z-image, or z-image-
+                        turbo.
   --preset {balanced,best,quick}
                         Ready-made settings. Default: balanced. Use balanced
                         for a person LoRA; quick is only a smoke test of the
@@ -846,6 +886,19 @@ options:
                         Text file, one test prompt per line.
   --resume              Continue a paused run from its last version.
   --dry-run             Print the plan and time estimate; train nothing.
+  --training-adapter TRAINING_ADAPTER
+                        De-distillation adapter for --base z-image-turbo: a
+                        local .safetensors path, a folder, or a Hugging Face
+                        repo (default: ostris/zimage_turbo_training_adapter).
+                        Loaded at scale 1.0 and frozen during training;
+                        removed from checkpoints, export and previews.
+  --training-adapter-revision TRAINING_ADAPTER_REVISION
+                        Git revision of --training-adapter when it is a
+                        Hugging Face repo. Default:
+                        654cd1bf8b3589d9442cb1c5e35221879e1af4f3.
+  --training-adapter-file TRAINING_ADAPTER_FILE
+                        Filename inside the repo or folder (default:
+                        zimage_turbo_training_adapter_v2.safetensors).
   --embed-metadata      Write prompt, seed, steps, base, LoRA strength and
                         sha256 into saved pictures. Default: off.
   --fetch-missing       Fetch missing model ids before this command.

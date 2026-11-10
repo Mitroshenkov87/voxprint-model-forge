@@ -149,8 +149,9 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         default=DEFAULT_BASE,
         action=_MarkBase,
         help=(
-            "MDL id, moss, z-image, or both. Omitted: the project's first base "
-            f"(a legacy project stays on Z-Image). both trains each base in turn. Default: {DEFAULT_BASE}."
+            "MDL id, moss, z-image, z-image-turbo, or both. Omitted: the project's first base "
+            f"(a legacy project stays on Z-Image). both trains each base in turn. Default: {DEFAULT_BASE}. "
+            "z-image-turbo needs the training adapter (default: Ostris v2)."
         ),
     )
     train.set_defaults(base_explicit=False)
@@ -167,8 +168,8 @@ def add_command(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     retrain.add_argument(
         "--base",
         required=True,
-        choices=("moss", "z-image"),
-        help="Base to add and train: moss or z-image.",
+        choices=("moss", "z-image", "z-image-turbo"),
+        help="Base to add and train: moss, z-image, or z-image-turbo.",
     )
     _training_flags(retrain, project=False)
     _review_flags(retrain)
@@ -304,10 +305,11 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument("--dup-threshold", type=int, default=DUP_THRESHOLD, help="Duplicate limit (Expert).")
     command.add_argument(
         "--base",
-        choices=("moss", "z-image", "both"),
+        choices=("moss", "z-image", "z-image-turbo", "both"),
         default="z-image",
         action=_MarkBase,
-        help="Which bases this project trains: moss, z-image, or both. Stored on the project. Default: z-image.",
+        help="Which bases this project trains: moss, z-image, z-image-turbo, or both. "
+        "Stored on the project. Default: z-image. z-image-turbo trains with a de-distillation adapter.",
     )
     command.set_defaults(base_explicit=False)
     _fetch_flags(command)
@@ -360,6 +362,24 @@ def _training_flags(command: argparse.ArgumentParser, *, project: bool = True) -
     command.add_argument("--preview-prompts", type=Path, default=None, help="Text file, one test prompt per line.")
     command.add_argument("--resume", action="store_true", help="Continue a paused run from its last version.")
     command.add_argument("--dry-run", action="store_true", help="Print the plan and time estimate; train nothing.")
+    command.add_argument(
+        "--training-adapter",
+        default=None,
+        help="De-distillation adapter for --base z-image-turbo: a local .safetensors path, "
+        "a folder, or a Hugging Face repo (default: ostris/zimage_turbo_training_adapter). "
+        "Loaded at scale 1.0 and frozen during training; removed from checkpoints, export and previews.",
+    )
+    command.add_argument(
+        "--training-adapter-revision",
+        default=None,
+        help="Git revision of --training-adapter when it is a Hugging Face repo. "
+        "Default: 654cd1bf8b3589d9442cb1c5e35221879e1af4f3.",
+    )
+    command.add_argument(
+        "--training-adapter-file",
+        default=None,
+        help="Filename inside the repo or folder (default: zimage_turbo_training_adapter_v2.safetensors).",
+    )
     _embed_flag(command)
     _fetch_flags(command)
 
@@ -567,11 +587,14 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.dry_run:
         if len(base_ids) == 1:
-            return estimate(project, config, get_adapter(base_ids[0], training=True))
-        runs = [
-            {"base": base_id, **estimate(project, config, get_adapter(base_id, training=True))}
-            for base_id in base_ids
-        ]
+            adapter = get_adapter(base_ids[0], training=True)
+            _bind_training_adapter(adapter, args)
+            return estimate(project, config, adapter)
+        runs = []
+        for base_id in base_ids:
+            adapter = get_adapter(base_id, training=True)
+            _bind_training_adapter(adapter, args)
+            runs.append({"base": base_id, **estimate(project, config, adapter)})
         return {"state": "dry-run", "bases": list(base_ids), "runs": runs}
     attire = getattr(args, "sample_attire", None)
     if isinstance(attire, str) and attire:
@@ -587,6 +610,7 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             if finished is not None:
                 release_adapter(finished)
             adapter = get_adapter(base_id, training=True)
+            _bind_training_adapter(adapter, args)
             result = train(
                 project,
                 config,
@@ -829,6 +853,18 @@ def _review(args: argparse.Namespace) -> dict[str, object]:
     return {"phase": state.get("phase"), **counted, "samples": samples, "originals": originals}
 
 
+def _bind_training_adapter(adapter: object, args: argparse.Namespace) -> None:
+    """Pin the Turbo training adapter (defaults if the flags were omitted). No-op on other bases."""
+    from voxprint_forge.lora.training_adapter import bind
+
+    bind(
+        adapter,
+        getattr(args, "training_adapter", None),
+        getattr(args, "training_adapter_revision", None),
+        getattr(args, "training_adapter_file", None),
+    )
+
+
 def _continue(args: argparse.Namespace) -> dict[str, object]:
     """Train the next review stage from the checkpoint and the liked samples."""
     from voxprint_forge.lora.bases import get_adapter
@@ -840,6 +876,7 @@ def _continue(args: argparse.Namespace) -> dict[str, object]:
     state = load_state(project)
     # A review opened before the base was recorded belongs to a Z-Image project.
     adapter = get_adapter(resolve_base(state.get("base")), training=True)
+    _bind_training_adapter(adapter, args)
     raw_prompts = state.get("prompts")
     prompts = [str(prompt) for prompt in raw_prompts] if isinstance(raw_prompts, list) else []
     attire = getattr(args, "sample_attire", None)

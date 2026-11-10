@@ -533,8 +533,9 @@ def check_lora_base(document: Mapping[str, object], target_base: str) -> None:
     sidecar next to an exported ``.safetensors``, or a package whose ``base`` is an
     MDL id. A descriptor without base information predates MOSS and describes a
     Z-Image LoRA (:func:`voxprint_forge.lora.resolve_base`). A Z-Image LoRA is also
-    accepted on ``z-image-turbo``. The error names
-    ``forge lora retrain --base moss|z-image PROJECT`` as the way to train the
+    accepted on ``z-image-turbo``. A Turbo-trained LoRA is accepted on
+    ``z-image-turbo`` only, not on full Z-Image. The error names
+    ``forge lora retrain --base moss|z-image|z-image-turbo PROJECT`` as the way to train the
     same photos for ``target_base``. Weights are not converted.
     """
     from voxprint_forge.lora import resolve_base

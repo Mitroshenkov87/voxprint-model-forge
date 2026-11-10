@@ -46,7 +46,7 @@ RESERVED_TOKENS = frozenset({"safety", "minor", "minors", "age", "gate", "gates"
 _LICENCES = Path(__file__).resolve().parent / "licences"
 # Short base tag in export file names. Unknown ids fall back to a compact slug.
 # The stored tag stays moss5b for the MOSS registry id. The SFT/Base split is base_variant.
-_BASE_SHORT = {"moss-image-base": "moss5b", "z-image": "zimg6b"}
+_BASE_SHORT = {"moss-image-base": "moss5b", "z-image": "zimg6b", "z-image-turbo": "zimgturbo"}
 _VARIANTS = frozenset({"sft", "base", "z-image"})
 # Canvas contract: trained_base is "<mdl_id>@<first 8 of the revision>".
 _ZIMAGE_COMPATIBLE = ("z-image", "z-image-turbo")
@@ -54,7 +54,7 @@ _MOSS_COMPATIBLE = ("moss-image-base",)
 
 
 def trained_base_tag(mdl_id: str, revision: str = "") -> str:
-    """``z-image@04cc4abb`` or ``moss-image-base@fc5de0d5`` for header metadata."""
+    """``z-image@04cc4abb``, ``z-image-turbo@f332072a`` or ``moss-image-base@fc5de0d5``."""
     ident = (mdl_id or "").strip() or "z-image"
     short = (revision or "").strip()[:8]
     if not short:
@@ -66,10 +66,17 @@ def trained_base_tag(mdl_id: str, revision: str = "") -> str:
 
 
 def compatible_bases_list(mdl_id: str) -> list[str]:
-    """Sidecar ``compatible_bases``: Z-Image LoRAs also load on Z-Image-Turbo."""
+    """Sidecar ``compatible_bases``.
+
+    A full Z-Image LoRA also loads on Z-Image-Turbo. A LoRA trained on Turbo
+    with the de-distillation adapter is Turbo-only and is not claimed for
+    full Z-Image.
+    """
     ident = (mdl_id or "").strip() or "z-image"
     if ident == "z-image":
         return list(_ZIMAGE_COMPATIBLE)
+    if ident == "z-image-turbo":
+        return ["z-image-turbo"]
     if ident == "moss-image-base":
         return list(_MOSS_COMPATIBLE)
     return [ident]
