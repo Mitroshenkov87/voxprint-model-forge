@@ -31,8 +31,8 @@ dependencies = [
   "pillow-avif-plugin==1.6.0",
   # Not on PyPI. CI, the VM scripts and the installer install the vendored
   # v0.7.0 wheel vendor/voxprint_common-0.7.0-py3-none-any.whl
-  # (Components local commit 1d5b89c, not yet pushed;
-  # sha256 e0100f6ea42e62ce0d310695ab34bfdcd9227e15c71cdac4fb9e5b1e35b1f6ee).
+  # (Components local commit 241ac452, not yet pushed;
+  # sha256 582ed667ef51896086b6f70c85148c525ea24b5c3dacb64f546a76486d311eca).
   # preflight --vm checks this pin.
   "voxprint-common==0.7.0",
 ]

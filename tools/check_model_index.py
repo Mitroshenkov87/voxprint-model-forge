@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MDL = ROOT / "src" / "voxprint_forge" / "data" / "mdl.json"
 INDEX_REPO = "Mitroshenkov87/voxprint-model-index"
 INDEX_REVISION = "main"
-MIN_SERIAL = 10
+MIN_SERIAL = 11
 
 # Forge ids with no index row, mapped to the stand-in index id. Empty now:
 # z-image-turbo has its own index row, and nothing may point at the retired

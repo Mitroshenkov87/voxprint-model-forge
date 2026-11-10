@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build serial 10 of the signed model index from a Components handover and sign it.
+"""Build a signed model index from a Components handover and sign it.
 
 Does not upload. Refuses to sign while any ``TODO`` remains in the document
 (for example ``z-image-turbo`` revision ``TODO-pending-upload``). Pass the
@@ -13,8 +13,8 @@ One command (set the key file in the environment; the key is never printed):
         --turbo-revision <40-hex-commit> \\
         --out signed-index/index.json
 
-The bundled pin (serial 9, head 15edeab0) is left unchanged. The new index
-is serial 10 with the same head unless ``--head`` is passed.
+The bundled pin (serial 10, head 15edeab0) is left unchanged. The new index
+is serial 11 with the same head unless ``--head`` or ``--serial`` is passed.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def build_index(
     head: str,
     generated_at: str,
 ) -> dict[str, object]:
-    """Overlay handover entries onto the bundled serial-9 models and bump the serial."""
+    """Overlay handover entries onto the bundled serial-10 models and bump the serial."""
     base = _bundled_index()
     by_id = {str(row["id"]): dict(row) for row in base["models"] if isinstance(row, dict)}
     for entry in handover.get("entries") or []:
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         help="40 lowercase hex commit for the z-image-turbo index row (replaces TODO-pending-upload).",
     )
     parser.add_argument("--out", type=Path, default=ROOT / "signed-index" / "index.json")
-    parser.add_argument("--serial", type=int, default=10)
+    parser.add_argument("--serial", type=int, default=11)
     parser.add_argument("--head", default="", help="Defaults to the handover or bundled pin head.")
     parser.add_argument(
         "--dry-run",

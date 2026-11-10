@@ -1,7 +1,7 @@
 {
   "head": "15edeab0f7a874c27d2b38ef6ecb69106ff94df8",
-  "serial": 10,
-  "generated_at": "2026-11-09T23:09:06Z",
+  "serial": 11,
+  "generated_at": "2026-11-10T00:09:45Z",
   "models": [
     {
       "id": "dinov2-base",

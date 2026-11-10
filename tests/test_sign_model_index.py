@@ -107,12 +107,12 @@ def test_build_index_drops_retired_rows() -> None:
         "retired_rows": [{"id": "mirror-z-image-turbo"}],
     }
     document = module.build_index(
-        handover, serial=10, head=handover["head"], generated_at="2026-11-10T00:00:00Z"
+        handover, serial=11, head=handover["head"], generated_at="2026-11-10T00:00:00Z"
     )
     ids = [row["id"] for row in document["models"]]
     assert "mirror-z-image-turbo" not in ids
     assert "moss-image-compressed" not in ids
     assert "z-image-turbo" in ids
     assert "mirror-z-image-turbo-controlnet-union-2.1" in ids
-    assert document["serial"] == 10
+    assert document["serial"] == 11
 
