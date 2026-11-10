@@ -17,15 +17,15 @@ MANIFEST = ROOT / "manifests" / "model-forge.models.json"
 SCHEMA = ROOT / "schemas" / "voxprint-app-models.schema.json"
 
 REQUIRED = {
-    "z-image": "04cc4abb",
+    "z-image-turbo": "f332072a",
     "qwen3-vl-4b-instruct": "ebb281ec",
     "mivolo-v2": "53393526",
     "yunet-2023mar": "47534e27",
 }
 OPTIONAL = {
+    "z-image": "04cc4abb",
     "florence2-large": "21a599d4",
     "moss-image-base": "fc5de0d5",
-    "z-image-turbo": "f332072a",
     "dinov2-base": "f9e44c81",
     "sface-2021dec": "47534e27",
 }

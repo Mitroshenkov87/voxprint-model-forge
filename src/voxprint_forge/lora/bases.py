@@ -1,8 +1,9 @@
 """Base-model adapters. The engine talks only to :class:`BaseAdapter`; the base is picked by MDL id.
 
-Built in: MOSS-Image SFT (registry id ``moss-image-base``, the default for new projects;
-weights are ``OpenMOSS-Team/MOSS-Image-SFT`` from :data:`voxprint_forge.diffusion.moss.REPOS`)
-and Z-Image (``z-image``, the base of every project and LoRA saved before MOSS existed).
+Built in: Z-Image (registry id ``z-image``, the default for new projects)
+and MOSS-Image SFT (``moss-image-base``, optional; weights are
+``OpenMOSS-Team/MOSS-Image-SFT`` from :data:`voxprint_forge.diffusion.moss.REPOS`).
+A project or LoRA saved with no base recorded is still Z-Image.
 Both are Apache-2.0 and both can train.
 A restrictive base may only be an optional MDL link to its official source.
 """
@@ -351,9 +352,10 @@ def _z_shapes(weights_dir: Path | None) -> tuple[int, int, int, int, int]:
 class ZImageAdapter(BaseAdapter):
     """Z-Image (Tongyi-MAI/Z-Image, Apache-2.0), flow matching, via diffusers ``ZImagePipeline``.
 
-    LoRAs trained here are for Z-Image. Loading them on Z-Image-Turbo is
-    untested; revisit after a Canvas test. The real path needs a CUDA GPU; CI
-    covers the engine with a tiny stand-in.
+    LoRAs trained here are for full Z-Image (Tongyi-MAI/Z-Image@04cc4abb) and
+    are also accepted on Z-Image-Turbo. Strength and likeness on Turbo are
+    unmeasured until a VM check. Z-Image-Turbo itself is not a training base.
+    The real path needs a CUDA GPU; CI covers the engine with a tiny stand-in.
     """
 
     info = BaseInfo(

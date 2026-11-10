@@ -210,7 +210,7 @@ def test_unresolved_descriptor_commit_writes_nothing(tmp_path: Path, monkeypatch
     assert not dest.exists()
 
 
-def _signed_fixture(tmp_path: Path, serial: int = 10) -> tuple[Path, Path, bytes]:
+def _signed_fixture(tmp_path: Path, serial: int = 11) -> tuple[Path, Path, bytes]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
@@ -258,10 +258,11 @@ def test_index_push_refuses_a_stale_serial_or_a_bare_list(tmp_path: Path, monkey
 
 
 def test_index_serial_follows_the_published_one() -> None:
-    # voxprint-common 0.5.2 bundles serial 9, so nothing below 10 is published.
-    assert next_serial(None) == 10
-    assert next_serial(1) == 10
-    assert next_serial(9) == 10
+    # voxprint-common 0.7.0 bundles serial 10, so nothing below 11 is published.
+    assert next_serial(None) == 11
+    assert next_serial(1) == 11
+    assert next_serial(9) == 11
+    assert next_serial(10) == 11
     assert next_serial(12) == 13
 
 
@@ -344,7 +345,7 @@ def test_build_document_emits_onnx_prebuilt() -> None:
     _schema(document)
 
 
-def test_bundled_serial_nine_index_still_parses() -> None:
+def test_bundled_serial_ten_index_still_parses() -> None:
     import hashlib
     from importlib import resources
 
@@ -355,15 +356,15 @@ def test_bundled_serial_nine_index_still_parses() -> None:
     )
     raw = resources.files("voxprint_common.mdl.data").joinpath("model-index.json").read_bytes()
     document = json.loads(raw.decode("utf-8"))
-    assert pin["serial"] == 9
-    assert document["serial"] == 9
+    assert pin["serial"] == 10
+    assert document["serial"] == 10
     assert document["head"] == pin["head"]
     assert document["generated_at"] == pin["generated_at"]
     assert isinstance(document["models"], list) and document["models"]
     assert hashlib.sha256(raw).hexdigest() == pin["sha256"]
     bundled = load_index(remote=False)
     assert bundled.source == "bundled"
-    assert bundled.serial == 9
+    assert bundled.serial == 10
     assert len(bundled.entries) == len(document["models"])
 
 

@@ -303,7 +303,8 @@ voxprint-forge-cli models verify --gui
 <th>Tier</th>
 <th>Text encoder</th>
 <th>Time per step</th>
-<th>Peak video memory</th>
+<th>Planned peak</th>
+<th>Reserved peak</th>
 </tr>
 </thead>
 <tbody>
@@ -312,20 +313,23 @@ voxprint-forge-cli models verify --gui
 <td>16 GB</td>
 <td>8-bit, on the card</td>
 <td>4.89 s</td>
-<td>13.6 GB</td>
+<td>—</td>
+<td>13.6 GB, measured</td>
 </tr>
 <tr>
 <td>MOSS-Image Base</td>
 <td>24 GB</td>
 <td>full precision, on the card</td>
 <td>4.90 s</td>
-<td>18.5 GB</td>
+<td>—</td>
+<td>18.5 GB, measured</td>
 </tr>
 <tr>
 <td>Z-Image</td>
 <td>16 GB</td>
 <td>full precision</td>
-<td>9.7 s at 1024 px</td>
+<td>9.7 s at 1024 px, batch 1, accum 1, measured</td>
+<td>9.03 GiB (<code>quick</code>), 10.08 GiB (<code>balanced</code>/<code>best</code>)</td>
 <td>not measured</td>
 </tr>
 <tr>
@@ -333,11 +337,12 @@ voxprint-forge-cli models verify --gui
 <td>24 GB</td>
 <td>full precision</td>
 <td>1.6 s at 1024 px, not measured</td>
+<td>14.87 GiB (<code>quick</code>), 16.27 GiB (<code>balanced</code>/<code>best</code>)</td>
 <td>not measured</td>
 </tr>
 </tbody>
 </table>
-<p>The Z-Image 16 GB time was measured on a 16 GB RTX 4090 laptop, one picture at 1024 px. That run did not record a peak, so the card line stays 16 GB+. The 24 GB Z-Image time has not been measured. <strong>Estimate time</strong> and the first-pictures line use these seconds per step. A Balanced run on MOSS-Image Base (1500 steps) takes about 2 hours of training on such a card, plus a few minutes to load. The base model list on the Train step shows the measured peak for MOSS-Image Base; for Z-Image it shows the smallest card the presets target (16 GB+).</p>
+<p>The Z-Image 16 GB time was measured on a 16 GB RTX 4090 laptop, one picture at 1024 px, batch 1, accum 1. That run did not record a peak. <code>balanced</code> and <code>best</code> use accum 2, so Estimate time scales the 9.7 s figure to 19.4 s per optimizer step; <code>quick</code> at 768 px scales it to about 5.46 s. Planned peaks are from the Z-Image memory plan (no GPU), not from a memprobe. The 24 GB Z-Image time has not been measured. A Balanced run on MOSS-Image Base (1500 steps) takes about 2 hours of training on a 16 GB-capped 4090, plus a few minutes to load. The Train step lists Z-Image as the default base; MOSS-Image is optional.</p>
 <p><a id="page-training"></a></p>
 <h1 id="training">Training</h1>
 <h2 id="step-4-check-and-prepare">Step 4: Check and prepare</h2>

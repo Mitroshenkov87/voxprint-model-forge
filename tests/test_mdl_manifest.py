@@ -56,7 +56,7 @@ def test_plan_files_tiers_cover_required_and_optional_ids() -> None:
     optional = [model.id for model in models if not model.required]
     assert _planned_ids(VramTier.GB16, memory_gib=16) == required
     assert _planned_ids(VramTier.GB24) == required
-    assert _planned_ids(VramTier.GB8) == required - {"z-image"}
+    assert _planned_ids(VramTier.GB8) == required - {"z-image-turbo"}
     assert _planned_ids(VramTier.GB24, only=optional) == set(optional)
 
 

@@ -19,10 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 MDL = ROOT / "src" / "voxprint_forge" / "data" / "mdl.json"
 INDEX_REPO = "Mitroshenkov87/voxprint-model-index"
 INDEX_REVISION = "main"
-MIN_SERIAL = 10
+MIN_SERIAL = 11
 
-# Forge ids with no index row, and the index id recorded beside each one.
-NOT_IN_INDEX = {"z-image-turbo": "mirror-z-image-turbo"}
+# Forge ids with no index row, mapped to the stand-in index id. Empty now:
+# z-image-turbo has its own index row, and nothing may point at the retired
+# mirror-z-image-turbo id (controlnet union 2.1 stays in the index under its own id).
+NOT_IN_INDEX: dict[str, str] = {}
 # Optional forge ids whose signed index row is not published yet. mdl.json still pins every
 # file by size and sha256, so a download is verified either way. Remove an id once the index
 # carries it; the check then compares it like any other row.

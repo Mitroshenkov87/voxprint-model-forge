@@ -29,12 +29,12 @@ dependencies = [
   "protobuf==5.29.6",
   # Canvas writes AVIF. Pillow 13 may already decode it; this plugin covers builds that do not.
   "pillow-avif-plugin==1.6.0",
-  # Not on PyPI. CI, the VM scripts and the installer install the official
-  # v0.6.3 release asset vendor/voxprint_common-0.6.3-py3-none-any.whl
-  # (10fb281771bb75b9e0e595ad84fb556581086726;
-  # sha256 a18e5760863e34042c6eb16dd25d37d28055b9eb90a460c62407cdc2a09b43e4).
+  # Not on PyPI. CI, the VM scripts and the installer install the vendored
+  # v0.7.0 wheel vendor/voxprint_common-0.7.0-py3-none-any.whl
+  # (Components local commit 241ac452, not yet pushed;
+  # sha256 582ed667ef51896086b6f70c85148c525ea24b5c3dacb64f546a76486d311eca).
   # preflight --vm checks this pin.
-  "voxprint-common==0.6.3",
+  "voxprint-common==0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -75,7 +75,7 @@ te-quant = [
   "bitsandbytes>=0.50.2,<0.51",
 ]
 gui = [
-  "voxprint-common[ui]==0.6.3",
+  "voxprint-common[ui]==0.7.0",
   "PySide6>=6.8",
   "keyring>=25",
   "nvidia-ml-py>=12",

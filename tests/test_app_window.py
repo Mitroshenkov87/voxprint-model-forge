@@ -650,10 +650,12 @@ def test_base_picker_is_short_with_a_hint_and_only_trainable_bases(make_app, tmp
     ids = [combo.itemData(i) for i in range(combo.count())]
     assert ids == [info.mdl_id for info in bases.trainable()]
     assert ids[0] == "z-image" and "moss-image-base" in ids
-    assert combo.itemText(0) == tr("forge.app.base.optional_name", name="Z-Image")
-    assert combo.currentData() == "moss-image-base"
+    assert combo.itemText(0) == "Z-Image"
+    assert combo.currentData() == "z-image"
+    moss_index = ids.index("moss-image-base")
+    assert combo.itemText(moss_index) == tr("forge.app.base.optional_name", name="MOSS-Image SFT")
     assert combo.width() <= basepicker.MAX_WIDTH
-    moss = combo.itemData(ids.index("moss-image-base"), basepicker.DETAIL_ROLE)
+    moss = combo.itemData(moss_index, basepicker.DETAIL_ROLE)
     assert tr("forge.app.base.moss-image-base.note") in moss
     detail = combo.itemData(0, basepicker.DETAIL_ROLE)
     assert detail == f"{tr('forge.app.base.z-image.note')} · {tr('forge.app.base.vram_tier', gb=16)}"

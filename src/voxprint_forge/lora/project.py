@@ -45,11 +45,11 @@ from pathlib import Path
 from voxprint_forge.lora import DEFAULT_BASE, legacy_base
 from voxprint_forge.lora.errors import LoraUsageError
 
-# ``lora prepare --base`` names. ``both`` is moss, then Z-Image.
+# ``lora prepare --base`` names. ``both`` is Z-Image, then moss.
 _PREPARE_CHOICES = {
     "moss": ("moss-image-base",),
     "z-image": ("z-image",),
-    "both": ("moss-image-base", "z-image"),
+    "both": ("z-image", "moss-image-base"),
 }
 # ``lora retrain --base`` spellings. The reverse of the single-base prepare names.
 _CLI_BASE = {ids[0]: name for name, ids in _PREPARE_CHOICES.items() if len(ids) == 1}
@@ -92,7 +92,7 @@ def train_bases(choice: str | None, recorded: Sequence[str], *, explicit: bool) 
 
     An omitted ``--base`` uses the project's first base, so a legacy project
     stays on Z-Image. ``both`` trains every recorded base when the project
-    lists more than one, and otherwise moss then Z-Image.
+    lists more than one, and otherwise Z-Image then moss.
     """
     known = [item for item in recorded if item]
     if not explicit:
@@ -101,7 +101,7 @@ def train_bases(choice: str | None, recorded: Sequence[str], *, explicit: bool) 
     if text.lower() == "both":
         if len(known) > 1:
             return known
-        return ["moss-image-base", "z-image"]
+        return ["z-image", "moss-image-base"]
     return bases_for_choice(text) if text else ([known[0]] if known else [DEFAULT_BASE])
 
 

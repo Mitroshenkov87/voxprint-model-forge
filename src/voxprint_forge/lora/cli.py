@@ -305,9 +305,9 @@ def _prepare_flags(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--base",
         choices=("moss", "z-image", "both"),
-        default="moss",
+        default="z-image",
         action=_MarkBase,
-        help="Which bases this project trains: moss, z-image, or both. Stored on the project. Default: moss.",
+        help="Which bases this project trains: moss, z-image, or both. Stored on the project. Default: z-image.",
     )
     command.set_defaults(base_explicit=False)
     _fetch_flags(command)
@@ -760,7 +760,7 @@ def _prepare(args: argparse.Namespace) -> dict[str, object]:
     project = Project(args.project)
     progress = Progress(printer(args.json))
     _warn_typed_trigger(args, progress)
-    # A new folder takes the flag (default moss). An existing project keeps its
+    # A new folder takes the flag (default z-image). An existing project keeps its
     # list unless --base was passed, so re-preparing a legacy folder does not
     # move checkpoints/.
     explicit = bool(getattr(args, "base_explicit", False))

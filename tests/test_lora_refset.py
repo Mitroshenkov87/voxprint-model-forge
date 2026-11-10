@@ -359,7 +359,7 @@ def test_the_cli_has_refset_round_and_finish(tmp_path) -> None:
     assert args.refset_command == "round" and args.candidates == 16 and args.strength == 0.4
     assert args.steps == refset.DEFAULT_STEPS
     args = build_parser().parse_args(["lora", "refset", "finish", "--project", str(tmp_path), "--mode", "expert"])
-    assert args.refset_command == "finish" and args.base == "moss-image-base"
+    assert args.refset_command == "finish" and args.base == "z-image"
 
 
 def test_refset_text_never_says_what_the_check_looks_for() -> None:

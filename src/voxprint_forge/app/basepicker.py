@@ -132,6 +132,20 @@ class DownwardCombo(QtWidgets.QComboBox):
     the label and the controls above it.
     """
 
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt API
+        """Qt hook: keep the closed picker within MAX_WIDTH.
+
+        QComboBox with AdjustToContents can report a contents width a few pixels
+        over setMaximumWidth on some Windows styles (frame and arrow metrics).
+        """
+        hint = super().sizeHint()
+        return QtCore.QSize(min(hint.width(), MAX_WIDTH), hint.height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt API
+        """Qt hook: same cap as sizeHint, so a layout cannot grow past MAX_WIDTH."""
+        hint = super().minimumSizeHint()
+        return QtCore.QSize(min(hint.width(), MAX_WIDTH), hint.height())
+
     def showPopup(self) -> None:  # noqa: N802 - Qt API
         """Qt hook: open, then move the list under the field."""
         super().showPopup()
@@ -146,7 +160,7 @@ class DownwardCombo(QtWidgets.QComboBox):
 
 
 def default_mdl(ids: list[str]) -> str:
-    """MOSS when this build can train it, otherwise the first offered base."""
+    """The default LoRA base when this build can train it, otherwise the first offered base."""
     if DEFAULT_BASE in ids:
         return DEFAULT_BASE
     return ids[0] if ids else ""
@@ -155,8 +169,8 @@ def default_mdl(ids: list[str]) -> str:
 def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -> QtWidgets.QComboBox:
     """A sane-width combo of ``(mdl_id, name, repo, licence, permissive)`` with two-line options.
 
-    MOSS is the selection when ``current`` is not one of the offered ids.
-    Z-Image is labelled optional. The tooltip keeps the plain display name.
+    The default LoRA base is the selection when ``current`` is not one of the offered ids.
+    Optional bases are labelled as such. The tooltip keeps the plain display name.
     """
     combo = DownwardCombo()
     combo.setObjectName("forge.train.base")
@@ -186,6 +200,9 @@ def build_picker(options: list[tuple[str, str, str, str, bool]], current: str) -
     view.setMinimumWidth(min(POPUP_MAX_WIDTH, max(widest, combo.sizeHint().width())))
     view.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
     combo.setCurrentIndex(max(0, combo.findData(current)))
+    # AdjustToContents + Windows style metrics can leave the widget a few pixels
+    # over setMaximumWidth; pin the closed width to the capped hint.
+    combo.setFixedWidth(min(MAX_WIDTH, max(MIN_WIDTH, combo.sizeHint().width())))
     return combo
 
 

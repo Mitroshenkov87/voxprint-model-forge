@@ -42,12 +42,12 @@ VRAM_TIER = {
 
 # (role, MDL id, display name, repo, revision prefix)
 HF_ENTRIES = [
-    ("required", "z-image", "Z-Image base (BF16)", "Tongyi-MAI/Z-Image", "04cc4abb"),
+    ("required", "z-image-turbo", "Z-Image-Turbo", "Tongyi-MAI/Z-Image-Turbo", "f332072a"),
     ("required", "qwen3-vl-4b-instruct", "Qwen3-VL-4B-Instruct", "Qwen/Qwen3-VL-4B-Instruct", "ebb281ec"),
     ("required", "mivolo-v2", "MiVOLO v2", "iitolstykh/mivolo_v2", "53393526"),
+    ("optional", "z-image", "Z-Image base (BF16)", "Tongyi-MAI/Z-Image", "04cc4abb"),
     ("optional", "florence2-large", "Florence-2-large", "microsoft/Florence-2-large", "21a599d4"),
     ("optional", "moss-image-base", "MOSS-Image SFT", "OpenMOSS-Team/MOSS-Image-SFT", "fc5de0d5"),
-    ("optional", "z-image-turbo", "Z-Image-Turbo", "Tongyi-MAI/Z-Image-Turbo", "f332072a"),
     ("optional", "dinov2-base", "DINOv2-base", "facebook/dinov2-base", "f9e44c81"),
 ]
 # opencv_zoo has no HF repo; the files are fetched from the pinned GitHub commit.

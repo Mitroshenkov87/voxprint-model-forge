@@ -1,7 +1,7 @@
 """``lora prepare --base`` stores a base list. Captions stay base-free.
 
 Legacy projects (no ``bases`` list) keep ``checkpoints/`` and ``export/`` at the
-project root. A new project records MOSS unless a base was chosen.
+project root. A new project records Z-Image unless a base was chosen.
 """
 
 from __future__ import annotations
@@ -79,27 +79,27 @@ def _run(root, files, **kw):
     )
 
 
-def test_prepare_flag_defaults_to_moss_and_maps_names(tmp_path) -> None:
+def test_prepare_flag_defaults_to_z_image_and_maps_names(tmp_path) -> None:
     omitted = build_parser().parse_args(["lora", "prepare", "--project", str(tmp_path)])
-    assert omitted.base == "moss" and omitted.base_explicit is False
+    assert omitted.base == "z-image" and omitted.base_explicit is False
     chosen = build_parser().parse_args(["lora", "prepare", "--project", str(tmp_path), "--base", "both"])
     assert chosen.base == "both" and chosen.base_explicit is True
     with pytest.raises(SystemExit):
         build_parser().parse_args(["lora", "prepare", "--project", str(tmp_path), "--base", "tiny-test"])
     assert bases_for_choice("moss") == ["moss-image-base"]
     assert bases_for_choice("z-image") == ["z-image"]
-    assert bases_for_choice("both") == ["moss-image-base", "z-image"]
+    assert bases_for_choice("both") == ["z-image", "moss-image-base"]
     assert bases_for_choice("tiny-test") == ["tiny-test"]
 
 
 def test_train_base_flag_follows_the_project_unless_it_was_passed(tmp_path) -> None:
     omitted = build_parser().parse_args(["lora", "train", "--project", str(tmp_path)])
-    assert omitted.base == "moss-image-base" and omitted.base_explicit is False
+    assert omitted.base == "z-image" and omitted.base_explicit is False
     both = build_parser().parse_args(["lora", "train", "--project", str(tmp_path), "--base", "both"])
     assert both.base == "both" and both.base_explicit is True
     assert train_bases("moss-image-base", ["z-image"], explicit=False) == ["z-image"]
     assert train_bases("both", ["moss-image-base", "z-image"], explicit=True) == ["moss-image-base", "z-image"]
-    assert train_bases("both", ["z-image"], explicit=True) == ["moss-image-base", "z-image"]
+    assert train_bases("both", ["z-image"], explicit=True) == ["z-image", "moss-image-base"]
     assert train_bases("moss", ["z-image"], explicit=True) == ["moss-image-base"]
     assert train_bases("Z-Image", ["moss-image-base"], explicit=True) == ["z-image"]
     assert train_bases("tiny-test", ["z-image"], explicit=True) == ["tiny-test"]
@@ -123,13 +123,13 @@ def test_prepare_stores_bases_and_keeps_one_base_free_dataset(tmp_path) -> None:
     assert digests["moss"] == digests["z-image"] == digests["both"]
 
 
-def test_a_new_prepare_records_moss_and_a_legacy_folder_keeps_its_paths(tmp_path) -> None:
+def test_a_new_prepare_records_z_image_and_a_legacy_folder_keeps_its_paths(tmp_path) -> None:
     fresh = tmp_path / "fresh"
     _run(fresh, _photos(fresh / "in"))
     fresh_project = Project(fresh)
-    assert fresh_project.read()["bases"] == ["moss-image-base"]
-    assert fresh_project.checkpoints == fresh / "checkpoints" / "moss-image-base"
-    assert fresh_project.export == fresh / "export" / "moss-image-base"
+    assert fresh_project.read()["bases"] == ["z-image"]
+    assert fresh_project.checkpoints == fresh / "checkpoints" / "z-image"
+    assert fresh_project.export == fresh / "export" / "z-image"
 
     legacy = Project(tmp_path / "legacy")
     legacy.write({"kind": "object", "mode": "expert", "subject": _subject().to_dict()})

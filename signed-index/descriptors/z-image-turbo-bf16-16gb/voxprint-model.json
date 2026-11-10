@@ -1,0 +1,105 @@
+{
+  "schema": "voxprint-model/1",
+  "id": "z-image-turbo-bf16-16gb",
+  "display_name": "Z-Image-Turbo BF16 (16 GB)",
+  "app_ids": [
+    "canvas"
+  ],
+  "task": "text-to-image",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "path": "transformer/config.json",
+      "size": 473,
+      "sha256": "06d49d1ae533f825c4704cc616fc8bc7826e9d449dde292cc7a95163c69af24a",
+      "sources": [
+        {
+          "kind": "hf",
+          "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+          "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+          "ours": true
+        }
+      ]
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+      "size": 4994754240,
+      "sha256": "d38279715f7d31232fd14602dec2810f91bf2b4ec2d2960ff9501d3d939f7357",
+      "sources": [
+        {
+          "kind": "hf",
+          "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+          "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+          "ours": true
+        }
+      ]
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+      "size": 4986883624,
+      "sha256": "880479ddfe46e2dda2b289d7f90d0d9e1f2a5db91efa0cec407fc5ef72cfa531",
+      "sources": [
+        {
+          "kind": "hf",
+          "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+          "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+          "ours": true
+        }
+      ]
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+      "size": 2328235888,
+      "sha256": "47da630f1e9cba51bf2726aed068916904b2627f4994776a332e7635369f10a1",
+      "sources": [
+        {
+          "kind": "hf",
+          "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+          "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+          "ours": true
+        }
+      ]
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "size": 45821,
+      "sha256": "1ae53cb8899b503c9443391868b9f0f55fda7d38d8f7a7f4caaba28305ff7fb7",
+      "sources": [
+        {
+          "kind": "hf",
+          "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+          "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+          "ours": true
+        }
+      ]
+    }
+  ],
+  "mirrors": [
+    {
+      "kind": "hf",
+      "ref": "Mitroshenkov87/voxprint-z-image-turbo-bf16",
+      "revision": "b6a12e018b150c9790626286daeaa1149d1ae598",
+      "ours": true
+    }
+  ],
+  "tier": {
+    "min_vram_gib": 15.5,
+    "recommended_vram_gib": 15.5,
+    "gpu_min_cc": 8.0
+  },
+  "runtime": {
+    "engine": "diffusers",
+    "version_req": ">=0.37.1,<0.38"
+  },
+  "base_model": "Tongyi-MAI/Z-Image-Turbo",
+  "card_url": "https://huggingface.co/Mitroshenkov87/voxprint-z-image-turbo-bf16",
+  "flags": [
+    "voxprint-conversion"
+  ],
+  "on_demand": true,
+  "build": {
+    "forge_version": "0.1.0",
+    "tag": "",
+    "date": "2026-11-10"
+  }
+}

@@ -31,8 +31,8 @@ uv pip install -q --python "$VENV" "torch==2.14.1" --index-url "$TORCH_INDEX"
 VIRTUAL_ENV="$VENV" uv pip install -q "diffusers==0.41.0" "transformers==5.20.1" \
   "accelerate>=1.0" "safetensors>=0.4" Pillow "huggingface_hub>=0.26" tomli-w
 # voxprint_common (sha256 vs vendor/pins.txt) plus its Requires-Dist: cryptography, jeepney.
-WHEEL="$ROOT/vendor/voxprint_common-0.6.3-py3-none-any.whl"
-grep -E 'voxprint_common-0.6.3-py3-none-any.whl$' "$ROOT/vendor/pins.txt" \
+WHEEL="$ROOT/vendor/voxprint_common-0.7.0-py3-none-any.whl"
+grep -E 'voxprint_common-0.7.0-py3-none-any.whl$' "$ROOT/vendor/pins.txt" \
   | (cd "$ROOT/vendor" && sha256sum -c --strict -)
 VIRTUAL_ENV="$VENV" uv pip install -q "$WHEEL" "cryptography>=44" "jeepney>=0.8"
 # Fast GDN kernels for the Qwen3.5 text encoder; optional (preflight warns when missing).
