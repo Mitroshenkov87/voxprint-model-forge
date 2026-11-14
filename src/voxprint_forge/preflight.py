@@ -90,6 +90,12 @@ _FIX_BINARIES = (
     "Install cmake, ninja, and nvcc, or set FORGE_LLAMA_BIN to a directory with "
     "llama-quantize, llama-imatrix, llama-cli, and llama-server."
 )
+_FIX_MIVOLO_ENV = (
+    "Install the estimator packages: pip install \"setuptools<81\" wheel && "
+    "pip install --no-deps --no-build-isolation "
+    "\"mivolo @ git+https://github.com/WildChlamydia/MiVOLO.git@37475e3f8818b5f22448003feec3e64b01bfb188\". "
+    "On Windows, repair the venv-mivolo env instead (installer/requirements-mivolo.txt)."
+)
 
 
 def _check(name: str, ok: bool, detail: str, fix: str) -> dict[str, object]:
@@ -433,7 +439,7 @@ def refset_preflight(
     python = mivolo_python()
     worker = (mivolo or _mivolo_imports)(python)
     add("mivolo-env", worker, f"estimator worker env {'imports' if worker else 'does not import'}",
-        "Repair the venv-mivolo env (installer/requirements-mivolo.txt).")
+        _FIX_MIVOLO_ENV)
     dino = present(refset.EMBEDDER_ID)
     add(f"model:{refset.EMBEDDER_ID}", dino, f"DINOv2-base {'installed' if dino else 'missing'} (near-duplicate marks)",
         "Run: voxprint-forge-cli models fetch --model dinov2-base. "

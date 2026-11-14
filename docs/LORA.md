@@ -104,7 +104,7 @@ voxprint-forge-cli lora prepare --project my-lora --photos my-photos --kind pers
 
 ## Safety check (always on)
 
-Every photo of every kind goes through the safety check (`voxprint_forge.lora.gate`, settings in [Gate config](spec/gate-config.md)). A person set needs `--consent-obtained` and `--subject-adult`. A photo that does not pass is set aside as `lora.drop.safety`; some cases block the project (`lora.err.blocked`). If a check model is not installed, nothing runs (`lora.err.gate_missing`). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
+Every photo of every kind goes through the safety check (`voxprint_forge.lora.gate`, settings in [Gate config](spec/gate-config.md)). A person set needs `--consent-obtained` and `--subject-adult`. A photo that does not pass is set aside as `lora.drop.safety`; some cases block the project (`lora.err.blocked`). If a check model is not installed, nothing runs (`lora.err.gate_missing`). If the age estimator does not load because OpenCV, timm or MiVOLO are missing, the gate fails closed and training refuses to start; the fix is the core pins (`opencv-python-headless`, `timm`) plus the pinned MiVOLO install from [Install](CLI.md#install). MDL ids: `qwen3-vl-4b-instruct`, `mivolo-v2`, `yunet-2023mar`.
 
 ## Captions
 

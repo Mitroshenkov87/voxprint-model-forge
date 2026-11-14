@@ -29,6 +29,13 @@ dependencies = [
   "protobuf==5.29.6",
   # Canvas writes AVIF. Pillow 13 may already decode it; this plugin covers builds that do not.
   "pillow-avif-plugin==1.6.0",
+  # LoRA safety gate: lora/mivolo_worker.py imports cv2 and the mivolo-v2 remote
+  # code needs timm. A real install failed closed without opencv
+  # (ModuleNotFoundError: cv2, then the gate estimator did not load).
+  # Verified on Python 3.14. mivolo itself is not a PyPI dep; the worker venv
+  # installs it with --no-deps --no-build-isolation (installer/requirements-mivolo.txt).
+  "opencv-python-headless==5.0.0.93",
+  "timm==0.8.13.dev0",
   # Not on PyPI. CI, the VM scripts and the installer install the vendored
   # v0.7.0 wheel vendor/voxprint_common-0.7.0-py3-none-any.whl
   # (Components local commit 241ac452, not yet pushed;

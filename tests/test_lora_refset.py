@@ -213,6 +213,16 @@ def test_no_gate_means_no_round(tmp_path) -> None:
     assert "generator.load" not in loaders.log
 
 
+def test_gate_unavailable_with_models_present_blocks_with_the_worker_env_fix(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("voxprint_forge.mdl_app.missing_id_text", lambda: "")
+    monkeypatch.setattr("voxprint_forge.lora.backends.gate_worker_imports", lambda: False)
+    loaders = Loaders(gate_available=False)
+    with pytest.raises(LoraBlocked) as caught:
+        _round(Project(tmp_path / "proj"), _refs(tmp_path / "refs", 1), loaders)
+    assert caught.value.key == "lora.err.gate_missing_deps"
+    assert "generator.load" not in loaders.log
+
+
 def test_a_missing_teacher_is_a_plain_error(tmp_path) -> None:
     project = Project(tmp_path / "proj")
     loaders = Loaders()

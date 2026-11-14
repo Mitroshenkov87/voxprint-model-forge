@@ -38,6 +38,7 @@ def test_catalogs_cover_the_plan_tables() -> None:
     for key in (
         "lora.err.blocked",
         "lora.err.gate_missing",
+        "lora.err.gate_missing_deps",
         "lora.drop.safety",
         "lora.progress.safety",
         "lora.warn.count",

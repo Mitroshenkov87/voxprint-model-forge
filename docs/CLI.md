@@ -40,6 +40,23 @@ pip install vendor/voxprint_common-0.7.0-py3-none-any.whl
 pip install -e ".[dev]"
 ```
 
+For the window app on Linux, install the `gui` extra instead of `dev` (it pulls `voxprint-common[ui]`, PySide6, keyring and nvidia-ml-py, and exposes the `voxprint-model-forge` binary). `installer/linux/install.sh` does this in a user-space venv under `~/.local/share/voxprint-ai-suite/`, together with the MiVOLO step below, and writes the GNOME/freedesktop menu entry:
+
+```bash
+pip install -e ".[gui]"
+# or, from the repository root:
+installer/linux/install.sh
+```
+
+The LoRA safety gate also needs the MiVOLO age estimator. It is not on PyPI; install it from the pinned GitHub commit with `--no-deps` (its own pins pull packages the classifier never uses) and `--no-build-isolation`. Its `setup.py` imports `pkg_resources`, so install `setuptools<81` first:
+
+```bash
+pip install "setuptools<81" wheel
+pip install --no-deps --no-build-isolation "mivolo @ git+https://github.com/WildChlamydia/MiVOLO.git@37475e3f8818b5f22448003feec3e64b01bfb188"
+```
+
+`opencv-python-headless` and `timm` are already core pins (see above), so this is the only extra gate step on Linux. The Windows installer runs the equivalent itself in `venv-mivolo` (Python 3.12).
+
 The Windows installer ships the `te-quant` extra from `installer/windows/requirements-te-quant.txt`: bitsandbytes==0.50.2, the PyPI win_amd64 wheel, sha256 `c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d`.
 
 Model downloads through MDL honour `VOXPRINT_MDL_ROUTE=direct|system|auto` (default `auto`).

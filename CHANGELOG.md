@@ -38,6 +38,7 @@
 - Windows setup: adds `{app}\venv\Scripts` (`voxprint-forge-cli.exe`) to the current user's `Path` once, and the uninstaller removes only that entry. The old RU guide shortcut is now removed by an ASCII pattern.
 - `preflight` and the other plan commands work on an installed copy without a checkout: the default plan ships in the package (`voxprint_forge/data/plan.toml`, kept equal to `plans/plan.toml` by a test). A checkout's `plans/plan.toml` and an explicit `--plan` still take precedence.
 - `lora prepare --help` explains `--name` and `--consent-method` and shows an example. A missing `--name` prints one line with an example, `--name Garnis_AI --consent-method verbal` (still exit 2). docs/LORA.md documents `--name`, `--consent-method` and `--fetch-missing`.
+- `opencv-python-headless==5.0.0.93` and `timm==0.8.13.dev0` are now core package dependencies (the LoRA safety gate needs them). Linux from-source install: `installer/linux/install.sh` installs the `[gui]` extra, the pinned MiVOLO package (commit `37475e3f8818b5f22448003feec3e64b01bfb188`, `--no-deps --no-build-isolation`, `setuptools<81`), and writes `~/.local/share/applications/voxprint-model-forge.desktop` with the app icon. When the age estimator does not load because those packages are missing, `lora prepare`/refset fail closed with `lora.err.gate_missing_deps`, which names that install command instead of the misleading "Prepare the photos first".
 
 ## 0.1.0
 
