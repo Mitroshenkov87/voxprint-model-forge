@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import NoReturn
 
 from voxprint_forge.lora import DEFAULT_BASE
+from voxprint_forge.lora.backends import gate_unavailable_error
 from voxprint_forge.lora.captioner import DEFAULT, Captioner, unclothed_flag
 from voxprint_forge.lora.consent import Subject
-from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
+from voxprint_forge.lora.errors import LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
 from voxprint_forge.lora.gate import (
     AVG_MIN,
@@ -62,7 +63,6 @@ from voxprint_forge.lora.project import Item, Project
 from voxprint_forge.lora.refusal import announce, outside_simple, report_from_drops, scan_files
 from voxprint_forge.lora.train import MIN_PHOTOS
 from voxprint_forge.lora.trigger import prepend_trigger
-from voxprint_forge.mdl_app import missing_id_text
 
 # Near-duplicates are kept unless ``drop_near_duplicates`` is set.
 _NEAR_DUPLICATE = frozenset({"lora.drop.duplicate"})
@@ -145,10 +145,7 @@ def prepare(
     check_subject(project, {"kind": subject.kind, "subject": subject.to_dict()})
     if not gate.available:
         progress.emit("prepare.safety", "lora.progress.blocked", reason_key="lora.reason.safety", state="blocked")
-        ids = missing_id_text()
-        if not ids:
-            raise LoraBlocked("lora.err.not_prepared")
-        raise LoraBlocked("lora.err.gate_missing", ids=ids)
+        raise gate_unavailable_error()
     # Before the first photo. A crash leaves this ``running``; training will not start.
     start(project)
     existing = project.items()

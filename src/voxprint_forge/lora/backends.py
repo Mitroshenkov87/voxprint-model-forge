@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from voxprint_forge.lora.errors import LoraStageError
+from voxprint_forge.lora.errors import LoraBlocked, LoraStageError
 from voxprint_forge.lora.gate import INDICATORS, AgeReading, Face, Gate, Verdict
 from voxprint_forge.lora.presets import detect_vram_gb
 from voxprint_forge.lora.te_quant import check_available, quant_config
@@ -352,6 +352,36 @@ def _report(part: str, exc: Exception) -> None:
     import sys
 
     print(f"safety gate {part} did not load: {type(exc).__name__}", file=sys.stderr)
+
+
+def gate_worker_imports() -> bool:
+    """True when the MiVOLO worker interpreter imports ``mivolo``, ``timm`` and ``cv2``.
+
+    Uses :func:`mivolo_python` for the interpreter and the preflight import probe, so the
+    check never spawns a worker and tests can patch either side.
+    """
+    from voxprint_forge.preflight import _mivolo_imports
+
+    return _mivolo_imports(mivolo_python())
+
+
+def gate_unavailable_error() -> LoraBlocked:
+    """The block for an unavailable safety gate (the gate fails closed).
+
+    Missing check models name the ``models fetch --required`` fix. Installed models with a
+    worker interpreter that cannot import ``mivolo``, ``timm`` and ``cv2`` name the package
+    install instead. Anything else keeps the plain not-prepared error.
+    """
+    # Imported here: ``mdl_app`` imports this module (LEGACY_IDS), so a module-level
+    # import would be circular.
+    from voxprint_forge.mdl_app import missing_id_text
+
+    ids = missing_id_text()
+    if ids:
+        return LoraBlocked("lora.err.gate_missing", ids=ids)
+    if not gate_worker_imports():
+        return LoraBlocked("lora.err.gate_missing_deps")
+    return LoraBlocked("lora.err.not_prepared")
 
 
 def _limit(image: Any) -> Any:

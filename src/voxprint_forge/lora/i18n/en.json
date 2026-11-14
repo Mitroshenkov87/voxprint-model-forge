@@ -28,6 +28,7 @@
  "lora.err.encoders_stuck": "The text encoder did not leave the graphics card ({gb} GB still in use), so training stopped before it could run out of memory. Please report this.",
  "lora.err.export_project": "Give the project folder once: the .voxlora package, or --project for the .safetensors file.",
  "lora.err.gate_missing": "Models not installed: {ids}. Run: voxprint-forge-cli models fetch --required",
+ "lora.err.gate_missing_deps": "The age-check program cannot start: its Python packages are not installed, and the safety gate stays closed until they are. The app already pins opencv-python-headless and timm==0.8.13.dev0; add MiVOLO with: pip install \"setuptools<81\" wheel && pip install --no-deps --no-build-isolation \"mivolo @ git+https://github.com/WildChlamydia/MiVOLO.git@37475e3f8818b5f22448003feec3e64b01bfb188\"",
  "lora.err.likeness_models": "The likeness score needs: {ids}. Run: voxprint-forge-cli models fetch --model sface-2021dec --model yunet-2023mar",
  "lora.err.likeness_unavailable": "The likeness score could not run: {reason}",
  "lora.err.no_checkpoint": "There is no saved version to continue from.",

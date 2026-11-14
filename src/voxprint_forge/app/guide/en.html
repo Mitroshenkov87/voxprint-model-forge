@@ -81,6 +81,11 @@
 <p>The setup adds <code>C:\Program Files\VOXPrint AI Suite\Model Forge\venv\Scripts</code> to your user <code>Path</code>, so <code>voxprint-forge-cli</code> runs from any new terminal window. Removing the app removes that entry again.</p>
 <p>The guide opens from <strong>Open guide</strong> in the app. PDF copies are in <code>C:\Program Files\VOXPrint AI Suite\Model Forge\docs</code>.</p>
 <p>If the setup fails, it shows the path to its log: <code>C:\Program Files\VOXPrint AI Suite\Model Forge\setup-work\install.log</code>. Check the internet connection and run the setup again.</p>
+<h2 id="install-on-linux">Install on Linux</h2>
+<p>Linux installs from source; run the installer script from a repository checkout (see the README). It needs Python 3.14 or newer and no administrator rights:</p>
+<pre><code class="language-bash">installer/linux/install.sh
+</code></pre>
+<p>The script creates a user-space environment at <code>~/.local/share/voxprint-ai-suite/venv</code>, installs the vendored <code>voxprint-common</code> wheel and the app with the <code>gui</code> extra so the <strong>VOXPrint AI Model Forge</strong> window app works, and installs the MiVOLO package for the LoRA safety gate from its pinned commit (without its unneeded extras). It also writes a desktop entry, so the app appears in the GNOME application menu as <strong>VOXPrint AI Model Forge</strong>. Running the script again upgrades in place. The manual steps behind it are in <a href="../../CLI.md#install">the CLI install docs</a>.</p>
 <h2 id="first-launch">First launch</h2>
 <p>Open the <strong>Check this computer</strong> tab. It lists the graphics card, the computer memory, the free disk space and which models are missing. Press <strong>Manage models</strong> to download them (see <a href="#page-models">Model download</a>), then <strong>Check again</strong>.</p>
 <p><img alt="Check this computer" src="img/en-simple-check.png" /></p>

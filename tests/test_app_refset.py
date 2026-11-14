@@ -26,7 +26,10 @@ from voxprint_forge.lora.events import Progress  # noqa: E402
 @pytest.fixture
 def make_app(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
+    from voxprint_forge.app import window as forge_window
     from voxprint_forge.app.window import ForgeApp
+
+    monkeypatch.setattr(forge_window, "EXTEND_FROM_SAMPLES_ENABLED", True)
 
     made = []
 

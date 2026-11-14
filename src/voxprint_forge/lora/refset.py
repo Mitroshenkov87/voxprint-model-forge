@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from voxprint_forge.lora.backends import gate_unavailable_error
 from voxprint_forge.lora.consent import Subject
 from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
 from voxprint_forge.lora.events import Progress
@@ -48,7 +49,6 @@ from voxprint_forge.lora.vram_stage import (
     release_heavy,
     require_quantized,
 )
-from voxprint_forge.mdl_app import missing_id_text
 from voxprint_forge.model_views import ensure_view
 
 SCHEMA = "voxprint-refset/1"
@@ -331,10 +331,7 @@ def check_refs(
     if not gate.available:
         _unload_gate(gate)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check", state="blocked")
-        ids = missing_id_text()
-        if not ids:
-            raise LoraBlocked("lora.err.not_prepared")
-        raise LoraBlocked("lora.err.gate_missing", ids=ids)
+        raise gate_unavailable_error()
     prompts = load_prompts(project)
     try:
         for index, (rid, image) in enumerate(images, 1):
@@ -537,10 +534,7 @@ def _gate_candidates(
         for _job, path in made:
             path.unlink(missing_ok=True)
         progress.emit("refset.safety", "lora.progress.blocked", reason_key="lora.reason.refset_check", state="blocked")
-        ids = missing_id_text()
-        if not ids:
-            raise LoraBlocked("lora.err.not_prepared")
-        raise LoraBlocked("lora.err.gate_missing", ids=ids)
+        raise gate_unavailable_error()
     shown: list[dict[str, Any]] = []
     minor = False
     try:

@@ -585,6 +585,11 @@ def _train(args: argparse.Namespace) -> dict[str, object]:
             project.recorded_bases(),
             explicit=bool(getattr(args, "base_explicit", False)),
         )
+    if not args.dry_run and _wants_fetch(args):
+        # ``_fetch_missing`` covers the required gate models only; the selected
+        # training base is fetched here, before the weights load.
+        for base_id in base_ids:
+            _ensure_base_weights(base_id)
     if args.dry_run:
         if len(base_ids) == 1:
             adapter = get_adapter(base_ids[0], training=True)

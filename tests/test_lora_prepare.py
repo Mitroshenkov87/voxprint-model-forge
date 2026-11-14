@@ -269,6 +269,35 @@ def test_missing_gate_blocks_before_any_work(tmp_path) -> None:
     assert not (tmp_path / "proj" / "prepared").exists()
 
 
+def test_gate_unavailable_with_models_present_names_the_worker_env_fix(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("voxprint_forge.mdl_app.missing_id_text", lambda: "")
+    monkeypatch.setattr("voxprint_forge.lora.backends.gate_worker_imports", lambda: False)
+    files = photos(tmp_path / "in", 10)
+    with pytest.raises(LoraBlocked) as info:
+        run(tmp_path, files, gate=Gate(None, FakeEstimator()))
+    assert info.value.code == "lora.err.gate_missing_deps"
+    assert not (tmp_path / "proj" / "prepared").exists()
+    message = text("lora.err.gate_missing_deps")
+    assert "opencv-python-headless" in message
+    assert "timm==0.8.13.dev0" in message
+    assert "--no-deps" in message
+    assert "--no-build-isolation" in message
+    assert "37475e3f8818b5f22448003feec3e64b01bfb188" in message
+
+
+def test_gate_unavailable_with_models_missing_keeps_gate_missing_even_when_imports_fail(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("voxprint_forge.mdl_app.missing_id_text", lambda: "mivolo-v2")
+    monkeypatch.setattr("voxprint_forge.lora.backends.gate_worker_imports", lambda: False)
+    files = photos(tmp_path / "in", 10)
+    with pytest.raises(LoraBlocked) as info:
+        run(tmp_path, files, gate=Gate(None, FakeEstimator()))
+    assert info.value.code == "lora.err.gate_missing"
+    assert info.value.params["ids"] == "mivolo-v2"
+    assert not (tmp_path / "proj" / "prepared").exists()
+
+
 def test_judge_exception_refuses_the_job(tmp_path) -> None:
     files = photos(tmp_path / "in", 10)
     with pytest.raises(LoraBlocked) as info:
