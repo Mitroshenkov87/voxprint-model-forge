@@ -59,6 +59,13 @@ CARD_PICTURE = 136  # px, a review-grid picture
 KEEP_MARK = 30  # px, the checkmark toggle on a picture
 REVIEW_MARK = 36  # px, the include / leave-out toggles on a review sample
 
+# "Extend the set from samples" is hidden for now and comes back later as its
+# own tested task. While this is False, the photos-step switch and its hint,
+# the overflow-menu "Add more photos to a model…" action and the result-step
+# "Add more photos" button are not shown. The switch stays off, so the
+# Build-a-set (refset) step also stays out of the visible wizard.
+EXTEND_FROM_SAMPLES_ENABLED = False
+
 
 def button_radius_px() -> int:
     """Square-button radius from the suite token, or 4 px when that token is absent."""
@@ -969,6 +976,8 @@ class ForgeApp:
             ("forge.app.menu.guide", "lora.menu.guide.desc", self.open_guide),
         )
         for label, desc, slot in items:
+            if label == "forge.app.menu.extend" and not EXTEND_FROM_SAMPLES_ENABLED:
+                continue
             action = QtGui.QAction(tr(label), menu)
             action.setStatusTip(tr(desc))
             action.setToolTip(tr(desc))
@@ -1314,11 +1323,13 @@ class ForgeApp:
         extend.setToolTip(tr("forge.app.photos.extend.tip"))
         extend.setChecked(self.draft.source == "refs")
         extend.toggled.connect(lambda checked: self._set_source("refs" if checked else "photos"))
+        extend.setVisible(EXTEND_FROM_SAMPLES_ENABLED)
         column.addWidget(extend)
         hint = QtWidgets.QLabel(tr("forge.app.photos.extend.hint"))
         hint.setObjectName("forge.photos.extend.hint")
         hint.setProperty("muted", "true")
         hint.setWordWrap(True)
+        hint.setVisible(EXTEND_FROM_SAMPLES_ENABLED)
         column.addWidget(hint)
         if self.draft.photos:
             column.addWidget(self._photo_count_label())
@@ -2047,6 +2058,8 @@ class ForgeApp:
             ("forge.app.result.canvas", "lora.result.canvas.tip", self.install, False),
             ("forge.app.result.extend", "lora.result.extend.tip", self.extend_this, False),
         ):
+            if label == "forge.app.result.extend" and not EXTEND_FROM_SAMPLES_ENABLED:
+                continue
             button = _button(label, tip, slot, primary=primary)
             button.setEnabled(not busy)
             row.addWidget(button)

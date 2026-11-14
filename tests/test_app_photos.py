@@ -218,7 +218,10 @@ def test_kind_options_have_a_one_line_note(make_app) -> None:
         assert segments.isAncestorOf(chip)
 
 
-def test_count_line_follows_the_subject_and_the_toggle(make_app) -> None:
+def test_count_line_follows_the_subject_and_the_toggle(make_app, monkeypatch) -> None:
+    from voxprint_forge.app import window as forge_window
+
+    monkeypatch.setattr(forge_window, "EXTEND_FROM_SAMPLES_ENABLED", True)
     app = make_app("en")
     assert tr("forge.app.step.photos.short") in _label_texts(app)
     for kind in ("person", "object", "style"):
@@ -235,7 +238,10 @@ def test_count_line_follows_the_subject_and_the_toggle(make_app) -> None:
     assert tr("forge.app.step.photos.short.style") not in texts
 
 
-def test_extend_toggle_maps_onto_the_refs_pipeline(make_app, tmp_path) -> None:
+def test_extend_toggle_maps_onto_the_refs_pipeline(make_app, tmp_path, monkeypatch) -> None:
+    from voxprint_forge.app import window as forge_window
+
+    monkeypatch.setattr(forge_window, "EXTEND_FROM_SAMPLES_ENABLED", True)
     app = make_app()
     toggle = app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend")
     hint = app.window.findChild(QtWidgets.QLabel, "forge.photos.extend.hint")
@@ -286,3 +292,24 @@ def test_extend_toggle_maps_onto_the_refs_pipeline(make_app, tmp_path) -> None:
     assert app.draft.source == "photos"
     assert len(app.draft.photos) == 2
     assert not app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").isChecked()
+
+
+def test_extend_from_samples_is_hidden_by_default(make_app) -> None:
+    """Flag off: the switch, its hint, the menu action and the result button stay out of the chrome."""
+    from voxprint_forge.app import window as forge_window
+    from voxprint_forge.app.draft import STEPS
+
+    assert forge_window.EXTEND_FROM_SAMPLES_ENABLED is False
+    app = make_app()
+    page = _page(app)
+    toggle = page.findChild(QtWidgets.QCheckBox, "forge.photos.extend")
+    hint = page.findChild(QtWidgets.QLabel, "forge.photos.extend.hint")
+    assert toggle is not None and not toggle.isVisibleTo(app.window)
+    assert hint is not None and not hint.isVisibleTo(app.window)
+    menu = app.widget._parts()["overflow"].menu()
+    assert tr("forge.app.menu.extend") not in [action.text() for action in menu.actions()]
+    app.layout.sections._index = STEPS.index("result")
+    app.repaint()
+    QtWidgets.QApplication.processEvents()
+    labels = [b.text() for b in app.window.findChildren(QtWidgets.QPushButton) if b.isVisibleTo(app.window)]
+    assert tr("forge.app.result.extend") not in labels

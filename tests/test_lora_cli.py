@@ -78,3 +78,37 @@ def test_dry_run_works_without_a_source_checkout(tmp_path, capsys, monkeypatch) 
     code = main(["--json", "lora", "train", "--project", str(project), "--dry-run", *ARGS])
     payload = json.loads(capsys.readouterr().out)
     assert code == 0 and payload["result"]["state"] == "dry-run"
+
+
+def _spy_base_fetch(monkeypatch) -> list[str]:
+    """Record ``_ensure_base_weights`` calls and stub the gate fetch and weight loading."""
+    fetched: list[str] = []
+    monkeypatch.setattr("voxprint_forge.lora.cli._fetch_missing", lambda: None)
+    monkeypatch.setattr("voxprint_forge.lora.cli._ensure_base_weights", fetched.append)
+    monkeypatch.setattr("voxprint_forge.lora.bases.get_adapter", lambda *a, **k: TinyAdapter())
+    monkeypatch.setattr("voxprint_forge.lora.train.train", lambda *a, **k: {"state": "done"})
+    return fetched
+
+
+def test_fetch_missing_fetches_the_selected_base(tmp_path, monkeypatch) -> None:
+    make_project(tmp_path)
+    fetched = _spy_base_fetch(monkeypatch)
+    code = main(
+        [
+            "--json", "lora", "train", "--project", str(tmp_path),
+            "--fetch-missing", "--base", "z-image", "--vram", "24", "--steps", "4",
+        ]
+    )
+    assert code == 0 and fetched == ["z-image"]
+
+
+def test_no_fetch_skips_the_selected_base(tmp_path, monkeypatch) -> None:
+    make_project(tmp_path)
+    fetched = _spy_base_fetch(monkeypatch)
+    code = main(
+        [
+            "--json", "lora", "train", "--project", str(tmp_path),
+            "--no-fetch", "--base", "z-image", "--vram", "24", "--steps", "4",
+        ]
+    )
+    assert code == 0 and fetched == []
