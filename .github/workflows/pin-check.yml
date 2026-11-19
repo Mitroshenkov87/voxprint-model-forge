@@ -1,0 +1,55 @@
+# Reusable pin check. Copy this file to .github/workflows/pin-check.yml in an
+# app repo and call it with workflow_call. GitHub only loads reusable
+# workflows from that directory. The checker script stays in this repo at
+# docs/ci/check_pin.py and is checked out at the wanted tag.
+name: voxprint-common pin
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Wanted voxprint-common tag, such as v0.7.4
+        required: true
+        type: string
+      pyproject:
+        description: Path to pyproject.toml in the app checkout
+        required: false
+        type: string
+        default: pyproject.toml
+      lock:
+        description: Lock file to read. Empty uses uv.lock, poetry.lock, pdm.lock, or requirements.txt when present.
+        required: false
+        type: string
+        default: ""
+      commit:
+        description: voxprint-common commit the tag points at; its wheel is built from it
+        required: true
+        type: string
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Mitroshenkov87/voxprint-common
+          ref: ${{ inputs.tag }}
+          path: .voxprint-pin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # Release pages are gone (2026-11-17). Build the wheel from the pinned commit
+      # instead of reading the deleted release .sha256; the build is reproducible,
+      # so its sha256 is the published wheel's.
+      - name: Build the voxprint-common wheel from the pinned commit
+        run: |
+          python -m pip wheel -q --no-deps -w .voxprint-wheel \
+            "git+https://github.com/Mitroshenkov87/voxprint-common.git@${{ inputs.commit }}"
+          echo "VOXPRINT_WHEEL_SHA256=$(sha256sum .voxprint-wheel/*.whl | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Fail when the pin disagrees with the tag's wheel sha256
+        env:
+          WANTED_TAG: ${{ inputs.tag }}
+          PYPROJECT: ${{ inputs.pyproject }}
+          LOCK: ${{ inputs.lock }}
+        run: python .voxprint-pin/docs/ci/check_pin.py

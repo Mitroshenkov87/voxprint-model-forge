@@ -1,0 +1,263 @@
+"""Review-sample prompts follow the prepared captions' attire."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from tests.lora_fakes import make_project
+from voxprint_forge.lora.captioner import text_marks_unclothed
+from voxprint_forge.lora.job_gate import pin
+from voxprint_forge.lora.project import Item
+from voxprint_forge.lora.review import load_state, passes_output_check
+from voxprint_forge.lora.sample_prompts import (
+    ATTIRE_MODES,
+    FRAMINGS,
+    build_sample_prompts,
+    marks_unclothed,
+    read_attire,
+    resolve_attire,
+    store_attire,
+)
+
+
+def _caps(*flags: bool | None) -> list[dict[str, object]]:
+    rows = []
+    for flag in flags:
+        row: dict[str, object] = {"long": "a person standing", "short": "standing"}
+        if isinstance(flag, bool):
+            row["unclothed"] = flag
+        rows.append(row)
+    return rows
+
+
+def test_auto_follows_any_unclothed_caption() -> None:
+    assert resolve_attire("auto", _caps(False, False)) == "as_photos"
+    assert resolve_attire("auto", _caps(False, True)) == "unclothed"
+    assert resolve_attire("auto", []) == "as_photos"
+    assert resolve_attire("as_photos", _caps(True)) == "as_photos"
+    assert resolve_attire("clothed", _caps(True)) == "clothed"
+    assert resolve_attire("unclothed", _caps(False)) == "unclothed"
+    with pytest.raises(ValueError):
+        resolve_attire("fancy", _caps(False))
+
+
+def test_a_missing_flag_can_come_from_the_caption_text() -> None:
+    assert marks_unclothed({"long": "a nude figure", "short": "figure"}) is True
+    assert marks_unclothed({"long": "a coated figure", "short": "figure"}) is False
+    assert marks_unclothed({"unclothed": False, "long": "a nude figure"}) is False
+    assert marks_unclothed({"unclothed": True, "long": "a coated figure"}) is True
+    assert text_marks_unclothed("fully nude.") is True
+    assert text_marks_unclothed("denude") is False
+
+
+def test_prompts_rotate_framings_from_the_seed_and_round() -> None:
+    captions = _caps(False)
+    first = build_sample_prompts("tcube", count=3, seed=0, round_no=1, mode="auto", captions=captions)
+    again = build_sample_prompts("tcube", count=3, seed=0, round_no=1, mode="auto", captions=captions)
+    assert first == again
+    assert first == [
+        "tcube, a person, waist-up, wearing near-skin-tone underwear",
+        "tcube, a person, full body, wearing near-skin-tone underwear",
+        "tcube, a person, close-up portrait, wearing near-skin-tone underwear",
+    ]
+    shifted = build_sample_prompts("tcube", count=3, seed=2, round_no=1, mode="clothed", captions=_caps(True))
+    assert shifted[0] == "tcube, a person, close-up portrait, wearing near-skin-tone underwear"
+    nxt = build_sample_prompts("tcube", count=4, seed=0, round_no=2, mode="auto", captions=captions)
+    assert [part.split(", ")[2] for part in nxt] == [
+        "full body", "close-up portrait", "waist-up", "full body",
+    ]
+    bare = build_sample_prompts("", count=1, seed=2, round_no=1, mode="unclothed", captions=captions)
+    assert bare == ["a person, close-up portrait, unclothed"]
+    assert set(FRAMINGS) == {"close-up portrait", "waist-up", "full body"}
+
+
+def test_as_photos_does_not_add_clothing_and_clothed_does() -> None:
+    mixed = _caps(False, True)
+    as_photos = build_sample_prompts("mira", count=2, seed=2, round_no=1, mode="as_photos", captions=mixed)
+    forced = build_sample_prompts("mira", count=2, seed=2, round_no=1, mode="clothed", captions=mixed)
+    assert all(prompt.endswith(", unclothed") for prompt in as_photos)
+    assert all("underwear" not in prompt for prompt in as_photos)
+    assert all(prompt.endswith(", wearing near-skin-tone underwear") for prompt in forced)
+    auto = build_sample_prompts("mira", count=1, seed=2, round_no=1, mode="auto", captions=mixed)
+    assert auto == ["mira, a person, close-up portrait, unclothed"]
+
+
+def test_sample_attire_is_stored_on_the_project(tmp_path: Path) -> None:
+    project = make_project(tmp_path, count=10)
+    assert read_attire(project.read()) == "auto"
+    assert store_attire(project, "unclothed") == "unclothed"
+    assert project.read()["sample_attire"] == "unclothed"
+    assert read_attire(project.read()) == "unclothed"
+    store_attire(project, "unclothed")
+    assert ATTIRE_MODES == ("auto", "as_photos", "clothed", "unclothed")
+
+
+def test_the_output_check_still_keeps_only_a_picture() -> None:
+    assert passes_output_check(None) is False
+    assert passes_output_check(object()) is True
+    source = Path(passes_output_check.__code__.co_filename).read_text(encoding="utf-8")
+    body = source.split("def passes_output_check", 1)[1].split("def ", 1)[0]
+    assert "return image is not None" in body
+
+
+def test_adult_projects_default_to_a_clothed_and_a_nude_preview(tmp_path: Path) -> None:
+    """The default preview set: a clothed person picture; an adult person project adds the nude one."""
+    from voxprint_forge.lora.sample_prompts import PREVIEW_CLOTHED, PREVIEW_NUDE
+    from voxprint_forge.lora.train import default_preview_prompts
+
+    project = make_project(tmp_path / "plain", count=10)
+    single = default_preview_prompts(project, project.read())
+    assert len(single) == 1  # an object project keeps its single plain prompt
+    assert PREVIEW_CLOTHED not in single[0] and PREVIEW_NUDE not in single[0]
+
+    person = make_project(tmp_path / "person", count=10)
+    data = person.read()
+    data["kind"] = "person"
+    data["subject"] = {"name": "Ann", "trigger": "tann", "adult_content": False}
+    clothed = default_preview_prompts(person, data)
+    assert len(clothed) == 1
+    assert clothed[0].endswith(f", {PREVIEW_CLOTHED}")
+    assert "full figure" in clothed[0] and "vertical" in clothed[0]
+
+    data["subject"] = {"name": "Ann", "trigger": "tann", "adult_content": True}
+    pair = default_preview_prompts(person, data)
+    assert len(pair) == 2
+    assert pair[0] == clothed[0]
+    assert pair[1] == f"{clothed[0][: -len(PREVIEW_CLOTHED)]}{PREVIEW_NUDE}"
+
+    object_adult = make_project(tmp_path / "object", count=10)
+    object_data = object_adult.read()
+    object_data["subject"] = {"name": "Test cube", "trigger": "tcube", "adult_content": True}
+    object_single = default_preview_prompts(object_adult, object_data)
+    assert len(object_single) == 1  # an adult object project still keeps the single prompt
+    assert PREVIEW_CLOTHED not in object_single[0] and PREVIEW_NUDE not in object_single[0]
+
+
+def test_a_review_without_a_prompt_file_stores_sample_prompts(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
+    from voxprint_forge.lora.events import Progress
+    from voxprint_forge.lora.train import train
+
+    project = make_project(tmp_path, count=10)
+    items = project.items()
+    project.write_items([
+        Item(item.id, item.file, item.long, item.short, item.round, index == 0)
+        for index, item in enumerate(items)
+    ])
+    pin(project)  # the setup edits captions after the gate
+    DrawingAdapter.preview_steps = []
+    train(
+        project, _config(steps=2), DrawingAdapter(), Progress(),
+        review_rounds=1, samples_per_round=3, first_round_samples=3, sample_attire="auto",
+    )
+    state = load_state(project)
+    prompts = [str(prompt) for prompt in state["prompts"]]
+    assert state["custom_prompts"] is False
+    assert prompts
+    assert all(prompt.startswith("tcube, ") and prompt.endswith(", unclothed") for prompt in prompts)
+    assert project.read()["sample_attire"] == "auto"
+    kept = [sample for sample in state["samples"] if isinstance(sample, dict)]
+    assert kept
+    assert all(str(sample["prompt"]).endswith(", unclothed") for sample in kept)
+
+
+def test_an_explicit_prompt_list_is_kept(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
+    from voxprint_forge.lora.events import Progress
+    from voxprint_forge.lora.train import train
+
+    project = make_project(tmp_path, count=10)
+    train(
+        project, _config(steps=2), DrawingAdapter(), Progress(),
+        review_rounds=1, samples_per_round=1, preview_prompts=["a cube"],
+    )
+    state = load_state(project)
+    assert state["prompts"] == ["a cube"]
+    assert state["custom_prompts"] is True
+
+
+def test_the_cli_flag_parses_and_the_next_round_uses_the_saved_mode(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
+    from voxprint_forge.cli import build_parser
+    from voxprint_forge.lora.events import Progress
+    from voxprint_forge.lora.train import train
+
+    parsed = build_parser().parse_args(
+        ["lora", "train", "--project", str(tmp_path), "--sample-attire", "clothed"],
+    )
+    assert parsed.sample_attire == "clothed"
+    project = make_project(tmp_path / "proj", count=10)
+    project.write_items([
+        Item(item.id, item.file, item.long, "nude", item.round, None) for item in project.items()
+    ])
+    pin(project)  # the setup edits captions after the gate
+    train(
+        project, _config(steps=3), DrawingAdapter(), Progress(),
+        review_rounds=2, samples_per_round=2, first_round_samples=2,
+    )
+    first = load_state(project)
+    assert all(str(prompt).endswith(", unclothed") for prompt in first["prompts"])
+    store_attire(project, "clothed")
+    before = sorted(path.name for path in (project.root / "review" / "round-0001").glob("*.webp"))
+    second = train(project, _config(steps=3), DrawingAdapter(), Progress(), review_continue=True)
+    assert second["state"] == "review"
+    state = load_state(project)
+    assert all(str(prompt).endswith(", wearing near-skin-tone underwear") for prompt in state["prompts"])
+    assert sorted(path.name for path in (project.root / "review" / "round-0001").glob("*.webp")) == before
+    assert json.loads((project.root / "project.json").read_text(encoding="utf-8"))["sample_attire"] == "clothed"
+
+
+def test_portrait_framing_is_a_face_close_up_for_every_sample() -> None:
+    from voxprint_forge.lora.sample_prompts import PORTRAIT_FRAMING
+
+    captions = _caps(False)
+    mixed = build_sample_prompts("tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions)
+    default = build_sample_prompts(
+        "tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions, framing="mixed",
+    )
+    assert mixed == default
+    assert {framing for framing in FRAMINGS if any(framing in prompt for prompt in mixed)} == set(FRAMINGS)
+    portrait = build_sample_prompts(
+        "tcube", count=6, seed=0, round_no=1, mode="clothed", captions=captions, framing="portrait",
+    )
+    assert len(portrait) == 6
+    assert all(PORTRAIT_FRAMING in prompt and prompt.startswith("tcube") for prompt in portrait)
+    assert not any("full body" in prompt or "waist-up" in prompt for prompt in portrait)
+    with pytest.raises(ValueError):
+        build_sample_prompts("tcube", count=1, seed=0, round_no=1, mode="auto", captions=captions, framing="wide")
+
+
+def test_sample_framing_is_stored_and_used_by_train_and_continue(tmp_path: Path) -> None:
+    from tests.test_lora_review import DrawingAdapter, _config
+    from voxprint_forge.cli import build_parser
+    from voxprint_forge.lora.events import Progress
+    from voxprint_forge.lora.review import save_state
+    from voxprint_forge.lora.sample_prompts import PORTRAIT_FRAMING, read_framing, store_framing
+    from voxprint_forge.lora.train import train
+
+    parsed = build_parser().parse_args(["lora", "train", "--project", "p", "--sample-framing", "portrait"])
+    assert parsed.sample_framing == "portrait" and parsed.sample_attire is None
+    assert build_parser().parse_args(["lora", "train", "--project", "p"]).sample_framing is None
+    cont = build_parser().parse_args(
+        ["lora", "continue", "p", "--sample-framing", "mixed", "--sample-attire", "clothed"],
+    )
+    assert cont.sample_framing == "mixed" and cont.sample_attire == "clothed"
+    project = make_project(tmp_path, count=10)
+    assert read_framing(project.read()) == "mixed"
+    store_framing(project, "portrait")
+    assert project.read()["sample_framing"] == "portrait"
+    first = train(
+        project, _config(steps=201), DrawingAdapter(), Progress(), review_rounds=2, samples_per_round=2,
+        first_round_steps=100, first_round_samples=2,
+    )
+    assert first["state"] == "review"
+    state = load_state(project)
+    assert state["prompts"] and all(PORTRAIT_FRAMING in str(p) for p in state["prompts"])
+    store_framing(project, "mixed")
+    save_state(project, state)
+    train(project, _config(steps=201), DrawingAdapter(), Progress(), review_continue=True)
+    later = load_state(project)
+    assert later["index"] == 2 and not any(PORTRAIT_FRAMING in str(p) for p in later["prompts"])

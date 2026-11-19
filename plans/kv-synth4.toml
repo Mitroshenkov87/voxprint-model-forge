@@ -1,0 +1,83 @@
+# Plotweaver llama.cpp stack (b11476): KV-cache arms and a speculative/prefix bench.
+# Prompt text is public. Corpus: wikitext-2-raw test (CC BY-SA 3.0). It is downloaded at
+# runtime from ggml-org/ci at a pinned revision and sha256-checked; it is never committed.
+# Each KV arm is scored against the SAME GGUF with an f16 KV cache, so it measures the cache only.
+# L2 (gemma4) waits for the L1/L2 eval fix (fix/llm-kl-l1-l2). With it, PPL may be marked unusable
+# on prose and KL/top-1 decide.
+
+[corpus]
+repo = "ggml-org/ci"
+repo_type = "dataset"
+revision = "927b3642933080f1b0e811e2f916e14c292992f9"
+file = "wikitext-2-raw-v1.zip"
+sha256 = "ef7edb566e3e2b2d31b29c1fdb0c89a4cc683597484c3dc2517919c615435a11"
+member = "wikitext-2-raw/wiki.test.raw"
+
+[kv]
+# (ctx, chunks): about 50k and 98k scored tokens.
+contexts = [[512, 100], [8192, 12]]
+base = ["f16", "f16"]
+arms = [["q8_0", "q8_0"], ["q8_0", "q4_0"], ["q4_0", "q4_0"]]
+# Proposed pass bar against f16 KV. Advisory until Suite Lead sets it.
+kl_max = 0.01
+ppl_rel_max = 0.01
+
+[[models]]
+id = "L1"
+repo = "Mitroshenkov87/voxprint-t-lite-it-2.1"
+revision = "d85d9393"
+pattern = "*IQ4_XS*.gguf"
+dense = true
+
+[[models]]
+id = "L2"
+repo = "Mitroshenkov87/voxprint-gemma4-31b"
+revision = "0d84d5f0"
+pattern = "*IQ3_XXS*.gguf"
+dense = false
+requires = "L1/L2 eval fix merged"
+note = "SWA model: --cache-reuse needs KV shifting and does not apply; prefix reuse relies on ctx checkpoints."
+
+[[models]]
+id = "L3"
+repo = "Mitroshenkov87/voxprint-huihui-qwen36-27b"
+revision = "29771181"
+pattern = "*Q3_K_M*.gguf"
+dense = false
+note = "Hybrid (recurrent) model: speculative decoding or --cache-reuse may be refused; the bench records that."
+
+[[models]]
+id = "L4"
+repo = "Mitroshenkov87/voxprint-mirror-t-pro-it-2.1-gguf"
+revision = "56ca6ce9"
+pattern = "*Q4_K_M*.gguf"
+dense = true
+
+[bench]
+models = ["L1", "L4", "L3"]
+ctx = 8192
+n_predict = 256
+seed = 7
+temperature = 0.0
+spec_arms = [
+  { id = "none", args = [] },
+  { id = "ngram-simple", args = ["--spec-type", "ngram-simple", "--spec-draft-n-max", "64"] },
+  { id = "ngram-map-k", args = ["--spec-type", "ngram-map-k", "--spec-draft-n-max", "64"] },
+  { id = "ngram-mod", args = ["--spec-type", "ngram-mod", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "48", "--spec-ngram-mod-n-max", "64"] },
+]
+prefix_arms = [
+  { id = "prompt-cache", args = [] },
+  { id = "cache-reuse-256", args = ["--cache-reuse", "256"] },
+]
+# Rewrite set: wikitext passages the model must return with light edits, so output repeats input.
+rewrite_passages = 8
+rewrite_instruction = "Return the passage below with spelling and punctuation corrected. Change nothing else."
+free_prompts = [
+  "Write the opening scene of a mystery novel set in a mountain observatory.",
+  "Describe a busy harbour market at dawn from the point of view of a ferry captain.",
+  "Write a short dialogue between two engineers arguing about a bridge design.",
+  "Continue: The letter had been waiting under the door for three days before anyone noticed it.",
+]
+# Prefix test: one long shared system prompt (first N wikitext tokens), then short user turns.
+prefix_system_chars = 12000
+prefix_turns = 4

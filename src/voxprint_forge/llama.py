@@ -1,0 +1,397 @@
+"""Command lines for llama.cpp b11476. The runner is injected so tests do not need the binary."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from queue import Empty, Queue
+
+from voxprint_forge.errors import StageError, ToolMissingError
+
+TAG = "b11476"
+COMMIT = "988190680d5a89fce97de3c20df2c2813731fd61"
+
+
+def _pump(stream, sink: Queue[str | None]) -> None:
+    try:
+        for line in stream:
+            sink.put(line)
+    except (OSError, ValueError):
+        return
+    finally:
+        sink.put(None)
+
+
+def _kill_tree(proc: subprocess.Popen[str]) -> None:
+    """Stop the process and anything it spawned. A blocked pipe must not keep it alive."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+@dataclass
+class Completed:
+    """Argv, return code, and captured stdout and stderr."""
+    argv: list[str]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class Runner:
+    """Subprocess runner. Tests subclass this and skip the binary."""
+
+    def run(self, argv: list[str], *, cwd: Path | None = None) -> Completed:
+        """Run argv to completion and raise when the return code is not 0."""
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise ToolMissingError(f"missing {argv[0]}", code="tool_missing") from exc
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout)[-2000:]
+            raise StageError(f"{Path(argv[0]).name} exited {proc.returncode}: {tail}", code="tool_failed")
+        return Completed(argv=argv, returncode=0, stdout=proc.stdout, stderr=proc.stderr)
+
+    def capture_until(self, argv: list[str], *, pattern: str, timeout: float = 180) -> Completed:
+        """Run until stdout contains pattern. The read never blocks past timeout.
+
+        A reader thread fills a queue, so a silent process still hits the
+        deadline. On timeout the whole process group is killed.
+        """
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            raise ToolMissingError(f"missing {argv[0]}", code="tool_missing") from exc
+        lines: list[str] = []
+        sink: Queue[str | None] = Queue()
+        assert proc.stdout is not None
+        thread = threading.Thread(target=_pump, args=(proc.stdout, sink), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = sink.get(timeout=remaining)
+                except Empty:
+                    timed_out = True
+                    break
+                if line is None:
+                    break
+                lines.append(line)
+                if pattern in line or pattern in "".join(lines):
+                    break
+        finally:
+            _kill_tree(proc)
+        text = "".join(lines)
+        if pattern not in text:
+            tail = text[-500:]
+            if timed_out:
+                raise StageError(
+                    f"{Path(argv[0]).name} timed out after {timeout:.0f}s before {pattern}: {tail}",
+                    code="tool_timeout",
+                )
+            raise StageError(f"{Path(argv[0]).name} did not report {pattern}: {tail}", code="tool_output")
+        return Completed(argv=argv, returncode=0, stdout=text, stderr="")
+
+
+def bin_dir() -> Path | None:
+    """``FORGE_LLAMA_BIN`` when it is set, otherwise None."""
+    raw = os.environ.get("FORGE_LLAMA_BIN", "")
+    if raw:
+        return Path(raw)
+    return None
+
+
+def src_dir() -> Path | None:
+    """``FORGE_LLAMA_SRC`` when it is set, otherwise None."""
+    raw = os.environ.get("FORGE_LLAMA_SRC", "")
+    if raw:
+        return Path(raw)
+    return None
+
+
+def tool(name: str) -> str:
+    """Path of a llama.cpp binary, from ``FORGE_LLAMA_BIN`` or ``PATH``."""
+    folder = bin_dir()
+    if folder is not None:
+        candidate = folder / name
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which(name)
+    if found:
+        return found
+    raise ToolMissingError(
+        f"{name} not on PATH. Build llama.cpp {TAG} and set FORGE_LLAMA_BIN.",
+        code="tool_missing",
+    )
+
+
+def convert_script() -> Path:
+    """Path of ``convert_hf_to_gguf.py`` under ``FORGE_LLAMA_SRC``."""
+    folder = src_dir()
+    if folder is None:
+        raise ToolMissingError("FORGE_LLAMA_SRC is not set (needs convert_hf_to_gguf.py)", code="tool_missing")
+    path = folder / "convert_hf_to_gguf.py"
+    if not path.is_file():
+        raise ToolMissingError(f"missing {path}", code="tool_missing")
+    return path
+
+
+def convert_argv(script: Path, source: Path, outfile: Path) -> list[str]:
+    """Argv that converts a safetensors directory to an F16 GGUF."""
+    return [
+        os.environ.get("FORGE_PYTHON") or sys.executable,
+        str(script),
+        str(source),
+        "--outtype",
+        "f16",
+        "--outfile",
+        str(outfile),
+    ]
+
+
+def imatrix_argv(binary: str, model: Path, corpus: Path, outfile: Path, *, chunks: int, ctx: int) -> list[str]:
+    """Argv for llama-imatrix. ``--fit`` stays off."""
+    return [
+        binary,
+        "-m",
+        str(model),
+        "-f",
+        str(corpus),
+        "-o",
+        str(outfile),
+        "--output-format",
+        "gguf",
+        "--chunks",
+        str(chunks),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "--no-ppl",
+    ]
+
+
+def quantize_argv(binary: str, source: Path, outfile: Path, quant: str, imatrix: Path) -> list[str]:
+    """Argv for llama-quantize with an importance matrix."""
+    return [binary, "--imatrix", str(imatrix), str(source), str(outfile), quant]
+
+
+# -ctk/-ctv values llama.cpp b11476 accepts (tools/server/README.md at the tag).
+KV_CACHE_TYPES = ("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")
+_UNQUANTIZED_KV = frozenset({"f32", "f16", "bf16"})
+
+
+def kv_cache_args(cache_k: str | None, cache_v: str | None) -> list[str]:
+    """``-ctk K -ctv V`` for the KV cache types. ``None`` keeps llama.cpp's default (f16)."""
+    out: list[str] = []
+    for flag, value in (("-ctk", cache_k), ("-ctv", cache_v)):
+        if value is None:
+            continue
+        if value not in KV_CACHE_TYPES:
+            raise StageError(f"KV cache type {value!r} is not one of {', '.join(KV_CACHE_TYPES)}", code="usage")
+        out += [flag, value]
+    return out
+
+
+def kv_is_quantized(cache_k: str | None, cache_v: str | None) -> bool:
+    """True when either cache type is a quantized one."""
+    return any(v is not None and v not in _UNQUANTIZED_KV for v in (cache_k, cache_v))
+
+
+def with_kv_cache(argv: list[str], cache_k: str | None, cache_v: str | None) -> list[str]:
+    """``argv`` plus the cache flags, and ``-fa on`` when the cache is quantized and FA is not set.
+
+    A quantized V cache needs flash attention on llama.cpp.
+    """
+    out = list(argv) + kv_cache_args(cache_k, cache_v)
+    if kv_is_quantized(cache_k, cache_v) and "-fa" not in out and "--flash-attn" not in out:
+        out += ["-fa", "on"]
+    return out
+
+
+def perplexity_argv(
+    binary: str,
+    model: Path,
+    corpus: Path,
+    *,
+    chunks: int,
+    ctx: int,
+    cache_k: str | None = None,
+    cache_v: str | None = None,
+) -> list[str]:
+    """Argv for llama-perplexity. ``--fit`` stays off. Cache types default to f16."""
+    argv = [
+        binary,
+        "-m",
+        str(model),
+        "-f",
+        str(corpus),
+        "--chunks",
+        str(chunks),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "--fit",
+        "off",
+    ]
+    return with_kv_cache(argv, cache_k, cache_v)
+
+
+def kl_argv(
+    binary: str,
+    model: Path,
+    corpus: Path,
+    logits: Path,
+    *,
+    chunks: int,
+    ctx: int,
+    compare: bool,
+    cache_k: str | None = None,
+    cache_v: str | None = None,
+) -> list[str]:
+    """Argv for one llama-perplexity KL step. ``--fit`` stays off.
+
+    On llama.cpp b11476, ``--kl-divergence-base`` is an alias of
+    ``--save-all-logits``. A run without ``--kl-divergence`` writes that file.
+    A run with ``--kl-divergence`` reads it and prints KL, top-1, and delta-p.
+    ``cache_k``/``cache_v`` set ``-ctk``/``-ctv``; ``None`` keeps f16.
+    """
+    argv = [
+        binary,
+        "-m",
+        str(model),
+        "-f",
+        str(corpus),
+        "--chunks",
+        str(chunks),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "--fit",
+        "off",
+        "--kl-divergence-base",
+        str(logits),
+    ]
+    if compare:
+        argv.append("--kl-divergence")
+    return with_kv_cache(argv, cache_k, cache_v)
+
+
+def server_argv(
+    binary: str,
+    model: Path,
+    *,
+    ctx: int,
+    port: int,
+    cache: str,
+    extra: tuple[str, ...] = (),
+) -> list[str]:
+    """Argv for llama-server. Extra split flags sit before ``-v --fit off``."""
+    return [
+        binary,
+        "-m",
+        str(model),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "-ctk",
+        cache,
+        "-ctv",
+        cache,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "-np",
+        "1",
+        *extra,
+        "-v",
+        "--fit",
+        "off",
+    ]
+
+
+def cli_argv(binary: str, model: Path, prompt: str, *, n_predict: int, ctx: int, cache: str) -> list[str]:
+    """Argv for one llama-cli sample. ``--fit`` stays off."""
+    return [
+        binary,
+        "-m",
+        str(model),
+        "-p",
+        prompt,
+        "-n",
+        str(n_predict),
+        "-c",
+        str(ctx),
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+        "-ctk",
+        cache,
+        "-ctv",
+        cache,
+        "--single-turn",
+        "--no-display-prompt",
+        "--temp",
+        "0.7",
+        "--fit",
+        "off",
+    ]

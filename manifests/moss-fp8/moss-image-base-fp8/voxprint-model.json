@@ -1,0 +1,72 @@
+{
+  "schema": "voxprint-model/1",
+  "id": "moss-image-base-fp8",
+  "display_name": "MOSS-Image Base DiT FP8",
+  "app_ids": [
+    "canvas"
+  ],
+  "task": "text-to-image",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "path": "LICENSE",
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "NOTICE",
+      "size": 470,
+      "sha256": "3eb5bc81958eb27e0bbc1dd7e7b4356166d0f90bed3bce1231e24f2cbb0b16e2"
+    },
+    {
+      "path": "README.md",
+      "size": 2142,
+      "sha256": "7c4e6f4c0d46871e054fd09e14d2324e5f4f1d0e0f778264b09d61a59b76bd4c"
+    },
+    {
+      "path": "dit-fp8.safetensors",
+      "size": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "mirrors": [
+    {
+      "kind": "hf",
+      "ref": "Mitroshenkov87/voxprint-mirror-moss-image-base-fp8",
+      "revision": "unpublished",
+      "ours": true
+    }
+  ],
+  "tier": {
+    "min_vram_gib": 15.5,
+    "recommended_vram_gib": 15.5,
+    "gpu_min_cc": 8.0
+  },
+  "runtime": {
+    "engine": "diffusers",
+    "version_req": ">=0.38"
+  },
+  "base_model": "OpenMOSS-Team/MOSS-Image-Base",
+  "card_url": "https://huggingface.co/Mitroshenkov87/voxprint-mirror-moss-image-base-fp8",
+  "flags": [
+    "derivative",
+    "modified",
+    "fallback=quantize-bf16",
+    "source-repo=OpenMOSS-Team/MOSS-Image-Base",
+    "source-revision=1ceede80badddd6a7812069619edaa5633587192",
+    "source-mirror=Mitroshenkov87/voxprint-mirror-moss-image-base",
+    "torchao=0.18.0",
+    "quant=float8_e4m3fn,per_row,v2",
+    "source-sha=transformer/config.json:3291c3a1c7adc22b8182a0de25ca8ec97474d72715ce84adbab09cc0be24f666",
+    "source-sha=transformer/diffusion_pytorch_model.safetensors.index.json:b609327fc75dbe5080e7e095d8b727d74d728b4f98e8b047133b0082cfa2fb03",
+    "source-sha=transformer/diffusion_pytorch_model-00001-of-00003.safetensors:ae085fba123b6df67daf90aa9698fadee60c73e45bcaf3f3043d15f34e7a1804",
+    "source-sha=transformer/diffusion_pytorch_model-00002-of-00003.safetensors:806e876d80c7fba560663a3a95580e6c7033da3f9ea3c52765245ef0e1818f75",
+    "source-sha=transformer/diffusion_pytorch_model-00003-of-00003.safetensors:5f319b72c40324294007c270d78112425627b537fcd8769b3c00f9f070e506a9"
+  ],
+  "on_demand": true,
+  "build": {
+    "forge_version": "0.1.0",
+    "tag": "",
+    "date": "2026-10-25"
+  }
+}

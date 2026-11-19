@@ -1,0 +1,38 @@
+# Export
+
+## Step 6: Result
+
+![Step 6, Result](../img/en-simple-6-result.png)
+
+1. Look at the test pictures and choose a **Version**. A later version is not always better; pick the one you like.
+2. **Export LoRA** writes one `.voxlora` package: the LoRA weights, a `voxprint-model.json` description and preview pictures. Your photos are not in it. The file name is the stage name, or the name when the stage name is empty.
+3. **Save** writes one `.safetensors` file with its description file (`voxprint-model.json`), licence and notice. You can keep it or share it under the base model's licence.
+4. **Open in Canvas** adds the `.safetensors` file to your models. In Canvas, choose the LoRA, type the trigger word in your prompt, and set the strength (1.3 is a good start).
+
+To improve a model later, press **Add more photos** on this step. Training continues from the model with the new photos and a share of the old ones.
+
+## The file to keep
+
+The exported `.voxlora` package is the finished LoRA: keep it, share it, and open it in Canvas. The `checkpoints/step-NNNNNN.safetensors` files in the project folder are intermediate versions saved during training. They have no description or previews, and Canvas does not accept them. To use an earlier version, choose it under **Version** and export it.
+
+## Where the files go
+
+- LoRAs sent with **Open in Canvas**: `%LOCALAPPDATA%\VOXPrint AI Suite\models\user-models\lora\<name>\`.
+- Projects: `%USERPROFILE%\Documents\VOXPrint Projects\Model Forge\` (the Documents folder is resolved, not hard-coded: the `XDG_DOCUMENTS_DIR` setting on Linux, the Known Folder on Windows). **More → Open project…** opens an earlier project; **More → Open a command-line training…** opens a training that `forge-train` or `voxprint-forge-cli lora train` started — live while it runs, on the result step when it is finished; **Open project folder** shows its photos, versions and test pictures. Person photo folders live in `VOXPrint Projects\Model Forge\Photos\`, one folder per person; **Add → Add a person's folder** lists them.
+- Deleting a project folder removes its photos, descriptions and versions. Saved LoRA files elsewhere are not affected.
+
+## What the model file contains
+
+The names you entered, the trigger word, the consent and 18+ confirmations, how consent was given (verbal or file), the adult-content label, the optional provenance note, whether a release is attached and its fingerprint, and the training settings. It contains no photos, file paths, user name, computer details or photo metadata.
+
+## Command line
+
+The same exports are available from the command line:
+
+```text
+voxprint-forge-cli lora finish <project folder> [--no-preview]
+voxprint-forge-cli lora export <project folder> [-o <file.voxlora>]
+voxprint-forge-cli lora export --project <project folder> [--checkpoint <step>] [--out <file.safetensors>] [--install-to-mdl]
+```
+
+`lora finish` ends a paused review, saves the LoRA and writes the `.voxlora` package to `<project folder>/export/`. `--no-preview` skips the final test picture; if that picture fails, a warning is printed and the package is still written. `lora export <project folder>` writes the `.voxlora` package (uncompressed zip): `model.safetensors`, `voxprint-model.json` and previews from samples that passed the output check. The description follows `docs/schemas/voxprint-model-1.json`. It records the steps done and the steps planned. `--install-to-mdl` applies to the second command and adds the `.safetensors` file to your models for Canvas. See the [CLI reference](../../cli-reference.md).

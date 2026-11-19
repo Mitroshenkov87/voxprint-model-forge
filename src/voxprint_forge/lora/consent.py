@@ -1,0 +1,143 @@
+"""Subject and consent per kind."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from voxprint_forge.lora.attr import accepted
+from voxprint_forge.lora.errors import LoraUsageError
+from voxprint_forge.lora.trigger import rare_trigger
+
+if TYPE_CHECKING:
+    from voxprint_forge.lora.release_file import ReleaseInfo
+
+KINDS = ("person", "object", "style")
+CONSENT_METHODS = ("verbal", "file")
+
+
+@dataclass(frozen=True)
+class Subject:
+
+    kind: str
+    name: str = ""
+    stage_name: str = ""
+    trigger: str = ""
+    consent_obtained: bool = False
+    adult_confirmed: bool = False
+    rights_confirmed: bool = False
+    provenance_note: str = ""
+    release_attached: bool = False
+    release_sha256: str = ""
+    consent_method: str = ""
+    adult_content: bool = False
+    attr: int | None = None
+    # From a ``release.txt`` (``None``/empty: no such file or the line is missing). These
+    # are records only: none of them skips or weakens a check.
+    release_name: str = ""
+    release_date: str = ""
+    no_minors_attested: bool | None = None
+    consent_generation: bool | None = None
+    adult_generation: bool | None = None
+    adult_content_training: bool | None = None
+
+    @property
+    def adult_attested(self) -> bool:
+        """``Adult (18+): yes`` and ``No minors in photos: yes`` on a person: the captioner is told so."""
+        return self.kind == "person" and self.adult_confirmed and self.no_minors_attested is True
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def default_trigger(name: str = "", stage_name: str = "") -> str:
+    """A rare ``vxp`` token. ``name`` and ``stage_name`` are not used."""
+    del name, stage_name
+    return rare_trigger()
+
+
+def check_subject(
+    kind: str,
+    *,
+    name: str = "",
+    stage_name: str = "",
+    trigger: str = "",
+    consent_obtained: bool = False,
+    subject_adult: bool = False,
+    rights_confirmed: bool = False,
+    provenance_note: str = "",
+    release: Path | None = None,
+    consent_method: str | None = None,
+    adult_content: bool = False,
+    subject_age: object = None,
+    release_info: ReleaseInfo | None = None,
+) -> Subject:
+    """The checked :class:`Subject`.
+
+    ``release_info`` (a parsed ``release.txt``) only adds its records to the subject; the
+    validation above does not change with it.
+    """
+    if kind not in KINDS:
+        raise LoraUsageError("lora.err.no_name")
+    name, stage_name = name.strip(), stage_name.strip()
+    if not name and not stage_name:
+        raise LoraUsageError("lora.err.no_name")
+    declared = _declared_attr(kind, subject_adult, subject_age)
+    if adult_content and not (kind == "person" and subject_adult):
+        raise LoraUsageError("lora.err.adult_content")
+    if kind == "person" and not (consent_obtained and subject_adult):
+        raise LoraUsageError("lora.err.no_consent")
+    method = ""
+    if kind == "person":
+        method = consent_method or ("file" if release is not None else "verbal")
+        if method not in CONSENT_METHODS:
+            raise LoraUsageError("lora.err.consent_method")
+        if method == "verbal" and release is not None:
+            raise LoraUsageError("lora.err.consent_method")
+        if method == "file" and release is None:
+            raise LoraUsageError("lora.err.no_release")
+    if kind in ("object", "style") and not rights_confirmed:
+        raise LoraUsageError("lora.err.no_rights")
+    digest = ""
+    if release is not None:
+        digest = hashlib.sha256(Path(release).read_bytes()).hexdigest()
+    return Subject(
+        kind=kind,
+        name=name,
+        stage_name=stage_name,
+        trigger=trigger.strip() or default_trigger(name, stage_name),
+        consent_obtained=bool(consent_obtained) if kind == "person" else False,
+        adult_confirmed=bool(subject_adult) if kind == "person" else False,
+        rights_confirmed=bool(rights_confirmed) if kind != "person" else False,
+        provenance_note=provenance_note,
+        release_attached=release is not None,
+        release_sha256=digest,
+        consent_method=method,
+        adult_content=bool(adult_content),
+        attr=declared,
+        **_release_fields(release_info),
+    )
+
+
+def _release_fields(info: ReleaseInfo | None) -> dict[str, object]:
+    if info is None:
+        return {}
+    return {
+        "release_name": info.model_name,
+        "release_date": info.date,
+        "no_minors_attested": info.no_minors,
+        "consent_generation": info.consent_generation,
+        "adult_generation": info.adult_generation,
+        "adult_content_training": info.adult_content,
+    }
+
+
+def _declared_attr(kind: str, subject_adult: bool, subject_age: object) -> int | None:
+    if kind != "person" or subject_age is None:
+        return None
+    number = accepted(subject_age)
+    if number is None or not subject_adult:
+        raise LoraUsageError("lora.err.subject_attr")
+    return number

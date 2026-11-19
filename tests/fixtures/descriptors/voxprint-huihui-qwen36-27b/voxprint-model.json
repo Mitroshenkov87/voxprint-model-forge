@@ -1,0 +1,89 @@
+{
+  "schema": "voxprint-model/1",
+  "id": "huihui-qwen36-27b",
+  "display_name": "VOXPrint Huihui Qwen3.6 27B abliterated (GGUF)",
+  "app_ids": [
+    "plotweaver"
+  ],
+  "task": "text-generation",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "size": 1704,
+      "sha256": "4a26dee002d9043e86757c8d5d4c9b1d507b32745f34c45ef908a62d4e2eab62"
+    },
+    {
+      "path": "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf",
+      "size": 19535700288,
+      "sha256": "a4fd0da6216fb8b9a74e25a688a118b001888b704e17f5c851c2bd80f4f5e284"
+    },
+    {
+      "path": "Huihui-Qwen3.6-27B-abliterated-ggml-model-Q5_K.gguf.sha256",
+      "size": 118,
+      "sha256": "0d8ab2d8aa9d522484a24bd003b3578a56859fc7e88b891308198134b8478b21"
+    },
+    {
+      "path": "Q3_K_M.gguf",
+      "size": 13500736128,
+      "sha256": "a52055204d9bd9208f4312951a2a68b32c4c68d54d6905c5386dbb552df58edf"
+    },
+    {
+      "path": "Q3_K_M.gguf.sha256",
+      "size": 78,
+      "sha256": "92c2f3acf88719b015d72e2c528951e5358ea4d660e684b162f800cd802ba354"
+    },
+    {
+      "path": "README.md",
+      "size": 3370,
+      "sha256": "ac0a20c920b77291477de010a04c8d4d8cc14ea843c955792a645c8008fcdd8d"
+    },
+    {
+      "path": "README.md.sha256",
+      "size": 76,
+      "sha256": "dc3702817348decaca192f1c6af4feb7017fe52005346e48f9610c3eba839230"
+    },
+    {
+      "path": "imatrix.gguf",
+      "size": 27300224,
+      "sha256": "a9235683394e6fef4a20b74622c02e94418abaca4f9daf1df647997dbb945705"
+    },
+    {
+      "path": "imatrix.gguf.sha256",
+      "size": 79,
+      "sha256": "6e4b826f604ae0f3e5ecfa41ba7939522e166504fb201846e3acdd7e11945c70"
+    }
+  ],
+  "mirrors": [
+    {
+      "kind": "hf",
+      "ref": "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+      "revision": "2da8c0432f0a42c25c14cbc99f90028a90d3dcd3"
+    },
+    {
+      "kind": "hf",
+      "ref": "Mitroshenkov87/voxprint-huihui-qwen36-27b",
+      "revision": "cc596c1a74791b7fca57d037ef168dd57c76ed34"
+    }
+  ],
+  "tier": {
+    "min_vram_gib": 15.5,
+    "recommended_vram_gib": 23.5,
+    "gpu_min_cc": 6.0
+  },
+  "runtime": {
+    "engine": "llama.cpp",
+    "version_req": "b11476"
+  },
+  "base_model": "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF",
+  "card_url": "https://huggingface.co/Mitroshenkov87/voxprint-huihui-qwen36-27b",
+  "flags": [
+    "least-censored"
+  ],
+  "on_demand": true,
+  "build": {
+    "forge_version": "0.1.0",
+    "tag": "",
+    "date": "2026-10-11"
+  }
+}

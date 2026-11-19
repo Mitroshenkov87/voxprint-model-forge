@@ -1,0 +1,282 @@
+# Windows setup for VOXPrint AI Model Forge. Free GitHub-hosted runner, no GPU.
+# The setup holds the app wheels, the hash-pinned bitsandbytes wheel, and uv.exe.
+# Python, torch and the other packages are installed on the PC by install.ps1.
+# No model weights.
+# Runs on pull requests that touch the installer, on main, and by hand.
+# Nothing is published; the setup is a workflow artifact.
+name: installer
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "assets/**"
+      - "installer/**"
+      - "installer/windows/launcher.cs"
+      - ".github/workflows/installer.yml"
+      - "pyproject.toml"
+      - "BUILD.json"
+      - "scripts/windows_smoke.ps1"
+      - "src/voxprint_forge/data/mdl.json"
+      - "scripts/gen_app_models.py"
+      - "src/voxprint_forge/lora/export.py"
+      - "docs/manual/**"
+      - "scripts/build_pdf_guide.py"
+      - "scripts/build_guide.py"
+      - "tests/test_pdf_guide.py"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+jobs:
+  pdf-guide:
+    # The user guide PDF (en) from docs/manual with embedded DejaVu fonts. Installed into {app}\docs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Fonts and libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fonts-dejavu-core poppler-utils libpango-1.0-0 libpangoft2-1.0-0
+      - name: Build the PDF guide
+        run: |
+          python -m pip install --require-hashes -r installer/requirements-pdf.txt
+          python scripts/build_pdf_guide.py dist/guide
+          for f in dist/guide/*.pdf; do echo "$f: $(pdfinfo "$f" | grep Pages) images $(pdfimages -list "$f" | tail -n +3 | wc -l)"; done
+      - name: Check the PDF guide
+        env:
+          VOXPRINT_PDF_GUIDE_DIR: dist/guide
+        run: python -m pytest -p no:cacheprovider -o addopts="" --noconftest tests/test_pdf_guide.py -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxprint-model-forge-guide-pdf
+          path: dist/guide/*.pdf
+          if-no-files-found: error
+  windows:
+    needs: pdf-guide
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Stage the app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stage = "installer\windows\staging"
+          New-Item -ItemType Directory -Force "$stage\wheels" | Out-Null
+          # Resolved build and rc go into the wheel and into {app}\BUILD.json.
+          # The catalogue's null build is what a laptop prints as "dev" if this is skipped.
+          # A v<version>-rc.N tag build stamps rc=N; a tag version other than BUILD.json's fails here.
+          $stampArgs = @("--catalog", "BUILD.json", "--package-dir", "src\voxprint_forge", "--stage-dir", $stage, "--require-build")
+          if ($env:GITHUB_REF_TYPE -eq "tag") { $stampArgs += @("--tag", $env:GITHUB_REF_NAME) }
+          python installer\stamp_build.py @stampArgs
+          if ($LASTEXITCODE -ne 0) { throw "the build stamp failed" }
+          python -m pip wheel --no-deps --wheel-dir "$stage\wheels" .
+          if ($LASTEXITCODE -ne 0) { throw "the app wheel did not build" }
+          $pyproject = Get-Content -Raw pyproject.toml
+          $pins = @([regex]::Matches($pyproject, 'voxprint-common(?:\[[^\]]*\])?\s*(?:==|>=)\s*([0-9][0-9A-Za-z.]*)') |
+            ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+          if ($pins.Count -ne 1) { throw "pyproject.toml does not pin exactly one voxprint-common version: $($pins -join ', ')" }
+          $common = "vendor\voxprint_common-$($pins[0])-py3-none-any.whl"
+          if (-not (Test-Path -LiteralPath $common)) { throw "missing $common" }
+          $want = (Get-Content "$common.sha256").Split(" ")[0].Trim().ToLower()
+          if ((Get-FileHash $common -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "voxprint_common wheel sha256 mismatch" }
+          Copy-Item $common "$stage\wheels\"
+          foreach ($name in @("LICENSE", "NOTICE", "ACCEPTABLE_USE.md", "README.md")) { Copy-Item $name "$stage\$name" }
+          $mdl = "src\voxprint_forge\data\mdl.json"
+          if (-not (Test-Path -LiteralPath $mdl)) { throw "mdl.json is missing" }
+          Copy-Item -LiteralPath $mdl "$stage\mdl.json"
+          if (-not (Test-Path -LiteralPath "$stage\mdl.json")) { throw "mdl.json was not staged" }
+          Copy-Item installer\requirements-mivolo.txt "$stage\requirements-mivolo.txt"
+          Copy-Item installer\windows\install.ps1 "$stage\install.ps1"
+          Copy-Item installer\windows\requirements-te-quant.txt "$stage\requirements-te-quant.txt"
+          Copy-Item installer\windows\requirements-avif.txt "$stage\requirements-avif.txt"
+          $teReq = Get-Content -Raw "$stage\requirements-te-quant.txt"
+          if ($teReq -notmatch '(?m)^bitsandbytes==0\.50\.2\b') { throw "requirements-te-quant.txt does not pin bitsandbytes==0.50.2" }
+          if ($teReq -notmatch '--hash=sha256:([0-9a-f]{64})') { throw "requirements-te-quant.txt has no sha256 pin" }
+          $bnbHash = $Matches[1].ToLower()
+          if ($teReq -match 'extra-index-url|git\+') { throw "requirements-te-quant.txt must use PyPI only" }
+          $bnbName = "bitsandbytes-0.50.2-py3-none-win_amd64.whl"
+          $meta = Invoke-RestMethod -Uri "https://pypi.org/pypi/bitsandbytes/0.50.2/json"
+          $published = @($meta.urls | Where-Object { $_.filename -eq $bnbName })
+          if ($published.Count -ne 1) { throw "PyPI has no single $bnbName" }
+          $bnb = Join-Path "$stage\wheels" $bnbName
+          curl.exe -fsSL --retry 5 -o $bnb $published[0].url
+          if ((Get-FileHash $bnb -Algorithm SHA256).Hash.ToLower() -ne $bnbHash) { throw "bitsandbytes sha256 mismatch" }
+          $avifReq = Get-Content -Raw "$stage\requirements-avif.txt"
+          if ($avifReq -notmatch '(?m)^pillow-avif-plugin==1\.6\.0\b') { throw "requirements-avif.txt does not pin pillow-avif-plugin==1.6.0" }
+          if ($avifReq -notmatch '--hash=sha256:([0-9a-f]{64})') { throw "requirements-avif.txt has no sha256 pin" }
+          $avifHash = $Matches[1].ToLower()
+          if ($avifReq -match 'extra-index-url|git\+|cp314t') { throw "requirements-avif.txt must use the cp314 win_amd64 wheel from PyPI" }
+          $avifName = "pillow_avif_plugin-1.6.0-cp314-cp314-win_amd64.whl"
+          $avifMeta = Invoke-RestMethod -Uri "https://pypi.org/pypi/pillow-avif-plugin/1.6.0/json"
+          $avifPublished = @($avifMeta.urls | Where-Object { $_.filename -eq $avifName })
+          if ($avifPublished.Count -ne 1) { throw "PyPI has no single $avifName" }
+          $avif = Join-Path "$stage\wheels" $avifName
+          curl.exe -fsSL --retry 5 -o $avif $avifPublished[0].url
+          if ((Get-FileHash $avif -Algorithm SHA256).Hash.ToLower() -ne $avifHash) { throw "pillow-avif-plugin sha256 mismatch" }
+          $zip = Join-Path $env:RUNNER_TEMP "uv.zip"
+          curl.exe -fsSL --retry 5 -o $zip "https://github.com/astral-sh/uv/releases/download/0.13.0/uv-x86_64-pc-windows-msvc.zip"
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne "088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c") { throw "uv sha256 mismatch" }
+          Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "uv") -Force
+          Copy-Item (Get-ChildItem (Join-Path $env:RUNNER_TEMP "uv") -Recurse -Filter uv.exe | Select-Object -First 1).FullName "$stage\uv.exe"
+          Get-ChildItem -Recurse $stage | Select-Object FullName, Length | Format-Table -AutoSize
+          # ROADMAP: no model weights in the setup; the app downloads them via MDL.
+          $weights = Get-ChildItem -Recurse -File $stage -Include *.safetensors, *.gguf, *.bin, *.pt, *.pth, *.onnx, *.ckpt
+          if ($weights) { throw "model weights in the setup staging: $($weights.Name -join ', ')" }
+          foreach ($w in Get-ChildItem "$stage\wheels" -Filter *.whl) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($w.FullName)
+            $hit = $zip.Entries | Where-Object { $_.Name -match '\.(safetensors|gguf|bin|pt|pth|onnx|ckpt)$' }
+            $zip.Dispose()
+            if ($hit) { throw "model weights inside $($w.Name): $($hit.FullName -join ', ')" }
+          }
+          # Live {app}\wheels is updated only after the copy succeeds. Keep the
+          # new wheels out of staging so [Files] does not drop them there early.
+          $incoming = "installer\windows\wheels-incoming"
+          if (Test-Path -LiteralPath $incoming) { Remove-Item -LiteralPath $incoming -Recurse -Force }
+          Move-Item -LiteralPath "$stage\wheels" -Destination $incoming
+          if (Test-Path -LiteralPath "$stage\wheels") { throw "wheels were not moved out of staging" }
+          if (-not (Get-ChildItem -LiteralPath $incoming -Filter *.whl)) { throw "wheels-incoming has no wheels" }
+      - name: PowerShell 7 MSI pin (download, sha256, Microsoft signature)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $iss = Get-Content -Raw installer\windows\voxprint-model-forge.iss
+          if ($iss -notmatch "PwshMsiUrl = '([^']+)'") { throw "no PwshMsiUrl in the .iss" }
+          $url = $Matches[1]
+          if ($iss -notmatch "PwshMsiSha256 = '([0-9a-f]{64})'") { throw "no PwshMsiSha256 in the .iss" }
+          $want = $Matches[1]
+          if ($url -notmatch '^https://github\.com/PowerShell/PowerShell/releases/download/v7\.[0-9.]+/PowerShell-7\.[0-9.]+-win-x64\.msi$') { throw "not an official PowerShell 7 x64 MSI url: $url" }
+          $msi = Join-Path $env:RUNNER_TEMP "pwsh.msi"
+          curl.exe -fsSL --retry 5 -o $msi $url
+          if ($LASTEXITCODE -ne 0) { throw "download failed: $url" }
+          $got = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want) { throw "PowerShell MSI sha256 $got, pinned $want" }
+          $sig = Get-AuthenticodeSignature $msi
+          if ($sig.Status -ne "Valid") { throw "PowerShell MSI signature: $($sig.Status)" }
+          if ($sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw "PowerShell MSI signer: $($sig.SignerCertificate.Subject)" }
+          "PowerShell MSI ok: $url sha256 $got signer $($sig.SignerCertificate.Subject)"
+      - uses: actions/download-artifact@v4
+        with:
+          name: voxprint-model-forge-guide-pdf
+          path: installer/windows/staging/docs
+      - name: Check the staged PDF guide
+        shell: pwsh
+        run: |
+          foreach ($lang in @("en")) {
+            $pdf = "installer\windows\staging\docs\VOXPrint-Model-Forge-Guide-$lang.pdf"
+            if (-not (Test-Path $pdf)) { throw "missing $pdf" }
+            "{0}: {1:N1} MB" -f $pdf, ((Get-Item $pdf).Length / 1MB)
+          }
+      - name: Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Icon check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check pillow
+          $py = Join-Path $env:RUNNER_TEMP "check_icon.py"
+          @(
+            'from PIL import Image',
+            '# voxprint_common 0.7.4 branding: python -m voxprint_common.branding check',
+            'path = r"assets/voxprint-model-forge.ico"',
+            'with Image.open(path) as image:',
+            '    sizes = set(image.ico.sizes())',
+            'want = {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)}',
+            'if sizes != want:',
+            '    raise SystemExit("icon sizes %s, want %s" % (sorted(sizes), sorted(want)))',
+            'print("icon ok", sorted(sizes))'
+          ) | Set-Content -Encoding utf8 $py
+          python $py
+          if ($LASTEXITCODE -ne 0) { throw "icon check failed" }
+      - name: Compile the setup
+        id: compile
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw BUILD.json | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "Inno Setup was not installed" }
+          & $iscc "/DAppVersion=$version" "/O$env:GITHUB_WORKSPACE\dist" "installer\windows\voxprint-model-forge.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC exited $LASTEXITCODE" }
+          "{0:N1} MB" -f ((Get-Item dist\VoxprintModelForgeSetup.exe).Length / 1MB)
+          $launcher = Join-Path (Resolve-Path "installer\windows") "voxprint-model-forge.exe"
+          if (-not (Test-Path -LiteralPath $launcher)) { throw "launcher was not compiled" }
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($launcher)
+          if ($null -eq $icon) { throw "ExtractAssociatedIcon returned null" }
+          $icon.Dispose()
+          if (-not ("LauncherIcon" -as [type])) {
+            $code = @(
+              'using System;',
+              'using System.Runtime.InteropServices;',
+              'public static class LauncherIcon {',
+              '    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]',
+              '    public static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);',
+              '    [DllImport("kernel32.dll", SetLastError = true)]',
+              '    public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);',
+              '    [DllImport("kernel32.dll", SetLastError = true)]',
+              '    public static extern bool FreeLibrary(IntPtr module);',
+              '}'
+            ) -join "`n"
+            Add-Type -TypeDefinition $code
+          }
+          # LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE. RT_GROUP_ICON is 14.
+          $module = [LauncherIcon]::LoadLibraryEx($launcher, [IntPtr]::Zero, 0x22)
+          if ($module -eq [IntPtr]::Zero) { throw "LoadLibraryEx failed" }
+          try {
+              $found = [LauncherIcon]::FindResource($module, [IntPtr]1, [IntPtr]14)
+              if ($found -eq [IntPtr]::Zero) { $found = [LauncherIcon]::FindResource($module, [IntPtr]32512, [IntPtr]14) }
+              if ($found -eq [IntPtr]::Zero) { throw "PE has no RT_GROUP_ICON" }
+          } finally {
+              [void][LauncherIcon]::FreeLibrary($module)
+          }
+          "launcher icon ok"
+      - name: Smoke (install, upgrade wheels, busy upgrade, --version, preflight, LoRA dry-run, uninstall)
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\windows_smoke.ps1 -Setup dist\VoxprintModelForgeSetup.exe -MigrationTest -Results "$env:RUNNER_TEMP\smoke"
+          $code = $LASTEXITCODE
+          $resultPath = Join-Path $env:RUNNER_TEMP "smoke\result.json"
+          if (-not (Test-Path -LiteralPath $resultPath)) { throw "windows_smoke.ps1 exited $code without result.json" }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          foreach ($name in @("upgrade-wheels", "upgrade-busy", "version")) {
+            $step = @($result.steps | Where-Object { $_.name -eq $name })
+            if ($step.Count -ne 1 -or -not $step[0].ok) {
+              $detail = if ($step.Count -eq 1) { $step[0].detail } else { "missing" }
+              throw "$name did not pass: $detail"
+            }
+            "${name}: $($step[0].detail)"
+          }
+          $versionDetail = @($result.steps | Where-Object { $_.name -eq "version" })[0].detail
+          if ($versionDetail -notmatch "build \d+") { throw "installed --version did not report a build: $versionDetail" }
+          if ($code -ne 0) { throw "windows_smoke.ps1 exited $code" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke-results
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxprint-model-forge-setup-${{ steps.compile.outputs.version }}
+          path: dist/VoxprintModelForgeSetup.exe
+          if-no-files-found: error

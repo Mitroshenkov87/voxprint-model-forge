@@ -1,0 +1,163 @@
+[project]
+name = "voxprint-forge"
+version = "0.1.0"
+description = "VOXPrint AI Model Forge: prepare, quantize, measure, and card local GGUF models."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "ACCEPTABLE_USE.md"]
+authors = [{name = "Aleksandr Mitroshenkov"}]
+dependencies = [
+  "cryptography>=42",
+  "huggingface_hub>=0.26",
+  "jinja2>=3.1",
+  "torch>=2.5",
+  # MOSS 16 GB DiT: FP8 e4m3 weight-only. Pinned so a newer torchao cannot
+  # change Float8Tensor.dtype or the saved quant config without a manifest miss.
+  "torchao==0.18.0",
+  # MOSS-Image (Qwen3.5 text encoder) needs transformers>=5.3.
+  "transformers>=5.3",
+  "safetensors>=0.4",
+  "accelerate>=1.0",
+  "gguf>=0.10",
+  # convert_hf_to_gguf.py at scripts/llama.rev imports these at vocab time
+  # (Qwen2/Qwen3 try sentencepiece first; SentencePiece models read its protobuf).
+  # Missing sentencepiece failed synth4 L1 with ModuleNotFoundError.
+  "sentencepiece==0.2.2",
+  # protobuf 4.25.9 (what llama.cpp asks for, <5) crashes on Python 3.14 (synth4 L1/L2);
+  # 5.29.6 from PyPI imports and reads the sentencepiece model there.
+  "protobuf==5.29.6",
+  # Canvas writes AVIF. Pillow 13 may already decode it; this plugin covers builds that do not.
+  "pillow-avif-plugin==1.6.0",
+  # LoRA safety gate: lora/mivolo_worker.py imports cv2 and the mivolo-v2 remote
+  # code needs timm. A real install failed closed without opencv
+  # (ModuleNotFoundError: cv2, then the gate estimator did not load).
+  # Verified on Python 3.14. mivolo itself is not a PyPI dep; the worker venv
+  # installs it with --no-deps --no-build-isolation (installer/requirements-mivolo.txt).
+  "opencv-python-headless==5.0.0.93",
+  "timm==0.8.13.dev0",
+  # Not on PyPI. CI, the VM scripts and the installer install the vendored
+  # v0.7.4 wheel vendor/voxprint_common-0.7.4-py3-none-any.whl
+  # (GitHub release v0.7.4 of Mitroshenkov87/voxprint-common, tag commit fc970319;
+  # sha256 e5834ce279c0b3ba6dc5cae527d6270dbdcd5c233120b45a6819bd16c5e88eab).
+  # The floor is 0.7.4 (live MDL progress, app registry, serial 11 index pin);
+  # newer releases such as 0.7.5 are allowed. preflight --vm checks this pin.
+  "voxprint-common>=0.7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.8",
+  "pytest-qt>=4.4",
+  "PySide6>=6.8",
+  "keyring>=25",
+  "nvidia-ml-py>=12",
+  "interrogate>=1.7",
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.26",
+  "diffusers>=0.41.0,<0.42",
+  "jsonschema>=4.23",
+  "torchmetrics>=1.6",
+]
+compare = [
+  "diffusers>=0.41.0,<0.42",
+  "torchmetrics>=1.6",
+  "lpips",
+  "torchvision",
+  "nvidia-ml-py",
+]
+# MOSS-Image fit job only (separate VM venv): the vendored pipeline needs newer diffusers/transformers
+# than the compare extra pins. scripts/vm_run_moss_fit.sh installs these exact versions.
+moss = [
+  "torch>=2.9",
+  "diffusers==0.41.0",
+  "transformers==5.20.1",
+  "accelerate>=1.0",
+  "safetensors>=0.4",
+  "Pillow",
+]
+# Optional MOSS text encoder quantization (--te-quant int8|nf4). Wheels for win_amd64 include CUDA 13.
+te-quant = [
+  "bitsandbytes>=0.50.2,<0.51",
+]
+gui = [
+  "voxprint-common[ui]>=0.7.4",
+  "PySide6>=6.8",
+  "keyring>=25",
+  "nvidia-ml-py>=12",
+]
+
+[project.scripts]
+forge = "voxprint_forge.cli:main"
+# Internal operator window (VM runs, uploads). Not shipped; the user app is voxprint-model-forge.
+forge-gui = "voxprint_forge.gui.__main__:main"
+voxprint-forge-cli = "voxprint_forge.cli:main"
+
+[project.gui-scripts]
+voxprint-model-forge = "voxprint_forge.app.__main__:main"
+
+# Display names and install paths. installer/windows builds the Windows setup.
+# An upgrade moves an older program folder here, updates shortcuts and PATH,
+# and leaves the user data in place. The setup moves a legacy %LOCALAPPDATA%\Voxprint to
+# %LOCALAPPDATA%\VOXPrint AI Suite once, before any Python runs (installer/windows/migrate-home.ps1).
+[tool.voxprint.install]
+display-name = "VOXPrint AI Model Forge"
+start-menu-folder = "VOXPrint AI Suite"
+shortcut-name = "VOXPrint AI Model Forge"
+windows-dir = 'C:\Program Files\VOXPrint AI Suite\Model Forge'
+linux-dir = "/opt/voxprint-ai-suite/model-forge"
+gui-exe = "voxprint-model-forge.exe"
+cli-exe = "voxprint-forge-cli.exe"
+user-data = '%LOCALAPPDATA%\VOXPrint AI Suite'
+linux-data = "~/.local/share/voxprint-ai-suite"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+voxprint_forge = ["BUILD.json", "build_info.json", "data/**/*", "gui/assets/*", "gui/assets/**/*", "lora/i18n/*.json", "lora/words.txt.gz", "lora/licences/*.txt", "app/locales/*.json", "app/guide/*.html", "app/guide/img/*.png", "app/review-chevron.svg", "app/chevron-up.svg", "vendored/**/LICENSE", "vendored/**/VENDOR.md"]
+
+[tool.ruff]
+line-length = 120
+# Vendored verbatim; see src/voxprint_forge/vendored/moss_image/VENDOR.md.
+extend-exclude = [
+  "src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py",
+  # Content-addressed laptop snapshot, including PG's rebuild.py. Do not reformat it.
+  "tests/fixtures/laptop_layout",
+]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+qt_api = "pyside6"
+markers = [
+    "real_models: downloads and loads real models; skipped unless VOXPRINT_REAL_MODELS=1",
+]
+
+[tool.interrogate]
+ignore-init-method = true
+ignore-magic = true
+ignore-private = true
+ignore-semiprivate = true
+ignore-nested-functions = true
+fail-under = 65
+exclude = [
+  "src/voxprint_forge/vendored/moss_image/pipeline_moss_image.py",
+  "src/voxprint_forge/diffusion/probe_ablate.py",
+  "src/voxprint_forge/diffusion/probe_decide.py",
+  "src/voxprint_forge/diffusion/probe_gate.py",
+  "src/voxprint_forge/diffusion/probe_hash.py",
+  "src/voxprint_forge/diffusion/probe_prompts.py",
+  "src/voxprint_forge/diffusion/probe_spec.py",
+]

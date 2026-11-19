@@ -1,0 +1,1350 @@
+"""LoRA training loop: train, extend, pause/resume and dry-run (plan §3-§6)."""
+
+from __future__ import annotations
+
+import gc
+import json
+import math
+import os
+import random
+import shutil
+import threading
+import time
+from collections.abc import Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
+
+import torch
+from safetensors import safe_open
+from safetensors.torch import load_file, save_file
+
+from voxprint_forge.hashing import sha256_file
+from voxprint_forge.lora.bases import BaseAdapter, weights_dir
+from voxprint_forge.lora.errors import LoraBlocked, LoraStageError, LoraUsageError
+from voxprint_forge.lora.events import Progress
+from voxprint_forge.lora.export import base_variant, lora_base_of
+from voxprint_forge.lora.gate_run import open_gate_run
+from voxprint_forge.lora.job_gate import check_run, preflight_refuse
+from voxprint_forge.lora.layers import inject, load_lora_state, lora_parameters, lora_state, lora_strength
+from voxprint_forge.lora.limits import min_photos, need_more
+from voxprint_forge.lora.memory import MemoryPlan, check_plan, vram_cap_gb
+from voxprint_forge.lora.presets import TrainConfig
+from voxprint_forge.lora.progress_log import ProgressWriter, read_progress, write_row
+from voxprint_forge.lora.project import Item, Project, base_mismatch_params
+from voxprint_forge.lora.review import (
+    DEFAULT_FIRST_ROUND_SAMPLES,
+    DEFAULT_FIRST_ROUND_STEPS,
+    DEFAULT_SAMPLE_STEPS,
+    DEFAULT_SAMPLES,
+    HumanReviewDecider,
+    ReviewDecider,
+    apply_decider,
+    build_sets,
+    check_review_round_count,
+    check_round_options,
+    first_pictures_eta,
+    load_state,
+    passes_output_check,
+    plan_samples,
+    sample_steps_of,
+    samples_for_round,
+    save_image,
+    save_state,
+    steps_completed,
+    steps_for_stage,
+    summary,
+    total_steps_of,
+    transition,
+)
+from voxprint_forge.lora.sample_prompts import (
+    build_sample_prompts,
+    caption_rows,
+    preview_prompt_set,
+    project_kind,
+    read_attire,
+    read_framing,
+    store_attire,
+)
+from voxprint_forge.lora.trigger import prepend_trigger
+from voxprint_forge.lora.verify_record import write_record
+from voxprint_forge.lora.vram_stage import fail_peak
+from voxprint_forge.mdl_app import missing_id_text
+from voxprint_forge.model_park import events
+
+MIN_PHOTOS = {mode: min_photos(mode) for mode in ("simple", "expert")}
+STATE_FILE = "state.pt"
+# Previews draw with the LoRA a bit hotter than training so test versions read closer to
+# how the owner will use it (strength 1.3; alpha / rank is applied inside each layer).
+PREVIEW_LORA_SCALE = 1.3
+
+
+def _check_gate(project: Project) -> dict[str, object]:
+    """Block training when the photos were not prepared, or the last prepare did not finish.
+
+    An open ``gate_run.json`` means at least one photo has no trace row. That photo was
+    not checked and is not kept. Prepare again. Nothing is written: this is not a refusal
+    of the photos.
+    """
+    if open_gate_run(project):
+        raise LoraUsageError("lora.err.not_prepared")
+    data = project.read()
+    if data.get("gate_passed") is not True:
+        ids = missing_id_text()
+        if not ids:
+            raise LoraBlocked("lora.err.not_prepared")
+        raise LoraBlocked("lora.err.gate_missing", ids=ids)
+    return data
+
+
+def _check_ready(project: Project, mode_floor: bool = True) -> tuple[dict[str, object], list[Item]]:
+    data = _check_gate(project)
+    items = project.items()
+    need = need_more(len(items), str(data.get("mode", "simple")))
+    if mode_floor and need:
+        raise LoraUsageError("lora.err.too_few", need=need)
+    return data, items
+
+
+def release_adapter(adapter: object) -> None:
+    """Free encoders before the next base in a sequential ``both`` run loads.
+
+    A real adapter sets ``pipe`` to None until ``load``. Releasing that empty
+    pipe is skipped. A stand-in with no ``pipe`` attribute still runs
+    ``release_encoders``. A second call after training is safe for these adapters.
+    """
+    raw = getattr(adapter, "__dict__", None)
+    if isinstance(raw, dict) and "pipe" in raw and raw["pipe"] is None:
+        return
+    release = getattr(adapter, "release_encoders", None)
+    if callable(release):
+        release()
+
+
+def estimate(project: Project, config: TrainConfig, adapter: BaseAdapter) -> dict[str, object]:
+    """Plan and ETA without training (``--dry-run``)."""
+    _, items = _check_ready(project)
+    seconds = adapter.seconds_per_step(config) * config.steps
+    result: dict[str, object] = {
+        "state": "dry-run",
+        "base": adapter.info.mdl_id,
+        "base_variant": base_variant(adapter.info.mdl_id, adapter.info.variant),
+        "photos": len(items),
+        "steps": config.steps,
+        "eta_seconds": int(round(seconds)),
+        "vram_need_gb": adapter.vram_need_gb(config),
+        "config": config.to_dict(),
+    }
+    plan = adapter.memory_plan(config, len(items))
+    if plan is not None:
+        result["memory_plan"] = plan.to_dict()
+        cap = vram_cap_gb()
+        if cap is not None:
+            result["vram_cap_gb"] = cap
+            result["plan_fits_cap"] = plan.peak_gb <= cap - 1.0
+    return result
+
+
+def finish_review(
+    project: Project,
+    adapter: BaseAdapter,
+    progress: Progress,
+    *,
+    preview: bool = True,
+    state: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Save the current LoRA, draw a final preview, and record the steps it got.
+
+    The review stays open until the checkpoint is found on disk, so a missing
+    checkpoint does not look like a finished run. ``preview=False`` skips the
+    final picture. A final picture that fails is a warning: the run still
+    finishes and can be exported. ``state`` replaces the saved review; it is
+    written only as the finished state, after the checkpoint is found.
+    """
+    current = load_state(project) if state is None else state
+    return _seal_finished(project, current, adapter, progress, preview=preview)
+
+
+def discard_run(project: Project) -> dict[str, object]:
+    """Stop and discard: remove temporary checkpoints and samples. Photos stay.
+
+    Nothing is written for export. ``prepared/``, ``photos/``, captions and the
+    subject record stay. A link that points outside the project is left alone.
+    """
+    root = project.root.resolve()
+    # The whole checkpoints tree: every base in a multi-base project, and the
+    # same root folder a legacy project already uses.
+    for path in (
+        project.root / "checkpoints",
+        project.previews,
+        project.review,
+        project.train_state,
+        project.train_log,
+        project.vram_log,
+        project.pause,
+    ):
+        _remove_inside(root, path)
+    data = project.read()
+    cleaned = {key: value for key, value in data.items() if key not in {"train", "review"}}
+    project.write(cleaned)
+    return {"state": "discarded", "saved": False}
+
+
+def _remove_inside(root: Path, path: Path) -> None:
+    """Delete ``path`` when it stays inside ``root``. An outside link is skipped."""
+    if not path.exists() and not path.is_symlink():
+        return
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return
+    if resolved == root:
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    shutil.rmtree(path)
+
+
+def lora_base(path: Path) -> dict[str, str]:
+    """``voxprint.lora.*`` header metadata of a LoRA file."""
+    with safe_open(str(path), framework="pt") as handle:
+        meta = handle.metadata() or {}
+    return {key: value for key, value in meta.items() if key.startswith("voxprint.lora.")}
+
+
+def select_items(items: Sequence[Item], replay: float, rng: random.Random) -> list[Item]:
+    """For an extend: every photo of the newest round plus ``replay`` share of the older ones."""
+    if not items:
+        return []
+    newest = max(item.round for item in items)
+    new = [item for item in items if item.round == newest]
+    old = [item for item in items if item.round < newest]
+    keep = math.ceil(replay * len(old))
+    return new + (rng.sample(old, keep) if keep else [])
+
+
+def _device(adapter: BaseAdapter, config: TrainConfig, plan: MemoryPlan | None = None) -> str:
+    if not adapter.requires_gpu:
+        return "cpu"
+    if not torch.cuda.is_available():
+        raise LoraStageError("lora.err.no_gpu")
+    card = torch.cuda.get_device_properties(0).total_memory / 2**30
+    have = card
+    cap = vram_cap_gb()
+    if cap is not None and cap < have:
+        # Emulates a smaller card on a big one (calibration): the allocator stops at the cap.
+        torch.cuda.set_per_process_memory_fraction(cap / have, 0)
+        have = cap
+    if plan is not None:
+        # Fail fast: the projected peak must fit before any weight reaches the card.
+        check_plan(plan, cap, card)
+        return "cuda"
+    need = adapter.vram_need_gb(config)
+    if have + 0.5 < need:
+        raise LoraStageError("lora.err.vram", have=int(have), need=int(math.ceil(need)))
+    return "cuda"
+
+
+class VramPhases:
+    """Peak allocated and reserved GiB per training phase (load, encode, resident, step, preview).
+
+    Each mark records the peak since the previous one and resets it, so an OOM names its
+    phase and a passing run shows which phase sets the overall peak. No-op without CUDA.
+    """
+
+    def __init__(self, tier: int | None = None) -> None:
+        self.peaks: dict[str, dict[str, float]] = {}
+        self.plan: dict[str, float] | None = None
+        self.phase = "load"
+        self.tier = tier
+        self.on = torch.cuda.is_available()
+        if self.on:
+            torch.cuda.reset_peak_memory_stats()
+
+    def mark(self, done: str, next_phase: str) -> None:
+        if self.on:
+            alloc = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+            reserved = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+            old = self.peaks.get(done, {"alloc_gb": 0.0, "reserved_gb": 0.0})
+            self.peaks[done] = {
+                "alloc_gb": max(alloc, old["alloc_gb"]),
+                "reserved_gb": max(reserved, old["reserved_gb"]),
+            }
+            torch.cuda.reset_peak_memory_stats()
+            if self.tier is not None:
+                fail_peak(done, self.peaks[done]["alloc_gb"], tier=self.tier)
+        self.phase = next_phase
+
+
+def _schedule(config: TrainConfig):
+    def factor(step: int) -> float:
+        if config.warmup and step < config.warmup:
+            return (step + 1) / config.warmup
+        if config.scheduler == "cosine":
+            span = max(1, config.steps - config.warmup)
+            return 0.5 * (1 + math.cos(math.pi * min(1.0, (step - config.warmup) / span)))
+        return 1.0
+
+    return factor
+
+
+def _images(project: Project, items: Sequence[Item], resolution: int) -> list[object]:
+    from PIL import Image
+
+    out = []
+    for item in items:
+        with Image.open(project.resolve(item.file)) as image:
+            image = image.convert("RGB")
+            if image.size != (resolution, resolution):
+                image = image.resize((resolution, resolution), Image.Resampling.LANCZOS)
+            out.append(image)
+    return out
+
+
+def _caption_key(config: TrainConfig, rng: random.Random) -> str:
+    if rng.random() < config.caption_dropout:
+        return ""
+    if config.caption_mode == "both":
+        return rng.choice(("long", "short"))
+    return config.caption_mode
+
+
+def _write_lora_file(path: Path, layers, base: str, step: int, trigger: str = "") -> None:
+    """Write this step's LoRA file. A second write of the same weights matches byte for byte.
+
+    safetensors stores ``__metadata__`` in a hash map, so two ``save_file`` calls are not the same
+    bytes. The preview digest is the sha256 of the checkpoint file, which is only true when every
+    write of those weights produces that file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Canvas reads the trigger from this key, so a copied checkpoint still names its word.
+    metadata = {"voxprint.lora.base": base, "step": str(step), "voxprint.subject.trigger": trigger}
+    save_file(lora_state(layers), str(path), metadata=metadata)
+    _stable_safetensors_header(path)
+
+
+def _stable_safetensors_header(path: Path) -> None:
+    """Sort ``__metadata__`` and tensor names. The tensor byte buffer is left as written."""
+    raw = path.read_bytes()
+    size = int.from_bytes(raw[:8], "little")
+    header = json.loads(raw[8:8 + size])
+    meta = header.pop("__metadata__", None)
+    ordered: dict[str, object] = {}
+    if isinstance(meta, dict):
+        ordered["__metadata__"] = {key: meta[key] for key in sorted(meta)}
+    for name in sorted(header):
+        info = header[name]
+        if isinstance(info, dict):
+            preferred = ("dtype", "shape", "data_offsets")
+            stable = {key: info[key] for key in preferred if key in info}
+            stable.update({key: value for key, value in info.items() if key not in stable})
+            info = stable
+        ordered[name] = info
+    encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded += b" " * ((-len(encoded)) % 8)
+    path.write_bytes(len(encoded).to_bytes(8, "little") + encoded + raw[8 + size:])
+
+
+def _save_checkpoint(project: Project, layers, step: int, optimizer, rng: random.Random, meta: dict) -> Path:
+    project.checkpoints.mkdir(parents=True, exist_ok=True)
+    path = project.checkpoints / f"step-{step:06d}.safetensors"
+    _write_lora_file(path, layers, str(meta["base"]), step, str(meta.get("trigger") or ""))
+    torch.save(
+        {
+            "step": step,
+            "optimizer": optimizer.state_dict(),
+            "rng": rng.getstate(),
+            "torch_rng": torch.get_rng_state(),
+            **meta,
+        },
+        project.checkpoints / STATE_FILE,
+    )
+    # Signed record beside the file, only when the project's gate passed. A signing error is raised.
+    write_record(project, path)
+    return path
+
+
+def train(
+    project: Project,
+    config: TrainConfig,
+    adapter: BaseAdapter,
+    progress: Progress,
+    *,
+    resume: bool = False,
+    from_lora: Path | None = None,
+    stop: threading.Event | None = None,
+    preview_prompts: Sequence[str] = (),
+    base_dir: Path | None = None,
+    review_rounds: int = 0,
+    samples_per_round: int = DEFAULT_SAMPLES,
+    first_round_steps: int = DEFAULT_FIRST_ROUND_STEPS,
+    first_round_samples: int = DEFAULT_FIRST_ROUND_SAMPLES,
+    sample_steps: int = DEFAULT_SAMPLE_STEPS,
+    review_continue: bool = False,
+    no_more_reviews: bool = False,
+    decider: ReviewDecider | None = None,
+    sample_attire: str | None = None,
+) -> dict[str, object]:
+    """Train (or extend, with ``from_lora``) and return the run summary.
+
+    ``stop`` or a ``PAUSE`` file in the project folder pauses with a
+    checkpoint after the current step. A ``PAUSE`` file left from before is
+    refused at the start (``lora.err.pause_file``), so a resume never stops at once.
+    ``review_rounds`` of 1 to 6 pauses after each planned stage so the user can
+    mark samples. ``0`` trains straight through. The first stage is
+    ``first_round_steps``; later stages share the preset steps that remain.
+    ``review_continue`` trains the next stage. ``no_more_reviews`` trains every
+    remaining preset step and then finishes. ``decider`` writes like and dislike
+    marks before that next stage. The default reads marks already stored by the
+    GUI or ``lora review``.
+    """
+    project.activate_base(adapter.info.mdl_id)
+    _check_gate(project)
+    # The one refusal step: minors, unavailable checks, and files changed since the gate.
+    settings = {"sample_attire": sample_attire or "", **config.to_dict()}
+    preflight_refuse(project, prompts=preview_prompts, settings=settings)
+    data, items = _check_ready(project)
+    if project.pause.exists():
+        raise LoraUsageError("lora.err.pause_file")
+    stop = stop or threading.Event()
+    saved: dict | None = None
+    if resume and not review_continue:
+        state_path = project.checkpoints / STATE_FILE
+        if not state_path.is_file():
+            raise LoraUsageError("lora.err.no_checkpoint")
+        saved = torch.load(state_path, weights_only=False)
+        config = TrainConfig.from_dict(saved["config"])
+        from_lora = Path(saved["from"]) if saved.get("from") else None
+        if saved["base"] != adapter.info.mdl_id:
+            raise LoraUsageError(
+                "lora.err.base_mismatch", **base_mismatch_params(str(saved["base"]), adapter.info.mdl_id)
+            )
+    if review_continue:
+        pending = load_state(project)
+        checkpoint = str(pending.get("checkpoint") or "")
+        if not checkpoint:
+            raise LoraUsageError("lora.err.no_checkpoint")
+        from_lora = project.resolve(checkpoint)
+        saved_config = pending.get("config")
+        if isinstance(saved_config, dict) and saved_config:
+            config = TrainConfig.from_dict(saved_config)
+    if from_lora is not None:
+        meta = lora_base(from_lora)
+        # A LoRA without base metadata predates MOSS: it is a Z-Image LoRA.
+        found = lora_base_of(meta)
+        if found != adapter.info.mdl_id:
+            raise LoraUsageError("lora.err.base_mismatch", **base_mismatch_params(found, adapter.info.mdl_id))
+        rank = int(meta.get("voxprint.lora.rank", config.rank))
+        alpha = int(meta.get("voxprint.lora.alpha", config.alpha))
+        config = TrainConfig.from_dict({**config.to_dict(), "rank": rank, "alpha": alpha})
+    given_prompts = _explicit_prompts(preview_prompts, data)
+    review_state = _review_plan(
+        project,
+        config,
+        adapter,
+        data,
+        preview_prompts,
+        review_rounds=review_rounds,
+        samples_per_round=samples_per_round,
+        first_round_steps=first_round_steps,
+        first_round_samples=first_round_samples,
+        sample_steps=sample_steps,
+        review_continue=review_continue,
+        no_more_reviews=no_more_reviews,
+        resume=resume,
+        decider=decider,
+        sample_attire=sample_attire,
+    )
+    if review_state is not None and review_state.get("custom_prompts") is False:
+        built = [str(prompt) for prompt in review_state.get("prompts") or [] if str(prompt).strip()]
+        if built:
+            preview_prompts = built
+        stored = project.read().get("sample_attire")
+        if isinstance(stored, str):
+            data["sample_attire"] = stored
+    if review_state is not None and not (resume and not review_continue):
+        stage = steps_for_stage(review_state)
+        if review_state.get("no_more_reviews") and stage < 1:
+            return _seal_finished(project, review_state, adapter, progress)
+        config = replace(config, steps=max(1, stage) if stage > 0 else 0)
+    if config.previews and _explicit_prompts(preview_prompts, data) is None:
+        preview_prompts = default_preview_prompts(project, data)
+    # Training previews draw the --preview-prompts lines, else the full-figure default. Review
+    # prompts stay in ``preview_prompts`` so they are encoded with them and checked with them.
+    drawn = given_prompts if given_prompts is not None else default_preview_prompts(project, data)
+    preview_prompts = list(dict.fromkeys([*drawn, *preview_prompts])) if config.previews else preview_prompts
+    check_run(project, preview_prompts, config.to_dict())
+    rng = random.Random(config.seed)
+    torch.manual_seed(config.seed)
+    negatives: list[Item] = []
+    if review_state is not None:
+        sets = build_sets(items, review_state, supports_negatives=bool(adapter.supports_negatives))
+        chosen = list(sets.include)
+        if adapter.supports_negatives and callable(getattr(adapter, "negative_loss", None)):
+            negatives = list(sets.negatives)
+    elif from_lora is not None:
+        chosen = select_items(items, config.replay, rng)
+    else:
+        chosen = list(items)
+    # Grow segments instead of fragmenting fixed blocks; only read when CUDA first allocates.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    plan = adapter.memory_plan(config, len(chosen), base_dir)
+    device = _device(adapter, config, plan)
+
+    phases = VramPhases(tier=config.vram)
+    phases.plan = plan.to_dict() if plan is not None else None
+    try:
+        return _train(
+            project,
+            config,
+            adapter,
+            progress,
+            data,
+            chosen,
+            saved,
+            from_lora,
+            rng,
+            stop,
+            preview_prompts,
+            base_dir,
+            device,
+            phases,
+            negatives,
+            review_state,
+            drawn,
+        )
+    except torch.OutOfMemoryError as exc:
+        phases.mark(phases.phase, phases.phase)
+        planned = f" planned_peak_gb={phases.plan['peak_gb']}" if phases.plan else ""
+        raise torch.OutOfMemoryError(f"{exc} [phase={phases.phase} vram_phases={phases.peaks}{planned}]") from exc
+
+
+def _preview_due(step: int, config: TrainConfig) -> bool:
+    """Whether a mid-training preview is drawn at ``step``.
+
+    A multiple of ``preview_every`` strictly above ``preview_after``: with the
+    defaults (600, 400) that is 800, 1200, 1600, …, so steps 400 and 600 draw
+    nothing. The final preview at finish is not gated by this.
+    """
+    return step % config.preview_every == 0 and step > config.preview_after
+
+
+def _train(
+    project,
+    config,
+    adapter,
+    progress,
+    data,
+    chosen,
+    saved,
+    from_lora,
+    rng,
+    stop,
+    preview_prompts,
+    base_dir,
+    device,
+    phases: VramPhases,
+    negatives: Sequence[Item],
+    review_state: dict[str, object] | None,
+    drawn_previews: Sequence[str] = (),
+) -> dict[str, object]:
+    writer = ProgressWriter(project.root)
+    clock = _PictureClock(review_state, adapter, config)
+    progress.emit("train.load_base", "lora.progress.load_base", reason_key="lora.reason.load_base")
+    _report(writer, stage="load", step=0, total=config.steps, loss=None, eta=None, extra=clock.extra(config.steps))
+    base = base_dir or weights_dir(adapter.info.mdl_id)
+    bundle = list(chosen) + list(negatives)
+    trigger = _subject_trigger(data)
+    captions = [
+        {"long": prepend_trigger(trigger, i.long), "short": prepend_trigger(trigger, i.short)} for i in bundle
+    ]
+    if getattr(adapter, "encodes_before_load", False):
+        # Encoders first, then free the text encoder, then read the DiT: keeps RAM to one big model.
+        adapter.load_encoders(base, config, device)
+        images = _images(project, bundle, config.resolution)
+        phases.mark("load", "encode")
+        samples, neg_samples = _split_encoded(adapter.encode(images, captions, config), len(chosen))
+        if config.previews and preview_prompts:
+            adapter.prepare_previews(list(preview_prompts))
+        adapter.free_text_encoder()
+        model = adapter.load(base, config, device)
+        layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+        if from_lora is not None:
+            load_lora_state(layers, load_file(str(from_lora)))
+        _attach_training_adapter(adapter, model, layers)
+    else:
+        model = adapter.load(base, config, device)
+        layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+        if from_lora is not None:
+            load_lora_state(layers, load_file(str(from_lora)))
+        _attach_training_adapter(adapter, model, layers)
+        images = _images(project, bundle, config.resolution)
+        phases.mark("load", "encode")
+        samples, neg_samples = _split_encoded(adapter.encode(images, captions, config), len(chosen))
+        if config.previews and preview_prompts:
+            adapter.prepare_previews(list(preview_prompts))
+    phases.mark("encode", "resident")
+    _report(writer, stage="encode", step=0, total=config.steps, loss=None, eta=None, extra=clock.extra(config.steps))
+    adapter.release_encoders()
+    phases.mark("resident", "step")
+
+    params = lora_parameters(layers)
+    optimizer = torch.optim.AdamW(params, lr=config.lr, weight_decay=0.0)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _schedule(config))
+    start = 0
+    if saved is not None:
+        last = project.checkpoints / f"step-{int(saved['step']):06d}.safetensors"
+        load_lora_state(layers, load_file(str(last)))
+        optimizer.load_state_dict(saved["optimizer"])
+        rng.setstate(saved["rng"])
+        torch.set_rng_state(saved["torch_rng"])
+        start = int(saved["step"])
+        scheduler.last_epoch = start
+        for group, base_lr in zip(optimizer.param_groups, scheduler.base_lrs, strict=True):
+            group["lr"] = base_lr * _schedule(config)(start)
+    meta = {
+        "base": adapter.info.mdl_id,
+        "config": config.to_dict(),
+        "from": str(from_lora) if from_lora is not None else None,
+        "trigger": _subject_trigger(data),
+    }
+    last_good: Path | None = None
+    if saved is not None:
+        last_good = project.checkpoints / f"step-{start:06d}.safetensors"
+    loss_value = float("nan")
+    model.train()
+    step_mark = time.perf_counter()
+    for step in range(start + 1, config.steps + 1):
+        optimizer.zero_grad(set_to_none=True)
+        total = 0.0
+        for _ in range(config.grad_accum):
+            batch = [rng.choice(samples) for _ in range(config.batch)]
+            keys = [_caption_key(config, rng) for _ in batch]
+            loss = adapter.loss(model, batch, keys, rng) / config.grad_accum
+            extra = getattr(adapter, "negative_loss", None)
+            if neg_samples and callable(extra):
+                neg_batch = [rng.choice(neg_samples) for _ in range(config.batch)]
+                loss = loss + extra(model, neg_batch, keys, rng) / config.grad_accum
+            loss.backward()
+            total += float(loss.detach())
+        if not math.isfinite(total):
+            if last_good is not None:
+                load_lora_state(layers, load_file(str(last_good)))
+            progress.emit("train.step", "lora.progress.failed", state="failed")
+            raise LoraStageError("lora.err.diverged")
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        optimizer.step()
+        scheduler.step()
+        loss_value = total
+        event = progress.emit(
+            "train.step",
+            "lora.progress.train",
+            {"step": step, "steps": config.steps},
+            "lora.reason.train",
+            done=step,
+            total=config.steps,
+            offset=start,
+        )
+        clock.note_step(time.perf_counter() - step_mark)
+        step_mark = time.perf_counter()
+        step_extra = clock.extra(config.steps - step)
+        _report(writer, stage="step", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
+                extra=step_extra)
+        if step % config.save_every == 0 or step == config.steps:
+            progress.emit("train.checkpoint", "lora.progress.checkpoint", reason_key="lora.reason.checkpoint")
+            last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
+            _report(writer, stage="checkpoint", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
+                    extra=step_extra)
+        if config.previews and drawn_previews and _preview_due(step, config):
+            phases.mark("step", "preview")
+            digest = _weights_sha256(layers, adapter.info.mdl_id, step, last_good, str(meta["trigger"]))
+            stamp = PreviewStamp(adapter.info.mdl_id, digest, step)
+            _previews(project, adapter, model, drawn_previews, step, config, progress, stamp)
+            _report(writer, stage="preview", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
+                    extra=step_extra)
+            phases.mark("preview", "step")
+        if (stop.is_set() or project.pause.exists()) and step < config.steps:
+            if last_good is None or not last_good.name.endswith(f"{step:06d}.safetensors"):
+                last_good = _save_checkpoint(project, layers, step, optimizer, rng, meta)
+            progress.emit("train.paused", "lora.progress.paused", state="paused")
+            _report(writer, stage="paused", step=step, total=config.steps, loss=loss_value, eta=event.eta_seconds,
+                    extra=step_extra)
+            phases.mark(phases.phase, phases.phase)
+            return _finish(project, data, adapter, config, "paused", step, last_good, loss_value, from_lora, phases)
+    if review_state is not None and review_state.get("no_more_reviews"):
+        return _complete_full(
+            project, data, adapter, config, last_good, loss_value, from_lora, phases, progress, writer, review_state,
+        )
+    if review_state is not None:
+        return _open_review(
+            project, data, adapter, config, model, last_good, loss_value, from_lora, phases, progress, writer,
+            review_state, clock,
+        )
+    done = progress.emit("train.done", "lora.progress.done", state="done", done=config.steps, total=config.steps)
+    _report(
+        writer, stage="done", step=config.steps, total=config.steps, loss=loss_value, eta=done.eta_seconds,
+        extra={"steps": config.steps, "steps_planned": config.steps},
+    )
+    phases.mark(phases.phase, phases.phase)
+    return _finish(
+        project, data, adapter, config, "done", config.steps, last_good, loss_value, from_lora, phases,
+        steps_planned=config.steps,
+    )
+
+
+def _review_plan(
+    project: Project,
+    config: TrainConfig,
+    adapter: BaseAdapter,
+    data: dict[str, object],
+    preview_prompts: Sequence[str],
+    *,
+    review_rounds: int,
+    samples_per_round: int,
+    first_round_steps: int,
+    first_round_samples: int,
+    sample_steps: int,
+    review_continue: bool,
+    no_more_reviews: bool,
+    resume: bool,
+    decider: ReviewDecider | None = None,
+    sample_attire: str | None = None,
+) -> dict[str, object] | None:
+    """The review state for this stage, or ``None`` when the run does not pause for review."""
+    if review_continue:
+        state = apply_decider(load_state(project), decider if decider is not None else HumanReviewDecider())
+        action = "train_full" if no_more_reviews else "continue"
+        state = transition(state, action)
+        if not no_more_reviews and state.get("custom_prompts") is False:
+            state = _with_sample_prompts(project, data, state, sample_attire)
+        save_state(project, state)
+        return state
+    check_review_round_count(review_rounds)
+    if review_rounds < 1:
+        return None
+    check_round_options(
+        first_round_steps=first_round_steps,
+        first_round_samples=first_round_samples,
+        samples_per_round=samples_per_round,
+        sample_steps=sample_steps,
+    )
+    state = load_state(project)
+    if state.get("phase") == "review":
+        raise LoraUsageError("lora.err.review_pending")
+    if resume and state.get("phase") == "training" and int(state.get("rounds") or 0) > 0:
+        return state
+    explicit = _explicit_prompts(preview_prompts, data)
+    if explicit is None:
+        count = first_round_samples if first_round_samples > 0 else samples_per_round
+        prompts = _sample_prompt_list(project, data, config.seed, 1, count, sample_attire)
+        custom = False
+    else:
+        prompts = explicit
+        custom = True
+    state = transition(
+        state,
+        "start",
+        rounds=review_rounds,
+        samples_per_round=samples_per_round,
+        first_round_steps=first_round_steps,
+        first_round_samples=first_round_samples,
+        sample_steps=sample_steps,
+        total_steps=config.steps,
+        prompts=prompts,
+        custom_prompts=custom,
+        seed=config.seed,
+        base=adapter.info.mdl_id,
+        config=config.to_dict(),
+    )
+    save_state(project, state)
+    return state
+
+
+def default_preview_prompts(project: Project, data: dict[str, object]) -> list[str]:
+    """The full-figure default preview prompt(s).
+
+    A person project previews one clothed full-figure picture; an adult project
+    (the subject's ``adult_generation`` release answer when it is a boolean,
+    else the ``adult_content`` flag) adds the nude variant. Object and style
+    projects keep their single plain prompt.
+    """
+    subject = data.get("subject") if isinstance(data.get("subject"), dict) else {}
+    released = subject.get("adult_generation")
+    adult = released if isinstance(released, bool) else subject.get("adult_content") is True
+    return preview_prompt_set(
+        _subject_trigger(data),
+        project_kind(data),
+        caption_rows(project),
+        adult=adult,
+    )
+
+
+def _explicit_prompts(preview_prompts: Sequence[str], data: dict[str, object]) -> list[str] | None:
+    """Prompt lines from a file. The trigger-only fallback is not an explicit list."""
+    given = [str(prompt).strip() for prompt in preview_prompts if str(prompt).strip()]
+    trigger = _subject_trigger(data)
+    if not given or given == ([trigger] if trigger else []):
+        return None
+    return given
+
+
+def _subject_trigger(data: dict[str, object]) -> str:
+    subject = data.get("subject") if isinstance(data.get("subject"), dict) else {}
+    return str(subject.get("trigger") or "")
+
+
+def _sample_prompt_list(
+    project: Project,
+    data: dict[str, object],
+    seed: int,
+    round_no: int,
+    count: int,
+    sample_attire: str | None,
+) -> list[str]:
+    mode = sample_attire if isinstance(sample_attire, str) and sample_attire else read_attire(data)
+    mode = store_attire(project, mode)
+    return build_sample_prompts(
+        _subject_trigger(data),
+        count=count,
+        seed=seed,
+        round_no=round_no,
+        mode=mode,
+        captions=caption_rows(project),
+        framing=read_framing(project.read()),
+    )
+
+
+def _with_sample_prompts(
+    project: Project,
+    data: dict[str, object],
+    state: dict[str, object],
+    sample_attire: str | None,
+) -> dict[str, object]:
+    """Replace the stored prompts for the round that is about to be drawn."""
+    round_no = int(state.get("index") or 0) + 1
+    prompts = _sample_prompt_list(
+        project,
+        data,
+        int(state.get("seed") or 0),
+        round_no,
+        samples_for_round(state, round_no),
+        sample_attire,
+    )
+    return {**state, "prompts": prompts}
+
+
+def _open_review(
+    project, data, adapter, config, model, last_good, loss_value, from_lora, phases, progress, writer, review_state,
+    clock: _PictureClock,
+) -> dict[str, object]:
+    """Draw the round's samples at the training resolution, then pause with the review on disk."""
+    planned = plan_samples(review_state)
+    steps = sample_steps_of(review_state)
+    saved: list[dict[str, object]] = []
+    digest = sha256_file(last_good) if last_good is not None and Path(last_good).is_file() else None
+    model.eval()
+    try:
+        for index, spec in enumerate(planned, 1):
+            progress.emit(
+                "train.review_sample",
+                "lora.progress.review_sample",
+                {"n": index, "total": len(planned)},
+                "lora.reason.review",
+                done=index,
+                total=max(1, len(planned)),
+            )
+            started = time.perf_counter()
+            with lora_strength(model, PREVIEW_LORA_SCALE):
+                image = adapter.preview(model, str(spec["prompt"]), int(spec["seed"]), config, steps=steps)
+            clock.note_sample(time.perf_counter() - started)
+            _report(
+                writer, stage="review_sample", step=config.steps, total=config.steps, loss=loss_value, eta=None,
+                extra=clock.extra(0, samples_left=len(planned) - index),
+            )
+            if not passes_output_check(image):
+                continue
+            path = project.resolve(str(spec["file"]))
+            written = save_image(image, path, metadata={
+                "prompt": spec.get("prompt"),
+                "seed": spec.get("seed"),
+                "steps": steps,
+                "base": adapter.info.mdl_id,
+                "sha256": digest,
+                "strength": PREVIEW_LORA_SCALE,
+            })
+            saved.append({**spec, "file": str(Path(written).relative_to(project.root).as_posix())})
+    finally:
+        model.train()
+    rel = "" if last_good is None else str(Path(last_good).relative_to(project.root))
+    state = transition(review_state, "pause", checkpoint=rel, samples=saved)
+    save_state(project, state)
+    event = progress.emit(
+        "train.review",
+        "lora.progress.review",
+        {"round": int(state["index"]), "rounds": int(state["rounds"])},
+        "lora.reason.review",
+        state="done",
+    )
+    _report(writer, stage="review", step=config.steps, total=config.steps, loss=loss_value, eta=event.eta_seconds)
+    phases.mark(phases.phase, phases.phase)
+    return _finish(
+        project, data, adapter, config, "review", config.steps, last_good, loss_value, from_lora, phases,
+        review_summary=summary(state),
+    )
+
+
+def _complete_full(
+    project, data, adapter, config, last_good, loss_value, from_lora, phases, progress, writer, review_state,
+) -> dict[str, object]:
+    """Finish a train-fully stage: no more samples and no more pauses."""
+    rel = "" if last_good is None else str(Path(last_good).relative_to(project.root))
+    finished = transition({**review_state, "checkpoint": rel}, "finish")
+    save_state(project, finished)
+    planned = total_steps_of(finished)
+    done = progress.emit("train.done", "lora.progress.done", state="done", done=planned, total=planned)
+    _report(
+        writer, stage="done", step=planned, total=planned, loss=loss_value, eta=done.eta_seconds,
+        extra={"steps": planned, "steps_planned": planned},
+    )
+    phases.mark(phases.phase, phases.phase)
+    return _finish(
+        project, data, adapter, config, "done", planned, last_good, loss_value, from_lora, phases,
+        review_summary=summary(finished), steps_planned=planned,
+    )
+
+
+def _split_encoded(encoded: list[object], positive: int) -> tuple[list[object], list[object]]:
+    """Positive samples first, disliked negatives after them."""
+    return list(encoded[:positive]), list(encoded[positive:])
+
+
+def _report(
+    writer: ProgressWriter,
+    *,
+    stage: str,
+    step: int,
+    total: int,
+    loss: float | None,
+    eta: int | None,
+    extra: dict[str, object] | None = None,
+) -> None:
+    """One progress report. Non-finite loss is stored as unknown."""
+    number = None if loss is None or not math.isfinite(loss) else float(loss)
+    writer.note(step=step, total=total, loss=number, eta=eta, stage=stage, extra=extra)
+
+
+class _PictureClock:
+    """Step and sample times for the round-1 first-pictures ETA."""
+
+    def __init__(self, state: dict[str, object] | None, adapter: BaseAdapter, config: TrainConfig) -> None:
+        self.state = state
+        self.sample_steps = sample_steps_of(state) if state else DEFAULT_SAMPLE_STEPS
+        self.samples = len(plan_samples(state)) if self.active() and state is not None else 0
+        self.fallback = float(adapter.seconds_per_step(config))
+        self.step_seconds: list[float] = []
+        self.sample_seconds: list[float] = []
+
+    def active(self) -> bool:
+        """True only while round 1 is still training or drawing its pictures."""
+        state = self.state
+        if state is None or state.get("no_more_reviews"):
+            return False
+        return int(state.get("index") or 0) == 0 and int(state.get("rounds") or 0) > 0
+
+    def note_step(self, seconds: float) -> None:
+        """Record one optimizer step."""
+        if self.active() and seconds >= 0:
+            self.step_seconds.append(seconds)
+
+    def note_sample(self, seconds: float) -> None:
+        """Record one review picture."""
+        if self.active() and seconds >= 0:
+            self.sample_seconds.append(seconds)
+
+    def extra(self, steps_left: int, samples_left: int | None = None) -> dict[str, object] | None:
+        """The ``train.json`` fields for the first-pictures line, or ``None`` after round 1."""
+        if not self.active():
+            return None
+        per_step = sum(self.step_seconds) / len(self.step_seconds) if self.step_seconds else self.fallback
+        per_sample = None if not self.sample_seconds else sum(self.sample_seconds) / len(self.sample_seconds)
+        left = self.samples if samples_left is None else samples_left
+        payload = first_pictures_eta(
+            steps_left=steps_left,
+            seconds_per_step=per_step,
+            samples_left=left,
+            sample_steps=self.sample_steps,
+            seconds_per_sample=per_sample,
+        )
+        payload["round"] = 1
+        payload["seconds_per_step"] = round(per_step, 3)
+        return payload
+
+
+def _seal_finished(
+    project: Project, state: dict[str, object], adapter: BaseAdapter, progress: Progress, *, preview: bool = True,
+) -> dict[str, object]:
+    """Draw the final preview, then store a finished, exportable LoRA and the steps it got.
+
+    The preview is optional (``preview=False``). When it raises, a warning is sent and
+    the LoRA is still stored as finished; the result carries ``preview: "failed"``.
+    """
+    phase = state.get("phase")
+    if phase != "finished" and not (phase == "review" or (phase == "training" and state.get("no_more_reviews"))):
+        transition(state, "finish")
+    checkpoint = _review_checkpoint(project, state)
+    done_steps = steps_completed(state)
+    planned = total_steps_of(state)
+    config = _stored_config(project, state)
+    preview_state = "skipped"
+    if preview:
+        preview_state = _try_final_preview(project, adapter, config, state, checkpoint, progress)
+    if state.get("phase") != "finished":
+        state = transition(state, "finish")
+        save_state(project, state)
+    data = project.read()
+    trained = data.get("train")
+    record = dict(trained) if isinstance(trained, dict) else {}
+    record.update({
+        "base": record.get("base") or adapter.info.mdl_id,
+        "base_variant": base_variant(
+            str(record.get("base") or adapter.info.mdl_id),
+            record.get("base_variant") or adapter.info.variant,
+        ),
+        "base_revision": record.get("base_revision") or adapter.info.revision,
+        "base_sha256": str(record.get("base_sha256") or adapter.info.sha256 or ""),
+        "state": "done",
+        "step": done_steps,
+        "steps_planned": planned,
+        "checkpoint": checkpoint.name,
+        "config": record.get("config") if isinstance(record.get("config"), dict) else config.to_dict(),
+        "trained_on": record.get("trained_on") or datetime.now(UTC).date().isoformat(),
+    })
+    project.write({**data, "train": record, "review": summary(state)})
+    previous = read_progress(project.root) or {}
+    loss = previous.get("loss")
+    elapsed = previous.get("elapsed_seconds")
+    write_row(project.root, {
+        "step": done_steps,
+        "total": planned,
+        "steps": done_steps,
+        "steps_planned": planned,
+        "stage": "done",
+        "loss": loss if isinstance(loss, int | float) and not isinstance(loss, bool) else None,
+        "elapsed_seconds": elapsed if isinstance(elapsed, int | float) and not isinstance(elapsed, bool) else 0,
+        "eta_seconds": 0,
+    })
+    return {
+        "state": "done",
+        "step": done_steps,
+        "steps": done_steps,
+        "steps_planned": planned,
+        "checkpoint": checkpoint.name,
+        "review": summary(state),
+        "preview": preview_state,
+    }
+
+
+def _try_final_preview(
+    project: Project,
+    adapter: BaseAdapter,
+    config: TrainConfig,
+    state: dict[str, object],
+    checkpoint: Path,
+    progress: Progress,
+) -> str:
+    """``drawn``, or ``failed`` after a warning. The checkpoint is never touched here."""
+    try:
+        _final_preview(project, adapter, config, state, checkpoint, progress)
+    except Exception as exc:  # noqa: BLE001 - a picture must not block saving the LoRA
+        progress.emit(
+            "train.preview",
+            "lora.warn.final_preview",
+            {"error": f"{type(exc).__name__}: {exc}"[:300]},
+        )
+        return "failed"
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return "drawn"
+
+
+def _review_checkpoint(project: Project, state: dict[str, object]) -> Path:
+    """The checkpoint the open review saved. Missing files are not a finished LoRA."""
+    raw = str(state.get("checkpoint") or "")
+    if not raw:
+        raise LoraUsageError("lora.err.no_checkpoint")
+    path = project.resolve(raw)
+    if not path.is_file():
+        alt = project.checkpoints / Path(raw).name
+        path = alt if alt.is_file() else path
+    if not path.is_file():
+        raise LoraUsageError("lora.err.no_checkpoint")
+    return path
+
+
+def _stored_config(project: Project, state: dict[str, object]) -> TrainConfig:
+    """The config the run was trained with, so the final preview matches that LoRA."""
+    data = project.read()
+    trained = data.get("train")
+    raw = trained.get("config") if isinstance(trained, dict) else None
+    if not isinstance(raw, dict) or "rank" not in raw:
+        stored = state.get("config")
+        raw = stored if isinstance(stored, dict) else {}
+    return TrainConfig.from_dict(raw)
+
+
+def _final_preview(
+    project: Project,
+    adapter: BaseAdapter,
+    config: TrainConfig,
+    state: dict[str, object],
+    checkpoint: Path,
+    progress: Progress,
+) -> None:
+    """Draw the result pictures from the saved LoRA. The name matches the checkpoint step.
+
+    Unless the run used its own ``--preview-prompts``, the full-figure default comes first,
+    so the final previews (and the likeness score drawn from them) always show the subject
+    head to toe.
+    """
+    prompts = [str(prompt) for prompt in state.get("prompts") or [] if str(prompt).strip()]
+    if state.get("custom_prompts") is not True:
+        prompts = list(dict.fromkeys([*default_preview_prompts(project, project.read()), *prompts]))
+    device = _device(adapter, config)
+    model = _preview_model(adapter, config, device, checkpoint, prompts)
+    file_step = _checkpoint_step(checkpoint.name)
+    steps = sample_steps_of(state)
+    stamp = PreviewStamp(adapter.info.mdl_id, sha256_file(checkpoint), file_step)
+    progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
+    model.eval()
+    for index, prompt in enumerate(prompts):
+        with lora_strength(model, PREVIEW_LORA_SCALE):
+            image = adapter.preview(model, prompt, config.seed + index, config, steps=steps)
+        if not passes_output_check(image):
+            continue
+        project.previews.mkdir(parents=True, exist_ok=True)
+        save_preview(
+            image,
+            project.previews / f"step-{file_step:06d}-{index}.webp",
+            stamp.text(config.seed + index),
+            metadata={
+                "prompt": prompt,
+                "seed": config.seed + index,
+                "steps": steps,
+                "base": stamp.base,
+                "strength": stamp.scale,
+                "sha256": stamp.lora_sha256,
+            },
+        )
+
+
+
+def _attach_training_adapter(adapter, model, layers) -> None:
+    """Load a frozen Turbo training adapter when the base provides one. No-op otherwise."""
+    attach = getattr(adapter, "attach_training_adapter", None)
+    if callable(attach):
+        attach(model, layers)
+
+
+def _preview_model(
+    adapter: BaseAdapter, config: TrainConfig, device: str, checkpoint: Path, prompts: Sequence[str],
+):
+    """Load the base, add the saved LoRA, and put the transformer on ``device`` for drawing.
+
+    The same order as a training stage, with no photos: encoders up, prompts encoded,
+    encoders down, then the transformer (with its LoRA) onto the card. ``adapter.load``
+    leaves the transformer on the CPU; without :meth:`release_encoders` the VAE and the
+    embeddings went to the card while the transformer stayed behind (cuda:0 vs cpu).
+    """
+    base = weights_dir(adapter.info.mdl_id)
+    if getattr(adapter, "encodes_before_load", False):
+        adapter.load_encoders(base, config, device)
+        adapter.encode([], [], config)
+        adapter.prepare_previews(list(prompts))
+        adapter.free_text_encoder()
+        model = adapter.load(base, config, device)
+    else:
+        model = adapter.load(base, config, device)
+        # No photos: this only stages the encoders, so the prompts encode on ``device``.
+        adapter.encode([], [], config)
+        adapter.prepare_previews(list(prompts))
+    layers = inject(model, adapter.target_modules, config.rank, config.alpha, dtype=adapter.lora_dtype)
+    load_lora_state(layers, load_file(str(checkpoint)))
+    adapter.release_encoders()
+    _one_device(model, layers, device)
+    return model
+
+
+def _one_device(model, layers, device: str) -> None:
+    """Every LoRA layer sits with its base weight, and the whole model sits on ``device``.
+
+    A LoRA layer left behind is moved next to its base weight. A model that is still
+    elsewhere stops with ``lora.err.preview_device`` instead of a mismatch deep in the pipeline.
+    """
+    for layer in layers.values():
+        home = layer.base.weight.device
+        if layer.lora_A.weight.device != home or layer.lora_B.weight.device != home:
+            layer.lora_A.to(home)
+            layer.lora_B.to(home)
+        if layer.has_training_adapter:
+            layer.training_A.to(home)
+            layer.training_B.to(home)
+    want = torch.device(device).type
+    found = {parameter.device.type for parameter in model.parameters()}
+    stray = sorted(found - {want})
+    if stray:
+        raise LoraStageError("lora.err.preview_device", devices=f"{','.join(stray)}->{want}")
+
+
+def _checkpoint_step(name: str) -> int:
+    """The step number in a ``step-NNNNNN`` checkpoint name."""
+    stem = Path(name).stem
+    if stem.startswith("step-") and stem.removeprefix("step-").isdigit():
+        return int(stem.removeprefix("step-"))
+    return 0
+
+
+class PreviewStamp:
+    """What a preview picture records about how it was drawn (XMP attributes, no paths or user data)."""
+
+    def __init__(self, base: str, lora_sha256: str, step: int, scale: float = PREVIEW_LORA_SCALE) -> None:
+        self.base = base
+        self.lora_sha256 = lora_sha256
+        self.step = step
+        self.scale = scale
+
+    def text(self, seed: int) -> dict[str, str]:
+        """``voxprint.*`` text chunks for one picture drawn with ``seed``."""
+        return {
+            "voxprint.seed": str(int(seed)),
+            "voxprint.lora_scale": f"{self.scale:g}",
+            "voxprint.base_model": self.base,
+            "voxprint.lora_sha256": self.lora_sha256,
+            "voxprint.step": str(int(self.step)),
+        }
+
+
+def save_preview(image, path: Path, text: dict[str, str], *, metadata: dict[str, object] | None = None) -> Path:
+    """Write one RGB preview picture and return the path actually written.
+
+    The picture is lossless WebP; when this Pillow cannot encode WebP the same
+    call falls back to JPEG, never PNG. The ``voxprint.*`` stamp in ``text``
+    is always stored as XMP attributes: likeness and the preview tests read
+    them. The shared prompt/seed/steps/base/LoRA document in ``metadata`` is
+    added only when embedding is opted in.
+    """
+    from voxprint_forge.imageio_save import save_image as write_image
+
+    return write_image(image, path, "series", metadata=metadata, stamp=text)
+
+
+def read_preview_text(path: Path) -> dict[str, str]:
+    """The ``voxprint.*`` stamp of one preview picture.
+
+    Old PNG previews carry the stamp as PNG text chunks; WebP previews carry
+    the same keys as XMP attributes. Both are read, so previews written by an
+    older version still score.
+    """
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image.load()
+        text = {str(k): str(v) for k, v in getattr(image, "text", {}).items() if str(k).startswith("voxprint.")}
+    if text:
+        return text
+    from voxprint_forge.imageio_save import read_stamp
+
+    return read_stamp(path)
+
+
+def _weights_sha256(layers, base: str, step: int, saved: Path | None = None, trigger: str = "") -> str:
+    """sha256 of this step's LoRA checkpoint file, the bytes on disk.
+
+    ``saved`` is that file when this step was just written. Otherwise :func:`_write_lora_file`
+    writes it to a temporary folder, and the digest is of that file. Re-saving with
+    ``save_file`` alone is not enough: the metadata key order is not stable, so the hash would
+    not be the checkpoint's.
+    """
+    if saved is not None and saved.name == f"step-{step:06d}.safetensors" and saved.is_file():
+        return sha256_file(saved)
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="vxp-lora-hash-") as folder:
+        path = Path(folder) / f"step-{step:06d}.safetensors"
+        _write_lora_file(path, layers, base, step, trigger)
+        return sha256_file(path)
+
+
+def _previews(project, adapter, model, prompts, step, config, progress, stamp: PreviewStamp | None = None) -> None:
+    progress.emit("train.preview", "lora.progress.preview", reason_key="lora.reason.preview")
+    model.eval()
+    try:
+        for index, prompt in enumerate(prompts):
+            with lora_strength(model, PREVIEW_LORA_SCALE):
+                image = adapter.preview(model, prompt, config.seed + index, config)
+            if image is not None:
+                path = project.previews / f"step-{step:06d}-{index}.webp"
+                meta = None if stamp is None else {
+                    "prompt": prompt,
+                    "seed": config.seed + index,
+                    "base": stamp.base,
+                    "strength": stamp.scale,
+                    "sha256": stamp.lora_sha256,
+                }
+                if stamp is None:
+                    from voxprint_forge.imageio_save import save_image as write_image
+
+                    write_image(image, path, "series")
+                else:
+                    save_preview(image, path, stamp.text(config.seed + index), metadata=meta)
+    finally:
+        model.train()
+
+
+def _finish(
+    project, data, adapter, config, state, step, checkpoint, loss, from_lora, phases=None, review_summary=None,
+    steps_planned: int | None = None,
+) -> dict[str, object]:
+    record = {
+        "base": adapter.info.mdl_id,
+        "base_variant": base_variant(adapter.info.mdl_id, adapter.info.variant),
+        "base_revision": adapter.info.revision,
+        "base_sha256": str(adapter.info.sha256 or ""),
+        "config": config.to_dict(),
+        "step": step,
+        "state": state,
+        "checkpoint": checkpoint.name if checkpoint else None,
+        "trained_on": datetime.now(UTC).date().isoformat(),
+        "extended": from_lora is not None,
+    }
+    if steps_planned is not None:
+        record["steps_planned"] = int(steps_planned)
+    payload = {**data, "train": record}
+    if review_summary is not None:
+        payload["review"] = review_summary
+    project.write(payload)
+    result = {"state": state, "step": step, "steps": config.steps, "checkpoint": record["checkpoint"], "loss": loss}
+    if review_summary is not None:
+        result["review"] = review_summary
+    if torch.cuda.is_available():
+        peaks = phases.peaks.values() if phases is not None and phases.peaks else []
+        result["peak_vram_gb"] = max(
+            (p["alloc_gb"] for p in peaks), default=round(torch.cuda.max_memory_allocated() / 2**30, 2)
+        )
+        result["peak_reserved_gb"] = max(
+            (p["reserved_gb"] for p in peaks), default=round(torch.cuda.max_memory_reserved() / 2**30, 2)
+        )
+        if phases is not None:
+            result["vram_phases_gb"] = phases.peaks
+            if phases.plan is not None:
+                result["memory_plan"] = phases.plan
+        cap = vram_cap_gb()
+        if cap is not None:
+            result["vram_cap_gb"] = cap
+    parked = events()
+    if parked:
+        result["park"] = parked
+    return result

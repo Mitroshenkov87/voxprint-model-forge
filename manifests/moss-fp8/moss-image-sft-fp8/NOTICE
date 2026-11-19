@@ -1,0 +1,10 @@
+MOSS-Image SFT DiT FP8
+Copyright 2026 Aleksandr Mitroshenkov
+
+This is a modified work. Voxprint quantized the MOSS-Image DiT to FP8 e4m3
+weight-only with torchao 0.18.0 (float8_e4m3fn,per_row,v2). Compute stays in bf16.
+The source revision, the source file sha256 values, the torchao version and the
+quant config are recorded in voxprint-model.json and README.md.
+
+Licensed under the Apache License, Version 2.0. The license text is the LICENSE
+file in this directory.

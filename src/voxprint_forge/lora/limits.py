@@ -1,0 +1,47 @@
+"""How many photos a LoRA trains on: the one place the numbers live.
+
+``RECOMMENDED_RANGE`` is what every UI string, the CLI help and the manual call the
+recommended set size (Simple mode enforces it). ``EXPERT_RANGE`` is what Expert mode
+allows; the UI names it ("Allowed in Expert") only when it really differs.
+"""
+
+from __future__ import annotations
+
+SIMPLE_CAP = 500
+RECOMMENDED_RANGE = (10, SIMPLE_CAP)
+EXPERT_FLOOR = 5
+EXPERT_CAP = 500
+EXPERT_RANGE = (EXPERT_FLOOR, EXPERT_CAP)
+MIN_SIDE = 512
+
+
+def min_photos(mode: str) -> int:
+    """The fewest photos ``mode`` trains on: the recommended low in Simple, ``EXPERT_FLOOR`` in Expert."""
+    return EXPERT_FLOOR if mode == "expert" else RECOMMENDED_RANGE[0]
+
+
+def need_more(count: int, mode: str) -> int:
+    """How many photos to add before ``mode`` accepts ``count``; 0 when it already does."""
+    return max(0, min_photos(mode) - count)
+
+
+def expert_only(count: int) -> bool:
+    """True when Expert trains on ``count`` photos and Simple refuses them."""
+    low, high = RECOMMENDED_RANGE
+    return not low <= count <= high and EXPERT_FLOOR <= count <= EXPERT_CAP
+
+
+def expert_range_differs() -> bool:
+    """True when Expert mode allows a range other than the recommended one."""
+    return EXPERT_RANGE != RECOMMENDED_RANGE
+
+
+def text_params() -> dict[str, int]:
+    """Default placeholders every catalog string may use: ``{rec_low}``–``{rec_high}``, the Expert range, MIN_SIDE."""
+    return {
+        "rec_low": RECOMMENDED_RANGE[0],
+        "rec_high": RECOMMENDED_RANGE[1],
+        "expert_low": EXPERT_RANGE[0],
+        "expert_high": EXPERT_RANGE[1],
+        "min_side": MIN_SIDE,
+    }

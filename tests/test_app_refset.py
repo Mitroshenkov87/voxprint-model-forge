@@ -1,0 +1,412 @@
+"""The "Build a set" step: references, rounds, Keep/Reject, This is it, layout at 1024x768 (offscreen, stubs)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from PySide6 import QtCore, QtWidgets  # noqa: E402
+from voxprint_common.i18n import set_language  # noqa: E402
+
+from tests.forge_app_stub import ALL_COMMANDS, StubRunner  # noqa: E402
+from tests.test_app_window import CONTROLS, _next, _scroll_problems, _status  # noqa: E402
+from tests.test_lora_refset import SUBJECT, Loaders, _refs  # noqa: E402
+from voxprint_forge.app import engine  # noqa: E402
+from voxprint_forge.app.engine import Outcome  # noqa: E402
+from voxprint_forge.app.text import tr  # noqa: E402
+from voxprint_forge.lora import refset  # noqa: E402
+from voxprint_forge.lora.errors import LoraBlocked  # noqa: E402
+from voxprint_forge.lora.events import Progress  # noqa: E402
+
+
+@pytest.fixture
+def make_app(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("VOXPRINT_HOME", str(tmp_path / "home"))
+    from voxprint_forge.app import window as forge_window
+    from voxprint_forge.app.window import ForgeApp
+
+    monkeypatch.setattr(forge_window, "EXTEND_FROM_SAMPLES_ENABLED", True)
+
+    made = []
+
+    def build(runner=None, lang="en"):
+        set_language(lang)
+        app = ForgeApp(runner=runner or StubRunner(), home=tmp_path / "state",
+                       projects_root=tmp_path / "state" / "lora", commands=ALL_COMMANDS,
+                       open_path=lambda _p: None, detached=lambda _a: None)
+        app.window.show()
+        qapp.processEvents()
+        made.append(app)
+        return app
+
+    yield build
+    for app in made:
+        app.expert.set_enabled(False)
+        app.window.close()
+    set_language("en")
+
+
+def _engine(app_ref: list, *, loaders_factory=Loaders) -> StubRunner:
+    """A runner whose refset commands run the real loop on stub models."""
+    runner = StubRunner()
+
+    def round_(project: Path) -> None:
+        args = runner.calls[-1]
+        count = int(args[args.index("--candidates") + 1])
+        strength = float(args[args.index("--strength") + 1])
+        steps = int(args[args.index("--steps") + 1])
+        refs = [Path(args[i + 1]) for i, a in enumerate(args) if a == "--ref"]
+        loaders = loaders_factory()
+        try:
+            refset.run_round(project, refs, SUBJECT, refset.check_settings(count, strength, steps),
+                             load_gate=loaders.gate, load_generator=loaders.generator,
+                             load_embedder=loaders.embedder, progress=Progress(), describe=lambda _i: "a test pattern")
+        except LoraBlocked:
+            pass  # the scripted outcome says blocked
+
+    def finish(project: Path) -> None:
+        args = runner.calls[-1]
+        base = args[args.index("--base") + 1] if "--base" in args else "z-image"
+        refset.finish(project, Progress(), mode=args[args.index("--mode") + 1], base=base)
+
+    runner.effects["refset.round"] = round_
+    runner.effects["refset.finish"] = finish
+    return runner
+
+
+def _to_refset(app, refs) -> None:
+    from tests.test_app_window import _pass_photo_check
+
+    app.draft.add_photos(refs)
+    app.draft.kind = "person"
+    app.repaint()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
+    assert app.draft.source == "refs"
+    _pass_photo_check(app)
+    app.repaint()
+    assert _next(app).isEnabled(), _status(app)
+    _next(app).click()
+    app.draft.set_names("Shape Demo", "")
+    app.draft.consent = app.draft.adult = True
+    app.draft.set_verbal(True)
+    app.repaint()
+    assert _next(app).isEnabled(), _status(app)
+    _next(app).click()
+    assert app.layout.sections.step.step_id == "refset"
+
+
+def _buttons(app, prefix):
+    QtWidgets.QApplication.processEvents()
+    return [b for b in app.window.findChildren(QtWidgets.QPushButton) if b.objectName().startswith(prefix)
+            and b.isVisibleTo(app.window)]
+
+
+def _make(app):
+    QtWidgets.QApplication.processEvents()
+    return next(b for b in app.window.findChildren(QtWidgets.QPushButton) if b.isVisibleTo(app.window)
+                and b.text() in (tr("forge.app.refset.make"), tr("forge.app.refset.next_round")))
+
+
+def _find(app, kind, name):
+    QtWidgets.QApplication.processEvents()
+    found = [w for w in app.window.findChildren(kind, name) if w.isVisibleTo(app.window)]
+    assert len(found) == 1, (name, len(found))
+    return found[0]
+
+
+def test_photos_step_takes_1_to_10_references(make_app, tmp_path) -> None:
+    app = make_app()
+    app.draft.kind = "person"
+    app.repaint()
+    app.window.findChild(QtWidgets.QCheckBox, "forge.photos.extend").click()
+    assert not _next(app).isEnabled()
+    assert _status(app) == tr("forge.app.err.refs_count", low=1, high=10)
+    app.draft.add_photos(_refs(tmp_path / "r", 11))
+    app.repaint()
+    assert not _next(app).isEnabled()
+    app.draft.remove_photo(app.draft.photos[-1])
+    app.repaint()
+    from tests.test_app_window import _pass_photo_check
+
+    assert not _next(app).isEnabled()
+    _pass_photo_check(app)
+    app.repaint()
+    assert _next(app).isEnabled()
+    assert tr("forge.app.step.photos.short_refs.person") in [
+        w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
+
+
+def test_own_photos_skip_the_step(make_app, tmp_path) -> None:
+    from tests.forge_app_stub import make_photos
+    from tests.test_app_window import _pass_photo_check
+
+    app = make_app()
+    app.draft.add_photos(make_photos(tmp_path / "p", 12))
+    app.draft.kind = "object"
+    app.draft.set_adult(False)  # object subjects carry no 18+/adult-content flags
+    app.repaint()
+    _pass_photo_check(app)
+    app.repaint()
+    _next(app).click()
+    app.draft.set_names("Cube", "")
+    app.draft.rights = True
+    app.repaint()
+    _next(app).click()
+    assert app.layout.sections.step.step_id == "prepare"
+    labels = [w.text() for w in app.window.findChildren(QtWidgets.QLabel)]
+    assert tr("forge.app.refset.skip") not in labels
+    count = app.window.findChild(QtWidgets.QLabel, "wizardCount")
+    assert count.text() == tr("wizard.step_count", current=3, total=5)
+    _find(app, QtWidgets.QPushButton, "wizardBack").click()
+    assert app.layout.sections.step.step_id == "subject"
+    _find(app, QtWidgets.QPushButton, "wizardBack").click()
+    assert app.layout.sections.step.step_id == "photos"
+
+
+def test_round_keep_and_this_is_it_hand_the_set_to_prepare(make_app, tmp_path) -> None:
+    refs = _refs(tmp_path / "refs", 3)
+    holder: list = []
+    app = make_app(_engine(holder))
+    _to_refset(app, refs)
+    assert not _next(app).isEnabled()
+    assert _status(app) == tr("forge.app.err.refset_not_done")
+    finish = _find(app, QtWidgets.QPushButton, "forge.refset.finish")
+    assert not finish.isEnabled()
+    _make(app).click()
+    call = app.runner.calls[-1]
+    assert call[:5] == ["--json", "lora", "refset", "round", "--project"]
+    assert call[call.index("--candidates") + 1] == "24" and call[call.index("--strength") + 1] == "0.50"
+    assert "--consent-obtained" in call and "--subject-adult" in call and call.count("--ref") == 3
+    keeps = _buttons(app, "forge.refset.keep.")
+    assert len(keeps) == 24
+    assert not _buttons(app, "forge.refset.reject.")  # one checkmark toggle per card, no Keep/Reject pair
+    for button in keeps[:9]:
+        button.click()
+    keeps[8].click()  # unticking leaves the picture out again
+    assert not keeps[8].isChecked()
+    state = refset.load_state(app.project)
+    assert len(refset.kept(state)) == 8
+    assert refset.candidates(state)[8]["verdict"] == "pending"
+    label = _find(app, QtWidgets.QLabel, "presetLabel")
+    assert label.text() == tr("forge.app.refset.kept", kept=8, shown=24)
+    assert not _next(app).isEnabled()  # Next stays off until This is it
+    _find(app, QtWidgets.QPushButton, "forge.refset.finish").click()
+    assert app.runner.calls[-1][2:4] == ["refset", "finish"]
+    assert len(app.draft.approved) == 11
+    assert _status(app) == tr("forge.app.refset.finished", count=11)
+    assert _next(app).isEnabled()
+    _next(app).click()
+    assert app.layout.sections.step.step_id == "prepare"
+    args = engine.prepare_args(app.draft, app.project)
+    photos = [Path(args[i + 1]) for i, a in enumerate(args) if a == "--photo"]
+    assert photos == app.draft.approved and not set(photos) & set(refs)
+    metadata = json.loads((refset.folder(app.project) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["base"] == app.simple["base"] and metadata["teacher"]["licence"] == "Apache-2.0"
+
+
+def test_a_second_round_starts_from_kept_pictures(make_app, tmp_path) -> None:
+    app = make_app(_engine([]))
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    _buttons(app, "forge.refset.keep.")[0].click()
+    _make(app).click()
+    assert _make(app).text() == tr("forge.app.refset.next_round")
+    state = refset.load_state(app.project)
+    assert len(state["rounds"]) == 2
+    assert len(_buttons(app, "forge.refset.keep.")) == 24
+
+
+def test_simple_has_no_round_settings_and_expert_has_them(make_app, tmp_path) -> None:
+    app = make_app(_engine([]))
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    assert not page.findChildren(QtWidgets.QAbstractSpinBox)
+    assert tr("forge.app.refset.simple", count=24) in [w.text() for w in page.findChildren(QtWidgets.QLabel)]
+    app.expert.set_enabled(True)
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    assert not page.findChildren(QtWidgets.QAbstractSpinBox)  # the round settings live in the Expert panel
+    panel = _find(app, QtWidgets.QWidget, "expertPanel")
+    box = _find(app, QtWidgets.QWidget, "forge.refset.expert")
+    assert panel.isAncestorOf(box)
+    labels = [w.text() for w in box.findChildren(QtWidgets.QLabel) if w.isVisibleTo(app.window)]
+    assert tr("forge.app.refset.prompts") in labels and tr("forge.app.refset.prompts_later") in labels
+    count = box.findChild(QtWidgets.QSpinBox, "forge.refset.count")
+    strength = box.findChild(QtWidgets.QDoubleSpinBox, "forge.refset.strength")
+    steps = box.findChild(QtWidgets.QSpinBox, "forge.refset.steps")
+    assert (count.minimum(), count.maximum()) == (8, 64)
+    assert (strength.minimum(), strength.maximum()) == (0.25, 0.9)
+    count.setValue(12)
+    strength.setValue(0.4)
+    steps.setValue(6)
+    assert box.findChild(QtWidgets.QTableWidget, "forge.refset.prompts") is None
+    assert page.isAncestorOf(_make(app)) and page.isAncestorOf(_find(app, QtWidgets.QPushButton, "forge.refset.finish"))
+    _make(app).click()
+    call = app.runner.calls[-1]
+    assert call[call.index("--candidates") + 1] == "12"
+    assert call[call.index("--strength") + 1] == "0.40" and call[call.index("--steps") + 1] == "6"
+    assert len(_buttons(app, "forge.refset.keep.")) == 12
+    table = _find(app, QtWidgets.QTableWidget, "forge.refset.prompts")
+    assert table is not None and table.rowCount() == 2
+    assert _find(app, QtWidgets.QWidget, "expertPanel").isAncestorOf(table)
+    table.item(0, 1).setText("an edited description")
+    rid = table.item(0, 1).data(QtCore.Qt.ItemDataRole.UserRole)
+    assert refset.load_prompts(app.project)[rid] == "an edited description"
+
+
+def test_a_blocked_set_cannot_continue(make_app, tmp_path) -> None:
+    runner = _engine([], loaders_factory=lambda: Loaders(fail_refs=True))
+    runner.script["refset.round"] = ([], Outcome(False, None, "lora.err.refset_blocked", "", 6))
+    app = make_app(runner)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    assert _status(app) == tr("lora.err.refset_blocked")
+    assert not _make(app).isEnabled()
+    assert not _find(app, QtWidgets.QPushButton, "forge.refset.restart").isEnabled()
+    assert not _find(app, QtWidgets.QPushButton, "forge.refset.finish").isEnabled()
+    assert not _next(app).isEnabled()
+    assert not _buttons(app, "forge.refset.keep.")
+    app.restart_set()
+    assert refset.load_state(app.project)["blocked"]
+
+
+@pytest.mark.parametrize("lang", ["en"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_refset_step_scrolls_above_the_footer_at_1024x768(make_app, tmp_path, lang, expert) -> None:
+    app = make_app(_engine([]), lang=lang)
+    app.expert.set_enabled(expert)
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 3))
+    problems = _scroll_problems(app, "refset-empty")
+    _make(app).click()
+    QtWidgets.QApplication.processEvents()
+    problems += _scroll_problems(app, "refset-review")
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    assert page.isAncestorOf(_find(app, QtWidgets.QPushButton, "forge.refset.finish"))
+    grid = _find(app, QtWidgets.QWidget, "forge.refset.grid")
+    assert grid is not None and grid.height() >= grid.flow.heightForWidth(grid.width())
+    assert app.window.size() == QtCore.QSize(1024, 768)
+    assert problems == []
+
+
+@pytest.mark.parametrize("lang", ["en"])
+@pytest.mark.parametrize("expert", [False, True])
+def test_every_refset_control_has_a_tooltip(make_app, tmp_path, lang, expert) -> None:
+    app = make_app(_engine([]), lang=lang)
+    app.expert.set_enabled(expert)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    missing = []
+    for widget in app.window.findChildren(QtWidgets.QWidget):
+        if isinstance(widget, CONTROLS) and widget.isVisibleTo(app.window) and widget.isEnabled():
+            # A combo's popup list and a spin box's embedded line edit are the
+            # control's own internals; the control carries the tooltip.
+            if isinstance(widget.parent(), (QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)):
+                continue
+            tip = widget.toolTip()
+            if not tip or tip.startswith(("lora.", "forge.app.")):
+                missing.append((type(widget).__name__, widget.objectName()))
+    assert not missing
+    for key in ("forge.app.step.refset.short",):
+        assert len(tr(key)) <= 60
+
+
+@pytest.mark.parametrize("lang", ["en"])
+def test_refset_step_has_one_details_and_one_action_row(make_app, tmp_path, lang) -> None:
+    app = make_app(_engine([]), lang=lang)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    details = [w for w in page.findChildren(QtWidgets.QWidget)
+               if w.objectName().startswith("forge.details.") and w.isVisibleTo(app.window)]
+    assert len(details) == 1
+    make, finish = _make(app), _find(app, QtWidgets.QPushButton, "forge.refset.finish")
+    restart = _find(app, QtWidgets.QPushButton, "forge.refset.restart")
+    assert make.mapTo(app.window, QtCore.QPoint()).y() == finish.mapTo(app.window, QtCore.QPoint()).y() \
+        == restart.mapTo(app.window, QtCore.QPoint()).y()
+    assert not _next(app).isEnabled()
+    _make(app).click()
+    for keep in _buttons(app, "forge.refset.keep.")[:8]:
+        keep.click()  # 2 references + 8 kept = the Simple minimum of 10
+    assert not _next(app).isEnabled()
+    _find(app, QtWidgets.QPushButton, "forge.refset.finish").click()
+    assert _next(app).isEnabled()
+
+
+def test_cards_line_up_with_and_without_the_similar_badge(make_app, tmp_path) -> None:
+    app = make_app(_engine([]))
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 3))
+    _make(app).click()
+    state = refset.load_state(app.project)
+    similar = {str(c["id"]) for c in refset.candidates(state) if c.get("near_duplicate_of")}
+    cards = [w for w in app.window.findChildren(QtWidgets.QFrame, "card") if w.property("candidate")]
+    assert similar and len(similar) < len(cards)  # the stub round has both kinds
+    assert len({card.sizeHint().height() for card in cards}) == 1
+    texts = {w.text() for w in app.window.findChildren(QtWidgets.QLabel, "forge.refset.similar")}
+    assert texts == {"", tr("forge.app.refset.similar_mark")}
+    labels = [w.text() for w in app.window.findChildren(QtWidgets.QLabel) if w.isVisibleTo(app.window)]
+    assert not any("(≈)" in text for text in labels)  # no round total, only the per-card badge
+    card = next(c for c in cards if c.property("candidate") not in similar)
+    picture = next(w for w in card.findChildren(QtWidgets.QLabel) if w.pixmap() is not None and not w.pixmap().isNull())
+    QtCore.QCoreApplication.sendEvent(picture, _click(picture))
+    keep = card.findChild(QtWidgets.QPushButton)
+    assert keep.isChecked() and card.property("kept") == "true"
+
+
+def _click(widget):
+    from PySide6 import QtGui
+
+    pos = QtCore.QPointF(widget.rect().center())
+    return QtGui.QMouseEvent(QtCore.QEvent.Type.MouseButtonPress, pos, widget.mapToGlobal(pos),
+                             QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+                             QtCore.Qt.KeyboardModifier.NoModifier)
+
+
+@pytest.mark.parametrize("expert", [False, True])
+def test_open_folder_lines_up_with_back(make_app, tmp_path, expert) -> None:
+    app = make_app(_engine([]))
+    app.expert.set_enabled(expert)
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    QtWidgets.QApplication.processEvents()
+    folder = _find(app, QtWidgets.QPushButton, "openFolder")
+    back = _find(app, QtWidgets.QPushButton, "wizardBack")
+    nxt = _find(app, QtWidgets.QPushButton, "wizardNext")
+    assert folder.text() == tr("forge.app.folder")
+    assert folder.property("textButton") == "true"
+    def mid_y(widget: QtWidgets.QWidget) -> float:
+        return widget.mapTo(app.window, QtCore.QPoint()).y() + widget.height() / 2
+
+    assert abs(mid_y(folder) - mid_y(back)) <= 2
+    assert abs(mid_y(folder) - mid_y(nxt)) <= 2
+    assert folder.mapTo(app.window, QtCore.QPoint()).x() < back.mapTo(app.window, QtCore.QPoint()).x()
+
+
+def test_round_text_and_one_range_in_both_modes(make_app, tmp_path) -> None:
+    app = make_app(_engine([]), lang="en")
+    app.window.resize(1024, 768)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    QtWidgets.QApplication.processEvents()
+    page = _find(app, QtWidgets.QWidget, "forgeStepPage")
+    labels = [w.text() for w in page.findChildren(QtWidgets.QLabel)]
+    assert "Round 1 is ready: 24 pictures to review" in labels
+    assert tr("forge.app.refset.simple", count=24) in labels
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr("forge.app.refset.kept", kept=0, shown=24)
+    app.expert.set_enabled(True)
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr(
+        "forge.app.refset.kept_expert", kept=0, shown=24)
+
+
+def test_expert_range_is_not_named_when_it_matches(make_app, tmp_path, monkeypatch) -> None:
+    from voxprint_forge.app import window
+
+    monkeypatch.setattr(window, "expert_range_differs", lambda: False)
+    app = make_app(_engine([]))
+    app.expert.set_enabled(True)
+    _to_refset(app, _refs(tmp_path / "refs", 2))
+    _make(app).click()
+    assert _find(app, QtWidgets.QLabel, "presetLabel").text() == tr("forge.app.refset.kept", kept=0, shown=24)

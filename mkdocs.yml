@@ -1,0 +1,53 @@
+site_name: VOXPrint AI Model Forge
+site_description: Prepare, quantize, measure, and card local models.
+site_url: https://mitroshenkov87.github.io/voxprint-model-forge/
+repo_url: https://github.com/Mitroshenkov87/voxprint-model-forge
+repo_name: Mitroshenkov87/voxprint-model-forge
+theme:
+  name: material
+exclude_docs: |
+  CANVAS.md
+  CLI.md
+  HOTFIXES-A100.md
+  LESSONS.md
+  VM.md
+nav:
+  - Home: index.md
+  - Manual:
+      - English:
+          - Overview: manual/en/index.md
+          - Install: manual/en/install.md
+          - Model download: manual/en/models.md
+          - Creating a LoRA project: manual/en/project.md
+          - Presets: manual/en/presets.md
+          - Training: manual/en/training.md
+          - Export: manual/en/export.md
+          - Compression tests: manual/en/compression.md
+          - RAM tiers: manual/en/memory.md
+          - Troubleshooting: manual/en/troubleshooting.md
+  - Roadmap: roadmap.md
+  - Testing: TESTING.md
+  - CLI: cli-reference.md
+  - Compare: COMPARE.md
+  - MOSS-Image: MOSS.md
+  - KL: KL.md
+  - KV and spec bench: KV.md
+  - LoRA trainer: LORA.md
+  - Gate config: spec/gate-config.md
+  - GUI feature map: ui/FEATURE-MAP.md
+  - Model manifest: MODEL-MANIFEST.md
+  - Index key rotation: KEY-ROTATION.md
+  - API: api.md
+markdown_extensions:
+  - pymdownx.snippets:
+      base_path:
+        - .
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            members_order: source
+            show_if_no_docstring: false

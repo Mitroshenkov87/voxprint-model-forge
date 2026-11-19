@@ -1,0 +1,9 @@
+{
+  "files": {
+    "config.json": "1ce878a77395b4a6a4da291a09b2b627d7d9b31bbe3be1fb1a37ad4d63f1a7e2",
+    "model.safetensors": "1265d8e5a8a363a615898be873c224aebc6f310654bf23b1745da0975a7b7555",
+    "preprocessor_config.json": "445c77049d082004aa07593344d5e1f521f1198228bf586196f70ce7ae021414"
+  },
+  "key": "fairface-age",
+  "schema": 1
+}

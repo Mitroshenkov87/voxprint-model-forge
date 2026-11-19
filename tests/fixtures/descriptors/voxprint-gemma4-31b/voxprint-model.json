@@ -1,0 +1,89 @@
+{
+  "schema": "voxprint-model/1",
+  "id": "gemma4-31b",
+  "display_name": "VOXPrint Gemma 4 31B abliterated (GGUF)",
+  "app_ids": [
+    "plotweaver"
+  ],
+  "task": "text-generation",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "size": 1689,
+      "sha256": "d9813935fc7333c946f61672e3b886f69ef43cdf4619bf9413a7563c4ae9c214"
+    },
+    {
+      "path": "IQ3_XXS.gguf",
+      "size": 12077502368,
+      "sha256": "c7bb8f9f4bdb396fb40a5beb617de27132cda6727b885e82f635340f353c5340"
+    },
+    {
+      "path": "IQ3_XXS.gguf.sha256",
+      "size": 79,
+      "sha256": "a7921913437ad40a5edb2098c979dd79242df4062c9c18f58c6ca3a13f680161"
+    },
+    {
+      "path": "README.md",
+      "size": 3342,
+      "sha256": "433420e44d1c4b4f76488899e4caf847740d70c6b4239f51c1b2b82b3163e5bf"
+    },
+    {
+      "path": "README.md.sha256",
+      "size": 76,
+      "sha256": "06c657d8f7fb259e31b64a71240fc6a2000a0888e8f90241438d7216174cde8d"
+    },
+    {
+      "path": "gemma-4-31b-abliterated-Q4_K_M.gguf",
+      "size": 18687057536,
+      "sha256": "380f2f50f441225e669ab1541220985387bf3933573cd2f4f7e667f3790e73a3"
+    },
+    {
+      "path": "gemma-4-31b-abliterated-Q4_K_M.gguf.sha256",
+      "size": 102,
+      "sha256": "20a73efb7487dd3a2ae783470f6dcc0b09d7259d35e5e8236e0e719860e174ae"
+    },
+    {
+      "path": "imatrix.gguf",
+      "size": 27520256,
+      "sha256": "0dab2123044d013a72bb9b838702afd5d95a76fa37aacb122edf5a7aef76ed6e"
+    },
+    {
+      "path": "imatrix.gguf.sha256",
+      "size": 79,
+      "sha256": "9701ad92f8513fa5180946612ab05b97651f5ab3a33ec5938b25633de00933b7"
+    }
+  ],
+  "mirrors": [
+    {
+      "kind": "hf",
+      "ref": "paperscarecrow/Gemma-4-31B-it-abliterated",
+      "revision": "2491ee58472b82a2372d288f982943b9d5e6a82c"
+    },
+    {
+      "kind": "hf",
+      "ref": "Mitroshenkov87/voxprint-gemma4-31b",
+      "revision": "26495e1a45d8bde085a0681c3c43044eff5c8ac5"
+    }
+  ],
+  "tier": {
+    "min_vram_gib": 15.5,
+    "recommended_vram_gib": 23.5,
+    "gpu_min_cc": 6.0
+  },
+  "runtime": {
+    "engine": "llama.cpp",
+    "version_req": "b11476"
+  },
+  "base_model": "paperscarecrow/Gemma-4-31B-it-abliterated",
+  "card_url": "https://huggingface.co/Mitroshenkov87/voxprint-gemma4-31b",
+  "flags": [
+    "least-censored"
+  ],
+  "on_demand": true,
+  "build": {
+    "forge_version": "0.1.0",
+    "tag": "",
+    "date": "2026-10-11"
+  }
+}

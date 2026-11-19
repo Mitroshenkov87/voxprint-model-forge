@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Copy the latest trained LoRA to a named .safetensors with the trigger Canvas reads.
+set -euo pipefail
+
+FORGE="$HOME/VOXPrint/forge"
+CLI="$FORGE/venv/bin/voxprint-forge-cli"
+
+usage() {
+  cat <<'USAGE'
+Usage: forge-save-as [NAME] [--project DIR] [--checkpoint N]
+  NAME             output file name, for example Tatiana_Model
+                   (.safetensors is added when missing). Written in the project folder.
+  --project DIR    project folder. Default: the latest trained project under
+                   <Documents>/VOXPrint Projects/Model Forge
+  --checkpoint N   step to copy. Default: the last saved step
+USAGE
+}
+
+NAME="" PROJECT="" CHECKPOINT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project)    PROJECT="${2:?--project requires a directory}"; shift 2;;
+    --checkpoint) CHECKPOINT="${2:?--checkpoint requires a number}"; shift 2;;
+    -h|--help)    usage; exit 0;;
+    --*)          echo "Unknown option: $1" >&2; usage; exit 2;;
+    *)            if [ -z "$NAME" ]; then NAME="$1"; shift
+                  else echo "Unexpected argument: $1" >&2; usage; exit 2; fi;;
+  esac
+done
+[ -n "$NAME" ] || { usage; exit 2; }
+if [ ! -x "$CLI" ]; then
+  echo "Error: voxprint-forge-cli not found at $CLI" >&2
+  exit 1
+fi
+
+ARGS=(lora save-as "$NAME")
+[ -n "$PROJECT" ] && ARGS+=(--project "$PROJECT")
+[ -n "$CHECKPOINT" ] && ARGS+=(--checkpoint "$CHECKPOINT")
+"$CLI" "${ARGS[@]}"

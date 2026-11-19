@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# Prepare and train a person LoRA with voxprint-forge-cli in one command.
+set -euo pipefail
+
+FORGE="$HOME/VOXPrint/forge"
+CLI="$FORGE/venv/bin/voxprint-forge-cli"
+
+# The Documents folder, resolved the same way the app resolves it (never a
+# hard-coded localized folder name): $XDG_DOCUMENTS_DIR, else
+# `xdg-user-dir DOCUMENTS` (or XDG_DOCUMENTS_DIR in ~/.config/user-dirs.dirs),
+# else $HOME/Documents.
+documents_dir() {
+  if [ -n "${XDG_DOCUMENTS_DIR:-}" ]; then
+    printf '%s\n' "$XDG_DOCUMENTS_DIR"
+    return
+  fi
+  local dir=""
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    dir="$(xdg-user-dir DOCUMENTS 2>/dev/null || true)"
+  fi
+  if [ -z "$dir" ] && [ -r "$HOME/.config/user-dirs.dirs" ]; then
+    dir="$(awk -F= '$1 == "XDG_DOCUMENTS_DIR" { v = $2; gsub(/^"|"$/, "", v); print v }' \
+      "$HOME/.config/user-dirs.dirs" | tail -n 1)"
+    case "$dir" in
+      \$HOME*) dir="$HOME${dir#\$HOME}";;
+      /*)      :;;
+      *)       dir="";;
+    esac
+  fi
+  [ -n "$dir" ] || dir="$HOME/Documents"
+  printf '%s\n' "$dir"
+}
+
+DOCS="$(documents_dir)"
+PROJECTS="$DOCS/VOXPrint Projects/Model Forge"
+DATA="$PROJECTS/Photos"
+
+usage() {
+  cat <<'EOF'
+Usage: forge-train [NAME] [PERSON] [--photos DIR] [--photos-from-gui] [--steps N] [--base ID]
+                    [--rank N] [--crop both|subject|whole] [--release FILE] [--no-adult-content]
+                    [--smoke] [--yes] [--dry-run]
+  NAME             subject or stage name. Optional when the photo folder holds a
+                   release.txt with a "Model name" line, or with --photos-from-gui
+                   (then the selected folder's name is the fallback)
+  PERSON           photo folder: a person-folder name under the Photos root
+                   (<Documents>/VOXPrint Projects/Model Forge/Photos), or an
+                   absolute path to a photo folder
+  --photos DIR     photo folder (overrides PERSON; a person-folder name under
+                   the Photos root, a relative path, or an absolute path)
+  --photos-from-gui  use the photo folder selected in the Forge window
+                   (~/VOXPrint/forge/venv/bin/python -m voxprint_forge.app.launch
+                   --print-selection); when NAME is omitted it defaults to the
+                   release.txt "Model name", else the selected folder's name
+  --steps N        training steps (default: 1600)
+  --base ID        base model MDL id the project trains for (default: z-image)
+  --rank N         LoRA rank; alpha follows rank (default: 64)
+  --crop MODE      what lora prepare crops: both (default; whole frame plus a
+                   head-and-shoulders close-up when a face is found), subject
+                   or whole
+  --release FILE   model release file: copied into the project and recorded
+                   with its sha256; skips the consent/age prompts (the age
+                   gate still runs). When this is not given, a release.txt
+                   directly inside the photo folder is used when its consent
+                   is complete (Adult (18+), Consent to training and LoRA
+                   training allowed all "yes")
+  --no-adult-content  do not pass --adult-content to lora prepare (it is passed
+                   by default; a release.txt "Adult content in training: yes" turns
+                   it back on unless this flag is given)
+  --smoke          quick smoke run: 50 steps, quick preset, save every 25
+  --yes            skip the consent and age prompts
+  --dry-run        pass --dry-run to lora train
+EOF
+}
+
+NAME="" PERSON="" PHOTOS="" STEPS=1600 BASE="z-image" RANK=64 CROP="both"
+RELEASE="" ADULT=1 ADULT_SET=0 SMOKE=0 ASSUME_YES=0 DRY_RUN=0 PHOTOS_FROM_GUI=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --photos)        PHOTOS="${2:?--photos requires a directory}"; shift 2;;
+    --photos-from-gui) PHOTOS_FROM_GUI=1; shift;;
+    --steps)         STEPS="${2:?--steps requires a number}"; shift 2;;
+    --base)          BASE="${2:?--base requires a model id}"; shift 2;;
+    --rank)          RANK="${2:?--rank requires a number}"; shift 2;;
+    --crop)          CROP="${2:?--crop requires both, subject or whole}"; shift 2;;
+    --release)       RELEASE="${2:?--release requires a file}"; shift 2;;
+    --no-adult-content) ADULT=0; ADULT_SET=1; shift;;
+    --smoke)         SMOKE=1; shift;;
+    --yes)           ASSUME_YES=1; shift;;
+    --dry-run)       DRY_RUN=1; shift;;
+    -h|--help)       usage; exit 0;;
+    --*)             echo "Unknown option: $1" >&2; usage; exit 2;;
+    *)               if [ -z "$NAME" ]; then NAME="$1"; shift
+                     elif [ -z "$PERSON" ]; then PERSON="$1"; shift
+                     else echo "Unexpected argument: $1" >&2; usage; exit 2; fi;;
+  esac
+done
+# --photos-from-gui: ask the app which photo folder was picked in the window. The helper
+# prints the folder on stdout (exit 0) or the reason on stderr (exit 3); a non-zero exit
+# stops forge-train after that message. NAME defaults later: release.txt model name first,
+# then the selected folder's name.
+if [ "$PHOTOS_FROM_GUI" = 1 ]; then
+  if ! PHOTOS="$("$FORGE/venv/bin/python" -m voxprint_forge.app.launch --print-selection)"; then
+    exit 1
+  fi
+fi
+case "$CROP" in
+  both|subject|whole) ;;
+  *) echo "Error: --crop must be 'both', 'subject' or 'whole'." >&2; exit 2;;
+esac
+case "$RANK" in
+  ''|*[!0-9]*|0) echo "Error: --rank must be a positive integer." >&2; exit 2;;
+esac
+if [ -n "$RELEASE" ]; then
+  if [ ! -f "$RELEASE" ] || [ ! -r "$RELEASE" ]; then
+    echo "Error: release file not found or not readable: $RELEASE" >&2
+    exit 2
+  fi
+fi
+
+# Photos: an absolute path is used as-is; a person-folder name (or a relative
+# path) is resolved under the Photos root, or against the current directory.
+if [ -n "$PHOTOS" ]; then
+  case "$PHOTOS" in
+    /*) :;;
+    *)  wanted="$PHOTOS"
+        if [ -d "$DATA/$PHOTOS" ]; then
+          PHOTOS="$DATA/$PHOTOS"
+        elif [ ! -d "$PHOTOS" ]; then
+          echo "Error: photo folder not found: $wanted (looked under $DATA and the current directory)" >&2
+          exit 1
+        fi;;
+  esac
+elif [ -n "$PERSON" ]; then
+  case "$PERSON" in
+    /*) PHOTOS="$PERSON";;
+    *)  PHOTOS="$DATA/$PERSON";;
+  esac
+  [ -d "$PHOTOS" ] || { echo "Error: photo folder not found: $PHOTOS" >&2; exit 1; }
+else
+  # No person given: use the only person folder under the Photos root, or list them.
+  count=0
+  for d in "$DATA"/*/; do
+    [ -d "$d" ] || continue
+    count=$((count + 1))
+    PHOTOS="${d%/}"
+  done
+  if [ "$count" != 1 ]; then
+    if [ "$count" = 0 ]; then
+      echo "Error: no person folders under the Photos root $DATA" >&2
+    else
+      echo "Several person folders exist under the Photos root $DATA. Pass one:" >&2
+      for d in "$DATA"/*/; do
+        [ -d "$d" ] && echo "  $(basename "$d")" >&2
+      done
+    fi
+    exit 1
+  fi
+fi
+
+[ -d "$PHOTOS" ] || { echo "Error: photos folder not found: $PHOTOS" >&2; exit 1; }
+found=0
+for f in "$PHOTOS"/*; do
+  case "${f,,}" in
+    *.jpg|*.jpeg|*.png|*.webp|*.avif) found=1; break;;
+  esac
+done
+[ "$found" = 1 ] || { echo "Error: no jpg/jpeg/png/webp/avif photos found in $PHOTOS" >&2; exit 1; }
+
+# A release.txt sitting next to the photos records the model's consent in plain
+# "Key: value" lines. The python module turns it into shell-safe assignments;
+# RELEASE_CONSENT is 1 only when Adult (18+), Consent to training and LoRA training
+# allowed are all "yes" — only then is the file attached as --release (which skips
+# the prompts below, like --yes). A "no" or a missing line only means the prompts
+# are asked as usual: the file is recorded nowhere and never adds a restriction.
+# The age gate still runs on every photo either way; lora prepare only lists image
+# files, so the .txt itself is never read as a photo.
+RELEASE_SHA256="" RELEASE_NAME="" RELEASE_ADULT=0 RELEASE_NO_MINORS=0 RELEASE_CONSENT=0 RELEASE_ADULT_CONTENT=0
+if [ -z "$RELEASE" ] && [ -f "$PHOTOS/release.txt" ] && [ -r "$PHOTOS/release.txt" ]; then
+  eval "$("$FORGE/venv/bin/python" -m voxprint_forge.lora.release_file --shell "$PHOTOS/release.txt")"
+  if [ "$RELEASE_CONSENT" = 1 ]; then
+    RELEASE="$PHOTOS/release.txt"
+    # "Adult content in training: yes" turns --adult-content on again; an explicit
+    # --no-adult-content still wins.
+    if [ "$ADULT_SET" != 1 ] && [ "$RELEASE_ADULT_CONTENT" = 1 ]; then
+      ADULT=1
+    fi
+  fi
+  [ "$RELEASE_NO_MINORS" = 1 ] && attested="yes" || attested="no"
+  [ "$ADULT" = 1 ] && grown="on" || grown="off"
+  if [ "$RELEASE_CONSENT" = 1 ] || [ "$ASSUME_YES" = 1 ]; then prompts="skipped"; else prompts="asked"; fi
+  echo "forge-train: release.txt found in the photo folder (sha256 $RELEASE_SHA256); name='$RELEASE_NAME'; adult $grown; no minors attested: $attested; consent prompts $prompts"
+fi
+
+# NAME: the command line wins, then the release.txt model name, then the folder name.
+if [ -z "$NAME" ]; then
+  if [ -n "$RELEASE_NAME" ]; then
+    NAME="$RELEASE_NAME"
+  elif [ "$PHOTOS_FROM_GUI" = 1 ]; then
+    NAME="$(basename "$PHOTOS")"
+  fi
+fi
+[ -n "$NAME" ] || { usage; exit 2; }
+
+ask() {
+  local ans=""
+  printf '%s ' "$1" >&2
+  read -r ans 2>/dev/null < /dev/tty || ans=""
+  case "$ans" in y|Y) return 0;; *) return 1;; esac
+}
+# --release FILE (a signed release on disk) declares consent and age through the command,
+# exactly like --yes: the interactive self-declaration prompts are skipped either way. The
+# safety gate itself always runs and stays fail-closed.
+if [ "$ASSUME_YES" != 1 ] && [ -z "$RELEASE" ]; then
+  ask "Consent was obtained from this person (y/N)?" || { echo "Aborted: consent not confirmed." >&2; exit 2; }
+  ask "The person is 18 or older (y/N)?" || { echo "Aborted: adult age not confirmed." >&2; exit 2; }
+fi
+
+SLUG="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')"
+P="$PROJECTS/$SLUG-$(date +%Y%m%d-%H%M)"
+mkdir -p "$P"
+# bitsandbytes logs a noisy MatMul8bitLt warning on every training step; drop those
+# lines from the terminal and the log. The filter lives in the tee pipeline, so its
+# exit status never reaches the script (grep exits 1 when everything was filtered).
+exec > >(grep -v --line-buffered 'MatMul8bitLt' | tee -a "$P/forge-train.log") 2>&1
+echo "forge-train: name='$NAME' project='$P' photos='$PHOTOS' base='$BASE' steps='$STEPS' rank='$RANK' crop='$CROP' smoke='$SMOKE' dry_run='$DRY_RUN' adult='$ADULT' release='${RELEASE:-none}'"
+
+PRESET=balanced WARMUP=50 SAVE_EVERY=200
+if [ "$SMOKE" = 1 ]; then
+  PRESET=quick WARMUP=5 SAVE_EVERY=25 STEPS=50
+fi
+DRY_FLAG=""; [ "$DRY_RUN" = 1 ] && DRY_FLAG="--dry-run"
+
+SMI_PID=""
+cleanup() { [ -n "$SMI_PID" ] && kill "$SMI_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
+echo "== Step 1: lora prepare =="
+# The consent self-declaration fields are always recorded; with --release FILE the release
+# is copied into the project and its sha256 is recorded, and consent-method is "file".
+# Without it, consent-method stays "verbal" as before.
+PREPARE_FLAGS=("--base" "$BASE" "--crop" "$CROP")
+[ "$ADULT" = 1 ] && PREPARE_FLAGS+=("--adult-content")
+if [ -n "$RELEASE" ]; then
+  PREPARE_FLAGS+=("--consent-method" "file" "--release" "$RELEASE")
+else
+  PREPARE_FLAGS+=("--consent-method" "verbal")
+fi
+"$CLI" lora prepare --project "$P" --photos "$PHOTOS" --kind person --name "$NAME" \
+  --consent-obtained --subject-adult --mode simple --fetch-missing "${PREPARE_FLAGS[@]}"
+
+echo "== Step 2: lora train =="
+if command -v nvidia-smi >/dev/null 2>&1; then
+  ( while :; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null; sleep 2; done >> "$P/vram.log" ) &
+  SMI_PID=$!
+fi
+time_it() {
+  if [ -x /usr/bin/time ]; then /usr/bin/time -v -a -o "$P/time.log" "$@"; else "$@"; fi
+}
+# Rank 64 vs the 16 GB preset, config-only (src/voxprint_forge/lora/presets.py; no r64 run was
+# measured): the LoRA adapter + Adam states scale roughly linearly with rank, so r64 about
+# doubles the r32 adapter share while the base weights dominate the budget. Z-Image r64 is
+# expected to fit, but that tier's row is timing-only (9.7 s/step, peak not measured), so it is
+# unverified. MOSS-Image 16 GB already reserves 13.6 GiB at r32 (measured), so r64 may be tight.
+time_it "$CLI" lora train --project "$P" --base "$BASE" --preset "$PRESET" \
+  --likeness balanced --vram 16 --rank "$RANK" --alpha "$RANK" --lr 2e-4 \
+  --scheduler cosine --warmup "$WARMUP" --steps "$STEPS" --resolution 1024 \
+  --grad-accum 1 --grad-checkpointing --caption-mode short --caption-dropout 0.05 \
+  --save-every "$SAVE_EVERY" --preview-after 600 --preview-every 400 --review-rounds 0 \
+  --sample-framing portrait --seed 42 --fetch-missing $DRY_FLAG
+
+MAX=""
+[ -f "$P/vram.log" ] && MAX="$(sort -n "$P/vram.log" | tail -n 1)"
+echo "== Done =="
+echo "Project: $P"
+echo "Max VRAM: ${MAX:-n/a} MiB"
+echo "LoRA files:"
+find "$P" -name "*.safetensors"

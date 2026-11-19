@@ -1,0 +1,114 @@
+"""``forge lora train|extend`` on a tiny CPU stand-in."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from tests.lora_fakes import TinyAdapter, make_project
+from voxprint_forge.cli import main
+from voxprint_forge.lora import bases
+
+
+@pytest.fixture(autouse=True)
+def tiny_base():
+    bases.register(TinyAdapter)
+    yield
+    bases.unregister("tiny-test")
+
+
+ARGS = [
+    "--base",
+    "tiny-test",
+    "--vram",
+    "24",
+    "--steps",
+    "4",
+    "--resolution",
+    "64",
+    "--save-every",
+    "2",
+    "--no-previews",
+]
+
+
+def test_dry_run_prints_the_plan(tmp_path, capsys) -> None:
+    make_project(tmp_path)
+    code = main(["--json", "lora", "train", "--project", str(tmp_path), "--dry-run", *ARGS])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["result"]["state"] == "dry-run" and payload["result"]["steps"] == 4
+
+
+def test_train_prints_json_events_then_result(tmp_path, capsys) -> None:
+    make_project(tmp_path)
+    code = main(["--json", "lora", "train", "--project", str(tmp_path), *ARGS])
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.startswith('{"event"')]
+    assert code == 0 and lines
+    events = [json.loads(line)["event"] for line in lines]
+    assert set(events[0]) == {"step", "message_key", "params", "reason_key", "percent", "eta_seconds", "state"}
+    assert events[-1]["state"] == "done"
+
+
+def test_plain_mode_prints_english_sentences_on_a_russian_system(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("VOXPRINT_LANG", "ru")
+    make_project(tmp_path)
+    assert main(["lora", "train", "--project", str(tmp_path), *ARGS]) == 0
+    assert "Training: step 4 of 4" in capsys.readouterr().out
+
+
+def test_unprepared_project_is_a_usage_error(tmp_path, capsys) -> None:
+    code = main(["--json", "lora", "train", "--project", str(tmp_path / "none"), *ARGS])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2 and payload["error"]["code"] == "lora.err.not_prepared"
+
+
+def test_dry_run_works_without_a_source_checkout(tmp_path, capsys, monkeypatch) -> None:
+    from voxprint_forge import cli
+
+    def no_checkout(explicit):
+        raise cli.UsageError("cannot find the forge repo; pass --root", code="root")
+
+    monkeypatch.setattr(cli, "_repo_root", no_checkout)
+    monkeypatch.delenv("FORGE_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project"
+    make_project(project)
+    code = main(["--json", "lora", "train", "--project", str(project), "--dry-run", *ARGS])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["result"]["state"] == "dry-run"
+
+
+def _spy_base_fetch(monkeypatch) -> list[str]:
+    """Record ``_ensure_base_weights`` calls and stub the gate fetch and weight loading."""
+    fetched: list[str] = []
+    monkeypatch.setattr("voxprint_forge.lora.cli._fetch_missing", lambda: None)
+    monkeypatch.setattr("voxprint_forge.lora.cli._ensure_base_weights", fetched.append)
+    monkeypatch.setattr("voxprint_forge.lora.bases.get_adapter", lambda *a, **k: TinyAdapter())
+    monkeypatch.setattr("voxprint_forge.lora.train.train", lambda *a, **k: {"state": "done"})
+    return fetched
+
+
+def test_fetch_missing_fetches_the_selected_base(tmp_path, monkeypatch) -> None:
+    make_project(tmp_path)
+    fetched = _spy_base_fetch(monkeypatch)
+    code = main(
+        [
+            "--json", "lora", "train", "--project", str(tmp_path),
+            "--fetch-missing", "--base", "z-image", "--vram", "24", "--steps", "4",
+        ]
+    )
+    assert code == 0 and fetched == ["z-image"]
+
+
+def test_no_fetch_skips_the_selected_base(tmp_path, monkeypatch) -> None:
+    make_project(tmp_path)
+    fetched = _spy_base_fetch(monkeypatch)
+    code = main(
+        [
+            "--json", "lora", "train", "--project", str(tmp_path),
+            "--no-fetch", "--base", "z-image", "--vram", "24", "--steps", "4",
+        ]
+    )
+    assert code == 0 and fetched == []

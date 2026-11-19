@@ -1,0 +1,63 @@
+name: release
+
+# Build numbers come from installer.yml, the workflow that stamps the setup (rc.8 was 183).
+# This workflow's github.run_number is its own, much smaller counter, so it is not in the title.
+run-name: release ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      installer_run: ${{ steps.publish.outputs.installer_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Publish installer, guides, and SHA256SUMS
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_assets.py publish "$RUNNER_TEMP/release-assets"
+  identity:
+    # The identity of the published setup: the installer run number plus the BUILD.json offset.
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Print the release identity
+        env:
+          PYTHONPATH: src
+          # GitHub ignores step-level overrides of GITHUB_* variables, so carry the installer run under its own name.
+          INSTALLER_RUN: ${{ needs.publish.outputs.installer_run }}
+          # rc.8 shipped build 183. A release below this went back in time.
+          BUILD_FLOOR: "184"
+        run: |
+          python -m pip install vendor/voxprint_common-0.7.4-py3-none-any.whl
+          build="$(python -c 'import json, os; print(int(os.environ["INSTALLER_RUN"]) + int(json.load(open("BUILD.json"))["offset"] or 0))')"
+          export VOXPRINT_BUILD="$build"
+          # Stamp the package as installer.yml does, so an rc tag shows its RC number.
+          python installer/stamp_build.py --catalog BUILD.json --package-dir src/voxprint_forge --stage-dir "$RUNNER_TEMP/stage" --require-build --tag "$GITHUB_REF_NAME"
+          line="$(python -c 'from voxprint_forge.version import version_line; print(version_line())')"
+          printf '%s\n' "$line"
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.([0-9]+)$ ]]; then
+            expected="0.1.0 RC ${BASH_REMATCH[1]} build ${build} \"Charash\""
+          else
+            expected="0.1.0 build ${build} \"Charash\""
+          fi
+          test "$line" = "$expected"
+          test "$build" -ge "$BUILD_FLOOR"
